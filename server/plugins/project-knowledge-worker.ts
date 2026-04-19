@@ -1,13 +1,22 @@
 import type { Buffer } from 'node:buffer'
+import type { KnowledgeEmbeddingContentItem } from '~~/server/services/knowledge-ai'
+import type { RuntimeSettings } from '~~/server/utils/env'
 import type { ProjectKnowledgeTaskContext } from '~~/server/utils/project-knowledge-store'
-import type { DocumentAnalysis, ProjectKnowledgeChunkKind, ProjectKnowledgeChunkMetadata, ProjectKnowledgeModality } from '~~/shared/types/domain'
+import type {
+  DocumentAnalysis,
+  ProjectKnowledgeChunkKind,
+  ProjectKnowledgeChunkMetadata,
+  ProjectKnowledgeEmbeddingApiStyle,
+  ProjectKnowledgeEmbeddingInputType,
+  ProjectKnowledgeModality,
+} from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { analyzePdfBufferWithDocAi } from '~~/server/services/document/analysis'
 import { createKnowledgeEmbedding } from '~~/server/services/knowledge-ai'
 import { analyzeKnowledgeVisualProjection } from '~~/server/services/knowledge-vision'
 import { getDocumentStorage } from '~~/server/storage/document-storage'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
   claimNextQueuedProjectKnowledgeIndexTask,
   completeProjectKnowledgeTaskFailure,
@@ -22,6 +31,7 @@ import {
   pushProjectKnowledgeWorkerRunRecord,
 } from '~~/server/utils/project-knowledge-worker-state'
 import { listProjectMeetingUtterances } from '~~/server/utils/project-meeting-store'
+import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
 import {
   getProjectResourcePreviewFileRef,
   getProjectResourceSourceFileRef,
@@ -45,6 +55,11 @@ interface WorkerChunk {
   pageNumber?: number | null
   sectionLabel?: string
   metadata?: Record<string, unknown>
+  embeddingInput?: {
+    contents?: KnowledgeEmbeddingContentItem[]
+    inputType?: ProjectKnowledgeEmbeddingInputType
+    enableFusion?: boolean
+  }
 }
 
 function getWorkerTimerState(): WorkerTimerState {
@@ -103,6 +118,38 @@ function isAudioMimeType(value: string): boolean {
 
 function isVideoMimeType(value: string): boolean {
   return normalizeString(value).toLowerCase().startsWith('video/')
+}
+
+function isBailianMultimodalEmbeddingEnabled(runtime: RuntimeSettings): boolean {
+  return normalizeString(runtime.ai.embeddingApiStyle) === 'bailian-multimodal'
+}
+
+function toImageDataUrl(buffer: Buffer, mimeType: string): string {
+  const safeMimeType = normalizeString(mimeType) || 'image/png'
+  return `data:${safeMimeType};base64,${buffer.toString('base64')}`
+}
+
+function isExternallyReachableMediaUrl(value: string): boolean {
+  const normalized = normalizeString(value)
+  if (!/^https?:\/\//i.test(normalized))
+    return false
+
+  try {
+    const url = new URL(normalized)
+    const host = String(url.hostname || '').trim().toLowerCase()
+    if (!host || host === 'localhost' || host.endsWith('.local'))
+      return false
+    if (host === '127.0.0.1' || host === '::1')
+      return false
+    if (/^10\./.test(host) || /^192\.168\./.test(host))
+      return false
+    if (/^172\.(?:1[6-9]|2\d|3[01])\./.test(host))
+      return false
+    return true
+  }
+  catch {
+    return false
+  }
 }
 
 function isDocumentVisualFallbackCandidate(value: string): boolean {
@@ -502,7 +549,7 @@ async function resolveProjectedDocumentAnalysis(context: ProjectKnowledgeTaskCon
     return context.documentAnalysis
 
   const { sourceRef, previewRef } = await resolveProjectResourceFileRefs(context)
-  const runtime = readRuntimeSettings()
+  const { runtime } = await readEffectiveRuntimeSettings()
   const candidates = [
     sourceRef && isPdfMimeType(sourceRef.mimeType) ? sourceRef : null,
     previewRef && isPdfMimeType(previewRef.mimeType) ? previewRef : null,
@@ -528,8 +575,23 @@ async function resolveProjectedDocumentAnalysis(context: ProjectKnowledgeTaskCon
   return context.documentAnalysis
 }
 
-async function resolveImageProjectionChunks(context: ProjectKnowledgeTaskContext): Promise<WorkerChunk[]> {
+function buildImageFusionText(input: {
+  summary: string
+  tags: string[]
+  layout: string
+  ocrText: string
+}): string {
+  return [
+    normalizeString(input.summary),
+    input.tags.length > 0 ? `标签: ${input.tags.join(' / ')}` : '',
+    normalizeString(input.layout) ? `版面: ${normalizeString(input.layout)}` : '',
+    normalizeString(input.ocrText) ? `OCR: ${normalizeString(input.ocrText)}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+async function resolveImageProjectionChunks(context: ProjectKnowledgeTaskContext, runtime: RuntimeSettings): Promise<WorkerChunk[]> {
   const { sourceRef, previewRef } = await resolveProjectResourceFileRefs(context)
+  const strictMultimodal = isBailianMultimodalEmbeddingEnabled(runtime)
   const imageRef = sourceRef && isImageMimeType(sourceRef.mimeType)
     ? sourceRef
     : previewRef && isImageMimeType(previewRef.mimeType)
@@ -545,6 +607,8 @@ async function resolveImageProjectionChunks(context: ProjectKnowledgeTaskContext
   })
 
   if (!imageRef) {
+    if (strictMultimodal)
+      throw new Error('BAILIAN_MULTIMODAL_IMAGE_SOURCE_MISSING')
     return buildFallbackSummaryChunks({
       title: context.resource.title,
       summary: context.resource.summary,
@@ -562,6 +626,8 @@ async function resolveImageProjectionChunks(context: ProjectKnowledgeTaskContext
 
   const imageBuffer = await resolveProjectResourceBuffer(imageRef.objectKey)
   if (!imageBuffer) {
+    if (strictMultimodal)
+      throw new Error('BAILIAN_MULTIMODAL_IMAGE_BUFFER_MISSING')
     return buildFallbackSummaryChunks({
       title: context.resource.title,
       summary: context.resource.summary,
@@ -577,6 +643,9 @@ async function resolveImageProjectionChunks(context: ProjectKnowledgeTaskContext
     })
   }
 
+  if (strictMultimodal && imageBuffer.length > 5 * 1024 * 1024)
+    throw new Error('BAILIAN_MULTIMODAL_IMAGE_TOO_LARGE')
+
   const visual = await analyzeKnowledgeVisualProjection({
     imageBuffer,
     mimeType: imageRef.mimeType,
@@ -588,7 +657,71 @@ async function resolveImageProjectionChunks(context: ProjectKnowledgeTaskContext
     visual,
     modality: 'image',
     projectionSource: visual.fallbackUsed ? 'fallback_metadata' : 'vision_model',
+  }).map((chunk) => {
+    if (chunk.chunkKind !== 'image_summary')
+      return chunk
+    return {
+      ...chunk,
+      embeddingInput: {
+        contents: [
+          { image: toImageDataUrl(imageBuffer, imageRef.mimeType) },
+          { text: buildImageFusionText(visual) || chunk.content },
+        ],
+        inputType: 'fused',
+        enableFusion: true,
+      },
+    }
   })
+}
+
+async function resolveVideoProjectionChunks(context: ProjectKnowledgeTaskContext, runtime: RuntimeSettings): Promise<WorkerChunk[]> {
+  const strictMultimodal = isBailianMultimodalEmbeddingEnabled(runtime)
+  const signedUrls = buildProjectResourceSignedUrls({
+    projectId: context.resource.projectId,
+    resourceId: context.resource.id,
+  })
+  const videoUrl = normalizeString(signedUrls.sourceDownloadUrl || signedUrls.previewUrl)
+  if (!videoUrl) {
+    if (strictMultimodal)
+      throw new Error('BAILIAN_MULTIMODAL_VIDEO_URL_MISSING')
+    return []
+  }
+  if (!isExternallyReachableMediaUrl(videoUrl)) {
+    if (strictMultimodal)
+      throw new Error('BAILIAN_MULTIMODAL_VIDEO_URL_UNREACHABLE')
+    return []
+  }
+
+  const content = compactText([
+    normalizeString(context.resource.title),
+    normalizeString(context.resource.summary),
+    normalizeString(context.resource.content),
+    extractMetadataText(normalizeRecord(context.resource.metadata)),
+  ].filter(Boolean).join('\n')) || normalizeString(context.resource.title) || '视频资源'
+
+  return [{
+    chunkIndex: 0,
+    chunkKind: 'resource_summary',
+    title: normalizeString(context.resource.title),
+    content,
+    citationLabel: `${normalizeString(context.resource.title) || '视频资源'}/video`,
+    metadata: {
+      ...normalizeRecord(context.resource.metadata),
+      ...buildChunkMetadata({
+        modality: 'video',
+        projectionType: 'resource_summary',
+        projectionSource: 'video_resource',
+        confidence: 0.72,
+        fallbackUsed: false,
+        signedSourceUrl: videoUrl,
+      }),
+    },
+    embeddingInput: {
+      contents: [{ video: videoUrl }],
+      inputType: 'video',
+      enableFusion: false,
+    },
+  }]
 }
 
 function buildMeetingTranscriptChunks(input: {
@@ -659,7 +792,7 @@ function buildMeetingTranscriptChunks(input: {
   return chunks
 }
 
-async function buildResourceChunks(context: ProjectKnowledgeTaskContext): Promise<WorkerChunk[]> {
+async function buildResourceChunks(context: ProjectKnowledgeTaskContext, runtime: RuntimeSettings): Promise<WorkerChunk[]> {
   const metadata = normalizeRecord(context.resource.metadata)
   const artifactKind = normalizeString(metadata.artifactKind)
   const mimeType = normalizeString(context.resource.mimeType)
@@ -712,7 +845,10 @@ async function buildResourceChunks(context: ProjectKnowledgeTaskContext): Promis
   }
 
   if (isImageMimeType(mimeType)) {
-    chunks.push(...await resolveImageProjectionChunks(context))
+    chunks.push(...await resolveImageProjectionChunks(context, runtime))
+  }
+  else if (isVideoMimeType(mimeType)) {
+    chunks.push(...await resolveVideoProjectionChunks(context, runtime))
   }
   else if (chunks.length === 0 && isDocumentVisualFallbackCandidate(mimeType)) {
     chunks.push(...buildFallbackSummaryChunks({
@@ -812,7 +948,8 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
       })
     })
 
-    const chunks = await buildResourceChunks(context)
+    const { runtime } = await readEffectiveRuntimeSettings()
+    const chunks = await buildResourceChunks(context, runtime)
     const chunkKinds = chunks.reduce<Record<string, number>>((accumulator, chunk) => {
       const key = normalizeString(chunk.chunkKind) || 'unknown'
       accumulator[key] = (accumulator[key] || 0) + 1
@@ -836,12 +973,19 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
       embeddingProvider: string
       embeddingModel: string
       embeddingFallbackUsed: boolean
+      embeddingApiStyle: ProjectKnowledgeEmbeddingApiStyle
+      embeddingInputType: ProjectKnowledgeEmbeddingInputType
+      embeddingDimensions: number
+      embeddingFusionUsed: boolean
     }> = []
     const chunkTotal = chunks.length
 
     for (const chunk of chunks) {
       const embeddingResult = await createKnowledgeEmbedding({
         text: chunk.content,
+        contents: chunk.embeddingInput?.contents,
+        inputType: chunk.embeddingInput?.inputType,
+        enableFusion: chunk.embeddingInput?.enableFusion,
       })
       embeddedChunks.push({
         ...chunk,
@@ -849,6 +993,10 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
         embeddingProvider: embeddingResult.provider,
         embeddingModel: embeddingResult.model,
         embeddingFallbackUsed: embeddingResult.fallbackUsed,
+        embeddingApiStyle: embeddingResult.apiStyle,
+        embeddingInputType: embeddingResult.inputType,
+        embeddingDimensions: embeddingResult.dimensions,
+        embeddingFusionUsed: embeddingResult.fusionUsed,
       })
 
       const chunkIndexed = embeddedChunks.length
@@ -905,6 +1053,10 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
               embeddingProvider: item.embeddingProvider,
               embeddingModel: item.embeddingModel,
               embeddingFallbackUsed: item.embeddingFallbackUsed,
+              embeddingApiStyle: item.embeddingApiStyle,
+              embeddingInputType: item.embeddingInputType,
+              embeddingDimensions: item.embeddingDimensions,
+              embeddingFusionUsed: item.embeddingFusionUsed,
             }),
           },
           embedding: item.embedding,

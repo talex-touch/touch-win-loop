@@ -1,5 +1,13 @@
 import type { H3Event } from 'h3'
+import type {
+  PlatformAiClientType,
+  ProjectKnowledgeEmbeddingApiStyle,
+} from '~~/shared/types/domain'
 import { useRuntimeConfig } from '#imports'
+import {
+  normalizePlatformAiClientType,
+  normalizeProjectKnowledgeEmbeddingApiStyle,
+} from '~~/server/utils/platform-ai-client'
 import { normalizeApiBase } from '~~/shared/utils/api-url'
 
 function toNumber(raw: unknown, fallback: number): number {
@@ -122,10 +130,13 @@ export interface RuntimeSettings {
   }
   ai: {
     provider: string
+    clientType: PlatformAiClientType
     baseURL: string
     apiKey: string
     model: string
     embeddingModel: string
+    embeddingApiStyle: ProjectKnowledgeEmbeddingApiStyle
+    embeddingDimensions: number
     visionModel: string
     modelCatalogJson: string
     modelPricingJson: string
@@ -279,10 +290,13 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
     },
     ai: {
       provider: String(runtime.ai?.provider ?? ''),
+      clientType: normalizePlatformAiClientType(runtime.ai?.clientType),
       baseURL: String(runtime.ai?.baseURL ?? ''),
       apiKey: String(runtime.ai?.apiKey ?? ''),
       model: String(runtime.ai?.model ?? ''),
       embeddingModel: String(runtime.ai?.embeddingModel ?? ''),
+      embeddingApiStyle: normalizeProjectKnowledgeEmbeddingApiStyle(runtime.ai?.embeddingApiStyle),
+      embeddingDimensions: Math.max(0, Math.trunc(toNumber(runtime.ai?.embeddingDimensions, 1024))),
       visionModel: String(runtime.ai?.visionModel ?? ''),
       modelCatalogJson: String(runtime.ai?.modelCatalogJson ?? ''),
       modelPricingJson: String(runtime.ai?.modelPricingJson ?? ''),

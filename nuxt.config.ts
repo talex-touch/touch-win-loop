@@ -97,10 +97,13 @@ export default defineNuxtConfig({
     },
     ai: {
       provider: 'mock',
+      clientType: 'langchain',
       baseURL: '',
       apiKey: '',
       model: 'gpt-4o-mini',
       embeddingModel: 'text-embedding-3-small',
+      embeddingApiStyle: 'openai-compatible-text',
+      embeddingDimensions: 1024,
       visionModel: '',
       modelCatalogJson: '',
       modelPricingJson: '',

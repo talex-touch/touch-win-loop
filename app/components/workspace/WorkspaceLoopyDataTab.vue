@@ -51,9 +51,13 @@ const EMPTY_DASHBOARD: ProjectKnowledgeIndexDashboard = {
     lastRefreshedAt: '',
   },
   runtime: {
+    clientType: 'langchain',
     embeddingConfigured: false,
+    embeddingClientType: 'openai-compatible',
+    embeddingApiStyle: 'openai-compatible-text',
     embeddingProvider: 'unconfigured',
     embeddingModel: '',
+    embeddingDimensions: 0,
   },
   worker: {
     started: false,
@@ -69,8 +73,11 @@ const EMPTY_DASHBOARD: ProjectKnowledgeIndexDashboard = {
     realEmbeddedChunkCount: 0,
     fallbackEmbeddedChunkCount: 0,
     unknownEmbeddedChunkCount: 0,
+    multimodalIndexedCount: 0,
+    multimodalBlockedCount: 0,
     healthState: 'empty_project',
     healthMessage: '当前项目没有可索引的活跃资源。',
+    embeddingHealthReason: '',
     issues: [],
   },
   visuals: {
@@ -137,7 +144,13 @@ const healthBadgeClass = computed(() => {
 const runtimeLabel = computed(() => {
   if (!runtime.value.embeddingConfigured)
     return 'Embedding 未配置'
-  return `${runtime.value.embeddingProvider || 'provider'} / ${runtime.value.embeddingModel || 'model'}`
+  const clientLabel = runtime.value.clientType === 'bailian-native'
+    ? '百炼原生 SDK'
+    : runtime.value.clientType === 'coze-sdk'
+      ? 'Coze SDK'
+      : 'LangChain'
+  const embeddingClientLabel = runtime.value.embeddingClientType === 'bailian-native' ? '百炼原生' : 'OpenAI 兼容'
+  return `${clientLabel} · ${embeddingClientLabel} · ${runtime.value.embeddingProvider || 'provider'} / ${runtime.value.embeddingModel || 'model'} @ ${runtime.value.embeddingDimensions || 0}d`
 })
 
 const workerLabel = computed(() => {
@@ -158,6 +171,8 @@ const summaryCards = computed(() => {
     { label: 'Chunk', value: String(diagnostics.value.chunkCount) },
     { label: '真实 Embedding', value: String(diagnostics.value.realEmbeddedChunkCount) },
     { label: 'Fallback Chunk', value: String(diagnostics.value.fallbackEmbeddedChunkCount) },
+    { label: '多模态资源', value: String(diagnostics.value.multimodalIndexedCount) },
+    { label: '阻塞资源', value: String(diagnostics.value.multimodalBlockedCount) },
   ]
 })
 

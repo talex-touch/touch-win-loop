@@ -7,6 +7,9 @@ export * from './ai'
 export * from './workspace'
 export * from './auth'
 export type {
+  PlatformAiClientType,
+  ProjectKnowledgeEmbeddingApiStyle,
+  ProjectKnowledgeEmbeddingInputType,
   ProjectKnowledgeChunkMetadata,
   ProjectKnowledgeModality,
   ProjectKnowledgeProjectionType,

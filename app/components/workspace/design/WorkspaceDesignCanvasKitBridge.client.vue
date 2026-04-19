@@ -11,7 +11,6 @@ import type {
   DesignCanvasSelectionState,
 } from '~~/app/composables/useDesignCanvasSelection'
 import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
-import { computed } from 'vue'
 import {
   createEmptyDesignCanvasSelectionState,
 } from '~~/app/composables/useDesignCanvasSelection'
@@ -87,16 +86,6 @@ const emit = defineEmits<{
   'update-mockup-screen-transform': [payload: { frameId: string, offsetX: number, offsetY: number, historyMergeKey?: string }]
   'clear-pending-image-placement': []
 }>()
-
-const bridgeStatusLabel = computed(() => {
-  return props.disabled ? '只读 New Host' : 'New Host'
-})
-
-const bridgeCaption = computed(() => {
-  return props.disabled
-    ? '当前设计内容已切到独立 host，只读渲染可用，编辑能力继续补齐。'
-    : '当前设计画布已脱离 Vue Flow 打开入口，走独立 host 渲染。'
-})
 </script>
 
 <template>
@@ -104,17 +93,6 @@ const bridgeCaption = computed(() => {
     class="relative h-full min-h-0 w-full"
     data-testid="workspace-design-canvaskit-bridge"
   >
-    <div class="pointer-events-none absolute inset-x-0 top-4 z-[30] flex justify-center px-4">
-      <div class="flex max-w-[720px] items-center gap-2 rounded-full border border-sky-200/80 bg-white/92 px-3 py-1.5 text-[11px] font-semibold text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.08)] backdrop-blur">
-        <span class="rounded-full bg-sky-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white">
-          CanvasKit
-        </span>
-        <span>{{ bridgeStatusLabel }}</span>
-        <span class="text-slate-400">·</span>
-        <span class="text-slate-500">{{ bridgeCaption }}</span>
-      </div>
-    </div>
-
     <WorkspaceDesignCanvasKitHost
       :page="props.page"
       :frames="props.frames"

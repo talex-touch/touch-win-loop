@@ -5,7 +5,8 @@ import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { extractKnowledgeKeywords, toKnowledgeText } from '~~/server/services/knowledge-ai'
 import { normalizeAiRuntimeProvider } from '~~/server/utils/ai-runtime'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { normalizePlatformAiClientType } from '~~/server/utils/platform-ai-client'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { runWithRetry } from '~~/server/utils/retry'
 
 const MAX_VISION_IMAGE_BYTES = 2 * 1024 * 1024
@@ -83,7 +84,7 @@ export async function analyzeKnowledgeVisualProjection(input: {
   textFallback?: string
   event?: H3Event
 }): Promise<KnowledgeVisualProjectionResult> {
-  const runtime = readRuntimeSettings(input.event)
+  const { runtime } = await readEffectiveRuntimeSettings(input.event)
   const provider = normalizeAiRuntimeProvider(runtime.ai.provider)
   const model = normalizeString(runtime.ai.visionModel)
   const fallback = buildFallbackProjection(input.textFallback || '')
@@ -107,6 +108,7 @@ export async function analyzeKnowledgeVisualProjection(input: {
 
   const chatModel = createChatModel({
     provider,
+    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
     baseURL: runtime.ai.baseURL,
     apiKey: runtime.ai.apiKey,
     model,

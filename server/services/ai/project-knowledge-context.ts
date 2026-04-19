@@ -362,6 +362,7 @@ export async function buildProjectKnowledgeLocalContext(
     query
       ? createKnowledgeEmbedding({
           text: query,
+          inputType: 'text',
           event: input.event,
         })
       : Promise.resolve({

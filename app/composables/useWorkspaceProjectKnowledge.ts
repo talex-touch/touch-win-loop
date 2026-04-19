@@ -30,9 +30,13 @@ const EMPTY_PROJECT_KNOWLEDGE_DASHBOARD: ProjectKnowledgeIndexDashboard = {
     lastRefreshedAt: '',
   },
   runtime: {
+    clientType: 'langchain',
     embeddingConfigured: false,
+    embeddingClientType: 'openai-compatible',
+    embeddingApiStyle: 'openai-compatible-text',
     embeddingProvider: 'unconfigured',
     embeddingModel: '',
+    embeddingDimensions: 0,
   },
   worker: {
     started: false,
@@ -48,8 +52,11 @@ const EMPTY_PROJECT_KNOWLEDGE_DASHBOARD: ProjectKnowledgeIndexDashboard = {
     realEmbeddedChunkCount: 0,
     fallbackEmbeddedChunkCount: 0,
     unknownEmbeddedChunkCount: 0,
+    multimodalIndexedCount: 0,
+    multimodalBlockedCount: 0,
     healthState: 'empty_project',
     healthMessage: '当前项目没有可索引的活跃资源。',
+    embeddingHealthReason: '',
     issues: [],
   },
   visuals: {

@@ -1,11 +1,23 @@
 import type { H3Event } from 'h3'
+import type {
+  ProjectKnowledgeEmbeddingApiStyle,
+  ProjectKnowledgeEmbeddingInputType,
+} from '~~/shared/types/domain'
 import { createHash } from 'node:crypto'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { isAiRuntimeConfigured, normalizeAiRuntimeProvider } from '~~/server/utils/ai-runtime'
-import { readRuntimeSettings } from '~~/server/utils/env'
-import { normalizePlatformAiApiKey, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
+import {
+  normalizePlatformAiApiKey,
+  resolveDashScopeNativeBaseURL,
+  resolvePlatformAiRequestBaseURL,
+} from '~~/server/utils/platform-ai-base-url'
+import {
+  normalizePlatformAiClientType,
+  normalizeProjectKnowledgeEmbeddingApiStyle,
+} from '~~/server/utils/platform-ai-client'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { runWithRetry } from '~~/server/utils/retry'
 
 interface EmbeddingApiResponse {
@@ -14,12 +26,40 @@ interface EmbeddingApiResponse {
   }>
 }
 
+interface BailianMultimodalEmbeddingResponse {
+  output?: {
+    embeddings?: Array<{
+      index?: number
+      embedding?: number[]
+      type?: string
+    }>
+  }
+  request_id?: string
+  code?: string
+  message?: string
+}
+
+export type KnowledgeEmbeddingContentItem
+  = string
+    | { text: string }
+    | { image: string }
+    | { video: string }
+    | { multi_images: string[] }
+
+type KnowledgeEmbeddingClientType = 'openai-compatible' | 'bailian-native'
+
 export interface KnowledgeEmbeddingResult {
   embedding: number[]
   provider: string
   model: string
   fallbackUsed: boolean
   attempts: number
+  clientType: KnowledgeEmbeddingClientType
+  apiStyle: ProjectKnowledgeEmbeddingApiStyle
+  inputType: ProjectKnowledgeEmbeddingInputType
+  dimensions: number
+  fusionUsed: boolean
+  requestId?: string
 }
 
 export interface KnowledgeEntityAnalysisResult {
@@ -79,6 +119,332 @@ function normalizeEmbeddingOutput(raw: unknown): number[] {
   return result
 }
 
+function normalizePositiveInt(value: unknown, fallback = 0): number {
+  const normalized = Math.round(Number(value))
+  if (!Number.isFinite(normalized) || normalized <= 0)
+    return fallback
+  return normalized
+}
+
+function resolveOpenAiCompatibleEmbeddingDimensions(model: string, configured: unknown): number {
+  const configuredValue = normalizePositiveInt(configured, 0)
+  if (configuredValue > 0)
+    return configuredValue
+
+  const normalizedModel = normalizeEmbeddingModel(model).toLowerCase()
+  if (normalizedModel.includes('text-embedding-3-large'))
+    return 3072
+  if (normalizedModel.includes('text-embedding-3-small'))
+    return 1536
+  if (normalizedModel.includes('text-embedding-v4'))
+    return 1024
+  if (normalizedModel.includes('text-embedding-v3'))
+    return 1024
+  return 1536
+}
+
+function resolveBailianMultimodalDimensions(model: string, configured: unknown): number {
+  const configuredValue = normalizePositiveInt(configured, 0)
+  const normalizedModel = normalizeEmbeddingModel(model).toLowerCase()
+  if (normalizedModel === 'multimodal-embedding-v1')
+    return 1024
+
+  const supportedDimensions = new Set([256, 512, 768, 1024, 1536, 2048, 2560])
+  if (supportedDimensions.has(configuredValue))
+    return configuredValue
+  return 1024
+}
+
+function resolveKnowledgeEmbeddingDimensions(input: {
+  apiStyle: ProjectKnowledgeEmbeddingApiStyle
+  model: string
+  configured: unknown
+}): number {
+  if (input.apiStyle === 'bailian-multimodal')
+    return resolveBailianMultimodalDimensions(input.model, input.configured)
+  return resolveOpenAiCompatibleEmbeddingDimensions(input.model, input.configured)
+}
+
+function normalizeKnowledgeEmbeddingInputText(input: {
+  text?: string
+  contents?: KnowledgeEmbeddingContentItem[]
+}): string {
+  const directText = toKnowledgeText(input.text)
+  if (directText)
+    return directText
+
+  const contents = Array.isArray(input.contents) ? input.contents : []
+  const lines = contents.flatMap((item) => {
+    if (typeof item === 'string')
+      return [toKnowledgeText(item)]
+    if ('text' in item)
+      return [toKnowledgeText(item.text)]
+    if ('multi_images' in item)
+      return item.multi_images.map(value => `image:${toKnowledgeText(value)}`).filter(Boolean)
+    if ('image' in item)
+      return [`image:${toKnowledgeText(item.image)}`]
+    if ('video' in item)
+      return [`video:${toKnowledgeText(item.video)}`]
+    return []
+  })
+
+  return lines.filter(Boolean).join('\n')
+}
+
+function normalizeKnowledgeEmbeddingContents(input: {
+  text?: string
+  contents?: KnowledgeEmbeddingContentItem[]
+}): KnowledgeEmbeddingContentItem[] {
+  const contents = Array.isArray(input.contents)
+    ? input.contents
+        .map((item) => {
+          if (typeof item === 'string')
+            return toKnowledgeText(item)
+          if ('text' in item)
+            return { text: toKnowledgeText(item.text) }
+          if ('image' in item)
+            return { image: toKnowledgeText(item.image) }
+          if ('video' in item)
+            return { video: toKnowledgeText(item.video) }
+          if ('multi_images' in item)
+            return { multi_images: item.multi_images.map(value => toKnowledgeText(value)).filter(Boolean) }
+          return null
+        })
+        .filter((item): item is KnowledgeEmbeddingContentItem => {
+          if (!item)
+            return false
+          if (typeof item === 'string')
+            return Boolean(item)
+          if ('text' in item)
+            return Boolean(item.text)
+          if ('image' in item)
+            return Boolean(item.image)
+          if ('video' in item)
+            return Boolean(item.video)
+          return item.multi_images.length > 0
+        })
+    : []
+
+  if (contents.length > 0)
+    return contents
+
+  const text = toKnowledgeText(input.text)
+  return text ? [{ text }] : []
+}
+
+function inferKnowledgeEmbeddingInputType(contents: KnowledgeEmbeddingContentItem[], fusionUsed: boolean): ProjectKnowledgeEmbeddingInputType {
+  if (fusionUsed)
+    return 'fused'
+
+  const first = contents[0]
+  if (!first)
+    return 'text'
+  if (typeof first === 'string')
+    return 'text'
+  if ('image' in first)
+    return 'image'
+  if ('video' in first)
+    return 'video'
+  if ('multi_images' in first)
+    return 'multi_images'
+  return 'text'
+}
+
+function normalizeBailianEmbeddingType(value: unknown, fallback: ProjectKnowledgeEmbeddingInputType): ProjectKnowledgeEmbeddingInputType {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'image')
+    return 'image'
+  if (normalized === 'video')
+    return 'video'
+  if (normalized === 'multi_images')
+    return 'multi_images'
+  if (normalized === 'fusion' || normalized === 'fused')
+    return 'fused'
+  return fallback
+}
+
+async function createOpenAiCompatibleTextEmbedding(input: {
+  text: string
+  provider: string
+  model: string
+  apiKey: string
+  endpoint: string
+  timeoutMs: number
+  maxRetries: number
+  dimensions: number
+}): Promise<KnowledgeEmbeddingResult> {
+  if (!input.text) {
+    return {
+      embedding: [],
+      provider: input.provider,
+      model: input.model,
+      fallbackUsed: true,
+      attempts: 1,
+      clientType: 'openai-compatible',
+      apiStyle: 'openai-compatible-text',
+      inputType: 'text',
+      dimensions: input.dimensions,
+      fusionUsed: false,
+    }
+  }
+
+  if (!input.apiKey || !input.model || !input.endpoint) {
+    return {
+      embedding: buildDeterministicKnowledgeEmbedding(input.text, input.dimensions),
+      provider: input.provider,
+      model: input.model,
+      fallbackUsed: true,
+      attempts: 1,
+      clientType: 'openai-compatible',
+      apiStyle: 'openai-compatible-text',
+      inputType: 'text',
+      dimensions: input.dimensions,
+      fusionUsed: false,
+    }
+  }
+
+  const result = await runWithRetry<number[]>({
+    maxRetries: input.maxRetries,
+    run: async () => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), input.timeoutMs)
+      try {
+        const response = await fetch(`${input.endpoint}/embeddings`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${input.apiKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: input.model,
+            input: input.text,
+            dimensions: input.dimensions,
+          }),
+          signal: controller.signal,
+        })
+        const payload = await response.json().catch(() => ({})) as EmbeddingApiResponse
+        if (!response.ok)
+          throw new Error(`EMBEDDING_HTTP_${response.status}`)
+        const embedding = normalizeEmbeddingOutput(payload.data?.[0]?.embedding)
+        if (!embedding.length)
+          throw new Error('EMBEDDING_EMPTY')
+        return embedding
+      }
+      finally {
+        clearTimeout(timer)
+      }
+    },
+    fallback: () => buildDeterministicKnowledgeEmbedding(input.text, input.dimensions),
+  })
+
+  return {
+    embedding: result.data,
+    provider: input.provider,
+    model: input.model,
+    fallbackUsed: result.fallbackUsed,
+    attempts: result.attempts,
+    clientType: 'openai-compatible',
+    apiStyle: 'openai-compatible-text',
+    inputType: 'text',
+    dimensions: result.data.length || input.dimensions,
+    fusionUsed: false,
+  }
+}
+
+async function createBailianMultimodalEmbedding(input: {
+  contents: KnowledgeEmbeddingContentItem[]
+  provider: string
+  model: string
+  apiKey: string
+  baseURL: string
+  timeoutMs: number
+  maxRetries: number
+  dimensions: number
+  fusionUsed: boolean
+  inputType: ProjectKnowledgeEmbeddingInputType
+}): Promise<KnowledgeEmbeddingResult> {
+  if (input.contents.length === 0) {
+    return {
+      embedding: [],
+      provider: input.provider,
+      model: input.model,
+      fallbackUsed: false,
+      attempts: 1,
+      clientType: 'bailian-native',
+      apiStyle: 'bailian-multimodal',
+      inputType: input.inputType,
+      dimensions: input.dimensions,
+      fusionUsed: input.fusionUsed,
+    }
+  }
+
+  if (!input.apiKey || !input.model || !input.baseURL)
+    throw new Error('BAILIAN_MULTIMODAL_RUNTIME_NOT_CONFIGURED')
+
+  const result = await runWithRetry<{
+    embedding: number[]
+    inputType: ProjectKnowledgeEmbeddingInputType
+    requestId: string
+  }>({
+    maxRetries: input.maxRetries,
+    run: async () => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), input.timeoutMs)
+      try {
+        const response = await fetch(`${input.baseURL}/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${input.apiKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: input.model,
+            input: {
+              contents: input.contents,
+            },
+            parameters: {
+              output_type: 'dense',
+              dimension: input.dimensions,
+              enable_fusion: input.fusionUsed,
+            },
+          }),
+          signal: controller.signal,
+        })
+        const payload = await response.json().catch(() => ({})) as BailianMultimodalEmbeddingResponse
+        if (!response.ok)
+          throw new Error(`BAILIAN_MULTIMODAL_HTTP_${response.status}:${payload.message || payload.code || 'UNKNOWN'}`)
+        const embeddings = Array.isArray(payload.output?.embeddings) ? payload.output?.embeddings : []
+        const firstEmbedding = embeddings[0]
+        const embedding = normalizeEmbeddingOutput(firstEmbedding?.embedding)
+        if (!embedding.length)
+          throw new Error(`BAILIAN_MULTIMODAL_EMPTY:${payload.message || payload.code || 'NO_VECTOR'}`)
+        return {
+          embedding,
+          inputType: normalizeBailianEmbeddingType(firstEmbedding?.type, input.inputType),
+          requestId: String(payload.request_id || '').trim(),
+        }
+      }
+      finally {
+        clearTimeout(timer)
+      }
+    },
+  })
+
+  return {
+    embedding: result.data.embedding,
+    provider: input.provider,
+    model: input.model,
+    fallbackUsed: false,
+    attempts: result.attempts,
+    clientType: 'bailian-native',
+    apiStyle: 'bailian-multimodal',
+    inputType: result.data.inputType,
+    dimensions: result.data.embedding.length || input.dimensions,
+    fusionUsed: input.fusionUsed,
+    requestId: result.data.requestId,
+  }
+}
+
 function buildAnalysisFallback(text: string): Omit<KnowledgeEntityAnalysisResult, 'provider' | 'model' | 'fallbackUsed' | 'attempts'> {
   const normalized = toKnowledgeText(text)
   const summary = normalized.slice(0, 220) || '暂无可分析内容。'
@@ -103,94 +469,89 @@ function buildAnalysisFallback(text: string): Omit<KnowledgeEntityAnalysisResult
 
 export async function createKnowledgeEmbedding(input: {
   text: string
+  contents?: KnowledgeEmbeddingContentItem[]
+  inputType?: ProjectKnowledgeEmbeddingInputType
+  enableFusion?: boolean
   event?: H3Event
 }): Promise<KnowledgeEmbeddingResult> {
-  const runtime = readRuntimeSettings(input.event)
-  const sourceText = toKnowledgeText(input.text)
+  const { runtime } = await readEffectiveRuntimeSettings(input.event)
   const provider = normalizeAiRuntimeProvider(runtime.ai.provider)
-  const model = normalizeEmbeddingModel(runtime.ai.embeddingModel || runtime.ai.model)
+  const apiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(runtime.ai.embeddingApiStyle)
+  const model = normalizeEmbeddingModel(runtime.ai.embeddingModel || runtime.ai.model || (apiStyle === 'bailian-multimodal' ? 'qwen3-vl-embedding' : ''))
+  const dimensions = resolveKnowledgeEmbeddingDimensions({
+    apiStyle,
+    model,
+    configured: runtime.ai.embeddingDimensions,
+  })
   const normalizedApiKey = normalizePlatformAiApiKey(runtime.ai.apiKey)
+  const timeoutMs = Math.max(3_000, Math.min(120_000, Number(runtime.ai.timeoutMs || 15_000)))
+  const maxRetries = Math.max(0, Math.min(6, Number(runtime.ai.maxRetries || 0)))
+  const sourceText = normalizeKnowledgeEmbeddingInputText({
+    text: input.text,
+    contents: input.contents,
+  })
+  const contents = normalizeKnowledgeEmbeddingContents({
+    text: input.text,
+    contents: input.contents,
+  })
+
+  if (apiStyle === 'bailian-multimodal') {
+    const embeddingRuntimeConfigured = isAiRuntimeConfigured({
+      provider: runtime.ai.provider,
+      baseURL: runtime.ai.baseURL,
+      apiKey: runtime.ai.apiKey,
+      model,
+    })
+    if (!embeddingRuntimeConfigured || !normalizedApiKey)
+      throw new Error('BAILIAN_MULTIMODAL_RUNTIME_NOT_CONFIGURED')
+
+    const fusionUsed = Boolean(input.enableFusion)
+    return createBailianMultimodalEmbedding({
+      contents,
+      provider,
+      model,
+      apiKey: normalizedApiKey,
+      baseURL: resolveDashScopeNativeBaseURL(runtime.ai.baseURL, provider),
+      timeoutMs,
+      maxRetries,
+      dimensions,
+      fusionUsed,
+      inputType: input.inputType || inferKnowledgeEmbeddingInputType(contents, fusionUsed),
+    })
+  }
+
   const endpoint = resolvePlatformAiRequestBaseURL(runtime.ai.baseURL, provider)
-  if (!sourceText) {
-    return {
-      embedding: [],
-      provider,
-      model,
-      fallbackUsed: true,
-      attempts: 1,
-    }
-  }
-
-  if (!normalizedApiKey) {
-    return {
-      embedding: buildDeterministicKnowledgeEmbedding(sourceText),
-      provider,
-      model,
-      fallbackUsed: true,
-      attempts: 1,
-    }
-  }
-
   const embeddingRuntimeConfigured = isAiRuntimeConfigured({
     provider: runtime.ai.provider,
     baseURL: runtime.ai.baseURL,
     apiKey: runtime.ai.apiKey,
     model,
   })
-
-  if (!model || !endpoint || !embeddingRuntimeConfigured) {
+  if (!embeddingRuntimeConfigured || !model || !endpoint || !normalizedApiKey) {
     return {
-      embedding: buildDeterministicKnowledgeEmbedding(sourceText),
+      embedding: sourceText ? buildDeterministicKnowledgeEmbedding(sourceText, dimensions) : [],
       provider,
       model,
       fallbackUsed: true,
       attempts: 1,
+      clientType: 'openai-compatible',
+      apiStyle: 'openai-compatible-text',
+      inputType: 'text',
+      dimensions,
+      fusionUsed: false,
     }
   }
 
-  const timeoutMs = Math.max(3_000, Math.min(120_000, Number(runtime.ai.timeoutMs || 15_000)))
-  const maxRetries = Math.max(0, Math.min(6, Number(runtime.ai.maxRetries || 0)))
-
-  const result = await runWithRetry<number[]>({
-    maxRetries,
-    run: async () => {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), timeoutMs)
-      try {
-        const response = await fetch(`${endpoint}/embeddings`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${normalizedApiKey}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model,
-            input: sourceText,
-          }),
-          signal: controller.signal,
-        })
-        const payload = await response.json().catch(() => ({})) as EmbeddingApiResponse
-        if (!response.ok)
-          throw new Error(`EMBEDDING_HTTP_${response.status}`)
-        const embedding = normalizeEmbeddingOutput(payload.data?.[0]?.embedding)
-        if (!embedding.length)
-          throw new Error('EMBEDDING_EMPTY')
-        return embedding
-      }
-      finally {
-        clearTimeout(timer)
-      }
-    },
-    fallback: () => buildDeterministicKnowledgeEmbedding(sourceText),
-  })
-
-  return {
-    embedding: result.data,
+  return createOpenAiCompatibleTextEmbedding({
+    text: sourceText,
     provider,
     model,
-    fallbackUsed: result.fallbackUsed,
-    attempts: result.attempts,
-  }
+    apiKey: normalizedApiKey,
+    endpoint,
+    timeoutMs,
+    maxRetries,
+    dimensions,
+  })
 }
 
 const analysisSchema = z.object({
@@ -207,7 +568,7 @@ export async function analyzeKnowledgeEntity(input: {
   event?: H3Event
   systemPrompt?: string
 }): Promise<KnowledgeEntityAnalysisResult> {
-  const runtime = readRuntimeSettings(input.event)
+  const { runtime } = await readEffectiveRuntimeSettings(input.event)
   const provider = normalizeAiRuntimeProvider(runtime.ai.provider)
   const model = toKnowledgeText(runtime.ai.model)
   const normalizedText = toKnowledgeText(input.text).slice(0, 12_000)
@@ -225,6 +586,7 @@ export async function analyzeKnowledgeEntity(input: {
 
   const chatModel = createChatModel({
     provider,
+    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
     baseURL: runtime.ai.baseURL,
     apiKey: runtime.ai.apiKey,
     model,

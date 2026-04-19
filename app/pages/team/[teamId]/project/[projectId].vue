@@ -2088,7 +2088,13 @@ const {
 const loopyDataRuntimeLabel = computed(() => {
   if (!projectKnowledgeRuntime.value.embeddingConfigured)
     return 'Embedding 未配置'
-  return `${projectKnowledgeRuntime.value.embeddingProvider || 'provider'} / ${projectKnowledgeRuntime.value.embeddingModel || 'model'}`
+  const clientLabel = projectKnowledgeRuntime.value.clientType === 'bailian-native'
+    ? '百炼原生 SDK'
+    : projectKnowledgeRuntime.value.clientType === 'coze-sdk'
+      ? 'Coze SDK'
+      : 'LangChain'
+  const embeddingClientLabel = projectKnowledgeRuntime.value.embeddingClientType === 'bailian-native' ? '百炼原生' : 'OpenAI 兼容'
+  return `${clientLabel} · ${embeddingClientLabel} · ${projectKnowledgeRuntime.value.embeddingProvider || 'provider'} / ${projectKnowledgeRuntime.value.embeddingModel || 'model'} @ ${projectKnowledgeRuntime.value.embeddingDimensions || 0}d`
 })
 const projectResourcesFirstLoadLoading = computed(() => {
   return resourcesLoading.value && resourcesLoadedProjectId.value !== activeProjectScopeId.value

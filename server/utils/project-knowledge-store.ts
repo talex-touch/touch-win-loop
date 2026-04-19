@@ -1,4 +1,5 @@
 import type { Queryable } from '~~/server/utils/db'
+import type { RuntimeSettings } from '~~/server/utils/env'
 import type {
   DocumentAnalysis,
   ProjectKnowledgeChunkKind,
@@ -25,7 +26,11 @@ import type {
 } from '~~/shared/types/domain'
 import { createHash, randomUUID } from 'node:crypto'
 import { isAiRuntimeConfigured, normalizeAiRuntimeProvider } from '~~/server/utils/ai-runtime'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import {
+  normalizePlatformAiClientType,
+  normalizeProjectKnowledgeEmbeddingApiStyle,
+} from '~~/server/utils/platform-ai-client'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { getProjectKnowledgeWorkerState } from '~~/server/utils/project-knowledge-worker-state'
 
 export const PROJECT_KNOWLEDGE_INDEX_VERSION = 'project-knowledge-v2-multimodal'
@@ -152,6 +157,7 @@ interface ProjectKnowledgeChunkStatsRow {
   real_chunk_count: string
   fallback_chunk_count: string
   unknown_chunk_count: string
+  multimodal_chunk_count: string
 }
 
 interface ProjectKnowledgeTaskCountRow {
@@ -185,6 +191,7 @@ interface ProjectKnowledgeAggregateChunkStats {
   realEmbeddedChunkCount: number
   fallbackEmbeddedChunkCount: number
   unknownEmbeddedChunkCount: number
+  multimodalEmbeddedChunkCount: number
 }
 
 interface ProjectKnowledgeSourceChunkStats extends ProjectKnowledgeAggregateChunkStats {}
@@ -351,7 +358,21 @@ function isProcessingSourceStatus(status: ProjectKnowledgeSourceStatus): boolean
   return PROCESSING_SOURCE_STATUS_SET.has(status)
 }
 
-function buildProjectKnowledgeSourceHash(row: ProjectKnowledgeCandidateRow): string {
+function normalizeEmbeddingApiStyle(value: unknown): 'openai-compatible-text' | 'bailian-multimodal' {
+  return normalizeProjectKnowledgeEmbeddingApiStyle(value)
+}
+
+function buildProjectKnowledgeEmbeddingConfigSignature(runtime: RuntimeSettings): Record<string, unknown> {
+  return {
+    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
+    embeddingApiStyle: normalizeEmbeddingApiStyle(runtime.ai.embeddingApiStyle),
+    embeddingProvider: normalizeAiRuntimeProvider(runtime.ai.provider),
+    embeddingModel: normalizeString(runtime.ai.embeddingModel || runtime.ai.model),
+    embeddingDimensions: Math.max(0, normalizeNumber(runtime.ai.embeddingDimensions, 0)),
+  }
+}
+
+function buildProjectKnowledgeSourceHash(row: ProjectKnowledgeCandidateRow, runtime: RuntimeSettings): string {
   const payload = {
     projectId: normalizeString(row.project_id),
     sourceResourceId: normalizeString(row.source_resource_id),
@@ -370,6 +391,7 @@ function buildProjectKnowledgeSourceHash(row: ProjectKnowledgeCandidateRow): str
     pageCount: normalizeNumber(row.page_count, 0),
     documentUpdatedAt: normalizeString(row.document_updated_at),
     analysis: normalizeRecord(row.analysis_json),
+    embeddingConfig: buildProjectKnowledgeEmbeddingConfigSignature(runtime),
   }
   return createHash('sha256').update(stableStringify(payload)).digest('hex')
 }
@@ -516,10 +538,12 @@ function formatChunkKindLabel(chunkKind: string): string {
   return normalized || '未分类 Chunk'
 }
 
-function buildProjectKnowledgeRuntimeStatus(): ProjectKnowledgeIndexRuntimeStatus {
-  const runtime = readRuntimeSettings()
+async function buildProjectKnowledgeRuntimeStatus(): Promise<ProjectKnowledgeIndexRuntimeStatus> {
+  const { runtime } = await readEffectiveRuntimeSettings()
   const embeddingModel = normalizeString(runtime.ai.embeddingModel || runtime.ai.model)
+  const embeddingApiStyle = normalizeEmbeddingApiStyle(runtime.ai.embeddingApiStyle)
   return {
+    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
     embeddingConfigured: Boolean(embeddingModel)
       && isAiRuntimeConfigured({
         provider: runtime.ai.provider,
@@ -527,8 +551,11 @@ function buildProjectKnowledgeRuntimeStatus(): ProjectKnowledgeIndexRuntimeStatu
         apiKey: runtime.ai.apiKey,
         model: embeddingModel,
       }),
+    embeddingClientType: embeddingApiStyle === 'bailian-multimodal' ? 'bailian-native' : 'openai-compatible',
+    embeddingApiStyle,
     embeddingProvider: normalizeAiRuntimeProvider(runtime.ai.provider),
     embeddingModel,
+    embeddingDimensions: Math.max(0, normalizeNumber(runtime.ai.embeddingDimensions, 0)),
   }
 }
 
@@ -554,6 +581,7 @@ function resolveSourceChunkStats(
     realEmbeddedChunkCount: 0,
     fallbackEmbeddedChunkCount: 0,
     unknownEmbeddedChunkCount: 0,
+    multimodalEmbeddedChunkCount: 0,
   }
 }
 
@@ -1103,7 +1131,11 @@ async function getProjectKnowledgeAggregateChunkStats(
       )::TEXT AS fallback_chunk_count,
       COUNT(*) FILTER (
         WHERE NOT (metadata ? 'embeddingFallbackUsed')
-      )::TEXT AS unknown_chunk_count
+      )::TEXT AS unknown_chunk_count,
+      COUNT(*) FILTER (
+        WHERE COALESCE(metadata ->> 'embeddingApiStyle', '') = 'bailian-multimodal'
+          AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = FALSE
+      )::TEXT AS multimodal_chunk_count
      FROM project_knowledge_chunks
      WHERE project_id = $1`,
     [projectId],
@@ -1115,6 +1147,7 @@ async function getProjectKnowledgeAggregateChunkStats(
     realEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.real_chunk_count, 0))),
     fallbackEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.fallback_chunk_count, 0))),
     unknownEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.unknown_chunk_count, 0))),
+    multimodalEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.multimodal_chunk_count, 0))),
   }
 }
 
@@ -1136,7 +1169,11 @@ async function listProjectKnowledgeSourceChunkStats(
       )::TEXT AS fallback_chunk_count,
       COUNT(*) FILTER (
         WHERE NOT (metadata ? 'embeddingFallbackUsed')
-      )::TEXT AS unknown_chunk_count
+      )::TEXT AS unknown_chunk_count,
+      COUNT(*) FILTER (
+        WHERE COALESCE(metadata ->> 'embeddingApiStyle', '') = 'bailian-multimodal'
+          AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = FALSE
+      )::TEXT AS multimodal_chunk_count
      FROM project_knowledge_chunks
      WHERE project_id = $1
      GROUP BY source_id`,
@@ -1149,6 +1186,7 @@ async function listProjectKnowledgeSourceChunkStats(
       realEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.real_chunk_count, 0))),
       fallbackEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.fallback_chunk_count, 0))),
       unknownEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.unknown_chunk_count, 0))),
+      multimodalEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.multimodal_chunk_count, 0))),
     }]
   }))
 }
@@ -1446,6 +1484,7 @@ export async function syncProjectKnowledgeSourcesForProject(
     autoEnqueue?: boolean
   },
 ): Promise<ProjectKnowledgeIndexSourceStatus[]> {
+  const { runtime } = await readEffectiveRuntimeSettings()
   const candidates = await listProjectKnowledgeCandidateRows(db, {
     projectId: input.projectId,
     resourceIds: input.resourceIds,
@@ -1461,7 +1500,7 @@ export async function syncProjectKnowledgeSourcesForProject(
     const scopeType = inferScopeType(candidate)
     const sourceKey = buildSourceEntityKey(scopeType, candidate.source_resource_id, candidate.linked_contest_resource_id)
     const existing = existingMap.get(sourceKey) || null
-    const sourceHash = buildProjectKnowledgeSourceHash(candidate)
+    const sourceHash = buildProjectKnowledgeSourceHash(candidate, runtime)
     const now = new Date().toISOString()
 
     if (!existing) {
@@ -1777,7 +1816,7 @@ export async function buildProjectKnowledgeIndexDashboard(
     lastRefreshedAt: new Date().toISOString(),
   }
 
-  const runtime = buildProjectKnowledgeRuntimeStatus()
+  const runtime = await buildProjectKnowledgeRuntimeStatus()
   const worker = buildProjectKnowledgeWorkerStatus()
   const health = buildProjectKnowledgeHealth({
     summary,
@@ -1809,6 +1848,14 @@ export async function buildProjectKnowledgeIndexDashboard(
     topology: topologyVisuals.topology,
     starfieldNodes: topologyVisuals.starfieldNodes,
   }
+  const multimodalIndexedCount = sources.filter((source) => {
+    const stats = resolveSourceChunkStats(chunkStatsBySourceId, source.id)
+    return stats.multimodalEmbeddedChunkCount > 0
+  }).length
+  const multimodalBlockedCount = sources.filter((source) => {
+    return source.status === 'failed' && normalizeString(source.lastError).includes('BAILIAN_MULTIMODAL')
+  }).length
+  const embeddingHealthReason = health.issues.find(issue => issue.severity !== 'info')?.code || (health.healthState === 'healthy' ? '' : health.healthState)
   const diagnostics: ProjectKnowledgeIndexDiagnostics = {
     candidateResourceCount: candidateRows.length,
     sourceCount: sources.length,
@@ -1817,8 +1864,11 @@ export async function buildProjectKnowledgeIndexDashboard(
     realEmbeddedChunkCount: chunkStats.realEmbeddedChunkCount,
     fallbackEmbeddedChunkCount: chunkStats.fallbackEmbeddedChunkCount,
     unknownEmbeddedChunkCount: chunkStats.unknownEmbeddedChunkCount,
+    multimodalIndexedCount,
+    multimodalBlockedCount,
     healthState: health.healthState,
     healthMessage: health.healthMessage,
+    embeddingHealthReason: embeddingHealthReason || undefined,
     issues: health.issues,
   }
 
@@ -2007,6 +2057,7 @@ export async function getProjectKnowledgeTaskContext(
   if (!candidate)
     return null
 
+  const { runtime } = await readEffectiveRuntimeSettings()
   return {
     task: source.lastTask || buildTaskSnapshot(task, source.resourceTitle),
     source,
@@ -2026,7 +2077,7 @@ export async function getProjectKnowledgeTaskContext(
       collabRevision: candidate.collab_revision,
     },
     documentAnalysis: normalizeDocumentAnalysis(candidate.analysis_json),
-    processedSourceHash: buildProjectKnowledgeSourceHash(candidate),
+    processedSourceHash: buildProjectKnowledgeSourceHash(candidate, runtime),
   }
 }
 

@@ -394,6 +394,9 @@ export type ProjectKnowledgeChunkKind
     | 'meeting_transcript'
 
 export type ProjectKnowledgeModality = 'text' | 'image' | 'audio' | 'video' | 'draw'
+export type PlatformAiClientType = 'langchain' | 'bailian-native' | 'coze-sdk'
+export type ProjectKnowledgeEmbeddingApiStyle = 'openai-compatible-text' | 'bailian-multimodal'
+export type ProjectKnowledgeEmbeddingInputType = 'text' | 'image' | 'video' | 'multi_images' | 'fused'
 
 export type ProjectKnowledgeProjectionType
   = 'document_text'
@@ -419,6 +422,10 @@ export interface ProjectKnowledgeChunkMetadata {
   embeddingProvider?: string
   embeddingModel?: string
   embeddingFallbackUsed?: boolean
+  embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+  embeddingInputType?: ProjectKnowledgeEmbeddingInputType
+  embeddingDimensions?: number
+  embeddingFusionUsed?: boolean
 }
 
 export type ProjectKnowledgeIndexHealthState
@@ -431,9 +438,13 @@ export type ProjectKnowledgeIndexHealthState
     | 'healthy'
 
 export interface ProjectKnowledgeIndexRuntimeStatus {
+  clientType: PlatformAiClientType
   embeddingConfigured: boolean
+  embeddingClientType: 'openai-compatible' | 'bailian-native'
+  embeddingApiStyle: ProjectKnowledgeEmbeddingApiStyle
   embeddingProvider: string
   embeddingModel: string
+  embeddingDimensions: number
 }
 
 export interface ProjectKnowledgeIndexWorkerStatus {
@@ -460,8 +471,11 @@ export interface ProjectKnowledgeIndexDiagnostics {
   realEmbeddedChunkCount: number
   fallbackEmbeddedChunkCount: number
   unknownEmbeddedChunkCount: number
+  multimodalIndexedCount: number
+  multimodalBlockedCount: number
   healthState: ProjectKnowledgeIndexHealthState
   healthMessage: string
+  embeddingHealthReason?: string
   issues: ProjectKnowledgeIndexDiagnosticIssue[]
 }
 
