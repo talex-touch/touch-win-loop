@@ -756,6 +756,69 @@ export async function patchMockupDeviceVariant(
   return toMockupDeviceVariant(refreshed.rows[0])
 }
 
+export async function deleteMockupDeviceVariant(
+  db: Queryable,
+  input: {
+    modelId: string
+    actorUserId: string
+    slotKey: MockupVariantSlotKey
+  },
+): Promise<{
+  model: MockupDeviceModel
+  variants: MockupDeviceVariant[]
+}> {
+  const normalizedSlotKey = normalizeMockupVariantSlotKey(input.slotKey)
+  const currentModel = await getMockupDeviceModelRow(db, input.modelId)
+  if (!currentModel)
+    throw new Error('MOCKUP_DEVICE_VARIANT_NOT_FOUND')
+
+  const deleteResult = await db.query<{ slot_key: string }>(
+    `DELETE FROM mockup_device_variants
+     WHERE device_model_id = $1
+       AND slot_key = $2
+     RETURNING slot_key`,
+    [input.modelId, normalizedSlotKey],
+  )
+
+  if (!deleteResult.rows[0])
+    throw new Error('MOCKUP_DEVICE_VARIANT_NOT_FOUND')
+
+  await db.query(
+    `WITH ranked AS (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (ORDER BY sort_order ASC, slot_key ASC) - 1 AS next_sort_order
+      FROM mockup_device_variants
+      WHERE device_model_id = $1
+    )
+    UPDATE mockup_device_variants AS variant
+    SET
+      sort_order = ranked.next_sort_order,
+      updated_at = NOW()
+    FROM ranked
+    WHERE variant.id = ranked.id`,
+    [input.modelId],
+  )
+
+  await db.query(
+    `UPDATE mockup_device_models
+     SET
+       default_variant_slot_key = CASE
+         WHEN default_variant_slot_key = $2 THEN NULL
+         ELSE default_variant_slot_key
+       END,
+       updated_by_user_id = $3,
+       updated_at = NOW()
+     WHERE id = $1`,
+    [input.modelId, normalizedSlotKey, input.actorUserId],
+  )
+
+  const detail = await getMockupDeviceModelDetail(db, { modelId: input.modelId })
+  if (!detail)
+    throw new Error('MOCKUP_DEVICE_MODEL_NOT_FOUND')
+  return detail
+}
+
 export async function publishMockupDeviceModel(
   db: Queryable,
   input: {
