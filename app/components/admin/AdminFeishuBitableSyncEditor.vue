@@ -372,6 +372,7 @@ const mappingSaveSuccess = ref('')
 const writebackSaveSuccess = ref('')
 const autoSyncSaveSuccess = ref('')
 const autoSyncDraftText = ref(JSON.stringify(buildDefaultSyncItemConfig('contest').autoSync, null, 2))
+const writebackDraftText = ref(JSON.stringify(buildDefaultSyncItemConfig('contest').writeback, null, 2))
 
 const syncDetail = ref<FeishuBitableSyncDetail | null>(null)
 const currentItem = ref<FeishuBitableSyncItemDetail | null>(null)
@@ -1297,7 +1298,7 @@ function fillItemForm(item: FeishuBitableSyncItemDetail) {
     loadMappingWizardFromJson()
     loadOptionsFormFromJson(false)
     resetAutoSyncDraft(false)
-    loadWritebackFormFromJson(false)
+    resetWritebackDraft(false)
   })
 }
 
@@ -1317,6 +1318,16 @@ function resetAutoSyncDraft(showNotice = false) {
     setSuccess('已恢复到当前已保存的自动同步配置。')
 }
 
+function resetWritebackDraft(showNotice = false) {
+  const savedText = String(itemForm.writebackText || '').trim() || formatJson(buildDefaultSyncItemConfig(itemForm.entityType).writeback)
+  writebackDraftText.value = savedText
+  withVisualSyncPaused(() => {
+    fillWritebackForm(parseJsonTextLoose(savedText))
+  })
+  if (showNotice)
+    setSuccess('已恢复到当前已保存的回填配置。')
+}
+
 function openAutoSyncDrawer() {
   clearFeedback()
   resetAutoSyncDraft(false)
@@ -1325,7 +1336,13 @@ function openAutoSyncDrawer() {
 
 function openWritebackDrawer() {
   clearFeedback()
+  resetWritebackDraft(false)
   writebackDrawerVisible.value = true
+}
+
+function closeWritebackDrawer() {
+  resetWritebackDraft(false)
+  writebackDrawerVisible.value = false
 }
 
 function resetCurrentItemLogState() {
@@ -1509,7 +1526,7 @@ function syncAutoSyncFormToJson(showNotice = false) {
 }
 
 function loadWritebackFormFromJson(showNotice = true) {
-  const writeback = parseJsonText(itemForm.writebackText, '回填配置')
+  const writeback = parseJsonText(writebackDraftText.value, '回填配置')
   withVisualSyncPaused(() => {
     fillWritebackForm(writeback)
   })
@@ -1518,7 +1535,7 @@ function loadWritebackFormFromJson(showNotice = true) {
 }
 
 function syncWritebackFormToJson(showNotice = false) {
-  itemForm.writebackText = formatJson(buildWritebackPayload())
+  writebackDraftText.value = formatJson(buildWritebackPayload())
   if (showNotice)
     setSuccess('已将回填配置同步到 JSON。')
 }
@@ -1565,6 +1582,7 @@ function applyRecommendedTemplateIfNeeded(entityType: FeishuBitableSyncItemEntit
     }
     if (isSyncItemConfigEmpty(writeback)) {
       itemForm.writebackText = formatJson(defaults.writeback)
+      writebackDraftText.value = itemForm.writebackText
       fillWritebackForm(defaults.writeback as Record<string, unknown>)
     }
   })
@@ -2123,7 +2141,9 @@ async function saveCurrentItem(saveContext: SaveCurrentItemContext = 'main') {
     mapping = parseJsonText(itemForm.mappingText, '字段映射')
     options = parseJsonText(itemForm.optionsText, '同步选项')
     autoSync = parseJsonText(autoSyncDraftText.value, '自动同步配置')
-    writeback = parseJsonText(itemForm.writebackText, '状态回填配置')
+    writeback = parseJsonText(saveContext === 'writeback' ? writebackDraftText.value : itemForm.writebackText, '状态回填配置')
+    if (saveContext === 'writeback')
+      itemForm.writebackText = formatJson(writeback)
   }
   catch (error) {
     setError(error instanceof Error ? error.message : '同步项配置解析失败。')
@@ -2169,6 +2189,7 @@ async function saveCurrentItem(saveContext: SaveCurrentItemContext = 'main') {
       return
     }
     if (saveContext === 'writeback') {
+      writebackDrawerVisible.value = false
       writebackSaveSuccess.value = '回填配置已保存。'
       setSuccess('回填配置已保存。')
       return
@@ -2490,6 +2511,12 @@ watch(autoSyncDrawerVisible, (visible, previousVisible) => {
   if (visible || !previousVisible)
     return
   resetAutoSyncDraft(false)
+})
+
+watch(writebackDrawerVisible, (visible, previousVisible) => {
+  if (visible || !previousVisible)
+    return
+  resetWritebackDraft(false)
 })
 
 watch(writebackForm, () => {
@@ -4005,7 +4032,7 @@ watch(() => props.selectedItemId, (value) => {
                 回填配置
               </h3>
               <p class="text-[11px] text-slate-500 m-0 mt-1">
-                回填的是飞书列名，不是平台字段名。这里直接从当前子表字段里选择，建议至少配置状态、同步时间、错误摘要、平台实体 ID 和 runId。
+                回填的是飞书列名，不是平台字段名。这里直接从当前子表字段里选择，建议至少配置状态、同步时间、错误摘要、平台实体 ID 和 runId。关闭只丢弃当前草稿，只有点击“保存配置”才会写入同步项配置。
               </p>
             </div>
             <a-button size="mini" :loading="loadingFieldInspection" :disabled="!canRefreshFieldInspection" @click="inspectFields">
@@ -4088,7 +4115,7 @@ watch(() => props.selectedItemId, (value) => {
                       </a-button>
                     </div>
                   </div>
-                  <a-textarea v-model="itemForm.writebackText" class="font-mono" :auto-size="{ minRows: 6, maxRows: 16 }" />
+                  <a-textarea v-model="writebackDraftText" class="font-mono" :auto-size="{ minRows: 6, maxRows: 16 }" />
                 </section>
               </div>
             </a-collapse-item>
@@ -4096,8 +4123,8 @@ watch(() => props.selectedItemId, (value) => {
         </section>
 
         <div class="flex gap-2 justify-end">
-          <a-button size="small" :disabled="savingItem" @click="writebackDrawerVisible = false">
-            关闭
+          <a-button size="small" :disabled="savingItem" @click="closeWritebackDrawer">
+            关闭（不保存）
           </a-button>
           <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem('writeback')">
             保存配置
