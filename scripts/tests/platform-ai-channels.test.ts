@@ -5,6 +5,7 @@ import {
   buildPlatformAiRegistryJson,
   inferPlatformAiModelCapabilities,
   resolveAiRuntimeForChannel,
+  resolvePlatformAiChannelModelCapability,
   resolvePlatformAiRegistry,
   resolvePlatformAiRuntimeByCapability,
   runWithPlatformAiChannelFallback,
@@ -262,6 +263,50 @@ describe('platform-ai-channels', () => {
     expect(resolved.ai.clientType).toBe('langchain')
   })
 
+  it('知识库 Embedding 场景只会选择 embedding 能力模型', () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'provider_a',
+          name: 'Provider A',
+          type: 'dashscope-bailian',
+          provider: 'dashscope',
+          baseURL: 'https://dashscope.aliyuncs.com',
+          models: [
+            { model: 'qwen-plus', enabled: true, format: 'openai-compatible', capabilities: ['chat'] },
+            { model: 'text-embedding-v4', enabled: true, format: 'openai-compatible', capabilities: ['embedding'] },
+          ],
+        },
+      ],
+      defaults: {
+        defaultModel: 'qwen-plus',
+        embeddingModel: 'text-embedding-v4',
+        visionModel: '',
+        documentModel: 'qwen-plus',
+      },
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'knowledge_embedding',
+          providerIds: ['provider_a'],
+          modelFallback: ['qwen-plus', 'text-embedding-v4'],
+          enabled: true,
+        },
+      ],
+    })
+
+    expect(resolvePlatformAiChannelModelCapability('knowledge_embedding')).toBe('embedding')
+    expect(resolvePlatformAiChannelModelCapability('project_chat')).toBe('chat')
+
+    const resolved = resolveAiRuntimeForChannel(runtime, 'knowledge_embedding')
+    expect(resolved.ai.model).toBe('text-embedding-v4')
+    expect(resolved.provider?.id).toBe('provider_a')
+    expect(resolved.candidates[0]?.modelConfig?.model).toBe('text-embedding-v4')
+    expect(resolved.candidates.map(item => item.ai.model)).toEqual(['text-embedding-v4'])
+  })
+
   it('默认 embedding 模型只能从 embedding 能力模型解析', () => {
     const runtime = createRuntime()
     runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
@@ -291,6 +336,12 @@ describe('platform-ai-channels', () => {
     const embeddingRuntime = resolvePlatformAiRuntimeByCapability(runtime, 'embedding')
     expect(embeddingRuntime?.modelConfig.model).toBe('tongyi-embedding-vision-plus')
     expect(embeddingRuntime?.modelConfig.embeddingApiStyle).toBe('bailian-multimodal')
+    expect(resolvePlatformAiChannelModelCapability('knowledge_embedding')).toBe('embedding')
+
+    const embeddingScene = registry.channels.find(item => item.key === 'knowledge_embedding')
+    expect(embeddingScene?.modelFallback).toEqual(['tongyi-embedding-vision-plus'])
+    const embeddingSceneRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_embedding')
+    expect(embeddingSceneRuntime.ai.model).toBe('tongyi-embedding-vision-plus')
   })
 
   it('只绑定 search-only Provider 时会回退到未配置运行时', () => {

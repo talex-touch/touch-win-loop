@@ -37,6 +37,7 @@ type PlatformAiChannelKey
     | 'workspace_canvas_refine'
     | 'admin_general'
     | 'admin_publish_assistant'
+    | 'knowledge_embedding'
     | 'document_analysis'
 
 interface ProviderModelItem {
@@ -955,11 +956,21 @@ const allPulledModelsIndeterminate = computed(() => {
 })
 const pulledEmbeddingCandidateCount = computed(() => pulledProviderModels.value.filter(item => item.capabilities.includes('embedding')).length)
 
-function resolveSceneModelCatalog(providerIds: string[], currentModels: string[] = []): Array<{ model: string, label: string, priceText: string }> {
+function sceneRequiredCapability(key: PlatformAiChannelKey): ModelCapability {
+  if (key === 'knowledge_embedding')
+    return 'embedding'
+  return 'chat'
+}
+
+function sceneCanRunChatTest(scene: Pick<SceneItem, 'key'>): boolean {
+  return sceneRequiredCapability(scene.key) === 'chat'
+}
+
+function resolveSceneModelCatalog(providerIds: string[], currentModels: string[] = [], capability: ModelCapability = 'chat'): Array<{ model: string, label: string, priceText: string }> {
   const providerSet = new Set(providerIds)
   const map = new Map<string, { model: string, label: string, priceText: string }>()
   for (const provider of providers.value.filter(item => item.capability === 'llm' && providerSet.has(item.id))) {
-    for (const model of provider.models.filter(item => item.enabled && modelHasCapability(item, 'chat'))) {
+    for (const model of provider.models.filter(item => item.enabled && modelHasCapability(item, capability))) {
       if (!map.has(model.model)) {
         map.set(model.model, {
           model: model.model,
@@ -982,7 +993,7 @@ function resolveSceneModelCatalog(providerIds: string[], currentModels: string[]
   return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
 }
 
-const sceneEditorModelOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.modelFallback))
+const sceneEditorModelOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.modelFallback, sceneRequiredCapability(sceneEditorForm.key)))
 const sceneBatchModelOptions = computed(() => resolveSceneModelCatalog(sceneBatchForm.providerIds, sceneBatchForm.modelFallback))
 
 function resolveDefaultModelOptions(capability: ModelCapability): Array<{ model: string, label: string, providerName: string }> {
@@ -1010,8 +1021,8 @@ function normalizeSceneProviderIds(providerIds: string[]): string[] {
   return dedupeStrings(providerIds).filter(item => llmProviderIdSet.has(item))
 }
 
-function normalizeSceneModelFallback(modelFallback: string[], providerIds: string[]): string[] {
-  const catalog = new Set(resolveSceneModelCatalog(providerIds).map(item => item.model))
+function normalizeSceneModelFallback(modelFallback: string[], providerIds: string[], capability: ModelCapability = 'chat'): string[] {
+  const catalog = new Set(resolveSceneModelCatalog(providerIds, [], capability).map(item => item.model))
   const normalized = dedupeStrings(modelFallback)
   if (catalog.size === 0)
     return normalized
@@ -1053,13 +1064,15 @@ function sceneUsageHint(scene: SceneItem): string {
     return '默认对话入口'
   if (scene.key === 'document_analysis')
     return '默认文档分析入口'
+  if (scene.key === 'knowledge_embedding')
+    return '默认向量入口'
   return ''
 }
 
 function sceneUsageHintColor(scene: SceneItem): 'arcoblue' | 'green' | 'gray' {
   if (scene.key === 'project_chat')
     return 'arcoblue'
-  if (scene.key === 'document_analysis')
+  if (scene.key === 'document_analysis' || scene.key === 'knowledge_embedding')
     return 'green'
   return 'gray'
 }
@@ -1163,7 +1176,7 @@ async function saveConsole() {
             enabled: item.enabled,
             providerIds: normalizeSceneProviderIds(item.providerIds),
             loadBalanceStrategy: item.loadBalanceStrategy,
-            modelFallback: normalizeSceneModelFallback(item.modelFallback, item.providerIds),
+            modelFallback: normalizeSceneModelFallback(item.modelFallback, item.providerIds, sceneRequiredCapability(item.key)),
             prompt: item.prompt,
           })),
         },
@@ -1285,7 +1298,7 @@ function removeProvider(providerId: string) {
     return {
       ...scene,
       providerIds,
-      modelFallback: normalizeSceneModelFallback(scene.modelFallback, providerIds),
+      modelFallback: normalizeSceneModelFallback(scene.modelFallback, providerIds, sceneRequiredCapability(scene.key)),
     }
   })
 }
@@ -1565,7 +1578,7 @@ function saveSceneDrawer() {
     enabled: Boolean(sceneEditorForm.enabled),
     providerIds,
     loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
-    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds),
+    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds, sceneRequiredCapability(sceneEditorForm.key)),
     prompt: String(sceneEditorForm.prompt || ''),
   })
   sceneItems.value = next
@@ -1587,12 +1600,11 @@ function closeSceneBatchDrawer() {
 
 function applySceneBatchConfig() {
   const providerIds = normalizeSceneProviderIds(sceneBatchForm.providerIds)
-  const modelFallback = normalizeSceneModelFallback(sceneBatchForm.modelFallback, providerIds)
   sceneItems.value = sceneItems.value.map(item => ({
     ...item,
     providerIds,
     loadBalanceStrategy: sceneBatchForm.loadBalanceStrategy,
-    modelFallback,
+    modelFallback: normalizeSceneModelFallback(sceneBatchForm.modelFallback, providerIds, sceneRequiredCapability(item.key)),
   }))
   sceneBatchEditorVisible.value = false
   Message.success(`已为 ${sceneItems.value.length} 个场景应用统一 Provider 与回退策略。`)
@@ -1600,17 +1612,20 @@ function applySceneBatchConfig() {
 
 function applyCurrentSceneConfigToAll() {
   const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds)
-  const modelFallback = normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds)
   sceneItems.value = sceneItems.value.map(item => ({
     ...item,
     providerIds,
     loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
-    modelFallback,
+    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds, sceneRequiredCapability(item.key)),
   }))
   Message.success(`已将「${sceneEditorForm.label}」的 Provider 绑定与回退策略复制到全部场景。`)
 }
 
 async function testScene(scene: SceneItem) {
+  if (!sceneCanRunChatTest(scene)) {
+    Message.info('Embedding 场景只配置向量模型路由，无需执行对话测试。')
+    return
+  }
   sceneTesting[scene.key] = true
   sceneTestMessage[scene.key] = ''
   try {
@@ -1957,8 +1972,8 @@ onMounted(async () => {
                   <a-button size="mini" @click="openSceneDrawer(scope.record)">
                     编辑
                   </a-button>
-                  <a-button size="mini" :loading="sceneTesting[scope.record.key]" @click="testScene(scope.record)">
-                    测试
+                  <a-button size="mini" :disabled="!sceneCanRunChatTest(scope.record)" :loading="sceneTesting[scope.record.key]" @click="testScene(scope.record)">
+                    {{ sceneCanRunChatTest(scope.record) ? '测试' : '无需测试' }}
                   </a-button>
                 </div>
               </template>

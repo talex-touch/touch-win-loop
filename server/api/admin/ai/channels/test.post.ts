@@ -8,7 +8,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
+import { resolvePlatformAiChannelModelCapability, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 
 interface ChannelTestBody {
@@ -39,6 +39,7 @@ function resolveChannelKey(raw: unknown): PlatformAiChannelKey {
     'workspace_canvas_refine',
     'admin_general',
     'admin_publish_assistant',
+    'knowledge_embedding',
     'document_analysis',
   ]
   return allowed.includes(text) ? text : DEFAULT_CHANNEL
@@ -82,6 +83,16 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody<ChannelTestBody>(event).catch(() => ({} as ChannelTestBody))
   const channelKey = resolveChannelKey(body.channelKey)
+  if (resolvePlatformAiChannelModelCapability(channelKey) !== 'chat') {
+    setResponseStatus(event, 400)
+    return fail('当前场景不是聊天模型场景，无需执行对话连通性测试。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.embeddingModel,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40099)
+  }
   const testMessage = String(body.message || '').trim() || '请回复“SCENE_OK”，并附带一句简短诊断说明。'
 
   try {

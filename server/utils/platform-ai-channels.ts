@@ -34,6 +34,7 @@ export type PlatformAiChannelKey
     | 'workspace_document_assist'
     | 'admin_general'
     | 'admin_publish_assistant'
+    | 'knowledge_embedding'
     | 'document_analysis'
 
 export interface PlatformAiProviderModelConfig {
@@ -190,6 +191,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
   { key: 'workspace_canvas_refine', label: '画布续改', description: '基于现有图结构重写和优化结构源' },
   { key: 'admin_general', label: '管理助手-通用', description: '后台管理通用任务' },
   { key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议' },
+  { key: 'knowledge_embedding', label: '知识库 Embedding', description: '知识库文本、多模态向量与检索索引' },
   { key: 'document_analysis', label: '文档分析', description: '文档解析、预览与重解析' },
 ]
 
@@ -919,13 +921,16 @@ function resolveDefaultModelsForChannel(
   defaults: PlatformAiSharedDefaults,
   providers: PlatformAiProviderConfig[],
 ): string[] {
-  const preferred = key === 'document_analysis' || isDocumentAssistChannelKey(key)
-    ? defaults.documentModel
-    : defaults.defaultModel
+  const capability = resolvePlatformAiChannelModelCapability(key)
+  const preferred = capability === 'embedding'
+    ? defaults.embeddingModel
+    : key === 'document_analysis' || isDocumentAssistChannelKey(key)
+      ? defaults.documentModel
+      : defaults.defaultModel
   const firstAvailable = providers
     .filter(provider => provider.capability === 'llm')
     .flatMap(provider => provider.models)
-    .find(item => item.enabled && platformAiModelHasCapability(item, 'chat'))
+    .find(item => item.enabled && platformAiModelHasCapability(item, capability))
     ?.model || ''
   return dedupeStrings([preferred, firstAvailable])
 }
@@ -1129,6 +1134,12 @@ function defaultModelForCapability(defaults: PlatformAiSharedDefaults, capabilit
   return defaults.defaultModel
 }
 
+export function resolvePlatformAiChannelModelCapability(key: PlatformAiChannelKey): PlatformAiModelCapability {
+  if (key === 'knowledge_embedding')
+    return 'embedding'
+  return 'chat'
+}
+
 export function resolvePlatformAiRuntimeByCapability(
   runtime: RuntimeSettings,
   capability: PlatformAiModelCapability,
@@ -1211,22 +1222,23 @@ function resolveChannelCandidates(
   }
 
   const requestedModels = dedupeStrings(channel.modelFallback)
-  let modelOrder = requestedModels.filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model)))
+  const capability = resolvePlatformAiChannelModelCapability(channel.key)
+  let modelOrder = requestedModels.filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model, capability)))
   const usedFallback = modelOrder.length === 0
 
   if (modelOrder.length === 0) {
     modelOrder = resolveDefaultModelsForChannel(channel.key, defaults, eligibleProviders)
-      .filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model)))
+      .filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model, capability)))
   }
 
   const candidates: PlatformAiResolvedChannelCandidate[] = []
   let candidateIndex = 0
 
   for (const model of modelOrder) {
-    const providersWithModel = eligibleProviders.filter(provider => resolveProviderModel(provider, model))
+    const providersWithModel = eligibleProviders.filter(provider => resolveProviderModel(provider, model, capability))
     const orderedProviders = rotateProviders(channel.key, model, providersWithModel, channel.loadBalanceStrategy)
     for (const provider of orderedProviders) {
-      const modelConfig = resolveProviderModel(provider, model)
+      const modelConfig = resolveProviderModel(provider, model, capability)
       if (!modelConfig)
         continue
       candidates.push({

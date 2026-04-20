@@ -80,8 +80,22 @@ it('场景抽屉支持 Provider 绑定、轮询和模型回退链', async () => 
   assert.match(source, /绑定 Provider/, '缺少场景 Provider 绑定项')
   assert.match(source, /负载均衡策略/, '缺少负载均衡策略项')
   assert.match(source, /模型回退链/, '缺少模型回退链项')
+  assert.match(source, /knowledge_embedding/, '缺少专用 Embedding 场景')
+  assert.match(source, /sceneRequiredCapability/, '场景模型选择应按能力过滤')
+  assert.match(source, /Embedding 场景只配置向量模型路由/, 'Embedding 场景不应执行对话测试')
   assert.match(source, /复制当前策略到全部场景/, '缺少一键复制当前场景策略入口')
   assert.match(source, /一键设置全部场景/, '缺少批量配置入口')
+})
+
+it('知识库 Embedding 场景只使用 embedding 模型并禁用对话测试', async () => {
+  const source = await readFile(PAGE_FILE, 'utf8')
+
+  assert.match(source, /'knowledge_embedding'/, '场景类型缺少知识库 Embedding')
+  assert.match(source, /function sceneRequiredCapability\(key: PlatformAiChannelKey\): ModelCapability \{[\s\S]*key === 'knowledge_embedding'[\s\S]*return 'embedding'/, '知识库 Embedding 场景未声明 embedding 能力')
+  assert.match(source, /resolveSceneModelCatalog\(sceneEditorForm\.providerIds, sceneEditorForm\.modelFallback, sceneRequiredCapability\(sceneEditorForm\.key\)\)/, '场景模型候选未按场景能力过滤')
+  assert.match(source, /normalizeSceneModelFallback\(item\.modelFallback, item\.providerIds, sceneRequiredCapability\(item\.key\)\)/, '保存场景配置时未按场景能力过滤模型回退链')
+  assert.match(source, /if \(!sceneCanRunChatTest\(scene\)\)[\s\S]*无需执行对话测试/, 'Embedding 场景测试入口未拦截对话测试')
+  assert.match(source, /:disabled="!sceneCanRunChatTest\(scope\.record\)"[\s\S]*无需测试/, 'Embedding 场景测试按钮未禁用并提示无需测试')
 })
 
 it('模型编辑与导入弹窗支持能力配置和 embedding 搜索', async () => {
