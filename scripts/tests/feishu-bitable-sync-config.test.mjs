@@ -49,6 +49,7 @@ describe('feishu-bitable-sync-config', () => {
   it('能按来源名称猜测 entityType 并生成推荐同步项名称', async () => {
     const {
       buildSuggestedSyncItemName,
+      listRequiredSyncItemFieldGroups,
       listRequiredSyncItemFieldKeys,
       suggestSyncItemEntityType,
     } = await loadModule()
@@ -67,7 +68,16 @@ describe('feishu-bitable-sync-config', () => {
     assert.deepEqual(listRequiredSyncItemFieldKeys('contest'), ['externalId', 'name', 'officialUrl'])
     assert.deepEqual(listRequiredSyncItemFieldKeys('track'), ['externalId', 'contestExternalId', 'name'])
     assert.deepEqual(listRequiredSyncItemFieldKeys('policy'), ['externalId', 'meetingName'])
-    assert.deepEqual(listRequiredSyncItemFieldKeys('persona'), ['externalId', 'contestExternalId', 'object', 'persona1'])
+    assert.deepEqual(listRequiredSyncItemFieldKeys('persona'), ['externalId', 'contestExternalId', 'object'])
+    assert.deepEqual(
+      listRequiredSyncItemFieldGroups('persona'),
+      [
+        { keys: ['externalId'], label: 'externalId', mode: 'all' },
+        { keys: ['contestExternalId'], label: 'contestExternalId', mode: 'all' },
+        { keys: ['object'], label: 'object', mode: 'all' },
+        { keys: ['persona1', 'persona2', 'persona3', 'persona4', 'persona5'], label: 'persona1~5 任一槽位', mode: 'any' },
+      ],
+    )
   })
 
   it('只把真正空配置判定为空，避免覆盖已有配置', async () => {

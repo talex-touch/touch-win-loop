@@ -12,6 +12,12 @@ export interface FeishuDefaultSyncItemConfig {
   autoSync: FeishuBitableAutoSyncConfig
 }
 
+export interface FeishuRequiredSyncItemFieldGroup {
+  keys: string[]
+  label: string
+  mode: 'all' | 'any'
+}
+
 const ENTITY_TYPE_SOURCE_HINTS: Record<FeishuBitableSyncItemEntityType, string[]> = {
   contest: ['竞赛', '赛事', 'contest', 'match'],
   track: ['赛道', '方向', 'track'],
@@ -27,7 +33,23 @@ const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, strin
   track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
   resource: ['externalId', 'contestExternalId', 'title', 'attachment'],
   policy: ['externalId', 'meetingName'],
-  persona: ['externalId', 'contestExternalId', 'object', PERSONA_SLOT_FIELD_KEYS[0]],
+  persona: ['externalId', 'contestExternalId', 'object'],
+}
+
+const REQUIRED_MAPPING_FIELD_GROUPS: Record<FeishuBitableSyncItemEntityType, FeishuRequiredSyncItemFieldGroup[]> = {
+  contest: REQUIRED_MAPPING_FIELD_KEYS.contest.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  track: REQUIRED_MAPPING_FIELD_KEYS.track.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  track_timeline: REQUIRED_MAPPING_FIELD_KEYS.track_timeline.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  resource: REQUIRED_MAPPING_FIELD_KEYS.resource.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  policy: REQUIRED_MAPPING_FIELD_KEYS.policy.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  persona: [
+    ...REQUIRED_MAPPING_FIELD_KEYS.persona.map(key => ({ keys: [key], label: key, mode: 'all' as const })),
+    {
+      keys: [...PERSONA_SLOT_FIELD_KEYS],
+      label: 'persona1~5 任一槽位',
+      mode: 'any',
+    },
+  ],
 }
 
 function buildDefaultWriteback(): FeishuBitableWritebackConfig {
@@ -221,6 +243,15 @@ function normalizeSourceHintText(raw: unknown): string {
 
 export function listRequiredSyncItemFieldKeys(entityType: FeishuBitableSyncItemEntityType): string[] {
   return [...(REQUIRED_MAPPING_FIELD_KEYS[entityType] || [])]
+}
+
+export function listRequiredSyncItemFieldGroups(entityType: FeishuBitableSyncItemEntityType): FeishuRequiredSyncItemFieldGroup[] {
+  return (REQUIRED_MAPPING_FIELD_GROUPS[entityType] || [])
+    .map(group => ({
+      keys: [...group.keys],
+      label: group.label,
+      mode: group.mode,
+    }))
 }
 
 export function suggestSyncItemEntityType(input: {

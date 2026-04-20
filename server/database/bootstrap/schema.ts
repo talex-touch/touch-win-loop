@@ -475,6 +475,7 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_sync_item_runs (
   skipped_count INTEGER NOT NULL DEFAULT 0,
   error_count INTEGER NOT NULL DEFAULT 0,
   error_message TEXT NOT NULL DEFAULT '',
+  diagnostics_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -2656,6 +2657,9 @@ ALTER TABLE feishu_bitable_sync_item_runs
 
 ALTER TABLE feishu_bitable_sync_item_runs
   ADD COLUMN IF NOT EXISTS delta_record_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE feishu_bitable_sync_item_runs
+  ADD COLUMN IF NOT EXISTS diagnostics_json JSONB NOT NULL DEFAULT '{}'::JSONB;
 
 ALTER TABLE feishu_bitable_sync_item_runs
   DROP CONSTRAINT IF EXISTS feishu_bitable_sync_runs_trigger_source_check;

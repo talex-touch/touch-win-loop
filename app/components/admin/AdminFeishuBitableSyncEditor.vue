@@ -7,6 +7,7 @@ import type {
   FeishuBitableSyncItem,
   FeishuBitableSyncItemDetail,
   FeishuBitableSyncItemEntityType,
+  FeishuBitableSyncItemRun,
   FeishuBitableSyncItemPreviewRequest,
   FeishuBitableSyncItemPreviewResult,
   FeishuBitableTableMeta,
@@ -21,10 +22,10 @@ import {
   buildDefaultSyncItemConfig,
   buildSuggestedSyncItemName,
   isSyncItemConfigEmpty,
-  listRequiredSyncItemFieldKeys,
+  listRequiredSyncItemFieldGroups,
   suggestSyncItemEntityType,
 } from '~~/shared/utils/feishu-bitable-sync-config'
-import { PERSONA_SLOT_FIELD_KEYS } from '~~/shared/utils/feishu-persona-sync'
+import { guessFeishuBitableFieldName } from '~~/shared/utils/feishu-bitable-field-guess'
 
 interface MappingOption {
   key: string
@@ -227,63 +228,6 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
   ],
 }
 
-const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
-  externalId: ['external_id', 'externalid', 'id', 'record_id', '业务id', '外部id', '外部编号', '唯一标识', '编号', '主键', '赛事编号', '竞赛编号', '赛道编号', '资料编号', '会议编号', '大会编号', '人设编号', '评委编号'],
-  contestExternalId: ['contest_external_id', 'contestid', '赛事外部id', '赛事id', '竞赛外部id', '竞赛id', '所属赛事id', '所属竞赛id', '所属竞赛编号'],
-  trackExternalId: ['track_external_id', 'trackid', '赛道外部id', '赛道id', '所属赛道id', '所属赛道编号'],
-  name: ['name', '名称', '名字', '竞赛名称', '赛事名称', '赛道名称', '人设名称', '评委名称'],
-  title: ['title', '标题', '资料标题', '资源标题'],
-  summary: ['summary', '简介', '描述', '说明', '概述', '竞赛简介', '赛道简介', '大会简介'],
-  officialUrl: ['officialurl', 'official_url', '官网', '官网链接', '赛事链接', '竞赛链接', '报名链接', 'url'],
-  disciplines: ['disciplines', '学科', '专业', '所属学科', '学科门类'],
-  keywords: ['keywords', '关键字', '关键词', '标签'],
-  timelineText: ['timelinetext', 'timeline_text', '时间节点', '时间线', '日程', '时间安排'],
-  recommendedFor: ['recommendedfor', 'recommended_for', '适配人群', '适合人群', '面向人群'],
-  registrationWindow: ['registrationwindow', 'registration_window', '报名时间', '报名窗口'],
-  submissionDeadline: ['submissiondeadline', 'submission_deadline', '截止时间', '提交截止时间', '提交时间'],
-  coverImageUrl: ['coverimageurl', 'cover_image_url', '封面', '封面图', '封面图片', '图片链接'],
-  location: ['location', '位置', '具体位置', '地点', '赛道位置'],
-  organizer: ['organizer', '主办方', '主办单位', '主办'],
-  undertaker: ['undertaker', '承办方', '承办单位', '承办'],
-  participantRequirements: ['participantrequirements', 'participant_requirements', '参赛对象', '适用对象', '参赛要求'],
-  teamRule: ['teamrule', 'team_rule', '组队规则', '组队要求'],
-  awardRatio: ['awardratio', 'award_ratio', '获奖比例'],
-  suitableMajors: ['suitablemajors', '适合专业', '适用专业', '推荐专业', '相关专业'],
-  deliverableTypes: ['deliverabletypes', '交付物', '成果类型', '提交物', '提交内容'],
-  sortOrder: ['sortorder', '排序', '序号', 'sort', 'order'],
-  evidenceRequirements: ['evidencerequirements', 'evidence_requirements', '必备项', '必备材料', '必须项'],
-  scoringPoints: ['scoringpoints', 'scoring_points', '加分项', '亮点', '加分点'],
-  deductionItems: ['deductionitems', 'deduction_items', '扣分项', '风险项', '减分项'],
-  nodeType: ['nodetype', 'node_type', '节点类型', '阶段类型'],
-  startAt: ['startat', 'start_at', '开始时间', '开始日期'],
-  endAt: ['endat', 'end_at', '结束时间', '结束日期', '截止时间'],
-  note: ['note', '备注', '说明'],
-  sourceLink: ['sourcelink', 'source_link', '来源链接', '来源地址'],
-  category: ['category', '分类', '资料分类', '资料类别'],
-  attachment: ['attachment', '附件', '附件链接', '资料附件', '资源附件', '下载链接'],
-  attachmentSummary: ['attachmentsummary', 'attachment_summary', '附件摘要', '摘要'],
-  year: ['year', '年份', '年度'],
-  meetingName: ['meetingname', 'meeting_name', '会议名称', '大会名称'],
-  conferenceDate: ['conferencedate', 'conference_date', '大会日期', '会议日期'],
-  importance: ['importance', '重要程度', '重要级别'],
-  officialMaterial: ['officialmaterial', 'official_material', '官网资料'],
-  officialMaterialLink: ['officialmateriallink', 'official_material_link', '官网资料链接', '官网链接'],
-  wechatMaterial: ['wechatmaterial', 'wechat_material', '微信公众号资料', '公众号资料'],
-  wechatMaterialLink: ['wechatmateriallink', 'wechat_material_link', '微信公众号链接', '公众号链接'],
-  weiboMaterial: ['weibomaterial', 'weibo_material', '微博资料'],
-  weiboMaterialLink: ['weibomateriallink', 'weibo_material_link', '微博资料链接', '微博链接'],
-  douyinMaterial: ['douyinmaterial', 'douyin_material', '抖音资料'],
-  douyinMaterialLink: ['douyinmateriallink', 'douyin_material_link', '抖音资料链接', '抖音链接'],
-  xiaohongshuMaterial: ['xiaohongshumaterial', 'xiaohongshu_material', '小红书资料'],
-  xiaohongshuMaterialLink: ['xiaohongshumateriallink', 'xiaohongshu_material_link', '小红书资料链接', '小红书链接'],
-  object: ['object', '对象', '适用对象', '目标对象', '比赛对象', '名人对象'],
-  persona1: ['persona1', '人设1', 'prompt1', '提示词1'],
-  persona2: ['persona2', '人设2', 'prompt2', '提示词2'],
-  persona3: ['persona3', '人设3', 'prompt3', '提示词3'],
-  persona4: ['persona4', '人设4', 'prompt4', '提示词4'],
-  persona5: ['persona5', '人设5', 'prompt5', '提示词5'],
-}
-
 const ENTITY_TYPE_OPTIONS: SelectOption<FeishuBitableSyncItemEntityType>[] = [
   { value: 'contest', label: '竞赛' },
   { value: 'track', label: '赛道' },
@@ -396,15 +340,6 @@ const SYNC_ISSUE_FIELD_HINT_SET = new Set([
   'runId',
   'triggerSource',
 ])
-
-const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, string[]> = {
-  contest: ['externalId', 'name', 'officialUrl'],
-  track: ['externalId', 'contestExternalId', 'name'],
-  track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
-  resource: ['externalId', 'contestExternalId', 'title', 'attachment'],
-  policy: ['externalId', 'meetingName'],
-  persona: ['externalId', 'contestExternalId', 'object', PERSONA_SLOT_FIELD_KEYS[0]],
-}
 
 const savingItem = ref(false)
 const savingSync = ref(false)
@@ -537,12 +472,22 @@ const activeOptionFieldGroups = computed(() => optionFieldGroups(itemForm.entity
 const newItemTableName = computed(() => availableTables.value.find(item => item.tableId === newItemForm.tableId)?.name || '')
 const newItemViewName = computed(() => newItemViews.value.find(item => item.viewId === newItemForm.viewId)?.name || '')
 const missingRequiredMappingLabels = computed(() => {
-  const requiredKeys = new Set(REQUIRED_MAPPING_FIELD_KEYS[itemForm.entityType] || [])
-  return mappingWizardBindings.value
-    .filter(binding => requiredKeys.has(binding.targetKey) && !toText(binding.sourceField))
-    .map(binding => mappingOptionLabel(binding.targetKey))
+  return listRequiredSyncItemFieldGroups(itemForm.entityType)
+    .filter((group) => {
+      const matchedCount = group.keys
+        .filter(key => mappingWizardBindings.value.some(binding => binding.targetKey === key && Boolean(toText(binding.sourceField))))
+        .length
+      return group.mode === 'any'
+        ? matchedCount === 0
+        : matchedCount < group.keys.length
+    })
+    .map(group => group.keys.length === 1 ? mappingOptionLabel(group.keys[0] || group.label) : group.label)
 })
-const newItemRequiredMappingLabels = computed(() => listRequiredSyncItemFieldKeys(newItemForm.entityType).map(key => mappingOptionLabelByEntityType(newItemForm.entityType, key)))
+const newItemRequiredMappingLabels = computed(() => listRequiredSyncItemFieldGroups(newItemForm.entityType).map((group) => {
+  return group.keys.length === 1
+    ? mappingOptionLabelByEntityType(newItemForm.entityType, group.keys[0] || group.label)
+    : group.label
+}))
 const newItemSuggestedEntityType = computed(() => suggestSyncItemEntityType({
   tableName: newItemTableName.value,
   viewName: newItemViewName.value,
@@ -767,10 +712,6 @@ function selectableFieldSampleValues(fieldName?: string, currentValue?: string |
   return [...values]
 }
 
-function normalizeKey(text: string): string {
-  return String(text || '').trim().toLowerCase().replace(/[\s_\-]/g, '')
-}
-
 function parseJsonTextLoose(raw: string): Record<string, unknown> {
   try {
     const normalized = String(raw || '').trim()
@@ -905,15 +846,63 @@ const PERSONA_ZERO_OUTPUT_HINT = '已抓取到飞书源行，但本次没有生�
 const SYNC_RUN_ZERO_FETCH_HINT = '本次没有进入任何记录处理。优先检查当前子表/视图是否真的有记录；如果启用了自动同步规则，也检查“记录状态 / 同步信息”是否命中了“已完成 / 未同步”。'
 const SYNC_RUN_ALL_SKIPPED_HINT = '本次记录全部被跳过。常见原因是自动同步规则没有命中，或关键映射字段仍然缺失。'
 
+function formatCountMap(counts?: Record<string, number> | null): string {
+  const entries = Object.entries(counts || {})
+    .filter(([, count]) => Number(count) > 0)
+    .sort((left, right) => Number(right[1]) - Number(left[1]))
+  if (!entries.length)
+    return ''
+  return entries.map(([key, count]) => `${key} ${count}`).join(' / ')
+}
+
+function syncRunRuleFilterText(run?: FeishuBitableSyncItemRun | null): string {
+  const diagnostics = run?.diagnostics
+  if (!diagnostics?.autoSync?.enabled)
+    return ''
+  const filteredCount = Math.max(0, Number(diagnostics.autoSyncFilteredCount) || 0)
+  const sourceFetchedCount = Math.max(0, Number(diagnostics.sourceFetchedCount) || 0)
+  const processedCount = Math.max(0, Number(diagnostics.processedCount) || 0)
+  if (filteredCount <= 0 && processedCount > 0)
+    return ''
+  const recordStatusText = formatCountMap(diagnostics.autoSync.recordStatusValueCounts)
+  const syncStatusText = formatCountMap(diagnostics.autoSync.syncStatusValueCounts)
+  return `规则过滤 ${filteredCount}/${sourceFetchedCount}；${diagnostics.autoSync.recordStatusField || '记录状态'}：${recordStatusText || '-'}；${diagnostics.autoSync.syncStatusField || '同步信息'}：${syncStatusText || '-'}。`
+}
+
+function syncRunBusinessSkipText(run?: FeishuBitableSyncItemRun | null): string {
+  const diagnostics = run?.diagnostics
+  if (!diagnostics)
+    return ''
+  const businessSkippedCount = Math.max(0, Number(diagnostics.businessSkippedCount) || 0)
+  if (businessSkippedCount <= 0)
+    return ''
+  const reasonText = formatCountMap(diagnostics.skipReasonCounts)
+  const missingText = formatCountMap(diagnostics.missingRequiredFieldCounts)
+  return `业务跳过 ${businessSkippedCount}；原因：${reasonText || '-'}${missingText ? `；缺失字段：${missingText}` : ''}。`
+}
+
 function syncRunHintText(entityType: FeishuBitableSyncItemEntityType | string | undefined, summary?: {
   fetchedCount?: number | null
   createdCount?: number | null
   updatedCount?: number | null
   skippedCount?: number | null
   errorCount?: number | null
+  diagnostics?: FeishuBitableSyncItemRun['diagnostics']
 } | null): string {
   if (!summary)
     return ''
+  const diagnostics = summary.diagnostics
+  if (diagnostics?.autoSync?.enabled && diagnostics.sourceFetchedCount > 0 && diagnostics.processedCount === 0) {
+    const recordStatusText = formatCountMap(diagnostics.autoSync.recordStatusValueCounts)
+    const syncStatusText = formatCountMap(diagnostics.autoSync.syncStatusValueCounts)
+    return `自动同步规则未命中任何记录。请检查 ${diagnostics.autoSync.recordStatusField || '记录状态'} 是否为 ${diagnostics.autoSync.completedValues.join(' / ')}，${diagnostics.autoSync.syncStatusField || '同步信息'} 是否为 ${diagnostics.autoSync.pendingValues.join(' / ')}。当前分布：${recordStatusText || '-'}；${syncStatusText || '-'}。`
+  }
+  if (diagnostics?.skipReasonCounts?.PERSONA_SLOTS_EMPTY)
+    return '本次人设记录已进入处理，但 persona1~5 未解析到有效文案。请检查槽位来源列是否映射正确且内容非空。'
+  if (diagnostics?.skipReasonCounts?.MISSING_REQUIRED_FIELD) {
+    const missingText = formatCountMap(diagnostics.missingRequiredFieldCounts)
+    return `本次记录因关键字段缺失被跳过。请打开基础映射检查 ${missingText || 'externalId / contestExternalId / object / persona1~5'}。`
+  }
   if (shouldShowPersonaZeroOutputHint(summary) && entityType === 'persona')
     return PERSONA_ZERO_OUTPUT_HINT
 
@@ -1205,7 +1194,7 @@ function previewFocusFields(entityType: FeishuBitableSyncItemEntityType): string
 }
 
 function isRequiredMappingField(entityType: FeishuBitableSyncItemEntityType, targetKey: string): boolean {
-  return (REQUIRED_MAPPING_FIELD_KEYS[entityType] || []).includes(targetKey)
+  return listRequiredSyncItemFieldGroups(entityType).some(group => group.keys.includes(targetKey))
 }
 
 function buildWritebackPayload(): Record<string, unknown> {
@@ -1973,33 +1962,36 @@ function writeMappingWizardToJson(showNotice = false) {
 }
 
 function guessFieldNameByTarget(targetKey: string): string {
-  const aliases = MAPPING_GUESS_ALIASES[targetKey] || [targetKey]
-  const normalizedAliases = aliases.map(alias => normalizeKey(alias))
-  for (const item of fieldInspection.value) {
-    const fieldName = toText(item.fieldName)
-    if (!fieldName)
-      continue
-    const normalizedField = normalizeKey(fieldName)
-    if (normalizedAliases.includes(normalizedField))
-      return fieldName
-    if (normalizedAliases.some(alias => normalizedField.includes(alias) || alias.includes(normalizedField)))
-      return fieldName
-  }
-  return ''
+  return guessFeishuBitableFieldName({
+    entityType: itemForm.entityType,
+    targetKey,
+    fields: fieldInspection.value,
+  })
 }
 
-function autoFillMappingWizardBindings() {
+function autoFillMappingWizardBindings(): number {
+  let matchedCount = 0
   normalizeMappingWizardBindings(mappingWizardBindings.value.map((binding) => {
     if (binding.sourceField)
       return binding
     const guessedField = guessFieldNameByTarget(binding.targetKey)
     if (!guessedField)
       return binding
+    matchedCount += 1
     return {
       ...binding,
       sourceField: guessedField,
     }
   }))
+  return matchedCount
+}
+
+function rematchMissingMappingFields() {
+  const matchedCount = autoFillMappingWizardBindings()
+  writeMappingWizardToJson(false)
+  setSuccess(matchedCount > 0
+    ? `已重新匹配 ${matchedCount} 个缺失字段，保存配置后生效。`
+    : '当前没有可自动匹配的缺失字段。')
 }
 
 async function inspectFields() {
@@ -3254,6 +3246,9 @@ watch(() => props.selectedItemId, (value) => {
                   <a-tag v-if="previewResult.issueCounts.missingRequiredField" color="orange">
                     必填缺失 {{ previewResult.issueCounts.missingRequiredField }}
                   </a-tag>
+                  <a-tag v-if="previewResult.issueCounts.personaSlotsEmpty" color="gold">
+                    人设槽位为空 {{ previewResult.issueCounts.personaSlotsEmpty }}
+                  </a-tag>
                   <a-tag v-if="previewResult.issueCounts.transformError" color="red">
                     transform 错误 {{ previewResult.issueCounts.transformError }}
                   </a-tag>
@@ -3594,6 +3589,20 @@ watch(() => props.selectedItemId, (value) => {
                 <p class="text-[10px] text-slate-500 m-0">
                   抓取 {{ currentItemLogSelectedRun.fetchedCount }} / 新增 {{ currentItemLogSelectedRun.createdCount }} / 更新 {{ currentItemLogSelectedRun.updatedCount }} / 跳过 {{ currentItemLogSelectedRun.skippedCount }} / 错误 {{ currentItemLogSelectedRun.errorCount }}
                 </p>
+                <div v-if="currentItemLogSelectedRun.diagnostics?.sourceFetchedCount !== undefined" class="flex flex-wrap gap-2">
+                  <a-tag size="small" color="gold">
+                    规则过滤 {{ currentItemLogSelectedRun.diagnostics.autoSyncFilteredCount || 0 }}
+                  </a-tag>
+                  <a-tag size="small" color="orange">
+                    业务跳过 {{ currentItemLogSelectedRun.diagnostics.businessSkippedCount || 0 }}
+                  </a-tag>
+                </div>
+                <p v-if="syncRunRuleFilterText(currentItemLogSelectedRun)" class="text-[10px] text-amber-600 m-0">
+                  {{ syncRunRuleFilterText(currentItemLogSelectedRun) }}
+                </p>
+                <p v-if="syncRunBusinessSkipText(currentItemLogSelectedRun)" class="text-[10px] text-orange-600 m-0">
+                  {{ syncRunBusinessSkipText(currentItemLogSelectedRun) }}
+                </p>
                 <p
                   v-if="syncRunHintText(currentItemLogItemDetail.entityType, currentItemLogSelectedRun)"
                   class="text-[10px] text-amber-600 m-0"
@@ -3755,6 +3764,9 @@ watch(() => props.selectedItemId, (value) => {
             <div class="flex gap-2">
               <a-button size="mini" @click="normalizeCurrentEntityTemplate">
                 整理为当前实体模板
+              </a-button>
+              <a-button size="mini" @click="rematchMissingMappingFields">
+                重新匹配缺失字段
               </a-button>
               <a-button size="mini" @click="loadMappingWizardFromJson">
                 从 JSON 回读

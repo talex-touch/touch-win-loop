@@ -13,6 +13,7 @@ import type {
   FeishuBitableSyncItemEntityType,
   FeishuBitableSyncItemPreviewRequest,
   FeishuBitableSyncItemPreviewResult,
+  FeishuBitableSyncRunDiagnostics,
   FeishuBitableSyncRunTriggerSource,
   FeishuBitableTablePreview,
   FeishuFieldDiagnosticItem,
@@ -82,6 +83,7 @@ interface SyncSummary {
   writebackSuccessCount: number
   writebackErrorCount: number
   errors: Array<{ recordId: string, message: string }>
+  diagnostics: FeishuBitableSyncRunDiagnostics
 }
 
 interface NormalizedMapping {
@@ -1182,9 +1184,88 @@ function buildTrackReleaseTimelines(
   }))
 }
 
-function buildSummaryBase(records: FeishuBitableRecord[], sourceRecordCount?: number): SyncSummary {
+function incrementRecordCount(target: Record<string, number>, key: string, amount = 1): void {
+  const normalized = toText(key) || '空值'
+  target[normalized] = Math.max(0, Math.trunc(Number(target[normalized]) || 0)) + Math.max(0, Math.trunc(Number(amount) || 0))
+}
+
+function collectAutoSyncRunDiagnostics(
+  sourceRecords: FeishuBitableRecord[],
+  autoSync?: NormalizedAutoSync | null,
+): FeishuBitableSyncRunDiagnostics['autoSync'] {
+  const normalizedAutoSync = autoSync || normalizeAutoSyncConfig(null)
+  const recordStatusValueCounts: Record<string, number> = {}
+  const syncStatusValueCounts: Record<string, number> = {}
+  let completedCount = 0
+  let pendingCount = 0
+  let matchedCount = 0
+
+  if (normalizedAutoSync.enabled) {
+    for (const record of sourceRecords) {
+      const recordStatus = pickFieldText(record, normalizedAutoSync.recordStatusField)
+      const syncStatus = pickFieldText(record, normalizedAutoSync.syncStatusField)
+      incrementRecordCount(recordStatusValueCounts, recordStatus)
+      incrementRecordCount(syncStatusValueCounts, syncStatus)
+      const completed = normalizedAutoSync.completedValues.includes(recordStatus)
+      const pending = normalizedAutoSync.pendingValues.includes(syncStatus)
+      if (completed)
+        completedCount += 1
+      if (pending)
+        pendingCount += 1
+      if (completed && pending)
+        matchedCount += 1
+    }
+  }
+
+  return {
+    enabled: normalizedAutoSync.enabled,
+    recordStatusField: normalizedAutoSync.recordStatusField,
+    syncStatusField: normalizedAutoSync.syncStatusField,
+    completedValues: [...normalizedAutoSync.completedValues],
+    pendingValues: [...normalizedAutoSync.pendingValues],
+    syncedValues: [...normalizedAutoSync.syncedValues],
+    recordStatusValueCounts,
+    syncStatusValueCounts,
+    completedCount,
+    pendingCount,
+    matchedCount,
+  }
+}
+
+function buildRunDiagnostics(input: {
+  records: FeishuBitableRecord[]
+  sourceRecords?: FeishuBitableRecord[]
+  sourceRecordCount?: number
+  autoSync?: NormalizedAutoSync | null
+}): FeishuBitableSyncRunDiagnostics {
+  const processedCount = Math.max(0, Math.trunc(Number(input.records.length) || 0))
+  const sourceFetchedCount = Math.max(
+    processedCount,
+    Math.trunc(Number(input.sourceRecords?.length ?? input.sourceRecordCount ?? processedCount) || 0),
+  )
+  const sourceRecords = input.sourceRecords || input.records
+  const autoSync = input.autoSync || normalizeAutoSyncConfig(null)
+
+  return {
+    sourceFetchedCount,
+    processedCount,
+    autoSyncFilteredCount: autoSync.enabled ? Math.max(0, sourceFetchedCount - processedCount) : 0,
+    businessSkippedCount: 0,
+    skipReasonCounts: {},
+    missingRequiredFieldCounts: {},
+    autoSync: collectAutoSyncRunDiagnostics(sourceRecords, autoSync),
+  }
+}
+
+function buildSummaryBase(input: {
+  records: FeishuBitableRecord[]
+  sourceRecords?: FeishuBitableRecord[]
+  sourceRecordCount?: number
+  autoSync?: NormalizedAutoSync | null
+}): SyncSummary {
+  const records = input.records
   const processedCount = Math.max(0, Math.trunc(Number(records.length) || 0))
-  const fetchedCount = Math.max(processedCount, Math.trunc(Number(sourceRecordCount) || 0))
+  const fetchedCount = Math.max(processedCount, Math.trunc(Number(input.sourceRecords?.length ?? input.sourceRecordCount) || 0))
   return {
     fetchedCount,
     createdCount: 0,
@@ -1194,7 +1275,51 @@ function buildSummaryBase(records: FeishuBitableRecord[], sourceRecordCount?: nu
     writebackSuccessCount: 0,
     writebackErrorCount: 0,
     errors: [],
+    diagnostics: buildRunDiagnostics(input),
   }
+}
+
+function normalizeMissingFieldKey(raw: string): string {
+  const field = toText(raw)
+  if (!field)
+    return ''
+  if (!field.startsWith('has') || field.length <= 3)
+    return field
+  const withoutPrefix = field.slice(3)
+  return `${withoutPrefix.slice(0, 1).toLowerCase()}${withoutPrefix.slice(1)}`
+}
+
+function collectMissingRequiredFields(result: ApplyRecordResult): string[] {
+  const payload = parseJsonObject(result.payload)
+  const explicit = Array.isArray(payload.missingFields)
+    ? payload.missingFields.map(item => toText(item)).filter(Boolean)
+    : []
+  if (explicit.length)
+    return [...new Set(explicit)]
+
+  return [...new Set(
+    Object.entries(payload)
+      .filter(([key, value]) => key.startsWith('has') && value === false)
+      .map(([key]) => normalizeMissingFieldKey(key))
+      .filter(Boolean),
+  )]
+}
+
+function recordBusinessSkipDiagnostics(
+  diagnostics: FeishuBitableSyncRunDiagnostics,
+  result: ApplyRecordResult,
+  skippedCount: number,
+): void {
+  const reasonCode = toText(result.reasonCode) || 'SKIPPED'
+  const normalizedSkippedCount = Math.max(1, Math.trunc(Number(skippedCount) || 0))
+  diagnostics.businessSkippedCount += normalizedSkippedCount
+  incrementRecordCount(diagnostics.skipReasonCounts, reasonCode, normalizedSkippedCount)
+
+  if (reasonCode !== 'MISSING_REQUIRED_FIELD' && reasonCode !== 'PERSONA_SLOTS_EMPTY' && reasonCode !== 'EXTERNAL_ID_MISSING')
+    return
+
+  for (const fieldKey of collectMissingRequiredFields(result))
+    incrementRecordCount(diagnostics.missingRequiredFieldCounts, fieldKey, normalizedSkippedCount)
 }
 
 function createEmptyPreviewIssueCounts(): FeishuPreviewIssueCounts {
@@ -1202,6 +1327,7 @@ function createEmptyPreviewIssueCounts(): FeishuPreviewIssueCounts {
     total: 0,
     externalIdMissing: 0,
     missingRequiredField: 0,
+    personaSlotsEmpty: 0,
     contestRefNotFound: 0,
     trackRefNotFound: 0,
     transformError: 0,
@@ -1215,6 +1341,7 @@ function createEmptyPreviewIssueCounts(): FeishuPreviewIssueCounts {
 function finalizePreviewIssueCounts(counts: FeishuPreviewIssueCounts): FeishuPreviewIssueCounts {
   counts.total = counts.externalIdMissing
     + counts.missingRequiredField
+    + counts.personaSlotsEmpty
     + counts.contestRefNotFound
     + counts.trackRefNotFound
     + counts.transformError
@@ -1237,6 +1364,8 @@ function incrementIssueCountsByReasonCode(
     counts.externalIdMissing += 1
   else if (normalized === 'MISSING_REQUIRED_FIELD')
     counts.missingRequiredField += 1
+  else if (normalized === 'PERSONA_SLOTS_EMPTY')
+    counts.personaSlotsEmpty += 1
   else if (normalized === 'CONTEST_REF_NOT_FOUND')
     counts.contestRefNotFound += 1
   else if (normalized === 'TRACK_REF_NOT_FOUND')
@@ -1251,6 +1380,12 @@ function incrementIssueCountsByDiagnostic(
 ): void {
   if (diagnostic.kind === 'mapping_empty' || diagnostic.kind === 'mapping_missing')
     counts.mappingEmpty += 1
+  else if (diagnostic.kind === 'external_id_missing')
+    counts.externalIdMissing += 1
+  else if (diagnostic.kind === 'missing_required_field')
+    counts.missingRequiredField += 1
+  else if (diagnostic.kind === 'persona_slots_empty')
+    counts.personaSlotsEmpty += 1
   else if (diagnostic.kind === 'source_field_missing')
     counts.sourceFieldMissing += 1
   else if (diagnostic.kind === 'writeback_field_missing')
@@ -1299,6 +1434,40 @@ function buildReasonDiagnostic(
   result: ApplyRecordResult,
   recordId: string,
 ): FeishuFieldDiagnosticItem | null {
+  if (result.reasonCode === 'EXTERNAL_ID_MISSING') {
+    return {
+      kind: 'external_id_missing',
+      level: 'error',
+      message: result.message || '记录缺少 externalId。',
+      fieldKey: 'externalId',
+      recordId,
+      externalId: result.externalId,
+    }
+  }
+
+  if (result.reasonCode === 'MISSING_REQUIRED_FIELD') {
+    const missingFields = collectMissingRequiredFields(result)
+    return {
+      kind: 'missing_required_field',
+      level: 'error',
+      message: result.message || '记录缺少必要字段。',
+      fieldKey: missingFields.join(' / '),
+      recordId,
+      externalId: result.externalId,
+    }
+  }
+
+  if (result.reasonCode === 'PERSONA_SLOTS_EMPTY') {
+    return {
+      kind: 'persona_slots_empty',
+      level: 'warning',
+      message: result.message || '人设记录未提供 persona1~5 的有效文案。',
+      fieldKey: 'persona1~5',
+      recordId,
+      externalId: result.externalId,
+    }
+  }
+
   if (result.reasonCode === 'CONTEST_REF_NOT_FOUND') {
     return {
       kind: 'contest_ref_not_found',
@@ -1539,6 +1708,10 @@ async function applyContestRecord(
     input.resolver.getStringArray('recommendedFor'),
   ])
   if (!name || !officialUrl) {
+    const missingFields = [
+      !name ? 'name' : '',
+      !officialUrl ? 'officialUrl' : '',
+    ].filter(Boolean)
     return {
       status: 'skipped',
       externalId: input.externalId,
@@ -1547,6 +1720,7 @@ async function applyContestRecord(
       payload: {
         hasName: Boolean(name),
         hasOfficialUrl: Boolean(officialUrl),
+        missingFields,
       },
     }
   }
@@ -1666,6 +1840,7 @@ async function applyTrackRecord(
       message: '赛道记录缺少必要字段 name。',
       payload: {
         hasName: false,
+        missingFields: ['name'],
       },
     }
   }
@@ -1773,6 +1948,7 @@ async function applyTrackTimelineRecord(
       message: '赛道时间线记录缺少必要字段 nodeType。',
       payload: {
         hasNodeType: false,
+        missingFields: ['nodeType'],
       },
     }
   }
@@ -1860,6 +2036,10 @@ async function applyResourceRecord(
     input.resolver.getText('attachmentSummary'),
   ])
   if (!title || !attachment) {
+    const missingFields = [
+      !title ? 'title' : '',
+      !attachment ? 'attachment' : '',
+    ].filter(Boolean)
     return {
       status: 'skipped',
       externalId: input.externalId,
@@ -1868,6 +2048,7 @@ async function applyResourceRecord(
       payload: {
         hasTitle: Boolean(title),
         hasAttachment: Boolean(attachment),
+        missingFields,
       },
     }
   }
@@ -1964,6 +2145,10 @@ async function applyPolicyRecord(
     input.resolver.getText('xiaohongshuMaterialLink'),
   ])
   if (!explicitExternalId || !meetingName) {
+    const missingFields = [
+      !explicitExternalId ? 'externalId' : '',
+      !meetingName ? 'meetingName' : '',
+    ].filter(Boolean)
     return {
       status: 'skipped',
       externalId: input.externalId,
@@ -1972,6 +2157,7 @@ async function applyPolicyRecord(
       payload: {
         hasExternalId: Boolean(explicitExternalId),
         hasMeetingName: Boolean(meetingName),
+        missingFields,
       },
     }
   }
@@ -2038,6 +2224,11 @@ async function applyPersonaRecord(
   const candidateSlotCount = countFeishuPersonaFilledSlots(personaTexts)
 
   if (!explicitExternalId || !contestExternalId || !object) {
+    const missingFields = [
+      !explicitExternalId ? 'externalId' : '',
+      !contestExternalId ? 'contestExternalId' : '',
+      !object ? 'object' : '',
+    ].filter(Boolean)
     return {
       status: 'skipped',
       externalId: input.externalId,
@@ -2054,6 +2245,7 @@ async function applyPersonaRecord(
         hasContestExternalId: Boolean(contestExternalId),
         hasObject: Boolean(object),
         candidateSlotCount,
+        missingFields,
       },
     }
   }
@@ -2081,6 +2273,7 @@ async function applyPersonaRecord(
       activeExternalIds: [],
       payload: {
         candidateSlotCount: 0,
+        missingFields: ['persona1~5'],
       },
     }
   }
@@ -2204,7 +2397,9 @@ async function applySingleRecord(
       externalId: input.record.recordId,
       reasonCode: 'EXTERNAL_ID_MISSING',
       message: '记录缺少 externalId，且 recordId 不可用。',
-      payload: {},
+      payload: {
+        missingFields: ['externalId'],
+      },
     }
   }
 
@@ -2344,11 +2539,18 @@ async function executeRecords(
     appToken: string
     tableId: string
     records: FeishuBitableRecord[]
+    sourceRecords?: FeishuBitableRecord[]
     sourceRecordCount?: number
+    autoSync?: NormalizedAutoSync
     dryRun: boolean
   },
 ): Promise<SyncSummary> {
-  const summary = buildSummaryBase(input.records, input.sourceRecordCount)
+  const summary = buildSummaryBase({
+    records: input.records,
+    sourceRecords: input.sourceRecords,
+    sourceRecordCount: input.sourceRecordCount,
+    autoSync: input.autoSync,
+  })
   const writebackRecords: Array<{ recordId: string, fields: Record<string, unknown> }> = []
   const activePersonaExternalIds = new Set<string>()
 
@@ -2366,10 +2568,12 @@ async function executeRecords(
         recordIndex,
       })
 
+      let resultSkippedCount = 0
       if (result.summaryCounts) {
         summary.createdCount += Math.max(0, Math.trunc(Number(result.summaryCounts.createdCount) || 0))
         summary.updatedCount += Math.max(0, Math.trunc(Number(result.summaryCounts.updatedCount) || 0))
-        summary.skippedCount += Math.max(0, Math.trunc(Number(result.summaryCounts.skippedCount) || 0))
+        resultSkippedCount = Math.max(0, Math.trunc(Number(result.summaryCounts.skippedCount) || 0))
+        summary.skippedCount += resultSkippedCount
       }
       else if (result.status === 'created') {
         summary.createdCount += 1
@@ -2378,6 +2582,7 @@ async function executeRecords(
         summary.updatedCount += 1
       }
       else {
+        resultSkippedCount = 1
         summary.skippedCount += 1
       }
 
@@ -2385,6 +2590,7 @@ async function executeRecords(
         activePersonaExternalIds.add(externalId)
 
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
+        recordBusinessSkipDiagnostics(summary.diagnostics, result, resultSkippedCount)
         await upsertFeishuSyncIssue(db, {
           syncItemId: input.syncItemId,
           entityType: input.entityType,
@@ -2579,7 +2785,10 @@ async function buildFeishuBitableSyncItemPreview(
     sourceRecords?: FeishuBitableRecord[]
   },
 ): Promise<FeishuBitableSyncItemPreviewResult> {
-  const summary = buildSummaryBase(input.records, input.sourceRecords?.length)
+  const summary = buildSummaryBase({
+    records: input.records,
+    sourceRecords: input.sourceRecords,
+  })
   const mappedColumns = [...TARGET_PREVIEW_FIELDS[input.entityType]]
   const mappedSampleRows: FeishuMappedPreviewRow[] = []
   const fieldDiagnostics: FeishuFieldDiagnosticItem[] = []
@@ -2908,7 +3117,9 @@ async function runFeishuBitableSyncItemById(
         appToken: task.appToken,
         tableId: task.tableId,
         records: filteredRecords,
+        sourceRecords: records,
         sourceRecordCount: records.length,
+        autoSync,
         dryRun: false,
       })
     })
@@ -2928,6 +3139,7 @@ async function runFeishuBitableSyncItemById(
         skippedCount: summary.skippedCount,
         errorCount: summary.errorCount,
         errorMessage: summary.errors.slice(0, 5).map(item => `${item.recordId}: ${item.message}`).join('；'),
+        diagnostics: summary.diagnostics,
       })
     })
 

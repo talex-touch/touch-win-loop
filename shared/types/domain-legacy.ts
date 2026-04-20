@@ -4165,6 +4165,9 @@ export interface FeishuFieldDiagnosticItem {
   kind:
     | 'mapping_empty'
     | 'mapping_missing'
+    | 'external_id_missing'
+    | 'missing_required_field'
+    | 'persona_slots_empty'
     | 'source_field_missing'
     | 'transform_error'
     | 'contest_ref_not_found'
@@ -4193,6 +4196,7 @@ export interface FeishuPreviewIssueCounts {
   total: number
   externalIdMissing: number
   missingRequiredField: number
+  personaSlotsEmpty: number
   contestRefNotFound: number
   trackRefNotFound: number
   transformError: number
@@ -4287,6 +4291,30 @@ export interface FeishuBitableAutoSyncConfig {
   useMappedFieldsAsWatched?: boolean
   watchedFieldNames?: string[]
   ignoredFieldNames?: string[]
+}
+
+export interface FeishuBitableAutoSyncRunDiagnostics {
+  enabled: boolean
+  recordStatusField: string
+  syncStatusField: string
+  completedValues: string[]
+  pendingValues: string[]
+  syncedValues: string[]
+  recordStatusValueCounts: Record<string, number>
+  syncStatusValueCounts: Record<string, number>
+  completedCount: number
+  pendingCount: number
+  matchedCount: number
+}
+
+export interface FeishuBitableSyncRunDiagnostics {
+  sourceFetchedCount: number
+  processedCount: number
+  autoSyncFilteredCount: number
+  businessSkippedCount: number
+  skipReasonCounts: Record<string, number>
+  missingRequiredFieldCounts: Record<string, number>
+  autoSync: FeishuBitableAutoSyncRunDiagnostics
 }
 
 export interface FeishuBitableAppMeta {
@@ -4567,6 +4595,7 @@ export interface FeishuBitableSyncItemRun {
   skippedCount: number
   errorCount: number
   errorMessage: string
+  diagnostics?: FeishuBitableSyncRunDiagnostics
   createdByUserId: string | null
   createdAt: string
 }

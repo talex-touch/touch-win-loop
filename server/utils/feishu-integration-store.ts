@@ -17,6 +17,7 @@ import type {
   FeishuBitableSyncItemDetail,
   FeishuBitableSyncItemEntityType,
   FeishuBitableSyncItemRun,
+  FeishuBitableSyncRunDiagnostics,
   FeishuBitableSyncRunStatus,
   FeishuBitableSyncRunTriggerSource,
   FeishuBitableWritebackConfig,
@@ -150,6 +151,7 @@ interface FeishuBitableSyncItemRunRow {
   skipped_count: number | string
   error_count: number | string
   error_message: string
+  diagnostics_json: Record<string, unknown>
   created_by_user_id: string | null
   created_at: string
 }
@@ -601,6 +603,7 @@ function toSyncItem(row: FeishuBitableSyncItemRow): FeishuBitableSyncItem {
 }
 
 function toRun(row: FeishuBitableSyncItemRunRow): FeishuBitableSyncItemRun {
+  const diagnostics = parseJsonObject(row.diagnostics_json)
   return {
     id: row.id,
     syncItemId: row.sync_item_id,
@@ -617,6 +620,7 @@ function toRun(row: FeishuBitableSyncItemRunRow): FeishuBitableSyncItemRun {
     skippedCount: Number(row.skipped_count || 0),
     errorCount: Number(row.error_count || 0),
     errorMessage: row.error_message || '',
+    diagnostics: Object.keys(diagnostics).length ? diagnostics as unknown as FeishuBitableSyncRunDiagnostics : undefined,
     createdByUserId: row.created_by_user_id || null,
     createdAt: row.created_at,
   }
@@ -2268,6 +2272,7 @@ export async function completeFeishuBitableSyncItemRun(
     skippedCount?: number
     errorCount?: number
     errorMessage?: string
+    diagnostics?: FeishuBitableSyncRunDiagnostics | Record<string, unknown>
   },
 ): Promise<void> {
   await db.query(
@@ -2280,7 +2285,8 @@ export async function completeFeishuBitableSyncItemRun(
        updated_count = $6,
        skipped_count = $7,
        error_count = $8,
-       error_message = $9
+       error_message = $9,
+       diagnostics_json = $10::JSONB
      WHERE id = $1
        AND sync_item_id = $2`,
     [
@@ -2293,6 +2299,7 @@ export async function completeFeishuBitableSyncItemRun(
       Math.max(0, Number(input.skippedCount || 0)),
       Math.max(0, Number(input.errorCount || 0)),
       String(input.errorMessage || '').slice(0, 1000),
+      JSON.stringify(parseJsonObject(input.diagnostics)),
     ],
   )
 
@@ -2331,6 +2338,7 @@ export async function listFeishuBitableSyncItemRuns(
       r.skipped_count,
       r.error_count,
       r.error_message,
+      r.diagnostics_json,
       r.created_by_user_id,
       r.created_at::TEXT
      FROM feishu_bitable_sync_item_runs r
