@@ -374,6 +374,7 @@ export interface Resource {
   uploaderAvatarUrl?: string | null
   createdAt?: string
   updatedAt?: string
+  deletedAt?: string | null
   aiProfile?: ResourceKnowledgeProfileSummary
 }
 
@@ -1032,6 +1033,7 @@ export interface CompositionBlock {
   title?: string
   body?: string
   imageSrc?: string
+  items?: Record<string, unknown>[]
   metadata?: Record<string, unknown>
 }
 
@@ -3901,7 +3903,7 @@ export type RuleCategory = 'eligibility' | 'material' | 'workflow' | 'reminder' 
 export type RuleVersionStatus = 'draft' | 'published'
 export type ScopeType = 'global' | 'activity' | 'instance' | 'region' | 'stage' | 'track' | 'policy'
 export type FeishuSyncIssueStatus = 'open' | 'resolved' | 'ignored'
-export type FeishuSyncIssueResolution = 'manual_bind' | 'ignored'
+export type FeishuSyncIssueResolution = 'manual_bind' | 'ignored' | 'auto_recovered'
 
 export interface EngineContext {
   activity?: Record<string, unknown>
@@ -4583,7 +4585,7 @@ export interface FeishuPostSyncTask {
   updatedAt: string
 }
 
-export type FeishuSyncedDataRecordStatus = 'indexed' | 'ref_only'
+export type FeishuSyncedDataRecordStatus = 'indexed' | 'ref_only' | 'release_draft'
 
 export interface FeishuSyncedDataQuery {
   keyword?: string

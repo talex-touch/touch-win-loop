@@ -773,7 +773,7 @@ CREATE TABLE IF NOT EXISTS feishu_sync_issues (
   reason_code TEXT NOT NULL,
   message TEXT NOT NULL DEFAULT '',
   payload JSONB NOT NULL DEFAULT '{}'::JSONB,
-  resolution TEXT NOT NULL DEFAULT '' CHECK (resolution IN ('', 'manual_bind', 'ignored')),
+  resolution TEXT NOT NULL DEFAULT '' CHECK (resolution IN ('', 'manual_bind', 'ignored', 'auto_recovered')),
   resolution_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
   resolved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   resolved_at TIMESTAMPTZ,
@@ -2747,6 +2747,13 @@ ALTER TABLE feishu_sync_issues
 ALTER TABLE feishu_sync_issues
   ADD CONSTRAINT feishu_sync_issues_entity_type_check
   CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona'));
+
+ALTER TABLE feishu_sync_issues
+  DROP CONSTRAINT IF EXISTS feishu_sync_issues_resolution_check;
+
+ALTER TABLE feishu_sync_issues
+  ADD CONSTRAINT feishu_sync_issues_resolution_check
+  CHECK (resolution IN ('', 'manual_bind', 'ignored', 'auto_recovered'));
 
 ALTER TABLE feishu_external_refs
   DROP CONSTRAINT IF EXISTS feishu_external_refs_scope_check;

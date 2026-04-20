@@ -45,6 +45,7 @@ import {
   upsertDefensePersonaPreset,
 } from '~~/server/utils/defense-persona-preset-store'
 import {
+  autoResolveFeishuSyncIssueByRecord,
   completeFeishuBitableSyncItemRun,
   createFeishuBitableSyncItemRun,
   deleteFeishuExternalRefsByExternalIds,
@@ -2398,6 +2399,19 @@ async function executeRecords(
           },
         })
       }
+      else if (!input.dryRun && result.status !== 'skipped') {
+        await autoResolveFeishuSyncIssueByRecord(db, {
+          actorUserId: input.actorUserId,
+          syncItemId: input.syncItemId,
+          recordId: record.recordId,
+          externalId: result.externalId || record.recordId,
+          resolutionPayload: {
+            runId: input.runId || '',
+            status: result.status,
+            entityId: result.entityId || '',
+          },
+        })
+      }
 
       if (!input.dryRun && input.writeback.enabled && input.runId) {
         const writebackFields = buildWritebackFields({
@@ -2431,10 +2445,15 @@ async function executeRecords(
     }
   }
 
-  if (!input.dryRun && input.entityType === 'persona' && summary.errorCount === 0 && shouldCleanupFeishuPersonaStaleData({
-    fetchedCount: summary.fetchedCount,
-    activeExternalIds: [...activePersonaExternalIds],
-  })) {
+  const shouldCleanupPersonaStaleData = !input.dryRun
+    && input.entityType === 'persona'
+    && summary.errorCount === 0
+    && shouldCleanupFeishuPersonaStaleData({
+      fetchedCount: summary.fetchedCount,
+      activeExternalIds: [...activePersonaExternalIds],
+    })
+
+  if (shouldCleanupPersonaStaleData) {
     const [existingPresetExternalIds, existingRefExternalIds] = await Promise.all([
       listDefensePersonaPresetExternalIdsBySyncItemId(db, {
         syncItemId: input.syncItemId,

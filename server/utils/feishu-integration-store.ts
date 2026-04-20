@@ -646,7 +646,11 @@ function toPostSyncTask(row: FeishuPostSyncTaskRow): FeishuPostSyncTask {
 }
 
 function toSyncedDataStatus(raw: unknown): FeishuSyncedDataRecordStatus {
-  return raw === 'ref_only' ? 'ref_only' : 'indexed'
+  if (raw === 'ref_only')
+    return 'ref_only'
+  if (raw === 'release_draft')
+    return 'release_draft'
+  return 'indexed'
 }
 
 function toSyncedDataRecord(row: FeishuSyncedDataRow): FeishuSyncedDataRecord {
@@ -2907,9 +2911,9 @@ export async function searchFeishuSyncedData(
       LEFT JOIN feishu_bitable_sync_items ref_item ON ref_item.id = ref.sync_item_id
       LEFT JOIN feishu_bitable_syncs ref_sync ON ref_sync.id = ref_item.sync_id
     ),
-    ref_only_rows AS (
-      SELECT
-        'ref_only'::TEXT AS status,
+      ref_only_rows AS (
+        SELECT
+          'ref_only'::TEXT AS status,
         ref.scope,
         COALESCE(sync.id, '') AS sync_id,
         COALESCE(sync.name, '') AS sync_name,
@@ -2938,14 +2942,236 @@ export async function searchFeishuSyncedData(
        AND li.entity_id = ref.entity_id
       LEFT JOIN feishu_bitable_sync_items item ON item.id = ref.sync_item_id
       LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
-      WHERE ref.provider = 'feishu_bitable'
-        AND li.id IS NULL
-    ),
-    all_rows AS (
-      SELECT * FROM indexed_rows
-      UNION ALL
-      SELECT * FROM ref_only_rows
-    )
+        WHERE ref.provider = 'feishu_bitable'
+          AND li.id IS NULL
+      ),
+      release_contest_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'contest'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(
+            NULLIF(rv.snapshot_json -> 'contest' ->> 'name', ''),
+            NULLIF(rv.scope_title, ''),
+            rv.scope_id
+          ) AS title,
+          COALESCE(rv.snapshot_json -> 'contest' ->> 'summary', '') AS summary,
+          COALESCE(rv.snapshot_json -> 'contest' ->> 'officialUrl', '') AS body,
+          COALESCE(NULLIF(rv.snapshot_json -> 'contest' ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':contest:', COALESCE(NULLIF(rv.snapshot_json -> 'contest' ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          '' AS record_id,
+          COALESCE(rv.sync_run_id, '') AS run_id,
+          ARRAY(
+            SELECT jsonb_array_elements_text(
+              CASE
+                WHEN jsonb_typeof(rv.snapshot_json -> 'contest' -> 'keywords') = 'array'
+                  THEN rv.snapshot_json -> 'contest' -> 'keywords'
+                ELSE '[]'::JSONB
+              END
+            )
+          ) AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'contest',
+            'snapshot', rv.snapshot_json -> 'contest'
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE rv.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'contest'
+          AND rv.status NOT IN ('superseded', 'rejected')
+          AND rv.snapshot_json -> 'contest' IS NOT NULL
+          AND rv.snapshot_json -> 'contest' <> 'null'::JSONB
+      ),
+      release_track_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'track'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(NULLIF(track_item.item ->> 'name', ''), NULLIF(track_item.item ->> 'externalId', ''), rv.scope_id) AS title,
+          COALESCE(track_item.item ->> 'summary', '') AS summary,
+          track_item.item::TEXT AS body,
+          COALESCE(NULLIF(track_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':track:', COALESCE(NULLIF(track_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          '' AS record_id,
+          COALESCE(rv.sync_run_id, '') AS run_id,
+          ARRAY[]::TEXT[] AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'track',
+            'snapshot', track_item.item
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(rv.snapshot_json -> 'tracks') = 'array'
+              THEN rv.snapshot_json -> 'tracks'
+            ELSE '[]'::JSONB
+          END
+        ) AS track_item(item) ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE rv.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'contest'
+          AND rv.status NOT IN ('superseded', 'rejected')
+      ),
+      release_track_timeline_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'track_timeline'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(NULLIF(timeline_item.item ->> 'note', ''), NULLIF(timeline_item.item ->> 'nodeType', ''), NULLIF(timeline_item.item ->> 'externalId', ''), rv.scope_id) AS title,
+          COALESCE(timeline_item.item ->> 'note', '') AS summary,
+          COALESCE(timeline_item.item ->> 'sourceLink', '') AS body,
+          COALESCE(NULLIF(timeline_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':track_timeline:', COALESCE(NULLIF(timeline_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          '' AS record_id,
+          COALESCE(rv.sync_run_id, '') AS run_id,
+          ARRAY[]::TEXT[] AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'track_timeline',
+            'snapshot', timeline_item.item
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(rv.snapshot_json -> 'trackTimelines') = 'array'
+              THEN rv.snapshot_json -> 'trackTimelines'
+            ELSE '[]'::JSONB
+          END
+        ) AS timeline_item(item) ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE rv.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'contest'
+          AND rv.status NOT IN ('superseded', 'rejected')
+      ),
+      release_resource_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'resource'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(NULLIF(resource_item.item ->> 'title', ''), NULLIF(resource_item.item ->> 'externalId', ''), rv.scope_id) AS title,
+          COALESCE(resource_item.item ->> 'summary', '') AS summary,
+          COALESCE(NULLIF(resource_item.item ->> 'content', ''), NULLIF(resource_item.item ->> 'url', ''), '') AS body,
+          COALESCE(NULLIF(resource_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':resource:', COALESCE(NULLIF(resource_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          COALESCE(NULLIF(resource_item.item -> 'metadata' ->> 'recordId', ''), '') AS record_id,
+          COALESCE(rv.sync_run_id, '') AS run_id,
+          ARRAY[]::TEXT[] AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'resource',
+            'snapshot', resource_item.item
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(rv.snapshot_json -> 'resources') = 'array'
+              THEN rv.snapshot_json -> 'resources'
+            ELSE '[]'::JSONB
+          END
+        ) AS resource_item(item) ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE rv.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'contest'
+          AND rv.status NOT IN ('superseded', 'rejected')
+      ),
+      release_policy_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'policy'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(NULLIF(policy_item.item ->> 'meetingName', ''), NULLIF(policy_item.item ->> 'externalId', ''), rv.scope_id) AS title,
+          COALESCE(policy_item.item ->> 'summary', '') AS summary,
+          policy_item.item::TEXT AS body,
+          COALESCE(NULLIF(policy_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':policy:', COALESCE(NULLIF(policy_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          '' AS record_id,
+          COALESCE(rv.sync_run_id, '') AS run_id,
+          ARRAY[]::TEXT[] AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'policy',
+            'snapshot', policy_item.item
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(rv.snapshot_json -> 'items') = 'array'
+              THEN rv.snapshot_json -> 'items'
+            ELSE '[]'::JSONB
+          END
+        ) AS policy_item(item) ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE rv.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'policy_library'
+          AND rv.status NOT IN ('superseded', 'rejected')
+      ),
+      all_rows AS (
+        SELECT * FROM indexed_rows
+        UNION ALL
+        SELECT * FROM ref_only_rows
+        UNION ALL
+        SELECT * FROM release_contest_rows
+        UNION ALL
+        SELECT * FROM release_track_rows
+        UNION ALL
+        SELECT * FROM release_track_timeline_rows
+        UNION ALL
+        SELECT * FROM release_resource_rows
+        UNION ALL
+        SELECT * FROM release_policy_rows
+      )
     SELECT
       rows.status,
       rows.scope,
@@ -3146,14 +3372,29 @@ export async function upsertFeishuSyncIssue(
     ON CONFLICT (sync_item_id, record_id, external_id)
     DO UPDATE SET
       entity_type = EXCLUDED.entity_type,
-      status = 'open',
+      status = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.status
+        ELSE 'open'
+      END,
       reason_code = EXCLUDED.reason_code,
       message = EXCLUDED.message,
       payload = EXCLUDED.payload,
-      resolution = '',
-      resolution_payload = '{}'::JSONB,
-      resolved_by_user_id = NULL,
-      resolved_at = NULL,
+      resolution = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.resolution
+        ELSE ''
+      END,
+      resolution_payload = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.resolution_payload
+        ELSE '{}'::JSONB
+      END,
+      resolved_by_user_id = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.resolved_by_user_id
+        ELSE NULL
+      END,
+      resolved_at = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.resolved_at
+        ELSE NULL
+      END,
       updated_at = NOW()
     RETURNING
       id,
@@ -3184,6 +3425,51 @@ export async function upsertFeishuSyncIssue(
   )
 
   return toIssue(result.rows[0]!)
+}
+
+export async function autoResolveFeishuSyncIssueByRecord(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    recordId: string
+    externalId: string
+    resolutionPayload?: Record<string, unknown>
+  },
+): Promise<number> {
+  const syncItemId = toText(input.syncItemId)
+  const recordId = toText(input.recordId)
+  const externalId = toText(input.externalId)
+  if (!syncItemId || !recordId || !externalId)
+    return 0
+
+  const result = await db.query<{ resolved_count: string }>(
+    `WITH updated AS (
+      UPDATE feishu_sync_issues
+      SET
+        status = 'resolved',
+        resolution = 'auto_recovered',
+        resolution_payload = $5::JSONB,
+        resolved_by_user_id = $1,
+        resolved_at = NOW(),
+        updated_at = NOW()
+      WHERE sync_item_id = $2
+        AND record_id = $3
+        AND external_id = $4
+        AND status = 'open'
+      RETURNING 1
+    )
+    SELECT COUNT(*)::TEXT AS resolved_count FROM updated`,
+    [
+      input.actorUserId,
+      syncItemId,
+      recordId,
+      externalId,
+      JSON.stringify(parseJsonObject(input.resolutionPayload)),
+    ],
+  )
+
+  return Math.max(0, Number(result.rows[0]?.resolved_count || 0) || 0)
 }
 
 export async function listFeishuSyncIssues(
