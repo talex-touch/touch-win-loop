@@ -1189,6 +1189,14 @@ function incrementRecordCount(target: Record<string, number>, key: string, amoun
   target[normalized] = Math.max(0, Math.trunc(Number(target[normalized]) || 0)) + Math.max(0, Math.trunc(Number(amount) || 0))
 }
 
+const SYNC_RUN_DIAGNOSTIC_SAMPLE_LIMIT = 12
+
+function resolveAutoSyncMismatchReason(completed: boolean, pending: boolean): 'record_status' | 'sync_status' | 'record_status_and_sync_status' {
+  if (!completed && !pending)
+    return 'record_status_and_sync_status'
+  return completed ? 'sync_status' : 'record_status'
+}
+
 function collectAutoSyncRunDiagnostics(
   sourceRecords: FeishuBitableRecord[],
   autoSync?: NormalizedAutoSync | null,
@@ -1196,6 +1204,7 @@ function collectAutoSyncRunDiagnostics(
   const normalizedAutoSync = autoSync || normalizeAutoSyncConfig(null)
   const recordStatusValueCounts: Record<string, number> = {}
   const syncStatusValueCounts: Record<string, number> = {}
+  const filteredSamples: NonNullable<FeishuBitableSyncRunDiagnostics['autoSync']['filteredSamples']> = []
   let completedCount = 0
   let pendingCount = 0
   let matchedCount = 0
@@ -1212,8 +1221,19 @@ function collectAutoSyncRunDiagnostics(
         completedCount += 1
       if (pending)
         pendingCount += 1
-      if (completed && pending)
+      if (completed && pending) {
         matchedCount += 1
+      }
+      else if (filteredSamples.length < SYNC_RUN_DIAGNOSTIC_SAMPLE_LIMIT) {
+        filteredSamples.push({
+          recordId: record.recordId,
+          recordStatus: recordStatus || '空值',
+          syncStatus: syncStatus || '空值',
+          recordStatusMatched: completed,
+          syncStatusMatched: pending,
+          reason: resolveAutoSyncMismatchReason(completed, pending),
+        })
+      }
     }
   }
 
@@ -1229,6 +1249,7 @@ function collectAutoSyncRunDiagnostics(
     completedCount,
     pendingCount,
     matchedCount,
+    filteredSamples,
   }
 }
 
@@ -1254,6 +1275,7 @@ function buildRunDiagnostics(input: {
     skipReasonCounts: {},
     missingRequiredFieldCounts: {},
     autoSync: collectAutoSyncRunDiagnostics(sourceRecords, autoSync),
+    businessSkipSamples: [],
   }
 }
 
@@ -1307,6 +1329,7 @@ function collectMissingRequiredFields(result: ApplyRecordResult): string[] {
 
 function recordBusinessSkipDiagnostics(
   diagnostics: FeishuBitableSyncRunDiagnostics,
+  record: FeishuBitableRecord,
   result: ApplyRecordResult,
   skippedCount: number,
 ): void {
@@ -1315,10 +1338,24 @@ function recordBusinessSkipDiagnostics(
   diagnostics.businessSkippedCount += normalizedSkippedCount
   incrementRecordCount(diagnostics.skipReasonCounts, reasonCode, normalizedSkippedCount)
 
+  const missingFields = collectMissingRequiredFields(result)
+  const samples = diagnostics.businessSkipSamples || []
+  if (samples.length < SYNC_RUN_DIAGNOSTIC_SAMPLE_LIMIT) {
+    samples.push({
+      recordId: record.recordId,
+      externalId: toText(result.externalId) || record.recordId,
+      reasonCode,
+      message: toText(result.message) || '记录未通过同步校验。',
+      skippedCount: normalizedSkippedCount,
+      missingFields,
+    })
+    diagnostics.businessSkipSamples = samples
+  }
+
   if (reasonCode !== 'MISSING_REQUIRED_FIELD' && reasonCode !== 'PERSONA_SLOTS_EMPTY' && reasonCode !== 'EXTERNAL_ID_MISSING')
     return
 
-  for (const fieldKey of collectMissingRequiredFields(result))
+  for (const fieldKey of missingFields)
     incrementRecordCount(diagnostics.missingRequiredFieldCounts, fieldKey, normalizedSkippedCount)
 }
 
@@ -2590,7 +2627,7 @@ async function executeRecords(
         activePersonaExternalIds.add(externalId)
 
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
-        recordBusinessSkipDiagnostics(summary.diagnostics, result, resultSkippedCount)
+        recordBusinessSkipDiagnostics(summary.diagnostics, record, result, resultSkippedCount)
         await upsertFeishuSyncIssue(db, {
           syncItemId: input.syncItemId,
           entityType: input.entityType,

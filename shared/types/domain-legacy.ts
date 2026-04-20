@@ -4305,6 +4305,14 @@ export interface FeishuBitableAutoSyncRunDiagnostics {
   completedCount: number
   pendingCount: number
   matchedCount: number
+  filteredSamples?: Array<{
+    recordId: string
+    recordStatus: string
+    syncStatus: string
+    recordStatusMatched: boolean
+    syncStatusMatched: boolean
+    reason: 'record_status' | 'sync_status' | 'record_status_and_sync_status'
+  }>
 }
 
 export interface FeishuBitableSyncRunDiagnostics {
@@ -4315,6 +4323,14 @@ export interface FeishuBitableSyncRunDiagnostics {
   skipReasonCounts: Record<string, number>
   missingRequiredFieldCounts: Record<string, number>
   autoSync: FeishuBitableAutoSyncRunDiagnostics
+  businessSkipSamples?: Array<{
+    recordId: string
+    externalId: string
+    reasonCode: string
+    message: string
+    skippedCount: number
+    missingFields: string[]
+  }>
 }
 
 export interface FeishuBitableAppMeta {

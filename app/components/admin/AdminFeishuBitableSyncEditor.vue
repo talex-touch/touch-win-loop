@@ -82,6 +82,8 @@ interface SyncWritebackFormState {
 type SyncWritebackFieldKey = keyof Pick<SyncWritebackFormState, 'status' | 'syncedAt' | 'errorMessage' | 'reasonCode' | 'entityId' | 'runId' | 'triggerSource'>
 type SaveCurrentItemContext = 'main' | 'mapping' | 'writeback' | 'autoSync'
 type SyncIssueCategoryKey = 'mapping' | 'relation' | 'writeback' | 'source'
+type AutoSyncFilteredSample = NonNullable<NonNullable<FeishuBitableSyncItemRun['diagnostics']>['autoSync']['filteredSamples']>[number]
+type BusinessSkipSample = NonNullable<NonNullable<FeishuBitableSyncItemRun['diagnostics']>['businessSkipSamples']>[number]
 
 const props = withDefaults(defineProps<{
   syncId: string
@@ -879,6 +881,41 @@ function syncRunBusinessSkipText(run?: FeishuBitableSyncItemRun | null): string 
   const reasonText = formatCountMap(diagnostics.skipReasonCounts)
   const missingText = formatCountMap(diagnostics.missingRequiredFieldCounts)
   return `业务跳过 ${businessSkippedCount}；原因：${reasonText || '-'}${missingText ? `；缺失字段：${missingText}` : ''}。`
+}
+
+function syncRunAutoSyncMatchText(run?: FeishuBitableSyncItemRun | null): string {
+  const autoSync = run?.diagnostics?.autoSync
+  if (!autoSync?.enabled)
+    return ''
+  return `命中统计：${autoSync.recordStatusField || '记录状态'} 命中 ${autoSync.completedCount || 0}；${autoSync.syncStatusField || '同步信息'} 命中 ${autoSync.pendingCount || 0}；同时命中 ${autoSync.matchedCount || 0}。`
+}
+
+function syncRunAutoSyncFilteredSamples(run?: FeishuBitableSyncItemRun | null): AutoSyncFilteredSample[] {
+  const samples = run?.diagnostics?.autoSync?.filteredSamples
+  return Array.isArray(samples) ? samples : []
+}
+
+function syncRunBusinessSkipSamples(run?: FeishuBitableSyncItemRun | null): BusinessSkipSample[] {
+  const samples = run?.diagnostics?.businessSkipSamples
+  return Array.isArray(samples) ? samples : []
+}
+
+function syncRunAutoSyncReasonLabel(reason: AutoSyncFilteredSample['reason']): string {
+  if (reason === 'record_status')
+    return '记录状态未命中'
+  if (reason === 'sync_status')
+    return '同步信息未命中'
+  return '记录状态与同步信息均未命中'
+}
+
+function syncRunMissingFieldsText(sample: BusinessSkipSample): string {
+  return Array.isArray(sample.missingFields) && sample.missingFields.length
+    ? sample.missingFields.join(' / ')
+    : '-'
+}
+
+function syncRunDiagnosticsJsonText(run?: FeishuBitableSyncItemRun | null): string {
+  return JSON.stringify(run?.diagnostics || {}, null, 2)
 }
 
 function syncRunHintText(entityType: FeishuBitableSyncItemEntityType | string | undefined, summary?: {
@@ -3609,6 +3646,80 @@ watch(() => props.selectedItemId, (value) => {
                 >
                   {{ syncRunHintText(currentItemLogItemDetail.entityType, currentItemLogSelectedRun) }}
                 </p>
+                <div
+                  v-if="currentItemLogSelectedRun.diagnostics?.sourceFetchedCount !== undefined"
+                  class="border border-slate-200 bg-slate-50 p-3 space-y-3"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <p class="text-[11px] text-slate-800 font-semibold m-0">
+                      详细诊断
+                    </p>
+                    <a-tag size="small">
+                      样本最多 12 条
+                    </a-tag>
+                  </div>
+                  <p v-if="syncRunAutoSyncMatchText(currentItemLogSelectedRun)" class="text-[10px] text-slate-600 m-0">
+                    {{ syncRunAutoSyncMatchText(currentItemLogSelectedRun) }}
+                  </p>
+                  <div v-if="syncRunAutoSyncFilteredSamples(currentItemLogSelectedRun).length" class="space-y-2">
+                    <p class="text-[10px] text-slate-700 font-medium m-0">
+                      规则过滤样本
+                    </p>
+                    <div
+                      v-for="sample in syncRunAutoSyncFilteredSamples(currentItemLogSelectedRun)"
+                      :key="`auto-sync-filtered-${sample.recordId}`"
+                      class="border border-amber-100 bg-white p-2 space-y-1"
+                    >
+                      <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
+                        {{ sample.recordId }}
+                      </p>
+                      <p class="text-[10px] text-slate-700 m-0">
+                        {{ currentItemLogSelectedRun.diagnostics.autoSync.recordStatusField || '记录状态' }}：{{ sample.recordStatus || '空值' }}
+                        <span :class="sample.recordStatusMatched ? 'text-emerald-600' : 'text-amber-600'">
+                          {{ sample.recordStatusMatched ? '命中' : '未命中' }}
+                        </span>
+                      </p>
+                      <p class="text-[10px] text-slate-700 m-0">
+                        {{ currentItemLogSelectedRun.diagnostics.autoSync.syncStatusField || '同步信息' }}：{{ sample.syncStatus || '空值' }}
+                        <span :class="sample.syncStatusMatched ? 'text-emerald-600' : 'text-amber-600'">
+                          {{ sample.syncStatusMatched ? '命中' : '未命中' }}
+                        </span>
+                      </p>
+                      <p class="text-[10px] text-amber-600 m-0">
+                        {{ syncRunAutoSyncReasonLabel(sample.reason) }}
+                      </p>
+                    </div>
+                  </div>
+                  <div v-if="syncRunBusinessSkipSamples(currentItemLogSelectedRun).length" class="space-y-2">
+                    <p class="text-[10px] text-slate-700 font-medium m-0">
+                      业务跳过样本
+                    </p>
+                    <div
+                      v-for="sample in syncRunBusinessSkipSamples(currentItemLogSelectedRun)"
+                      :key="`business-skip-${sample.recordId}-${sample.reasonCode}`"
+                      class="border border-orange-100 bg-white p-2 space-y-1"
+                    >
+                      <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
+                        {{ sample.recordId }}
+                      </p>
+                      <p class="text-[10px] text-slate-700 m-0">
+                        原因：{{ sample.reasonCode || '-' }}；外部 ID：{{ sample.externalId || '-' }}；跳过 {{ sample.skippedCount || 1 }}
+                      </p>
+                      <p class="text-[10px] text-slate-700 m-0">
+                        缺失字段：{{ syncRunMissingFieldsText(sample) }}
+                      </p>
+                      <p class="text-[10px] text-orange-600 m-0">
+                        {{ sample.message || '记录未通过同步校验。' }}
+                      </p>
+                    </div>
+                  </div>
+                  <details class="text-[10px] text-slate-600">
+                    <summary class="cursor-pointer text-slate-700">
+                      查看诊断 JSON
+                    </summary>
+                    <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all bg-white border border-slate-200 p-2">{{ syncRunDiagnosticsJsonText(currentItemLogSelectedRun) }}</pre>
+                  </details>
+                </div>
                 <p v-if="currentItemLogSelectedRun.deltaRecordCount !== undefined" class="text-[10px] text-slate-500 m-0">
                   Delta 记录数：{{ currentItemLogSelectedRun.deltaRecordCount }}
                 </p>
