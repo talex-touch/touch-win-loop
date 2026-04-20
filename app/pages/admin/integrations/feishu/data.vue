@@ -118,10 +118,14 @@ function scopeLabel(scope?: FeishuBitableSyncItemEntityType | ''): string {
 }
 
 function statusLabel(status?: string): string {
+  if (status === 'release_draft')
+    return '草稿/待审数据'
   return status === 'ref_only' ? '仅映射' : '已建索引'
 }
 
 function statusColor(status?: string): string {
+  if (status === 'release_draft')
+    return 'arcoblue'
   return status === 'ref_only' ? 'gold' : 'green'
 }
 
