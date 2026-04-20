@@ -93,6 +93,9 @@ interface ResolvedDesignFrameGrid {
 export type DesignExportBackgroundMode = 'transparent' | 'solid' | 'gradient'
 export type DeviceArrangementLayoutPresetKey = 'solo' | 'duo-overlap' | 'trio-fan' | 'desktop-phone' | 'grid'
 export type DeviceArrangementExportSizePresetKey = 'square' | 'portrait-4-5' | 'wide-16-9' | 'story-9-16' | 'custom'
+export type DeviceArrangementShadowPresetKey = 'none' | 'soft' | 'deep'
+export type DeviceArrangementSpacingPresetKey = 'compact' | 'balanced' | 'spacious'
+export type DeviceArrangementRotationPresetKey = 'none' | 'soft' | 'dynamic'
 export interface ResolvedDesignPageExport {
   width: number
   height: number
@@ -108,6 +111,8 @@ interface ResolvedDesignFrameExport {
 interface ResolvedDesignFrameDevice {
   shellMode: DeviceShellMode
   shellAssetId: string
+  shadowPresetKey: string
+  shadow: string
   mockupSourceFrameId: string
   screenScaleMode: DeviceScaleMode
   showSafeArea: boolean
@@ -669,6 +674,8 @@ function resolveDesignFrameDeviceMetadata(value: unknown, kind: DesignFrameKind)
       ? shellMode
       : defaultShellMode,
     shellAssetId: normalizeString(source.shellAssetId),
+    shadowPresetKey: normalizeString(source.shadowPresetKey),
+    shadow: normalizeString(source.shadow),
     mockupSourceFrameId: normalizeString(source.mockupSourceFrameId),
     screenScaleMode: screenScaleMode === 'fill' ? 'fill' : 'fit',
     showSafeArea: typeof source.showSafeArea === 'boolean'
@@ -4253,15 +4260,19 @@ function renderBuiltinShellMarkup(
   shellKey: string,
   outerRect: DesignRect,
   screenRect: DesignRect,
+  shadow: string = preset.shadow,
 ): string {
   const outerRadius = Math.max(16, Math.round(Math.min(outerRect.width, outerRect.height) * 0.06))
   const screenRadius = Math.max(12, Math.round(Math.min(screenRect.width, screenRect.height) * 0.04))
   const cameraDotX = outerRect.x + outerRect.width / 2
   const cameraDotY = outerRect.y + Math.max(14, Math.round(outerRect.height * 0.025))
+  const shadowFilterAttr = normalizeString(shadow)
+    ? ` filter="drop-shadow(${escapeXml(shadow)})"`
+    : ''
 
   if (preset.deviceFamily === 'browser') {
     const chromeHeight = Math.max(48, Math.round(screenRect.y - outerRect.y))
-    return `<g filter="drop-shadow(${escapeXml(preset.shadow)})">
+    return `<g${shadowFilterAttr}>
       <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
       <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${chromeHeight}" rx="${outerRadius}" ry="${outerRadius}" fill="#e2e8f0" />
       <circle cx="${outerRect.x + 28}" cy="${outerRect.y + chromeHeight / 2}" r="6" fill="#fb7185" />
@@ -4280,7 +4291,7 @@ function renderBuiltinShellMarkup(
     const standY = outerRect.y + outerRect.height + 8
     const baseX = outerRect.x + (outerRect.width - baseWidth) / 2
     const baseY = standY + standHeight
-    return `<g filter="drop-shadow(${escapeXml(preset.shadow)})">
+    return `<g${shadowFilterAttr}>
       <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
       <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${screenRadius}" ry="${screenRadius}" fill="#ffffff" />
       <rect x="${standX}" y="${standY}" width="${standWidth}" height="${standHeight}" rx="${Math.round(standHeight / 2)}" ry="${Math.round(standHeight / 2)}" fill="#94a3b8" />
@@ -4302,14 +4313,14 @@ function renderBuiltinShellMarkup(
     const crownHeight = Math.max(26, Math.round(outerRect.height * 0.18))
     const crownX = outerRect.x + outerRect.width - Math.max(2, Math.round(outerRect.width * 0.01))
     const crownY = outerRect.y + (outerRect.height - crownHeight) / 2
-    return `<g filter="drop-shadow(${escapeXml(preset.shadow)})">
+    return `<g${shadowFilterAttr}>
       <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
       <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${screenRadius}" ry="${screenRadius}" fill="#ffffff" />
       <rect x="${crownX}" y="${crownY}" width="${crownWidth}" height="${crownHeight}" rx="${Math.round(crownWidth / 2)}" ry="${Math.round(crownWidth / 2)}" fill="#475569" />
     </g>`
   }
 
-  return `<g filter="drop-shadow(${escapeXml(preset.shadow)})">
+  return `<g${shadowFilterAttr}>
     <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
     <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${screenRadius}" ry="${screenRadius}" fill="#ffffff" />
     ${shellKey === 'android-phone-shell'
@@ -4338,10 +4349,19 @@ function renderDeviceSurfaceMarkup(
 
   const screenRect = surfaceLayout.screenRect
   const clipId = `device-screen-${sanitizeIdentifier(frame.id, 'frame')}-${Math.round(outerRect.x)}-${Math.round(outerRect.y)}`
+  const deviceMetadata = normalizeRecord(frame.metadata?.device)
+  const deviceShadowPresetKey = normalizeString(deviceMetadata.shadowPresetKey)
+  const deviceShadowPreset = DEVICE_ARRANGEMENT_SHADOW_PRESETS.find(item => item.key === deviceShadowPresetKey)
+  const shadow = deviceShadowPreset
+    ? deviceShadowPreset.shadow
+    : normalizeString(deviceMetadata.shadow) || preset.shadow
+  const shadowFilterAttr = normalizeString(shadow)
+    ? ` filter="drop-shadow(${escapeXml(shadow)})"`
+    : ''
   const shellMarkup = surfaceLayout.shellKind === 'external' && surfaceLayout.shellAsset
-    ? `<image href="${escapeXml(surfaceLayout.shellAsset.src)}" x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" preserveAspectRatio="none" />`
+    ? `<g${shadowFilterAttr}><image href="${escapeXml(surfaceLayout.shellAsset.src)}" x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" preserveAspectRatio="none" /></g>`
     : surfaceLayout.shellKind === 'builtin'
-      ? renderBuiltinShellMarkup(preset, resolveBuiltinShellKey(preset), outerRect, screenRect)
+      ? renderBuiltinShellMarkup(preset, resolveBuiltinShellKey(preset), outerRect, screenRect, shadow)
       : ''
   const screenContentMarkup = renderScreenContentMarkup(composition, frame, screenRect, clipId)
 
@@ -6330,6 +6350,114 @@ export const DEVICE_ARRANGEMENT_EXPORT_SIZE_PRESETS: Array<{
   { key: 'custom', title: '自定义', width: 1600, height: 1600 },
 ]
 
+export const DEVICE_ARRANGEMENT_SHADOW_PRESETS: Array<{
+  key: DeviceArrangementShadowPresetKey
+  title: string
+  shadow: string
+}> = [
+  { key: 'none', title: '无阴影', shadow: '' },
+  { key: 'soft', title: '柔和阴影', shadow: '0 22px 54px rgba(15, 23, 42, 0.18)' },
+  { key: 'deep', title: '强阴影', shadow: '0 42px 110px rgba(15, 23, 42, 0.28)' },
+]
+
+export const DEVICE_ARRANGEMENT_SPACING_PRESETS: Array<{
+  key: DeviceArrangementSpacingPresetKey
+  title: string
+  spread: number
+  sizeScale: number
+}> = [
+  { key: 'compact', title: '紧凑', spread: 0.84, sizeScale: 1.08 },
+  { key: 'balanced', title: '均衡', spread: 1, sizeScale: 1 },
+  { key: 'spacious', title: '舒展', spread: 1.16, sizeScale: 0.94 },
+]
+
+export const DEVICE_ARRANGEMENT_ROTATION_PRESETS: Array<{
+  key: DeviceArrangementRotationPresetKey
+  title: string
+  factor: number
+}> = [
+  { key: 'none', title: '无倾斜', factor: 0 },
+  { key: 'soft', title: '轻微倾斜', factor: 0.72 },
+  { key: 'dynamic', title: '动态倾斜', factor: 1.18 },
+]
+
+export const DEVICE_ARRANGEMENT_TEMPLATE_PRESETS: Array<{
+  key: string
+  title: string
+  summary: string
+  layoutPresetKey: DeviceArrangementLayoutPresetKey
+  exportSizePresetKey: DeviceArrangementExportSizePresetKey
+  customWidth?: number
+  customHeight?: number
+  background: string
+  backgroundMode: DesignExportBackgroundMode
+  shadowPresetKey: DeviceArrangementShadowPresetKey
+  spacingPresetKey: DeviceArrangementSpacingPresetKey
+  rotationPresetKey: DeviceArrangementRotationPresetKey
+  watermarkText?: string
+}> = [
+  {
+    key: 'launch-clean',
+    title: '新品封面',
+    summary: '单机居中，适合首图。',
+    layoutPresetKey: 'solo',
+    exportSizePresetKey: 'square',
+    background: '#f8fafc',
+    backgroundMode: 'solid',
+    shadowPresetKey: 'soft',
+    spacingPresetKey: 'balanced',
+    rotationPresetKey: 'none',
+  },
+  {
+    key: 'social-overlap',
+    title: '叠屏预告',
+    summary: '双机错位，适合社媒。',
+    layoutPresetKey: 'duo-overlap',
+    exportSizePresetKey: 'portrait-4-5',
+    background: '#e0f2fe',
+    backgroundMode: 'gradient',
+    shadowPresetKey: 'deep',
+    spacingPresetKey: 'compact',
+    rotationPresetKey: 'dynamic',
+  },
+  {
+    key: 'feature-fan',
+    title: '功能合集',
+    summary: '三屏扇形，适合亮点页。',
+    layoutPresetKey: 'trio-fan',
+    exportSizePresetKey: 'wide-16-9',
+    background: '#ecfdf5',
+    backgroundMode: 'solid',
+    shadowPresetKey: 'soft',
+    spacingPresetKey: 'spacious',
+    rotationPresetKey: 'dynamic',
+  },
+  {
+    key: 'desktop-pair',
+    title: '桌面联动',
+    summary: '桌面主画面搭配手机。',
+    layoutPresetKey: 'desktop-phone',
+    exportSizePresetKey: 'wide-16-9',
+    background: '#fdf2f8',
+    backgroundMode: 'gradient',
+    shadowPresetKey: 'soft',
+    spacingPresetKey: 'balanced',
+    rotationPresetKey: 'soft',
+  },
+  {
+    key: 'store-grid',
+    title: '截图矩阵',
+    summary: '多图规整，适合商店图。',
+    layoutPresetKey: 'grid',
+    exportSizePresetKey: 'portrait-4-5',
+    background: '#fefce8',
+    backgroundMode: 'solid',
+    shadowPresetKey: 'none',
+    spacingPresetKey: 'compact',
+    rotationPresetKey: 'none',
+  },
+]
+
 export interface DeviceArrangementSceneItemInput {
   screenshotSrc: string
   screenshotName?: string
@@ -6345,6 +6473,9 @@ export interface DeviceArrangementSceneInput {
   items?: DeviceArrangementSceneItemInput[]
   layoutPresetKey?: DeviceArrangementLayoutPresetKey
   exportSizePresetKey?: DeviceArrangementExportSizePresetKey
+  shadowPresetKey?: DeviceArrangementShadowPresetKey
+  spacingPresetKey?: DeviceArrangementSpacingPresetKey
+  rotationPresetKey?: DeviceArrangementRotationPresetKey
   customWidth?: number
   customHeight?: number
   exportScale?: number
@@ -6386,6 +6517,24 @@ function resolveDeviceArrangementLayoutPresetKey(value: unknown): DeviceArrangem
     : 'solo'
 }
 
+function resolveDeviceArrangementShadowPreset(value: unknown) {
+  const normalized = normalizeString(value)
+  return DEVICE_ARRANGEMENT_SHADOW_PRESETS.find(item => item.key === normalized)
+    || DEVICE_ARRANGEMENT_SHADOW_PRESETS.find(item => item.key === 'soft')!
+}
+
+function resolveDeviceArrangementSpacingPreset(value: unknown) {
+  const normalized = normalizeString(value)
+  return DEVICE_ARRANGEMENT_SPACING_PRESETS.find(item => item.key === normalized)
+    || DEVICE_ARRANGEMENT_SPACING_PRESETS.find(item => item.key === 'balanced')!
+}
+
+function resolveDeviceArrangementRotationPreset(value: unknown) {
+  const normalized = normalizeString(value)
+  return DEVICE_ARRANGEMENT_ROTATION_PRESETS.find(item => item.key === normalized)
+    || DEVICE_ARRANGEMENT_ROTATION_PRESETS.find(item => item.key === 'soft')!
+}
+
 function resolveArrangementFitSize(
   preset: DeviceFramePreset,
   maxWidth: number,
@@ -6410,8 +6559,12 @@ function resolveArrangementDevicePlacements(
   pageWidth: number,
   pageHeight: number,
   layoutPresetKey: DeviceArrangementLayoutPresetKey,
+  spacingPresetKey: DeviceArrangementSpacingPresetKey,
+  rotationPresetKey: DeviceArrangementRotationPresetKey,
 ): Array<{ x: number, y: number, width: number, height: number, rotation: number }> {
   const count = Math.max(1, items.length)
+  const spacingPreset = resolveDeviceArrangementSpacingPreset(spacingPresetKey)
+  const rotationPreset = resolveDeviceArrangementRotationPreset(rotationPresetKey)
   const presetFor = (index: number) => resolveDeviceFramePreset(
     normalizeString(items[index]?.deviceFramePresetKey) || 'iphone-16-pro',
   )
@@ -6423,17 +6576,19 @@ function resolveArrangementDevicePlacements(
     maxHeightRatio: number,
     rotation = 0,
   ) => {
+    const centerOffsetX = centerX - pageWidth / 2
+    const centerOffsetY = centerY - pageHeight / 2
     const size = resolveArrangementFitSize(
       presetFor(index),
-      pageWidth * maxWidthRatio,
-      pageHeight * maxHeightRatio,
+      pageWidth * maxWidthRatio * spacingPreset.sizeScale,
+      pageHeight * maxHeightRatio * spacingPreset.sizeScale,
     )
     return {
-      x: Math.round(centerX - size.width / 2),
-      y: Math.round(centerY - size.height / 2),
+      x: Math.round(pageWidth / 2 + centerOffsetX * spacingPreset.spread - size.width / 2),
+      y: Math.round(pageHeight / 2 + centerOffsetY * spacingPreset.spread - size.height / 2),
       width: size.width,
       height: size.height,
-      rotation,
+      rotation: Math.round(rotation * rotationPreset.factor),
     }
   }
 
@@ -6518,18 +6673,13 @@ export function buildDeviceArrangementSceneDocument(input: DeviceArrangementScen
     }))
     .filter(item => Boolean(item.screenshotSrc))
     .slice(0, 9)
-  const safeItems = items.length > 0
-    ? items
-    : [{
-        screenshotSrc: '',
-        screenshotName: '截图 1',
-        deviceFramePresetKey: 'iphone-16-pro',
-        shellAsset: null,
-        shellMode: 'builtin' as DeviceShellMode,
-      }]
+  const safeItems = items
   const templateKey = 'device-showcase'
   const exportSize = resolveDeviceArrangementExportSize(input)
   const layoutPresetKey = resolveDeviceArrangementLayoutPresetKey(input.layoutPresetKey)
+  const shadowPreset = resolveDeviceArrangementShadowPreset(input.shadowPresetKey)
+  const spacingPreset = resolveDeviceArrangementSpacingPreset(input.spacingPresetKey)
+  const rotationPreset = resolveDeviceArrangementRotationPreset(input.rotationPresetKey)
   const background = normalizeString(input.background) || '#f8fafc'
   const accent = normalizeString(input.accent) || '#38bdf8'
   const page = createDefaultDesignPage({
@@ -6556,7 +6706,16 @@ export function buildDeviceArrangementSceneDocument(input: DeviceArrangementScen
       workspaceBackground: '#f8fafc',
     },
   })
-  const placements = resolveArrangementDevicePlacements(safeItems, exportSize.width, exportSize.height, layoutPresetKey)
+  const placements = safeItems.length > 0
+    ? resolveArrangementDevicePlacements(
+        safeItems,
+        exportSize.width,
+        exportSize.height,
+        layoutPresetKey,
+        spacingPreset.key,
+        rotationPreset.key,
+      )
+    : []
   const frames: DesignFrameModel[] = []
   const elements: DesignElementModel[] = []
   const assetMap = new Map<string, DesignAssetModel>()
@@ -6630,6 +6789,8 @@ export function buildDeviceArrangementSceneDocument(input: DeviceArrangementScen
         device: {
           shellMode: shellAsset?.id ? 'external' : item.shellMode || 'builtin',
           shellAssetId: shellAsset?.id || undefined,
+          shadowPresetKey: shadowPreset.key,
+          shadow: shadowPreset.shadow,
           mockupSourceFrameId: sourceFrameId,
           screenScaleMode: 'fit',
           showSafeArea: false,
@@ -6705,6 +6866,25 @@ export function buildDeviceArrangementSceneDocument(input: DeviceArrangementScen
       ...normalizeRecord(composition.metadata),
       designMode: 'device_arrangement',
       layoutPresetKey,
+      deviceArrangement: {
+        layoutPresetKey,
+        exportSizePresetKey: exportSize.sizePresetKey,
+        customWidth: exportSize.sizePresetKey === 'custom' ? exportSize.width : undefined,
+        customHeight: exportSize.sizePresetKey === 'custom' ? exportSize.height : undefined,
+        exportScale: Math.max(1, toFiniteNumber(input.exportScale, 1)),
+        background,
+        backgroundMode: normalizeDesignExportBackgroundMode(input.backgroundMode, 'solid'),
+        shadowPresetKey: shadowPreset.key,
+        spacingPresetKey: spacingPreset.key,
+        rotationPresetKey: rotationPreset.key,
+        items: safeItems.map(item => ({
+          screenshotName: item.screenshotName,
+          deviceFramePresetKey: normalizeString(item.deviceFramePresetKey) || 'iphone-16-pro',
+          shellMode: item.shellAsset?.id ? 'external' : item.shellMode || 'builtin',
+          shellAssetId: item.shellAsset?.id || undefined,
+        })),
+        watermarkText: normalizeString(input.watermarkText) || undefined,
+      },
     },
   })
 }
@@ -7714,12 +7894,12 @@ export function renderCompositionAssetToSvg(
     ? Math.round(exportBounds.width)
     : hasFixedPageExportSize
       ? pageExport.width
-    : Math.max(DEFAULT_ARTBOARD_WIDTH, Math.round(exportBounds.width + padding * 2))
+      : Math.max(DEFAULT_ARTBOARD_WIDTH, Math.round(exportBounds.width + padding * 2))
   const height = singleFrame
     ? Math.round(exportBounds.height)
     : hasFixedPageExportSize
       ? pageExport.height
-    : Math.max(DEFAULT_ARTBOARD_HEIGHT, Math.round(exportBounds.height + padding * 2))
+      : Math.max(DEFAULT_ARTBOARD_HEIGHT, Math.round(exportBounds.height + padding * 2))
   const offsetX = singleFrame ? -exportBounds.x : hasFixedPageExportSize ? 0 : padding - exportBounds.x
   const offsetY = singleFrame ? -exportBounds.y : hasFixedPageExportSize ? 0 : padding - exportBounds.y
   const themeTokens = singleFrame

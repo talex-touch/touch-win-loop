@@ -18,6 +18,7 @@ import {
   resolveDesignFrameExportMetadata,
   resolveDesignFrameGridMetadata,
   resolveDesignFrameLayoutMetadata,
+  resolveDesignPageExportMetadata,
   resolveDesignPageWorkspaceBackground,
 } from '~~/shared/utils/scene-document'
 
@@ -229,6 +230,9 @@ const frameClipContentEnabled = computed(
 )
 const pageClipToPage = computed(() =>
   Boolean(props.page?.metadata?.clipToPage),
+)
+const pageExport = computed(() =>
+  resolveDesignPageExportMetadata(props.page?.metadata?.export),
 )
 const elementSupportsRadius = computed(() =>
   Boolean(
@@ -447,6 +451,15 @@ function updatePageMetadata(patch: Record<string, unknown>): void {
   emit('updatePage', {
     metadata: {
       ...(props.page?.metadata || {}),
+      ...patch,
+    },
+  })
+}
+
+function updatePageExportMetadata(patch: Record<string, unknown>): void {
+  updatePageMetadata({
+    export: {
+      ...(props.page?.metadata?.export || {}),
       ...patch,
     },
   })
@@ -1673,6 +1686,22 @@ function updateElementConstraints(
                 "
               >
             </label>
+            <label class="workspace-design-inspector__compact-field">
+              <span class="workspace-design-inspector__compact-label">R</span>
+              <input
+                :value="Math.round(Number(props.frame.rotation || 0))"
+                class="workspace-design-inspector__compact-input"
+                type="number"
+                @change="
+                  emit('updateFrame', {
+                    rotation: toFiniteNumber(
+                      ($event.target as HTMLInputElement).value,
+                      Number(props.frame.rotation || 0),
+                    ),
+                  })
+                "
+              >
+            </label>
             <label
               class="workspace-design-inspector__compact-field workspace-design-inspector__compact-field--span-two"
             >
@@ -1888,6 +1917,20 @@ function updateElementConstraints(
                 <span class="workspace-design-inspector__meta-value">{{
                   currentMockupCatalogVariant.title
                 }}</span>
+              </div>
+              <div class="workspace-design-inspector__meta-row">
+                <span class="workspace-design-inspector__meta-key">壳状态</span>
+                <span class="workspace-design-inspector__meta-value">
+                  {{
+                    frameDeviceMetadata.shellMode === "external"
+                      ? selectedShellAsset
+                        ? "真实设备壳"
+                        : "等待壳资源"
+                      : frameDeviceMetadata.shellMode === "none"
+                        ? "不显示设备壳"
+                        : "内置设备壳"
+                  }}
+                </span>
               </div>
             </div>
 
@@ -3085,6 +3128,93 @@ function updateElementConstraints(
           v-if="isSectionOpen('page', 'export', true)"
           class="workspace-design-inspector__group-body"
         >
+          <div
+            class="workspace-design-inspector__field-grid workspace-design-inspector__field-grid--two"
+          >
+            <label class="workspace-design-inspector__field">
+              <span class="workspace-design-inspector__label">导出宽度</span>
+              <input
+                :value="pageExport.width || ''"
+                class="workspace-design-inspector__input"
+                type="number"
+                min="0"
+                placeholder="自动"
+                @change="
+                  updatePageExportMetadata({
+                    width: Math.max(
+                      0,
+                      Math.round(
+                        toFiniteNumber(
+                          ($event.target as HTMLInputElement).value,
+                          pageExport.width,
+                        ),
+                      ),
+                    ),
+                  })
+                "
+              >
+            </label>
+            <label class="workspace-design-inspector__field">
+              <span class="workspace-design-inspector__label">导出高度</span>
+              <input
+                :value="pageExport.height || ''"
+                class="workspace-design-inspector__input"
+                type="number"
+                min="0"
+                placeholder="自动"
+                @change="
+                  updatePageExportMetadata({
+                    height: Math.max(
+                      0,
+                      Math.round(
+                        toFiniteNumber(
+                          ($event.target as HTMLInputElement).value,
+                          pageExport.height,
+                        ),
+                      ),
+                    ),
+                  })
+                "
+              >
+            </label>
+            <label class="workspace-design-inspector__field">
+              <span class="workspace-design-inspector__label">导出倍率</span>
+              <input
+                :value="pageExport.scale"
+                class="workspace-design-inspector__input"
+                type="number"
+                min="1"
+                step="0.5"
+                @change="
+                  updatePageExportMetadata({
+                    scale: Math.max(
+                      1,
+                      toFiniteNumber(
+                        ($event.target as HTMLInputElement).value,
+                        pageExport.scale,
+                      ),
+                    ),
+                  })
+                "
+              >
+            </label>
+            <label class="workspace-design-inspector__field">
+              <span class="workspace-design-inspector__label">背景模式</span>
+              <select
+                :value="pageExport.backgroundMode"
+                class="workspace-design-inspector__input"
+                @change="
+                  updatePageExportMetadata({
+                    backgroundMode: ($event.target as HTMLSelectElement).value,
+                  })
+                "
+              >
+                <option value="transparent">transparent</option>
+                <option value="solid">solid</option>
+                <option value="gradient">gradient</option>
+              </select>
+            </label>
+          </div>
           <label class="workspace-design-inspector__check">
             <input
               :checked="pageClipToPage"

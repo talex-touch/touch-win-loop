@@ -35,6 +35,15 @@ interface ShareProjectResourcePayload {
   duration: ProjectResourceShareDurationPreset
 }
 
+interface CreateCollabResourcePayload {
+  kind: 'markdown' | 'draw'
+  purpose?: 'notes' | 'freeform' | 'design' | 'workflow'
+  parentResourceId?: string | null
+  title?: string
+  initialDrawValue?: string
+  designMode?: 'blank' | 'device_arrangement'
+}
+
 const props = withDefaults(defineProps<{
   naturalQuery: string
   major: string
@@ -170,7 +179,7 @@ const emit = defineEmits<{
   'openAccountCenter': []
   'createMeeting': [value: { mode: ProjectMeetingMode }]
   'selectMeeting': [meetingId: string]
-  'createCollabResource': [payload: { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design' | 'workflow', parentResourceId?: string | null }]
+  'createCollabResource': [payload: CreateCollabResourcePayload]
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
   'patchProjectResourceTree': [payload: { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> }]

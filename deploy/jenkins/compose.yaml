@@ -1,7 +1,6 @@
 services:
   winloop:
     image: ghcr.io/talex-touch/touch-win-loop:latest
-    command: node --import ./.output/server/sentry.server.config.mjs .output/server/index.mjs
     restart: unless-stopped
     env_file:
       - ${RUNTIME_ENV_FILE:-.env.runtime}

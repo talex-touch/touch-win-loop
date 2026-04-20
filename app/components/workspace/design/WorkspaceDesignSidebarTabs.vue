@@ -1,12 +1,16 @@
 <script setup lang="ts">
-type DesignSidebarTab = 'pages' | 'frames' | 'assets'
+import { computed } from 'vue'
+
+type DesignSidebarTab = 'arrangement' | 'pages' | 'frames' | 'assets'
 
 const props = withDefaults(
   defineProps<{
     activeTab?: DesignSidebarTab
+    showArrangement?: boolean
   }>(),
   {
     activeTab: 'pages',
+    showArrangement: false,
   },
 )
 
@@ -14,11 +18,12 @@ const emit = defineEmits<{
   'update:activeTab': [tab: DesignSidebarTab]
 }>()
 
-const tabs: Array<{ id: DesignSidebarTab, label: string, icon: string }> = [
+const tabs = computed<Array<{ id: DesignSidebarTab, label: string, icon: string }>>(() => [
+  ...(props.showArrangement ? [{ id: 'arrangement' as const, label: 'Arrange', icon: 'devices' }] : []),
   { id: 'pages', label: 'Pages', icon: 'description' },
   { id: 'frames', label: 'Frames', icon: 'dashboard_customize' },
   { id: 'assets', label: 'Assets', icon: 'imagesmode' },
-]
+])
 </script>
 
 <template>

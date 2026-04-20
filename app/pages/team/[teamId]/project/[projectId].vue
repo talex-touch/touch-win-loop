@@ -6989,7 +6989,14 @@ async function createCollabResource(
   resourceInput:
     | 'markdown'
     | 'draw'
-    | { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design' | 'workflow', parentResourceId?: string | null },
+    | {
+      kind: 'markdown' | 'draw'
+      purpose?: 'notes' | 'freeform' | 'design' | 'workflow'
+      parentResourceId?: string | null
+      title?: string
+      initialDrawValue?: string
+      designMode?: 'blank' | 'device_arrangement'
+    },
 ) {
   const projectId = String(activeProjectId.value || '').trim()
   const kind = typeof resourceInput === 'string' ? resourceInput : resourceInput.kind
@@ -6999,6 +7006,15 @@ async function createCollabResource(
   const parentResourceId = typeof resourceInput === 'string'
     ? ''
     : String(resourceInput.parentResourceId || '').trim()
+  const requestedTitle = typeof resourceInput === 'string'
+    ? ''
+    : String(resourceInput.title || '').trim()
+  const initialDrawValue = typeof resourceInput === 'string'
+    ? ''
+    : String(resourceInput.initialDrawValue || '')
+  const designMode = typeof resourceInput === 'string'
+    ? 'blank'
+    : (resourceInput.designMode || 'blank')
   if (!projectId)
     return
 
@@ -7012,7 +7028,7 @@ async function createCollabResource(
         purpose,
         ...(purpose === 'design'
           ? {
-              title: '设计稿',
+              title: requestedTitle || (designMode === 'device_arrangement' ? '设备排布' : '设计稿'),
               drawMode: 'composition',
               sceneSourceType: 'image_mockup',
               templateKey: 'device-showcase',
@@ -7035,6 +7051,14 @@ async function createCollabResource(
             ? 'flow'
             : 'preview',
       })
+      if (initialDrawValue) {
+        await nextTick()
+        updateCollabDrawContent(initialDrawValue)
+        statusLine.value = designMode === 'device_arrangement'
+          ? '已创建设备排布，静态导出稿已生成。'
+          : `已创建${resourceLabel}，初始内容已写入。`
+        return
+      }
       statusLine.value = `已创建${resourceLabel}，协作模式已打开。`
       return
     }

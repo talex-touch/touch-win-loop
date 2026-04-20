@@ -23,6 +23,10 @@ import {
   COLLAB_NOTES_RESOURCE_LABEL,
   COLLAB_WORKFLOW_RESOURCE_LABEL,
 } from '~~/shared/utils/collab-resource'
+import {
+  buildDeviceArrangementSceneDocument,
+  serializeSceneDocument,
+} from '~~/shared/utils/scene-document'
 import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 import {
   isProjectUploadTaskSidebarVisible,
@@ -75,6 +79,15 @@ interface ShareProjectResourcePayload {
   resourceId: string
   visibility: ProjectResourceShareVisibility
   duration: ProjectResourceShareDurationPreset
+}
+
+interface CreateCollabResourcePayload {
+  kind: 'markdown' | 'draw'
+  purpose?: 'notes' | 'freeform' | 'design' | 'workflow'
+  parentResourceId?: string | null
+  title?: string
+  initialDrawValue?: string
+  designMode?: 'blank' | 'device_arrangement'
 }
 
 interface WorkspaceLinkedContestResourceCategoryGroup {
@@ -174,7 +187,7 @@ const emit = defineEmits<{
   'openSettingsPanel': []
   'openMemberManagementPanel': []
   'openFlowPanel': []
-  'createCollabResource': [payload: { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design' | 'workflow', parentResourceId?: string | null }]
+  'createCollabResource': [payload: CreateCollabResourcePayload]
   'openDefenseMode': []
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
@@ -1558,6 +1571,22 @@ function openDesignCanvasFromMenu() {
   emit('createCollabResource', { kind: 'draw', purpose: 'design', parentResourceId: null })
 }
 
+function openDeviceArrangementFromMenu() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  projectResourceAddMenuOpen.value = false
+  emit('createCollabResource', {
+    kind: 'draw',
+    purpose: 'design',
+    parentResourceId: null,
+    title: '设备排布',
+    initialDrawValue: serializeSceneDocument(buildDeviceArrangementSceneDocument({
+      title: '设备排布',
+    })),
+    designMode: 'device_arrangement',
+  })
+}
+
 function openWorkflowCanvasFromMenu() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
@@ -1731,6 +1760,12 @@ function buildProjectResourceAddMenuItems(): ContextMenuItem[] {
       disabled,
     },
     {
+      key: 'createDeviceArrangement',
+      label: '新建设备排布',
+      icon: 'devices',
+      disabled,
+    },
+    {
       key: 'createWorkflowCanvas',
       label: `新建${COLLAB_WORKFLOW_RESOURCE_LABEL}`,
       icon: 'flowsheet',
@@ -1893,6 +1928,9 @@ function requestProjectResourceAddMenu(anchorEl: HTMLElement | null): void {
             return
           case 'createDesignCanvas':
             openDesignCanvasFromMenu()
+            return
+          case 'createDeviceArrangement':
+            openDeviceArrangementFromMenu()
             return
           case 'createWorkflowCanvas':
             openWorkflowCanvasFromMenu()

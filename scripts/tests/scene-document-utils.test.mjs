@@ -819,6 +819,132 @@ it('设备预设目录、单图 mockup 语义和旧文档兼容都可用', async
   )
 })
 
+it('设备排布文档支持源画板绑定、静态旋转和页面级固定导出', async () => {
+  const {
+    appendDesignFrameToSceneDocument,
+    buildDeviceArrangementSceneDocument,
+    createEmptySceneDocument,
+    renderCompositionAssetToSvg,
+    serializeSceneDocument,
+  } = await loadSceneUtils()
+
+  const blankScene = buildDeviceArrangementSceneDocument({
+    title: '空白设备排布',
+  })
+  assert.equal(blankScene.sourceModel.frames?.length || 0, 0)
+  assert.equal(blankScene.sourceModel.currentPageId, 'device-arrangement-export')
+
+  const shellAsset = {
+    id: 'shell-iphone',
+    type: 'image',
+    name: 'iPhone Shell',
+    src: 'data:image/png;base64,shell',
+    metadata: {
+      role: 'device_shell',
+      deviceShell: {
+        presetKeys: ['iphone-16-pro'],
+        viewportRect: {
+          x: 18,
+          y: 18,
+          width: 390,
+          height: 844,
+        },
+        cornerRadius: 48,
+        source: 'uploaded',
+      },
+    },
+  }
+  const scene = buildDeviceArrangementSceneDocument({
+    title: '设备排布',
+    layoutPresetKey: 'duo-overlap',
+    exportSizePresetKey: 'custom',
+    shadowPresetKey: 'none',
+    spacingPresetKey: 'spacious',
+    rotationPresetKey: 'dynamic',
+    customWidth: 1200,
+    customHeight: 900,
+    background: '#f8fafc',
+    backgroundMode: 'solid',
+    watermarkText: 'WinLoop',
+    items: [
+      {
+        screenshotSrc: 'data:image/png;base64,screen-a',
+        screenshotName: '首页',
+        deviceFramePresetKey: 'iphone-16-pro',
+        shellAsset,
+        shellMode: 'external',
+      },
+      {
+        screenshotSrc: 'data:image/png;base64,screen-b',
+        screenshotName: '详情页',
+        deviceFramePresetKey: 'iphone-16-pro',
+      },
+    ],
+  })
+
+  assert.equal(scene.drawMode, 'composition')
+  assert.equal(scene.sourceType, 'image_mockup')
+  assert.equal(scene.sourceModel.kind, 'composition')
+  assert.equal(scene.sourceModel.pages?.length, 2)
+  assert.equal(scene.sourceModel.currentPageId, 'device-arrangement-export')
+  const exportPage = scene.sourceModel.pages?.find(page => page.id === 'device-arrangement-export')
+  const sourcePage = scene.sourceModel.pages?.find(page => page.id === 'device-arrangement-sources')
+  assert.equal(exportPage?.metadata?.export?.width, 1200)
+  assert.equal(exportPage?.metadata?.export?.height, 900)
+  assert.equal(exportPage?.metadata?.export?.backgroundMode, 'solid')
+  assert.equal(scene.sourceModel.metadata?.deviceArrangement?.shadowPresetKey, 'none')
+  assert.equal(scene.sourceModel.metadata?.deviceArrangement?.spacingPresetKey, 'spacious')
+  assert.equal(scene.sourceModel.metadata?.deviceArrangement?.rotationPresetKey, 'dynamic')
+  assert.equal(scene.sourceModel.metadata?.deviceArrangement?.items?.[0]?.deviceFramePresetKey, 'iphone-16-pro')
+  assert.ok(sourcePage)
+
+  const mockupFrames = scene.sourceModel.frames?.filter(frame => frame.kind === 'device_mockup') || []
+  const sourceFrames = scene.sourceModel.frames?.filter(frame => frame.kind === 'device_artboard') || []
+  assert.equal(mockupFrames.length, 2)
+  assert.equal(sourceFrames.length, 2)
+  assert.equal(mockupFrames[0]?.metadata?.device?.mockupSourceFrameId, sourceFrames[0]?.id)
+  assert.equal(mockupFrames[0]?.metadata?.device?.shellMode, 'external')
+  assert.equal(mockupFrames[0]?.metadata?.device?.shellAssetId, 'shell-iphone')
+  assert.equal(mockupFrames[0]?.metadata?.device?.shadowPresetKey, 'none')
+  assert.notEqual(mockupFrames[0]?.rotation, 0)
+  assert.equal(scene.sourceModel.assets?.[0]?.metadata?.role, 'device_shell')
+
+  const svg = renderCompositionAssetToSvg(scene)
+  assert.match(svg, /width="1200" height="900"/)
+  assert.match(svg, /WinLoop/)
+  assert.match(svg, /rotate\(/)
+  assert.doesNotMatch(svg, /drop-shadow/)
+  assert.doesNotMatch(svg, /截图源/)
+
+  const canonical = JSON.parse(serializeSceneDocument(scene))
+  const canonicalMockup = canonical.sourceModel.frames.find(frame => frame.id === mockupFrames[0]?.id)
+  assert.equal(canonicalMockup.metadata.device.mockupSourceFrameId, sourceFrames[0]?.id)
+  assert.equal(canonicalMockup.metadata.device.shellAssetId, 'shell-iphone')
+  assert.notEqual(canonicalMockup.rotation, 0)
+
+  let rotatedScene = createEmptySceneDocument({
+    drawMode: 'composition',
+    sourceType: 'manual',
+    templateKey: 'device-showcase',
+    editorEngine: 'vueflow',
+  })
+  rotatedScene = appendDesignFrameToSceneDocument(rotatedScene, {
+    id: 'rotated-frame',
+    pageId: rotatedScene.sourceModel.currentPageId,
+    kind: 'freeform',
+    width: 100,
+    height: 200,
+    rotation: 450,
+  })
+  const rotatedFrame = rotatedScene.sourceModel.frames?.[0]
+  assert.equal(rotatedFrame?.rotation, 90)
+  const rotatedSvg = renderCompositionAssetToSvg(rotatedScene, {
+    frameId: 'rotated-frame',
+  })
+  assert.match(rotatedSvg, /width="200" height="100"/)
+  assert.match(rotatedSvg, /rotate\(90/)
+})
+
 it('device_mockup 的 screenTransform 会同步作用于预览与导出', async () => {
   const {
     appendDesignFrameToSceneDocument,
