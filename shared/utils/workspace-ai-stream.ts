@@ -33,6 +33,22 @@ function parseToolContent(content: string): { toolName: string, payloadSummary: 
   }
 }
 
+const WORKSPACE_TOOL_DISPLAY_NAME_MAP: Record<string, string> = {
+  get_workspace_context: '读取上下文',
+  web_search: '联网检索',
+  fetch_web_page: '读取网页',
+  propose_workflow_draft: '生成流程草案',
+  propose_scene_draft: '生成画布草案',
+  propose_document_change: '生成文档草案',
+  propose_change: '生成优化提案',
+  report_issue: '记录问题',
+  set_issue_report: '整理问题报告',
+}
+
+export function resolveWorkspaceToolDisplayName(toolName: string): string {
+  return WORKSPACE_TOOL_DISPLAY_NAME_MAP[toolName] || toolName
+}
+
 export function summarizeWorkspaceToolPayload(payload: unknown, maxLength = 180): string {
   if (payload === null || payload === undefined)
     return ''
@@ -134,10 +150,11 @@ export function resolveWorkspaceStreamSystemMessageView(
     const parsedFromContent = parseToolContent(normalizedContent)
     const toolName = toText(metadata?.toolName) || parsedFromContent.toolName
     const payloadSummary = toText(metadata?.payloadSummary) || parsedFromContent.payloadSummary
+    const toolLabel = toolName ? resolveWorkspaceToolDisplayName(toolName) : ''
     return {
       eventType,
       seq,
-      title: toolName ? `调用 ${toolName}` : '工具调用',
+      title: toolLabel || '工具调用',
       toolName,
       payloadSummary,
     }

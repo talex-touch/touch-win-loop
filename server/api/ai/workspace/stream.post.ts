@@ -12,6 +12,8 @@ import type {
   WorkflowDraftAction,
   WorkflowLayoutPreset,
   WorkflowStylePreset,
+  WorkspaceAiActionSource,
+  WorkspaceAiInteractionIntent,
   WorkspaceAiMode,
   WorkspaceContextualAssistantKey,
 } from '~~/shared/types/domain'
@@ -68,6 +70,14 @@ function normalizeMode(value: unknown): WorkspaceAiMode {
   return ALLOWED_MODES.includes(text) ? text : 'dialog_ask'
 }
 
+function normalizeInteractionIntent(value: unknown): WorkspaceAiInteractionIntent {
+  return toText(value) === 'draft_action' ? 'draft_action' : 'context_chat'
+}
+
+function normalizeActionSource(value: unknown): WorkspaceAiActionSource {
+  return toText(value) === 'toolbar' ? 'toolbar' : 'composer'
+}
+
 function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined): AiWorkspaceRequest {
   const context = body?.context || {}
   const workspaceId = toText(body?.teamId || body?.workspaceId || context.teamId || context.workspaceId)
@@ -97,6 +107,9 @@ function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined):
       assistantPreset: context.assistantPreset,
       assistantLabel: toText(context.assistantLabel),
       contextualAssistantKey: toText(context.contextualAssistantKey) as WorkspaceContextualAssistantKey | '',
+      interactionIntent: normalizeInteractionIntent(context.interactionIntent),
+      actionSource: normalizeActionSource(context.actionSource),
+      requestedAgentAction: toText(context.requestedAgentAction) as WorkflowDraftAction | undefined,
       activeTabId: toText(context.activeTabId),
       previewMode: toText(context.previewMode),
       resourcePurpose: toText(context.resourcePurpose) as CollabPurpose | '',
@@ -214,10 +227,12 @@ function buildWorkspaceBootstrapProgressMessage(request: AiWorkspaceRequest): st
 
   if (request.mode === 'contextual_agent') {
     const assistantLabel = toText(request.context?.assistantLabel)
+    if (request.context?.interactionIntent === 'draft_action' && assistantLabel && resourceTitle)
+      return `正在准备「${assistantLabel}」草案上下文：${resourceTitle}`
     if (assistantLabel && resourceTitle)
-      return `正在为「${assistantLabel}」读取当前资源「${resourceTitle}」的上下文...`
+      return `正在准备「${assistantLabel}」当前资源上下文：${resourceTitle}`
     if (assistantLabel)
-      return `正在为「${assistantLabel}」读取当前项目「${projectTitle || '未命名项目'}」的上下文...`
+      return `正在准备「${assistantLabel}」项目上下文：${projectTitle || '未命名项目'}`
   }
 
   return `正在读取当前项目「${projectTitle || '未命名项目'}」的上下文...`
@@ -605,6 +620,9 @@ export default defineEventHandler(async (event) => {
             assistantPreset: request.context?.assistantPreset || 'default',
             assistantLabel: toText(request.context?.assistantLabel),
             contextualAssistantKey: toText(request.context?.contextualAssistantKey) as WorkspaceContextualAssistantKey | '',
+            interactionIntent: normalizeInteractionIntent(request.context?.interactionIntent),
+            actionSource: normalizeActionSource(request.context?.actionSource),
+            requestedAgentAction: toText(request.context?.requestedAgentAction),
             activeTabId: toText(request.context?.activeTabId),
             previewMode: toText(request.context?.previewMode),
             resourcePurpose: toText(request.context?.resourcePurpose),

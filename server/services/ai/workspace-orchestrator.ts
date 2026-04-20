@@ -15,7 +15,9 @@ import type {
   WorkflowLayoutPreset,
   WorkflowSnapshot,
   WorkflowStylePreset,
+  WorkspaceAiActionSource,
   WorkspaceAiAssistantPreset,
+  WorkspaceAiInteractionIntent,
   WorkspaceAiMode,
   WorkspaceContextualAssistantKey,
 } from '~~/shared/types/domain'
@@ -90,6 +92,9 @@ export interface WorkspaceAiExecutionContext {
   assistantPreset: WorkspaceAiAssistantPreset
   assistantLabel: string
   contextualAssistantKey: WorkspaceContextualAssistantKey | ''
+  interactionIntent: WorkspaceAiInteractionIntent
+  actionSource: WorkspaceAiActionSource
+  requestedAgentAction: string
   activeTabId: string
   previewMode: string
   resourcePurpose: string
@@ -251,7 +256,7 @@ const WORKSPACE_AGENT_PROFILES: Record<WorkspaceSupportedMode, WorkspaceAgentPro
   contextual_agent: {
     mode: 'contextual_agent',
     allowWebAccess: false,
-    progressMessage: 'AI 正在生成待确认草案...',
+    progressMessage: 'AI 正在处理当前上下文...',
   },
 }
 
@@ -441,6 +446,9 @@ function buildContextSnapshot(context: WorkspaceAiExecutionContext): string {
     assistantPreset: context.assistantPreset,
     assistantLabel: context.assistantLabel,
     contextualAssistantKey: context.contextualAssistantKey,
+    interactionIntent: context.interactionIntent,
+    actionSource: context.actionSource,
+    requestedAgentAction: context.requestedAgentAction,
     activeTabId: context.activeTabId,
     previewMode: context.previewMode,
     resourcePurpose: context.resourcePurpose,
@@ -670,21 +678,35 @@ function isExplicitWorkflowDraftRequest(message: string): boolean {
   if (!normalized)
     return false
 
+  const isQuestionLike = includesAnyKeyword(normalized, [
+    '怎么',
+    '如何',
+    '为什么',
+    '一般',
+    '缺什么',
+    '是否',
+    '是不是',
+    '能不能',
+  ])
+  if (isQuestionLike) {
+    return false
+  }
+
   return includesAnyKeyword(normalized, [
     '生成',
     '画',
     '绘制',
     '做',
     '做个',
-    '整理',
-    '梳理',
     '补全',
     '续改',
     '调样式',
     '输出',
-    '给我',
-    '帮我',
     '来个',
+    '来一版',
+    '给我一个',
+    '给我一版',
+    '出一版',
   ]) && includesAnyKeyword(normalized, [
     '流程图',
     '流程',
@@ -699,6 +721,49 @@ function isExplicitWorkflowDraftRequest(message: string): boolean {
     'flowchart',
     'architecture',
   ])
+}
+
+function isExplicitContextualDraftRequest(message: string): boolean {
+  const normalized = toText(message).toLowerCase()
+  if (!normalized)
+    return false
+
+  if (isExplicitWorkflowDraftRequest(normalized))
+    return true
+
+  return includesAnyKeyword(normalized, [
+    '生成',
+    '画',
+    '绘制',
+    '补全',
+    '续改',
+    '调样式',
+    '改成',
+    '应用这个',
+    '按这个生成',
+    '就按这个',
+  ]) && !includesAnyKeyword(normalized, [
+    '怎么',
+    '如何',
+    '为什么',
+    '是否',
+    '是不是',
+    '能不能',
+    '可以吗',
+  ])
+}
+
+function isContextualDraftActionIntent(context: WorkspaceAiExecutionContext): boolean {
+  return context.interactionIntent === 'draft_action'
+    || context.actionSource === 'toolbar'
+    || Boolean(toText(context.requestedAgentAction))
+    || Boolean(toText(context.workflowAction))
+    || Boolean(toText(context.sceneAction))
+}
+
+function shouldExposeAgentProtoDraftTools(context: WorkspaceAiExecutionContext): boolean {
+  return isContextualDraftActionIntent(context)
+    || isExplicitContextualDraftRequest(context.latestUserMessage)
 }
 
 function isStandaloneWorkflowTopicRequest(message: string): boolean {
@@ -736,7 +801,7 @@ function isStandaloneWorkflowTopicRequest(message: string): boolean {
   ])
 }
 
-function buildModePrompt(profile: WorkspaceAgentProfile): string {
+function buildModePrompt(profile: WorkspaceAgentProfile, context?: WorkspaceAiExecutionContext): string {
   if (profile.mode === 'dialog_ask') {
     return [
       '模式：对话询问（只读）。',
@@ -745,21 +810,25 @@ function buildModePrompt(profile: WorkspaceAgentProfile): string {
       '如果信息不足，要明确指出缺口，而不是编造结论。',
       '如果上下文提供了方括号资料引用标签，引用依据时必须保留对应标签，不要编造新的 citation。',
       '如果上下文提示索引未完成，必须明确说明“索引未完成，结果可能不完整”。',
-      '当且仅当当前上下文是 AgentProto + workflow，且用户明确要求生成图、补全图、续改图或调样式时，才允许调用 propose_workflow_draft 生成待确认草案。',
-      '在 AgentProto + workflow 场景下，如果用户明确要求生成流程图/脑图/架构图等草案，应优先生成 workflow 草案，不要退回成项目摘要或上下文复述。',
-      '如果这是一个独立示例或模板主题的制图请求，应以用户给出的主题为主，当前项目资料只作为默认样式和布局参考。',
+      '即使当前资源是 AgentProto，也不要调用草案工具；如果用户要生成或修改图，请提示切回 AgentProto 上下文助手或使用工具栏动作。',
     ].join('\n')
   }
 
   if (profile.mode === 'contextual_agent') {
+    const draftActionIntent = context
+      ? isContextualDraftActionIntent(context) || isExplicitContextualDraftRequest(context.latestUserMessage)
+      : false
     return [
-      '模式：Contextual Agent（草案先行，确认后应用）。',
-      '你必须先调用 get_workspace_context 读取上下文，再决定是否生成草案。',
+      '模式：Contextual Agent（上下文协作 + 明确动作草案）。',
+      draftActionIntent
+        ? '本轮来自工具栏动作或明确草案请求：请先读取必要上下文，再调用匹配的草案工具。'
+        : '本轮默认是自由上下文聊天：可以先帮用户补充上下文、发散思路、整理方案或追问关键缺口，不要强行生成草案。',
       '禁止暗示已自动写入资源、已替换画布、已导入设计稿或已直接修改内容。',
-      '只有在当前上下文匹配对应助手能力时，才允许调用草案工具。',
+      '只有在用户点击工具栏动作，或明确要求生成、补全、续改、调样式时，才允许调用草案工具。',
       'AgentProto 的流程图场景使用 propose_workflow_draft。',
       'AgentProto 的自由画布/原型画布场景使用 propose_scene_draft。',
       '设计助手只输出结构源草案与导入建议，不做静默覆盖。',
+      '普通聊天可以自然回答，并在合适时提示“可以继续生成待确认草案”。',
     ].join('\n')
   }
 
@@ -794,6 +863,9 @@ function buildModePrompt(profile: WorkspaceAgentProfile): string {
 
 function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: WorkspaceAiExecutionContext): string {
   const explicitWorkflowDraftRequest = isExplicitWorkflowDraftRequest(context.latestUserMessage)
+  const explicitContextualDraftRequest = isExplicitContextualDraftRequest(context.latestUserMessage)
+  const draftActionIntent = isContextualDraftActionIntent(context)
+  const shouldRunDraftFlow = draftActionIntent || explicitContextualDraftRequest
   const standaloneWorkflowTopicRequest = isStandaloneWorkflowTopicRequest(context.latestUserMessage)
 
   if (profile.mode === 'auto_optimize') {
@@ -835,8 +907,12 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
             `当前助手：${context.assistantLabel || '设计助手'}`,
             `当前标签：${context.activeTabId || '未指定'}`,
             `当前画布：${context.resourceTitle || '未命名设计画布'}`,
-            '你可以生成结构源草案，但必须等待用户确认导入后才会真正应用到当前设计内容。',
-            '优先围绕页面结构、组件层次、交互状态与视觉一致性生成清晰草案。',
+            shouldRunDraftFlow
+              ? '本轮如果要生成结构源草案，必须等待用户确认导入后才会真正应用到当前设计内容。'
+              : '本轮优先作为设计搭子自然分析页面层级、组件拆分和交互路径；不要强行生成草案。',
+            shouldRunDraftFlow
+              ? '优先围绕页面结构、组件层次、交互状态与视觉一致性生成清晰草案。'
+              : '优先围绕页面结构、组件层次、交互状态与视觉一致性给出清晰建议。',
           ]
         : [
             `当前助手：${context.assistantLabel || '设计助手'}`,
@@ -850,7 +926,9 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
               `当前助手：${context.assistantLabel || 'AgentProto'}`,
               `当前标签：${context.activeTabId || '未指定'}`,
               `当前画布：${context.resourceTitle || '未命名流程画布'}`,
-              '优先围绕流程阶段、责任角色、输入输出、分支条件、异常回路和跨节点衔接生成可确认的草案。',
+              shouldRunDraftFlow
+                ? '本轮是明确制图动作：围绕流程阶段、责任角色、输入输出、分支条件、异常回路和跨节点衔接生成可确认草案。'
+                : '本轮优先自由协作：可以先帮用户补流程结构、找缺口、给组织建议，不要强行生成草案。',
               context.workflowSnapshot
                 ? `当前流程摘要：单页=${context.workflowSnapshot.isSinglePage ? '是' : '否'}，节点 ${context.workflowSnapshot.nodeCount}，连线 ${context.workflowSnapshot.edgeCount}，分组 ${context.workflowSnapshot.groupCount}。`
                 : '当前流程摘要：暂无可用 workflowSnapshot。',
@@ -859,7 +937,7 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
               context.workflowArchitectureView ? `当前架构视图：${context.workflowArchitectureView}` : '',
               context.workflowStylePreset ? `当前样式预设：${context.workflowStylePreset}` : '',
               context.workflowLayoutPreset ? `当前布局预设：${context.workflowLayoutPreset}` : '',
-              '如果用户明确要生成、补全、续改或调样式，请先读取上下文，再调用 propose_workflow_draft 生成完整草案；禁止暗示已经直接改图。',
+              '只有用户明确要生成、补全、续改或调样式时，才调用 propose_workflow_draft 生成完整草案；禁止暗示已经直接改图。',
               explicitWorkflowDraftRequest ? '当前这轮命中明确制图意图：优先生成 workflow 草案，不要停留在项目上下文复述。' : '',
               standaloneWorkflowTopicRequest ? '当前这轮更像独立示例/模板流程图请求：内容主题以用户输入为准，当前项目资料只用于默认布局和样式，不要把项目内容硬套进图里。' : '',
             ]
@@ -876,7 +954,7 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
               context.workflowArchitectureView ? `当前架构视图：${context.workflowArchitectureView}` : '',
               context.workflowStylePreset ? `当前样式预设：${context.workflowStylePreset}` : '',
               context.workflowLayoutPreset ? `当前布局预设：${context.workflowLayoutPreset}` : '',
-              '如果用户明确要生成、补全、续改或调样式，请先读取上下文，再调用 propose_workflow_draft 生成完整草案；禁止暗示已经直接改图。',
+              '如果用户明确要生成、补全、续改或调样式，请提示切回 AgentProto 上下文助手或使用工具栏动作；当前只读模式不要调用草案工具。',
               explicitWorkflowDraftRequest ? '当前这轮命中明确制图意图：优先生成 workflow 草案，不要停留在项目上下文复述。' : '',
               standaloneWorkflowTopicRequest ? '当前这轮更像独立示例/模板流程图请求：内容主题以用户输入为准，当前项目资料只用于默认布局和样式，不要把项目内容硬套进图里。' : '',
             ])
@@ -886,17 +964,19 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
                 `当前助手：${context.assistantLabel || 'AgentProto'}`,
                 `当前标签：${context.activeTabId || '未指定'}`,
                 `当前画布：${context.resourceTitle || '未命名原型画布'}`,
-                '你可以生成、补全、续改或调样式，结果必须先产出待确认草案。',
+                shouldRunDraftFlow
+                  ? '本轮是明确原型/自由画布动作：可以生成、补全、续改或调样式，结果必须先产出待确认草案。'
+                  : '本轮优先自由协作：可以先帮用户整理结构、补充上下文、讨论页面流转，不要强行生成草案。',
                 context.sceneAction ? `当前指定动作：${context.sceneAction}` : '',
                 context.sceneTemplate ? `当前图类型：${context.sceneTemplate}` : '',
                 context.sceneArchitectureView ? `当前架构视图：${context.sceneArchitectureView}` : '',
                 context.sceneStylePreset ? `当前样式预设：${context.sceneStylePreset}` : '',
                 context.sceneLayoutPreset ? `当前布局预设：${context.sceneLayoutPreset}` : '',
                 context.sceneHash ? `当前画布哈希：${context.sceneHash}` : '',
-                '如果用户明确要生成、补全、续改或调样式，请调用 propose_scene_draft 返回结构源草案；禁止暗示已经直接改图。',
+                '只有用户明确要生成、补全、续改或调样式时，才调用 propose_scene_draft 返回结构源草案；禁止暗示已经直接改图。',
               ]
             : [
-                `当前助手：${context.assistantLabel || '原型助手'}`,
+                `当前助手：${context.assistantLabel || 'AgentProto'}`,
                 `当前标签：${context.activeTabId || '未指定'}`,
                 `当前画布：${context.resourceTitle || '未命名原型画布'}`,
                 '优先围绕页面流转、模块拆分、核心状态与交互路径给出只读建议。',
@@ -914,9 +994,13 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
     '',
     ...assistantGuide,
     '',
-    '请先调用 get_workspace_context 读取当前项目上下文，再决定是否联网检索。',
+    profile.mode === 'contextual_agent' && !shouldRunDraftFlow
+      ? '如果只是创意讨论、结构建议或上下文补充，可以直接回答；只有依赖当前资源细节时才调用 get_workspace_context。'
+      : '请先调用 get_workspace_context 读取当前项目上下文，再决定是否联网检索。',
     profile.mode === 'contextual_agent'
-      ? '输出必须围绕“草案先行、确认后应用”，不要把草案描述成已落盘结果。'
+      ? (shouldRunDraftFlow
+          ? '本轮输出围绕待确认草案；不要把草案描述成已落盘结果。'
+          : '本轮优先自然协作，不要强行进入草案模式；如适合继续执行，可提示用户使用工具栏或明确说“生成草案”。')
       : '只做只读问答，输出必须简洁、具体、可执行。',
     '如果上下文带有方括号资料引用标签，回答引用依据时必须保留对应标签。',
     '',
@@ -1784,25 +1868,24 @@ function createWorkspaceToolset(
   if (profile.mode === 'document_assist')
     tools.push(createWorkspaceDocumentDraftTool(input, state))
 
-  if (profile.mode === 'dialog_ask' && isAgentProtoWorkflowContext(input.context))
-    tools.push(createWorkspaceWorkflowDraftTool(input, state))
-
   if (profile.mode === 'contextual_agent') {
-    if (isAgentProtoWorkflowContext(input.context))
+    if (isAgentProtoWorkflowContext(input.context) && shouldExposeAgentProtoDraftTools(input.context))
       tools.push(createWorkspaceWorkflowDraftTool(input, state))
-    if (isAgentProtoSceneContext(input.context))
+    if (isAgentProtoSceneContext(input.context) && shouldExposeAgentProtoDraftTools(input.context))
       tools.push(createWorkspaceSceneDraftTool(input, state))
   }
 
   return { tools }
 }
 
-function buildWorkspaceSystemPrompt(profile: WorkspaceAgentProfile, channelPrompt: string): string {
+function buildWorkspaceSystemPrompt(profile: WorkspaceAgentProfile, channelPrompt: string, context: WorkspaceAiExecutionContext): string {
   return [
     '你是 Loopy，负责 Team 与项目上下文下的工作台问答与分析。',
-    buildModePrompt(profile),
+    buildModePrompt(profile, context),
     channelPrompt ? `[场景提示词]\n${channelPrompt}` : '',
-    '必须先获取上下文再作答，避免与上下文冲突。',
+    profile.mode === 'contextual_agent'
+      ? '需要依赖当前资源细节或准备草案时先获取上下文；普通上下文讨论可以直接回答。'
+      : '需要依赖当前项目事实时先获取上下文，避免与上下文冲突。',
   ].filter(Boolean).join('\n')
 }
 
@@ -1866,7 +1949,9 @@ function finalizeWorkspaceExecutionResult(
             ? '已生成一条待确认的流程草案，请先预览后再决定是否应用。'
             : (state.sceneDraft
                 ? '已生成一条待确认的自由画布草案，请先预览后再决定是否应用。'
-                : 'AI 未返回有效结果，请稍后重试。'))
+                : (profile.mode === 'contextual_agent'
+                    ? '我可以先帮你梳理上下文；如果要落到画布，请继续明确生成、补全、续改或调样式。'
+                    : 'AI 未返回有效结果，请稍后重试。')))
     ),
     changeDrafts: [],
     issueDrafts: [],
@@ -1969,7 +2054,7 @@ async function executeWorkspaceAgentMode(
       const agent = createDeepAgent({
         model: createChatModel(input.ai),
         tools: toolset.tools,
-        systemPrompt: buildWorkspaceSystemPrompt(profile, channelPrompt),
+        systemPrompt: buildWorkspaceSystemPrompt(profile, channelPrompt, input.context),
       })
 
       const stream = agent.streamEvents({

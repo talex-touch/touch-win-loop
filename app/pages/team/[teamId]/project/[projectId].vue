@@ -128,7 +128,10 @@ import {
   COLLAB_WORKFLOW_RESOURCE_LABEL,
   resolveCollabResourceDisplayLabel,
 } from '~~/shared/utils/collab-resource'
-import { createWorkspaceStreamSystemChatMessage } from '~~/shared/utils/workspace-ai-stream'
+import {
+  createWorkspaceStreamSystemChatMessage,
+  resolveWorkspaceToolDisplayName,
+} from '~~/shared/utils/workspace-ai-stream'
 import {
   createWorkspaceLocalChatMessage,
   finalizeWorkspaceLocalChatMessages,
@@ -213,8 +216,8 @@ import {
   buildMarkdownWorkspaceOutlineNodes,
   buildProjectWorkspaceOutlineNodes,
   buildWorkflowWorkspaceOutlineNodes,
-  parseWorkspaceOutlineNavigationHash,
   parseWorkspaceOutlineDesignDocument,
+  parseWorkspaceOutlineNavigationHash,
 } from '~/utils/workspace-outline'
 import {
   clamp,
@@ -9948,6 +9951,7 @@ async function sendWorkspaceAiMessage(
           : undefined,
       })
     : null
+  const requestedAgentAction = workflowRequest?.action || sceneRequest?.action
 
   const renderStreamMessages = () => {
     const nextMessages: ChatMessage[] = [...baseMessages]
@@ -9986,6 +9990,9 @@ async function sendWorkspaceAiMessage(
       assistantPreset: currentWorkspaceAssistantContext.value.assistantPreset,
       assistantLabel: currentWorkspaceAssistantContext.value.assistantLabel,
       contextualAssistantKey: currentWorkspaceAssistantContext.value.contextualAssistantKey,
+      interactionIntent: requestedAgentAction ? 'draft_action' : 'context_chat',
+      actionSource: requestedAgentAction ? 'toolbar' : 'composer',
+      requestedAgentAction,
       activeTabId: currentWorkspaceAssistantContext.value.activeTabId,
       previewMode: currentWorkspaceAssistantContext.value.previewMode,
       resourcePurpose: currentWorkspaceAssistantContext.value.resourcePurpose,
@@ -10076,7 +10083,7 @@ async function sendWorkspaceAiMessage(
         renderStreamMessages()
         const name = String(data.name || '').trim()
         if (name)
-          statusLine.value = `AI 正在调用工具：${name}`
+          statusLine.value = `AI 正在${resolveWorkspaceToolDisplayName(name)}`
         else
           statusLine.value = 'AI 正在调用工具...'
         continue
@@ -10154,7 +10161,7 @@ async function sendWorkspaceAiMessage(
         }
         else {
           statusLine.value = runningMode === 'contextual_agent'
-            ? '上下文助手已完成，本次未生成可安全应用的草案。'
+            ? '上下文助手已完成。需要落到画布时，可以继续生成待确认草案。'
             : '只读对话完成，项目未发生写入。'
         }
         continue

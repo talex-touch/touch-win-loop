@@ -366,11 +366,11 @@ const inputPlaceholder = computed(() => {
     return '向 AgentDef 追问当前答辩策略，例如：这轮应该先补哪条证据？'
   if (props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual') {
     if (props.projectContextualAssistantPreset === 'design')
-      return '描述当前页面结构或交互目标，例如：把评审首页拆成更清晰的页面层级，并说明关键交互。'
+      return '可以先聊页面结构、交互目标或视觉问题；需要落地时再生成待确认结构草案。'
     if (props.projectContextualAssistantPreset === 'prototype' && props.projectContextualAssistantLabel === 'AgentProto')
-      return '描述你要生成或续改的流程/结构，例如：给我生成一个健身流程图，或把当前流程补全成可确认草案。'
+      return '先随便聊流程/结构想法也可以；说“生成草案”或点上方动作时，AgentProto 再产出待确认草案。'
     if (props.projectContextualAssistantPreset === 'prototype')
-      return '描述原型页面或交互路径，例如：梳理从首页到提交成功页的关键状态和跳转。'
+      return '先聊原型页面、状态或交互路径；需要落地时再生成待确认草案。'
   }
   if (props.aiMode === 'auto_optimize')
     return '描述你希望生成哪些可审批提案，例如：补齐摘要与问题陈述。'
@@ -2540,13 +2540,13 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
             <div v-if="aiMode === 'contextual_agent'" class="text-[11px] text-sky-700 leading-5 p-3 border border-sky-200 rounded bg-sky-50">
               <template v-if="props.workbenchMode === 'project' && props.projectContextualAssistantKey === 'agent_proto'">
-                当前为 AgentProto，可生成、补全、续改或调样式；结果会先产出草案，确认后才会应用到当前画布。
+                当前为 AgentProto，可以先聊想法，也可以用上方动作生成待确认草案；应用前会再次确认。
               </template>
               <template v-else-if="props.workbenchMode === 'project' && props.projectContextualAssistantKey === 'design_assistant'">
-                当前为设计助手，可生成结构源草案；确认后再导入到当前设计内容，不会静默覆盖。
+                当前为设计助手，可以先聊结构、层级和交互；需要落地时再生成待确认结构源草案。
               </template>
               <template v-else>
-                当前为上下文助手模式，可基于当前资源先生成待确认草案，再决定是否应用。
+                当前为上下文助手，可以先自由补充上下文；明确执行动作时再生成待确认草案。
               </template>
             </div>
 

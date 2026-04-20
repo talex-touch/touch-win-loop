@@ -2887,6 +2887,8 @@ export interface AiProjectChatResult {
 export type WorkspaceAiMode = 'dialog_ask' | 'contextual_agent' | 'auto_optimize' | 'issue_discovery' | 'defense' | 'document_assist'
 export type WorkspaceAiAssistantPreset = 'default' | 'document' | 'prototype' | 'design'
 export type WorkspaceContextualAssistantKey = 'agent_doc' | 'agent_proto' | 'design_assistant'
+export type WorkspaceAiInteractionIntent = 'context_chat' | 'draft_action'
+export type WorkspaceAiActionSource = 'composer' | 'toolbar'
 
 export type ProjectResourceCommentAnchorType = 'text_selection' | 'image_node'
 export type ProjectResourceCommentThreadStatus = 'open' | 'resolved'
@@ -3660,6 +3662,9 @@ export interface AiWorkspaceRequest {
     documentAction?: AiWorkspaceDocumentAction
     assistantPreset?: WorkspaceAiAssistantPreset
     contextualAssistantKey?: WorkspaceContextualAssistantKey | ''
+    interactionIntent?: WorkspaceAiInteractionIntent
+    actionSource?: WorkspaceAiActionSource
+    requestedAgentAction?: WorkflowDraftAction
     assistantLabel?: string
     activeTabId?: string
     previewMode?: string
