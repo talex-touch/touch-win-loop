@@ -13,6 +13,7 @@ import {
   resolveDashScopeNativeBaseURL,
   resolvePlatformAiRequestBaseURL,
 } from '~~/server/utils/platform-ai-base-url'
+import { resolvePlatformAiRuntimeByCapability } from '~~/server/utils/platform-ai-channels'
 import {
   normalizePlatformAiClientType,
   normalizeProjectKnowledgeEmbeddingApiStyle,
@@ -475,17 +476,19 @@ export async function createKnowledgeEmbedding(input: {
   event?: H3Event
 }): Promise<KnowledgeEmbeddingResult> {
   const { runtime } = await readEffectiveRuntimeSettings(input.event)
-  const provider = normalizeAiRuntimeProvider(runtime.ai.provider)
-  const apiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(runtime.ai.embeddingApiStyle)
-  const model = normalizeEmbeddingModel(runtime.ai.embeddingModel || runtime.ai.model || (apiStyle === 'bailian-multimodal' ? 'qwen3-vl-embedding' : ''))
+  const modelRuntime = resolvePlatformAiRuntimeByCapability(runtime, 'embedding', runtime.ai.embeddingModel)
+  const embeddingAi = modelRuntime?.ai || runtime.ai
+  const provider = normalizeAiRuntimeProvider(embeddingAi.provider)
+  const apiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(modelRuntime?.modelConfig.embeddingApiStyle, runtime.ai.embeddingApiStyle)
+  const model = normalizeEmbeddingModel(modelRuntime?.modelConfig.model || runtime.ai.embeddingModel || runtime.ai.model || (apiStyle === 'bailian-multimodal' ? 'qwen3-vl-embedding' : ''))
   const dimensions = resolveKnowledgeEmbeddingDimensions({
     apiStyle,
     model,
-    configured: runtime.ai.embeddingDimensions,
+    configured: modelRuntime?.modelConfig.embeddingDimensions || runtime.ai.embeddingDimensions,
   })
-  const normalizedApiKey = normalizePlatformAiApiKey(runtime.ai.apiKey)
-  const timeoutMs = Math.max(3_000, Math.min(120_000, Number(runtime.ai.timeoutMs || 15_000)))
-  const maxRetries = Math.max(0, Math.min(6, Number(runtime.ai.maxRetries || 0)))
+  const normalizedApiKey = normalizePlatformAiApiKey(embeddingAi.apiKey)
+  const timeoutMs = Math.max(3_000, Math.min(120_000, Number(embeddingAi.timeoutMs || 15_000)))
+  const maxRetries = Math.max(0, Math.min(6, Number(embeddingAi.maxRetries || 0)))
   const sourceText = normalizeKnowledgeEmbeddingInputText({
     text: input.text,
     contents: input.contents,
@@ -497,9 +500,9 @@ export async function createKnowledgeEmbedding(input: {
 
   if (apiStyle === 'bailian-multimodal') {
     const embeddingRuntimeConfigured = isAiRuntimeConfigured({
-      provider: runtime.ai.provider,
-      baseURL: runtime.ai.baseURL,
-      apiKey: runtime.ai.apiKey,
+      provider: embeddingAi.provider,
+      baseURL: embeddingAi.baseURL,
+      apiKey: embeddingAi.apiKey,
       model,
     })
     if (!embeddingRuntimeConfigured || !normalizedApiKey)
@@ -511,7 +514,7 @@ export async function createKnowledgeEmbedding(input: {
       provider,
       model,
       apiKey: normalizedApiKey,
-      baseURL: resolveDashScopeNativeBaseURL(runtime.ai.baseURL, provider),
+      baseURL: resolveDashScopeNativeBaseURL(embeddingAi.baseURL, provider),
       timeoutMs,
       maxRetries,
       dimensions,
@@ -520,11 +523,11 @@ export async function createKnowledgeEmbedding(input: {
     })
   }
 
-  const endpoint = resolvePlatformAiRequestBaseURL(runtime.ai.baseURL, provider)
+  const endpoint = resolvePlatformAiRequestBaseURL(embeddingAi.baseURL, provider)
   const embeddingRuntimeConfigured = isAiRuntimeConfigured({
-    provider: runtime.ai.provider,
-    baseURL: runtime.ai.baseURL,
-    apiKey: runtime.ai.apiKey,
+    provider: embeddingAi.provider,
+    baseURL: embeddingAi.baseURL,
+    apiKey: embeddingAi.apiKey,
     model,
   })
   if (!embeddingRuntimeConfigured || !model || !endpoint || !normalizedApiKey) {

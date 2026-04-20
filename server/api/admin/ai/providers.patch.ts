@@ -19,6 +19,7 @@ import {
   resolvePlatformAiModelCatalogJson,
   resolvePlatformAiModelPricingJson,
   resolvePlatformAiRegistry,
+  resolvePlatformAiRuntimeByCapability,
 } from '~~/server/utils/platform-ai-channels'
 import {
   normalizePlatformAiClientType,
@@ -59,6 +60,7 @@ interface ProvidersPatchBody {
   defaults?: {
     defaultModel?: string
     embeddingModel?: string
+    visionModel?: string
     documentModel?: string
   }
   scenes?: {
@@ -137,6 +139,7 @@ export default defineEventHandler(async (event) => {
     const defaultsSeed = {
       defaultModel: toText(defaultsBody?.defaultModel) || currentRegistry.defaults.defaultModel,
       embeddingModel: toText(defaultsBody?.embeddingModel) || currentRegistry.defaults.embeddingModel,
+      visionModel: toText(defaultsBody?.visionModel) || currentRegistry.defaults.visionModel,
       documentModel: toText(defaultsBody?.documentModel) || currentRegistry.defaults.documentModel,
     }
 
@@ -147,11 +150,12 @@ export default defineEventHandler(async (event) => {
         : {} as ProviderDraftBody
       const currentProvider = currentProvidersById.get(toText(source.id)) || null
       const providerId = toText(source.id) || currentProvider?.id || `provider_${index + 1}`
-      const apiKeyMode = toMode(source.apiKeyMode)
+      const providedApiKey = normalizePlatformAiApiKey(source.apiKey)
+      const apiKeyMode = providedApiKey ? 'replace' : toMode(source.apiKeyMode)
       let apiKey = currentProvider?.apiKey || ''
       if (apiKeyMode === 'replace') {
         if (masterKeyReady)
-          apiKey = normalizePlatformAiApiKey(source.apiKey)
+          apiKey = providedApiKey
         else
           ignoredProviderApiKeyIds.push(providerId)
       }
@@ -228,21 +232,25 @@ export default defineEventHandler(async (event) => {
       },
     }
     const finalRegistry = resolvePlatformAiRegistry(finalPreviewRuntime)
-    const primaryProvider = finalRegistry.providers.find(item => item.capability === 'llm' && item.enabled)
+    const chatRuntime = resolvePlatformAiRuntimeByCapability(finalPreviewRuntime, 'chat', finalRegistry.defaults.defaultModel)
+    const embeddingRuntime = resolvePlatformAiRuntimeByCapability(finalPreviewRuntime, 'embedding', finalRegistry.defaults.embeddingModel)
+    const visionRuntime = resolvePlatformAiRuntimeByCapability(finalPreviewRuntime, 'vision', finalRegistry.defaults.visionModel)
+    const primaryProvider = chatRuntime?.provider
+      || finalRegistry.providers.find(item => item.capability === 'llm' && item.enabled)
       || finalRegistry.providers.find(item => item.capability === 'llm')
       || null
 
-    ai.provider = primaryProvider?.provider || ''
-    ai.clientType = primaryProvider?.clientType || currentRuntime.ai.clientType
-    ai.baseURL = primaryProvider?.baseURL || ''
-    ai.apiKey = primaryProvider?.apiKey || ''
-    ai.model = finalRegistry.defaults.defaultModel || ''
-    ai.embeddingModel = finalRegistry.defaults.embeddingModel || ''
-    ai.embeddingApiStyle = primaryProvider?.embeddingApiStyle || currentRuntime.ai.embeddingApiStyle
-    ai.embeddingDimensions = Number(primaryProvider?.embeddingDimensions || currentRuntime.ai.embeddingDimensions || 0)
-    ai.visionModel = primaryProvider?.visionModel || ''
-    ai.timeoutMs = primaryProvider?.timeoutMs || currentRuntime.ai.timeoutMs
-    ai.maxRetries = primaryProvider?.maxRetries || currentRuntime.ai.maxRetries
+    ai.provider = chatRuntime?.ai.provider || primaryProvider?.provider || ''
+    ai.clientType = chatRuntime?.ai.clientType || currentRuntime.ai.clientType
+    ai.baseURL = chatRuntime?.ai.baseURL || primaryProvider?.baseURL || ''
+    ai.apiKey = chatRuntime?.ai.apiKey || primaryProvider?.apiKey || ''
+    ai.model = chatRuntime?.ai.model || finalRegistry.defaults.defaultModel || ''
+    ai.embeddingModel = embeddingRuntime?.modelConfig.model || finalRegistry.defaults.embeddingModel || ''
+    ai.embeddingApiStyle = embeddingRuntime?.modelConfig.embeddingApiStyle || primaryProvider?.embeddingApiStyle || currentRuntime.ai.embeddingApiStyle
+    ai.embeddingDimensions = Number(embeddingRuntime?.modelConfig.embeddingDimensions || primaryProvider?.embeddingDimensions || currentRuntime.ai.embeddingDimensions || 0)
+    ai.visionModel = visionRuntime?.modelConfig.model || finalRegistry.defaults.visionModel || ''
+    ai.timeoutMs = chatRuntime?.ai.timeoutMs || primaryProvider?.timeoutMs || currentRuntime.ai.timeoutMs
+    ai.maxRetries = chatRuntime?.ai.maxRetries || primaryProvider?.maxRetries || currentRuntime.ai.maxRetries
 
     const runtimeForCatalog = {
       ...finalPreviewRuntime,

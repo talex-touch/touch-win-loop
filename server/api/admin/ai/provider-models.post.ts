@@ -1,5 +1,5 @@
 import { setResponseStatus } from 'h3'
-import { discoverProviderModels } from '~~/server/services/admin-ai/provider-models'
+import { discoverProviderModels, resolveDashScopeMultimodalEmbeddingEndpoint } from '~~/server/services/admin-ai/provider-models'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
@@ -177,8 +177,11 @@ export default defineEventHandler(async (event) => {
 
     return ok({
       providerId: resolvedProvider.id,
+      providerName: resolvedProvider.name,
       provider,
       baseURL,
+      endpoint: items[0]?.sourceEndpoint || '',
+      nativeEmbeddingEndpoint: resolveDashScopeMultimodalEmbeddingEndpoint(baseURL, provider),
       fetchedAt: new Date().toISOString(),
       items,
     }, {

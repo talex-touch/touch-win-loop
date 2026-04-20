@@ -1,5 +1,6 @@
-import type { PlatformAiProviderAdapter } from '~~/server/utils/platform-ai-channels'
-import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
+import type { PlatformAiModelCapability, PlatformAiProviderAdapter } from '~~/server/utils/platform-ai-channels'
+import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolveDashScopeNativeBaseURL, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
+import { inferPlatformAiModelCapabilities } from '~~/server/utils/platform-ai-channels'
 
 export type ProviderModelScope = 'llm' | 'docAi' | 'provider'
 
@@ -9,6 +10,9 @@ export interface ProviderModelItem {
   model: string
   label: string
   mode: ProviderModelScope
+  capabilities: PlatformAiModelCapability[]
+  sourceEndpoint?: string
+  rawText?: string
   inputPricePer1M: number | null
   outputPricePer1M: number | null
   currency: string
@@ -194,6 +198,20 @@ function appendPath(baseURL: string, path: string): string {
   return `${baseURL.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`
 }
 
+const DASH_SCOPE_MULTIMODAL_EMBEDDING_PATH = '/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding'
+
+function isDashScopeProvider(provider: string, baseURL = ''): boolean {
+  const text = `${provider} ${baseURL}`.toLowerCase()
+  return text.includes('dashscope') || text.includes('bailian') || text.includes('qwen') || text.includes('aliyuncs.com')
+}
+
+export function resolveDashScopeMultimodalEmbeddingEndpoint(baseURL: string, provider: string): string {
+  if (!isDashScopeProvider(provider, baseURL))
+    return ''
+  const nativeBase = resolveDashScopeNativeBaseURL(baseURL, provider)
+  return nativeBase ? appendPath(nativeBase, DASH_SCOPE_MULTIMODAL_EMBEDDING_PATH) : ''
+}
+
 function resolveModelsEndpoints(
   baseURL: string,
   provider: string,
@@ -219,6 +237,42 @@ function resolveModelsEndpoints(
       unique.push(item)
   }
   return unique
+}
+
+function buildSuggestedProviderModels(input: {
+  scope: ProviderModelScope
+  provider: string
+  baseURL: string
+}): ProviderModelItem[] {
+  if (!isDashScopeProvider(input.provider, input.baseURL))
+    return []
+
+  const endpoint = resolveDashScopeMultimodalEmbeddingEndpoint(input.baseURL, input.provider)
+  if (!endpoint)
+    return []
+
+  const model = 'tongyi-embedding-vision-plus'
+  const label = 'Tongyi Embedding Vision Plus'
+  return [{
+    id: `${input.provider}:${model}`,
+    provider: input.provider,
+    model,
+    label,
+    mode: input.scope,
+    capabilities: ['embedding'],
+    sourceEndpoint: endpoint,
+    rawText: JSON.stringify({
+      id: model,
+      name: label,
+      source: 'dashscope-native-suggested',
+      endpoint,
+    }),
+    inputPricePer1M: null,
+    outputPricePer1M: null,
+    currency: 'USD',
+    pricingSource: 'none',
+    pricingText: '价格未返回',
+  }]
 }
 
 function readPricingNumber(record: Record<string, unknown>, keys: string[]): number | null {
@@ -455,6 +509,15 @@ function resolveModelLabel(record: Record<string, unknown>, model: string): stri
     || model
 }
 
+function buildModelRawText(record: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(record)
+  }
+  catch {
+    return ''
+  }
+}
+
 function shouldTryNextEndpoint(status: number): boolean {
   return status === 404 || status === 405 || status === 406 || status === 501
 }
@@ -568,7 +631,7 @@ export async function discoverProviderModels(input: DiscoverProviderModelsInput)
   const timeoutMs = Math.max(3000, Math.min(60000, Number(input.timeoutMs || 12000)))
   const endpoints = resolveModelsEndpoints(input.baseURL, provider)
 
-  const { payload } = await fetchModelsPayload({
+  const { payload, endpoint } = await fetchModelsPayload({
     endpoints,
     apiKey,
     timeoutMs,
@@ -584,6 +647,8 @@ export async function discoverProviderModels(input: DiscoverProviderModelsInput)
     if (!model)
       continue
 
+    const label = resolveModelLabel(record, model)
+    const rawText = buildModelRawText(record)
     const remotePricing = readRemotePricing(record)
     const tablePricing = resolvePricingFromTable(pricingTable, provider, model)
     const inputPricePer1M = remotePricing?.inputPricePer1M ?? tablePricing?.inputPricePer1M ?? null
@@ -594,8 +659,16 @@ export async function discoverProviderModels(input: DiscoverProviderModelsInput)
       id: `${provider}:${model}`,
       provider,
       model,
-      label: resolveModelLabel(record, model),
+      label,
       mode: input.scope,
+      capabilities: inferPlatformAiModelCapabilities({
+        model,
+        label,
+        provider,
+        rawText,
+      }),
+      sourceEndpoint: endpoint,
+      rawText,
       inputPricePer1M,
       outputPricePer1M,
       currency,
@@ -604,6 +677,15 @@ export async function discoverProviderModels(input: DiscoverProviderModelsInput)
     }
 
     deduped.set(model, item)
+  }
+
+  for (const item of buildSuggestedProviderModels({
+    scope: input.scope,
+    provider,
+    baseURL: input.baseURL,
+  })) {
+    if (!deduped.has(item.model))
+      deduped.set(item.model, item)
   }
 
   return Array.from(deduped.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))

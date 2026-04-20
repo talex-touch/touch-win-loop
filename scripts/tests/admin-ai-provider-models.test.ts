@@ -172,6 +172,35 @@ describe('admin-ai provider models', () => {
     expect(items.map(item => item.model)).toEqual(['gpt-4.1', 'gpt-4.1-mini'])
   })
 
+  it('会为拉取模型补充能力和实际请求端点', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return okJson({
+        data: [
+          { id: 'text-embedding-v4', name: 'Text Embedding V4' },
+          { id: 'qwen-plus', name: 'Qwen Plus' },
+          { id: 'qwen-vl-max', name: 'Qwen VL Max' },
+          { id: 'wanx2.1-t2i-turbo', name: 'Wanx Image' },
+        ],
+      })
+    }))
+
+    const items = await discoverProviderModels({
+      scope: 'provider',
+      provider: 'dashscope',
+      baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      apiKey: 'test-key',
+    })
+
+    expect(items.find(item => item.model === 'text-embedding-v4')?.capabilities).toEqual(['embedding'])
+    expect(items.find(item => item.model === 'qwen-plus')?.capabilities).toEqual(['chat'])
+    expect(items.find(item => item.model === 'qwen-vl-max')?.capabilities).toEqual(['chat', 'vision'])
+    expect(items.find(item => item.model === 'wanx2.1-t2i-turbo')?.capabilities).toEqual(['image-gen'])
+    expect(items.find(item => item.model === 'text-embedding-v4')?.sourceEndpoint).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/models')
+    expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.capabilities).toEqual(['embedding'])
+    expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.sourceEndpoint).toBe('https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding')
+    expect(items.find(item => item.model === 'text-embedding-v4')?.rawText).toContain('Text Embedding V4')
+  })
+
   it('缺少 provider 或 baseURL 时会直接报配置错误', async () => {
     await expect(discoverProviderModels({
       scope: 'provider',

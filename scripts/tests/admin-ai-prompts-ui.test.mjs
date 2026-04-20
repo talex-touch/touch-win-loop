@@ -17,7 +17,9 @@ it('顶部 tab 保留渠道和模型、场景、Audits、Logs', async () => {
 it('页面已切换为多 Provider 管理入口', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.match(source, /class="ai-prompts-page space-y-4 w-full min-w-0"/, '页面根节点应为全宽布局')
+  assert.match(source, /class="[^"]*\bai-prompts-page\b[^"]*"/, '页面根节点应为 ai-prompts-page')
+  assert.match(source, /class="[^"]*\bw-full\b[^"]*"/, '页面根节点应为全宽布局')
+  assert.match(source, /class="[^"]*\bmin-w-0\b[^"]*"/, '页面根节点应限制最小宽度')
   assert.match(source, /Provider 列表/, '缺少 Provider 列表')
   assert.match(source, /新增 Provider/, '缺少新增 Provider 入口')
   assert.match(source, /Provider 类型/, '缺少 Provider 类型编辑项')
@@ -38,7 +40,10 @@ it('provider 类型固定包含 LLM 与 search-only 首批枚举', async () => {
 it('默认模型与联网能力不再单独占据渠道和模型页', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.doesNotMatch(source, /<div class="text-base font-semibold">\s*默认模型\s*<\/div>/, '默认模型卡片应已移出当前页')
+  assert.match(source, /默认能力模型/, '缺少按能力拆分的默认模型配置')
+  assert.match(source, /默认聊天模型/, '缺少默认聊天模型')
+  assert.match(source, /默认 Embedding 模型/, '缺少默认 Embedding 模型')
+  assert.match(source, /默认视觉模型/, '缺少默认视觉模型')
   assert.doesNotMatch(source, /<div class="text-base font-semibold">\s*联网能力\s*<\/div>/, '联网能力卡片应已移出当前页')
   assert.match(source, /每个 Provider 独立维护类型、密钥、模型池，以及搜索或 LLM 能力配置。/, 'Provider 列表说明应体现搜索能力归属 Provider')
   assert.doesNotMatch(source, /价格优先级固定为 手工覆盖 > NewAPI 导入 > none。/, '旧统一模型池说明不应继续存在')
@@ -51,13 +56,17 @@ it('provider 抽屉支持独立测试、拉取模型和维护模型池', async (
   assert.match(source, /测试 Provider/, '缺少 Provider 测试入口')
   assert.match(source, /拉取模型/, '缺少 Provider 拉取模型入口')
   assert.match(source, /Provider 模型池/, '缺少 Provider 模型池区域')
-  assert.match(source, /每个 LLM Provider 维护自己的模型池与价格覆盖。/, '缺少 Provider 级模型池说明')
+  assert.match(source, /每个 LLM Provider 维护自己的模型池、能力标签、接入参数与价格覆盖。/, '缺少 Provider 级模型池说明')
+  assert.match(source, /Provider 只保存连接身份；模型能力与接入细节在模型池里维护。/, 'Provider 抽屉应按连接与模型池分层')
+  assert.doesNotMatch(source, /API Key 模式/, 'Provider API Key 不应再暴露模式下拉')
+  assert.match(source, /填写即替换并持久化；留空则保持已保存密钥不变。/, 'API Key 应采用输入即替换、留空保持的规则')
+  assert.doesNotMatch(source, /百炼原生 SDK/, '暂不应暴露不可用的百炼原生聊天接入')
 })
 
 it('search-only Provider 不参与 LLM 场景模型路由', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.match(source, /SearchXNG \/ Tavily 属于 search-only Provider，当前不会进入 LLM 模型池，也不能绑定到这些 LLM 场景。/, '缺少 search-only 限制说明')
+  assert.match(source, /搜索型 Provider，只做 search-only 登记，不参与 LLM 场景模型路由。/, '缺少 search-only 限制说明')
   assert.match(source, /只能选择 llm Provider/, '场景 Provider 选择应限制为 llm Provider')
   assert.match(source, /llmProviderOptions/, '场景 Provider 下拉应来自 llmProviderOptions')
 })
@@ -71,6 +80,19 @@ it('场景抽屉支持 Provider 绑定、轮询和模型回退链', async () => 
   assert.match(source, /模型回退链/, '缺少模型回退链项')
   assert.match(source, /复制当前策略到全部场景/, '缺少一键复制当前场景策略入口')
   assert.match(source, /一键设置全部场景/, '缺少批量配置入口')
+})
+
+it('模型编辑与导入弹窗支持能力配置和 embedding 搜索', async () => {
+  const source = await readFile(PAGE_FILE, 'utf8')
+
+  assert.match(source, /modelCapabilityOptions/, '缺少模型能力枚举')
+  assert.match(source, /模型能力/, '缺少模型能力编辑项')
+  assert.match(source, /modelPullCapabilityFilters/, '缺少导入模型能力过滤')
+  assert.match(source, /Provider 原始字段/, '导入搜索应覆盖 Provider 原始字段')
+  assert.match(source, /百炼多模态 Embedding 运行端点/, '导入弹窗应明确百炼 Embedding 原生端点')
+  assert.match(source, /未从该 Provider 拉取到 Embedding 模型/, '缺少 embedding 空结果提示')
+  assert.match(source, /tongyi-embedding-vision-plus/, '缺少百炼多模态 Embedding 模型提示')
+  assert.match(source, /providerEditorForm\.type !== 'dashscope-bailian'[\s\S]*value="response"/, 'DashScope 应隐藏 response 格式')
 })
 
 it('logs 表格与详情展示 AI 请求耗时和尝试链', async () => {

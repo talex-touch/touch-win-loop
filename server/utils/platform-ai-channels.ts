@@ -11,6 +11,7 @@ export type PlatformAiProviderAdapter = 'openai-compatible' | 'response'
 export type PlatformAiProviderCapability = 'llm' | 'search'
 export type PlatformAiProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'searchxng' | 'tavily'
 export type PlatformAiModelFormat = 'openai-compatible' | 'response'
+export type PlatformAiModelCapability = 'chat' | 'vision' | 'embedding' | 'image-gen' | 'video-gen'
 export type PlatformAiPricingSource = 'provider' | 'manual' | 'none'
 export type PlatformAiLoadBalanceStrategy = 'round_robin'
 export type PlatformAiChannelKey
@@ -39,6 +40,10 @@ export interface PlatformAiProviderModelConfig {
   model: string
   label: string
   format: PlatformAiModelFormat
+  capabilities: PlatformAiModelCapability[]
+  clientType: PlatformAiClientType
+  embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+  embeddingDimensions?: number
   enabled: boolean
   providerInputPricePer1M: number | null
   providerOutputPricePer1M: number | null
@@ -74,6 +79,7 @@ export interface PlatformAiProviderConfig {
 export interface PlatformAiSharedDefaults {
   defaultModel: string
   embeddingModel: string
+  visionModel: string
   documentModel: string
 }
 
@@ -119,6 +125,12 @@ export interface PlatformAiResolvedChannelRuntime {
   defaults: PlatformAiSharedDefaults
 }
 
+export interface PlatformAiResolvedCapabilityRuntime {
+  provider: PlatformAiProviderConfig
+  modelConfig: PlatformAiProviderModelConfig
+  ai: AiRuntimeConfig
+}
+
 export interface PlatformAiAggregatedModelItem {
   providerId: string
   providerName: string
@@ -128,6 +140,7 @@ export interface PlatformAiAggregatedModelItem {
   model: string
   label: string
   format: PlatformAiModelFormat
+  capabilities: PlatformAiModelCapability[]
   modelEnabled: boolean
   inputPricePer1M: number | null
   outputPricePer1M: number | null
@@ -192,6 +205,7 @@ const DOCUMENT_ASSIST_CHANNEL_KEYS: PlatformAiChannelKey[] = [
 
 const SEARCH_PROVIDER_TYPES = new Set<PlatformAiProviderType>(['searchxng', 'tavily'])
 const LEGACY_ROUND_ROBIN_POINTERS = new Map<string, number>()
+const MODEL_CAPABILITY_ORDER: PlatformAiModelCapability[] = ['chat', 'vision', 'embedding', 'image-gen', 'video-gen']
 
 function isDocumentAssistChannelKey(key: PlatformAiChannelKey): boolean {
   return DOCUMENT_ASSIST_CHANNEL_KEYS.includes(key)
@@ -250,6 +264,68 @@ function dedupeStrings(items: string[]): string[] {
     result.push(value)
   }
   return result
+}
+
+function normalizeModelCapability(value: unknown): PlatformAiModelCapability | null {
+  const normalized = toText(value).toLowerCase()
+  if (normalized === 'llm' || normalized === 'text-generation' || normalized === 'chat-completions')
+    return 'chat'
+  if (normalized === 'chat' || normalized === 'vision' || normalized === 'embedding' || normalized === 'image-gen' || normalized === 'video-gen')
+    return normalized
+  if (normalized === 'image_generation' || normalized === 'image-generation' || normalized === 'image')
+    return 'image-gen'
+  if (normalized === 'video_generation' || normalized === 'video-generation' || normalized === 'video')
+    return 'video-gen'
+  return null
+}
+
+function normalizeModelCapabilities(raw: unknown, fallback: PlatformAiModelCapability[]): PlatformAiModelCapability[] {
+  const source = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(/[,|\s]+/g)
+      : []
+  const normalized = source
+    .map(item => normalizeModelCapability(item))
+    .filter((item): item is PlatformAiModelCapability => Boolean(item))
+  const values = normalized.length > 0 ? normalized : fallback
+  const valueSet = new Set(values)
+  return MODEL_CAPABILITY_ORDER.filter(item => valueSet.has(item))
+}
+
+export function inferPlatformAiModelCapabilities(input: {
+  model: string
+  label?: string
+  provider?: string
+  rawText?: string
+}): PlatformAiModelCapability[] {
+  const model = toText(input.model)
+  const text = `${model} ${input.label || ''} ${input.provider || ''} ${input.rawText || ''}`.toLowerCase()
+  const result = new Set<PlatformAiModelCapability>()
+
+  if (/(?:^|[-_:./\s])(?:text-)?embed(?:ding)?(?:[-_:./\s]|$)|embedding|bge|gte|e5-|multimodal-embedding/.test(text))
+    result.add('embedding')
+
+  if (!result.has('embedding') && /(?:^|[-_:./\s])(?:qwen[-_.:]?vl|vl|vision|gpt-4o|gpt-4\.1|gpt-4[-_.:]?vision|gemini[-_.:]?pro[-_.:]?vision)(?:[-_:./\s]|$)/.test(text))
+    result.add('vision')
+
+  if (/wanx|(?:^|[-_:./\s])(?:dall[-_.:]?e|gpt-image|image-generation|stable-diffusion|flux|cogview|t2i)(?:[-_:./\s]|$)/.test(text))
+    result.add('image-gen')
+
+  if (/(?:^|[-_:./\s])(?:sora|kling|cogvideo|video-generation|text-to-video|image-to-video|t2v|i2v|wan.*video)(?:[-_:./\s]|$)/.test(text))
+    result.add('video-gen')
+
+  if (!result.has('embedding') && !result.has('image-gen') && !result.has('video-gen'))
+    result.add('chat')
+
+  return MODEL_CAPABILITY_ORDER.filter(item => result.has(item))
+}
+
+export function platformAiModelHasCapability(
+  model: Pick<PlatformAiProviderModelConfig, 'capabilities'> | null | undefined,
+  capability: PlatformAiModelCapability,
+): boolean {
+  return Boolean(model?.capabilities?.includes(capability))
 }
 
 function resolvePlatformAiProviderType(value: unknown, providerValue?: unknown): PlatformAiProviderType {
@@ -311,6 +387,33 @@ function toModelFormat(value: unknown, fallback: PlatformAiModelFormat): Platfor
   return fallback
 }
 
+function sanitizeModelFormatForProvider(type: PlatformAiProviderType, format: PlatformAiModelFormat): PlatformAiModelFormat {
+  if (type === 'dashscope-bailian')
+    return 'openai-compatible'
+  return format
+}
+
+function normalizeModelClientType(value: unknown): PlatformAiClientType {
+  return toText(value) === 'langchain' ? 'langchain' : 'langchain'
+}
+
+function inferEmbeddingApiStyle(model: string, providerType: PlatformAiProviderType, fallback: ProjectKnowledgeEmbeddingApiStyle): ProjectKnowledgeEmbeddingApiStyle {
+  const normalizedModel = model.toLowerCase()
+  if (
+    providerType === 'dashscope-bailian'
+    && (
+      normalizedModel.includes('tongyi-embedding-vision')
+      || normalizedModel.includes('embedding-vision')
+      || normalizedModel.includes('vl-embedding')
+      || normalizedModel.includes('multimodal-embedding')
+      || normalizedModel.includes('qwen3-vl-embedding')
+    )
+  ) {
+    return 'bailian-multimodal'
+  }
+  return fallback
+}
+
 function resolvePricingSource(value: unknown): PlatformAiPricingSource {
   const normalized = toText(value).toLowerCase()
   if (normalized === 'provider')
@@ -357,7 +460,16 @@ function resolveEffectivePricing(input: {
   }
 }
 
-function normalizeProviderModel(raw: unknown, fallbackFormat: PlatformAiModelFormat): PlatformAiProviderModelConfig | null {
+function normalizeProviderModel(
+  raw: unknown,
+  fallbackFormat: PlatformAiModelFormat,
+  options?: {
+    providerType?: PlatformAiProviderType
+    fallbackEmbeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+    fallbackEmbeddingDimensions?: number
+    legacyVisionModel?: string
+  },
+): PlatformAiProviderModelConfig | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     return null
 
@@ -395,11 +507,38 @@ function normalizeProviderModel(raw: unknown, fallbackFormat: PlatformAiModelFor
     manualOutputPricePer1M,
     manualPriceOverride,
   })
+  const label = toText(source.label || source.name) || model
+  const providerType = options?.providerType || 'openai-compatible'
+  const inferredCapabilities = inferPlatformAiModelCapabilities({
+    model,
+    label,
+    provider: providerType,
+    rawText: JSON.stringify(source),
+  })
+  const legacyVisionModel = toText(options?.legacyVisionModel)
+  const capabilityFallback = legacyVisionModel && legacyVisionModel === model
+    ? normalizeModelCapabilities(['chat', 'vision'], inferredCapabilities)
+    : inferredCapabilities
+  const capabilities = normalizeModelCapabilities(source.capabilities || source.capability || source.mode, capabilityFallback)
+  const embeddingApiStyleFallback = inferEmbeddingApiStyle(
+    model,
+    providerType,
+    normalizeProjectKnowledgeEmbeddingApiStyle(options?.fallbackEmbeddingApiStyle),
+  )
+  const embeddingDimensionsFallback = clampInt(options?.fallbackEmbeddingDimensions, 0, 0, 16384)
 
   return {
     model,
-    label: toText(source.label || source.name) || model,
-    format: toModelFormat(source.format || source.adapter || source.type, fallbackFormat),
+    label,
+    format: sanitizeModelFormatForProvider(providerType, toModelFormat(source.format || source.adapter || source.type, fallbackFormat)),
+    capabilities,
+    clientType: normalizeModelClientType(source.clientType),
+    embeddingApiStyle: capabilities.includes('embedding')
+      ? normalizeProjectKnowledgeEmbeddingApiStyle(source.embeddingApiStyle, embeddingApiStyleFallback)
+      : undefined,
+    embeddingDimensions: capabilities.includes('embedding')
+      ? clampInt(source.embeddingDimensions, embeddingDimensionsFallback, 0, 16384)
+      : undefined,
     enabled: toBoolean(source.enabled, true),
     providerInputPricePer1M,
     providerOutputPricePer1M,
@@ -426,11 +565,33 @@ function dedupeProviderModels(items: PlatformAiProviderModelConfig[]): PlatformA
 function createModelFromName(
   model: string,
   fallbackFormat: PlatformAiModelFormat,
+  options?: {
+    providerType?: PlatformAiProviderType
+    capabilities?: PlatformAiModelCapability[]
+    embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+    embeddingDimensions?: number
+  },
 ): PlatformAiProviderModelConfig {
+  const providerType = options?.providerType || 'openai-compatible'
+  const capabilities = normalizeModelCapabilities(options?.capabilities, inferPlatformAiModelCapabilities({
+    model,
+    provider: providerType,
+  }))
+  const embeddingApiStyle = capabilities.includes('embedding')
+    ? inferEmbeddingApiStyle(model, providerType, normalizeProjectKnowledgeEmbeddingApiStyle(options?.embeddingApiStyle))
+    : undefined
+  const embeddingDimensions = capabilities.includes('embedding')
+    ? clampInt(options?.embeddingDimensions, 0, 0, 16384)
+    : undefined
+
   return {
     model,
     label: model,
-    format: fallbackFormat,
+    format: sanitizeModelFormatForProvider(providerType, fallbackFormat),
+    capabilities,
+    clientType: 'langchain',
+    embeddingApiStyle,
+    embeddingDimensions,
     enabled: true,
     providerInputPricePer1M: null,
     providerOutputPricePer1M: null,
@@ -447,6 +608,14 @@ function createModelFromName(
 function serializeProviderModel(item: PlatformAiProviderModelConfig): PlatformAiProviderModelConfig {
   return {
     ...item,
+    capabilities: normalizeModelCapabilities(item.capabilities, inferPlatformAiModelCapabilities(item)),
+    clientType: normalizeModelClientType(item.clientType),
+    embeddingApiStyle: item.capabilities.includes('embedding')
+      ? normalizeProjectKnowledgeEmbeddingApiStyle(item.embeddingApiStyle)
+      : undefined,
+    embeddingDimensions: item.capabilities.includes('embedding')
+      ? clampInt(item.embeddingDimensions, 0, 0, 16384)
+      : undefined,
     providerInputPricePer1M: item.providerInputPricePer1M === null ? null : Number(item.providerInputPricePer1M),
     providerOutputPricePer1M: item.providerOutputPricePer1M === null ? null : Number(item.providerOutputPricePer1M),
     manualInputPricePer1M: item.manualInputPricePer1M === null ? null : Number(item.manualInputPricePer1M),
@@ -486,7 +655,7 @@ function buildDefaultProvider(runtime: RuntimeSettings): PlatformAiProviderConfi
   const formatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
   const modelSeed = toText(runtime.ai.model)
   const models = capability === 'llm' && modelSeed
-    ? [createModelFromName(modelSeed, formatFallback)]
+    ? [createModelFromName(modelSeed, formatFallback, { providerType: type, capabilities: ['chat'] })]
     : []
 
   return {
@@ -529,17 +698,38 @@ function normalizeProvider(
   const provider = providerRaw || type
   const adapter = resolveAdapter(source.adapter, provider, type)
   const formatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
+  const embeddingApiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(source.embeddingApiStyle, runtime.ai.embeddingApiStyle)
+  const embeddingDimensions = clampInt(source.embeddingDimensions, runtime.ai.embeddingDimensions, 0, 16384)
+  const visionModel = toText(source.visionModel || runtime.ai.visionModel)
 
   let models = capability === 'llm' && Array.isArray(source.models)
     ? source.models
-        .map(item => normalizeProviderModel(item, formatFallback))
+        .map(item => normalizeProviderModel(item, formatFallback, {
+          providerType: type,
+          fallbackEmbeddingApiStyle: embeddingApiStyle,
+          fallbackEmbeddingDimensions: embeddingDimensions,
+          legacyVisionModel: visionModel,
+        }))
         .filter((item): item is PlatformAiProviderModelConfig => Boolean(item))
     : []
 
   if (models.length === 0 && capability === 'llm' && options?.allowLegacyModelSeed) {
     const legacyModel = toText(source.model || runtime.ai.model)
     if (legacyModel)
-      models = [createModelFromName(legacyModel, formatFallback)]
+      models = [createModelFromName(legacyModel, formatFallback, { providerType: type, capabilities: ['chat'] })]
+  }
+
+  if (capability === 'llm' && visionModel) {
+    const existingVisionModel = models.find(item => item.model === visionModel)
+    if (existingVisionModel) {
+      existingVisionModel.capabilities = normalizeModelCapabilities(['chat', 'vision'], existingVisionModel.capabilities)
+    }
+    else {
+      models.push(createModelFromName(visionModel, formatFallback, {
+        providerType: type,
+        capabilities: ['chat', 'vision'],
+      }))
+    }
   }
 
   const providerId = sanitizeProviderId(source.id, index)
@@ -557,9 +747,9 @@ function normalizeProvider(
     timeoutMs: clampInt(source.timeoutMs, runtime.ai.timeoutMs, 1000, 120000),
     maxRetries: clampInt(source.maxRetries, runtime.ai.maxRetries, 0, 10),
     fetchedAt: toText(source.fetchedAt || source.modelFetchedAt),
-    embeddingApiStyle: normalizeProjectKnowledgeEmbeddingApiStyle(source.embeddingApiStyle, runtime.ai.embeddingApiStyle),
-    embeddingDimensions: clampInt(source.embeddingDimensions, runtime.ai.embeddingDimensions, 0, 16384),
-    visionModel: toText(source.visionModel || runtime.ai.visionModel),
+    embeddingApiStyle,
+    embeddingDimensions,
+    visionModel,
     models: dedupeProviderModels(models),
   }
 }
@@ -570,18 +760,28 @@ function buildSharedDefaults(
   raw?: Record<string, unknown> | null,
 ): PlatformAiSharedDefaults {
   const llmProviders = providers.filter(provider => provider.capability === 'llm')
-  const firstEnabledModel = llmProviders
-    .flatMap(provider => provider.models)
-    .find(item => item.enabled)
-    ?.model || llmProviders.flatMap(provider => provider.models)[0]?.model || ''
+  const allModels = llmProviders.flatMap(provider => provider.models)
+  const firstChatModel = allModels.find(item => item.enabled && platformAiModelHasCapability(item, 'chat'))?.model
+    || allModels.find(item => platformAiModelHasCapability(item, 'chat'))?.model
+    || allModels.find(item => item.enabled)?.model
+    || allModels[0]?.model
+    || ''
+  const firstEmbeddingModel = allModels.find(item => item.enabled && platformAiModelHasCapability(item, 'embedding'))?.model
+    || allModels.find(item => platformAiModelHasCapability(item, 'embedding'))?.model
+    || ''
+  const firstVisionModel = allModels.find(item => item.enabled && platformAiModelHasCapability(item, 'vision'))?.model
+    || allModels.find(item => platformAiModelHasCapability(item, 'vision'))?.model
+    || ''
 
-  const defaultModel = toText(raw?.defaultModel || raw?.chatModel || raw?.primaryModel || runtime.ai.model) || firstEnabledModel
-  const embeddingModel = toText(raw?.embeddingModel || runtime.ai.embeddingModel) || defaultModel || firstEnabledModel
-  const documentModel = toText(raw?.documentModel || raw?.docModel || runtime.docAi.model) || defaultModel || firstEnabledModel
+  const defaultModel = toText(raw?.defaultModel || raw?.chatModel || raw?.primaryModel || runtime.ai.model) || firstChatModel
+  const embeddingModel = toText(raw?.embeddingModel || runtime.ai.embeddingModel) || firstEmbeddingModel || defaultModel || firstChatModel
+  const visionModel = toText(raw?.visionModel || runtime.ai.visionModel) || firstVisionModel
+  const documentModel = toText(raw?.documentModel || raw?.docModel || runtime.docAi.model) || defaultModel || firstChatModel
 
   return {
     defaultModel,
     embeddingModel,
+    visionModel,
     documentModel,
   }
 }
@@ -725,7 +925,7 @@ function resolveDefaultModelsForChannel(
   const firstAvailable = providers
     .filter(provider => provider.capability === 'llm')
     .flatMap(provider => provider.models)
-    .find(item => item.enabled)
+    .find(item => item.enabled && platformAiModelHasCapability(item, 'chat'))
     ?.model || ''
   return dedupeStrings([preferred, firstAvailable])
 }
@@ -893,13 +1093,14 @@ function buildFallbackAi(runtime: RuntimeSettings): AiRuntimeConfig {
 function resolveProviderModel(
   provider: PlatformAiProviderConfig | null,
   model: string,
+  capability: PlatformAiModelCapability = 'chat',
 ): PlatformAiProviderModelConfig | null {
   if (!provider || provider.capability !== 'llm')
     return null
   const normalizedModel = toText(model)
   if (!normalizedModel)
     return null
-  return provider.models.find(item => item.model === normalizedModel && item.enabled) || null
+  return provider.models.find(item => item.model === normalizedModel && item.enabled && platformAiModelHasCapability(item, capability)) || null
 }
 
 function buildAiRuntimeFromModel(
@@ -910,7 +1111,7 @@ function buildAiRuntimeFromModel(
   return {
     ...runtime.ai,
     provider: provider.provider || provider.type,
-    clientType: provider.clientType,
+    clientType: model.clientType,
     baseURL: provider.baseURL,
     apiKey: provider.apiKey || runtime.ai.apiKey,
     model: model.model,
@@ -918,6 +1119,49 @@ function buildAiRuntimeFromModel(
     timeoutMs: provider.timeoutMs,
     maxRetries: provider.maxRetries,
   }
+}
+
+function defaultModelForCapability(defaults: PlatformAiSharedDefaults, capability: PlatformAiModelCapability): string {
+  if (capability === 'embedding')
+    return defaults.embeddingModel
+  if (capability === 'vision')
+    return defaults.visionModel
+  return defaults.defaultModel
+}
+
+export function resolvePlatformAiRuntimeByCapability(
+  runtime: RuntimeSettings,
+  capability: PlatformAiModelCapability,
+  preferredModel?: string,
+): PlatformAiResolvedCapabilityRuntime | null {
+  const registry = resolvePlatformAiRegistry(runtime)
+  const preferred = toText(preferredModel) || defaultModelForCapability(registry.defaults, capability)
+  const enabledProviders = registry.providers.filter(provider => provider.capability === 'llm' && provider.enabled)
+  const providers = enabledProviders.length > 0
+    ? enabledProviders
+    : registry.providers.filter(provider => provider.capability === 'llm')
+
+  const modelOrder = dedupeStrings([
+    preferred,
+    ...providers.flatMap(provider => provider.models)
+      .filter(model => model.enabled && platformAiModelHasCapability(model, capability))
+      .map(model => model.model),
+  ])
+
+  for (const model of modelOrder) {
+    for (const provider of providers) {
+      const modelConfig = resolveProviderModel(provider, model, capability)
+      if (!modelConfig)
+        continue
+      return {
+        provider,
+        modelConfig,
+        ai: buildAiRuntimeFromModel(runtime, provider, modelConfig),
+      }
+    }
+  }
+
+  return null
 }
 
 function rotateProviders(
@@ -1048,7 +1292,8 @@ function buildModelCatalogJson(providers: PlatformAiProviderConfig[]): string {
             label: item.label || item.model,
             provider: provider.provider,
             model: item.model,
-            description: `${provider.name} · ${item.format} · ${priceText}`,
+            capabilities: item.capabilities,
+            description: `${provider.name} · ${item.capabilities.join('/')} · ${item.format} · ${priceText}`,
           }
         })
 
@@ -1339,6 +1584,7 @@ export function aggregatePlatformAiModels(runtime: RuntimeSettings): PlatformAiA
         model: model.model,
         label: model.label,
         format: model.format,
+        capabilities: model.capabilities,
         modelEnabled: model.enabled,
         inputPricePer1M: model.inputPricePer1M,
         outputPricePer1M: model.outputPricePer1M,

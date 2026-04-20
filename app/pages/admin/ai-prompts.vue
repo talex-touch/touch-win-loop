@@ -16,6 +16,7 @@ type ModelFormat = 'openai-compatible' | 'response'
 type PricingSource = 'provider' | 'manual' | 'none'
 type ProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'searchxng' | 'tavily'
 type ProviderCapability = 'llm' | 'search'
+type ModelCapability = 'chat' | 'vision' | 'embedding' | 'image-gen' | 'video-gen'
 type LoadBalanceStrategy = 'round_robin'
 type PlatformAiChannelKey
   = 'contest_filter'
@@ -42,6 +43,10 @@ interface ProviderModelItem {
   model: string
   label: string
   format: ModelFormat
+  capabilities: ModelCapability[]
+  clientType: PlatformAiClientType
+  embeddingApiStyle?: EmbeddingApiStyle
+  embeddingDimensions?: number
   enabled: boolean
   providerInputPricePer1M: number | null
   providerOutputPricePer1M: number | null
@@ -82,6 +87,7 @@ interface ProviderDraftItem extends ProviderItem {
 interface DefaultsPayload {
   defaultModel: string
   embeddingModel: string
+  visionModel: string
   documentModel: string
 }
 
@@ -137,6 +143,9 @@ interface ProviderPullItem {
   provider: string
   model: string
   label: string
+  capabilities: ModelCapability[]
+  sourceEndpoint?: string
+  rawText?: string
   inputPricePer1M: number | null
   outputPricePer1M: number | null
   currency: string
@@ -146,8 +155,11 @@ interface ProviderPullItem {
 
 interface ProviderModelsPayload {
   providerId: string
+  providerName?: string
   provider: string
   baseURL: string
+  endpoint?: string
+  nativeEmbeddingEndpoint?: string
   fetchedAt: string
   items: ProviderPullItem[]
 }
@@ -155,6 +167,7 @@ interface ProviderModelsPayload {
 interface ModelPullSeriesGroup {
   key: string
   label: string
+  capability: ModelCapability | 'other'
   items: ProviderPullItem[]
 }
 
@@ -208,6 +221,18 @@ interface LogsPayload {
   items: LogItem[]
 }
 
+interface ProviderTypeGuide {
+  title: string
+  summary: string
+  providerPlaceholder: string
+  baseURLPlaceholder: string
+  baseURLHint: string
+  apiKeyPlaceholder: string
+  apiKeyHint: string
+  clientTypeHint: string
+  embeddingHint: string
+}
+
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 
@@ -218,6 +243,81 @@ const providerTypeOptions: Array<{ value: ProviderType, label: string, capabilit
   { value: 'searchxng', label: 'SearchXNG', capability: 'search' },
   { value: 'tavily', label: 'Tavily', capability: 'search' },
 ]
+
+const modelCapabilityOptions: Array<{ value: ModelCapability, label: string, color: string, hint: string }> = [
+  { value: 'chat', label: '聊天', color: 'arcoblue', hint: '用于 LLM 对话、文档分析和后台助手场景。' },
+  { value: 'vision', label: '视觉', color: 'purple', hint: '用于图片理解、OCR 和视觉投影。' },
+  { value: 'embedding', label: 'Embedding', color: 'green', hint: '用于知识库文本或多模态向量。' },
+  { value: 'image-gen', label: '图片生成', color: 'orange', hint: '先作为生成路由能力保留。' },
+  { value: 'video-gen', label: '视频生成', color: 'magenta', hint: '先作为生成路由能力保留。' },
+]
+
+const modelPullCapabilityFilters: Array<{ value: ModelCapability | 'all', label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'chat', label: '聊天' },
+  { value: 'vision', label: '视觉' },
+  { value: 'embedding', label: 'Embedding' },
+  { value: 'image-gen', label: '图片生成' },
+  { value: 'video-gen', label: '视频生成' },
+]
+
+const providerTypeGuides: Record<ProviderType, ProviderTypeGuide> = {
+  'newapi': {
+    title: 'NewAPI',
+    summary: '按 OpenAI 兼容协议接入，适合聚合网关或自建 NewAPI 服务。',
+    providerPlaceholder: 'newapi',
+    baseURLPlaceholder: 'https://newapi.example.com',
+    baseURLHint: '填写服务根地址即可；如果填到 /v1，保存时会规范化，运行时仍请求 /v1/chat/completions。',
+    apiKeyPlaceholder: 'sk-...',
+    apiKeyHint: '填写即替换并持久化；留空则保持已保存密钥不变。',
+    clientTypeHint: '聊天接入类型使用 LangChain，底层为 @langchain/openai 的 ChatOpenAI。',
+    embeddingHint: 'Embedding 通常选择 OpenAI 兼容文本，并在默认 Embedding 模型中填对应模型名。',
+  },
+  'openai-compatible': {
+    title: 'OpenAI Compatible',
+    summary: '用于 OpenAI 官方或任意兼容 /v1 接口的服务。',
+    providerPlaceholder: 'openai-compatible',
+    baseURLPlaceholder: 'https://api.openai.com',
+    baseURLHint: '填写域名根地址或已包含 /v1 的地址均可，系统会统一拼接到 /v1。',
+    apiKeyPlaceholder: 'sk-...',
+    apiKeyHint: '填写兼容服务的 API Key，不需要 Bearer 前缀；留空保持已保存密钥不变。',
+    clientTypeHint: '聊天接入类型使用 LangChain，底层为 @langchain/openai。',
+    embeddingHint: 'Embedding 选择 OpenAI 兼容文本，例如 text-embedding-3-small、text-embedding-v4 等兼容模型。',
+  },
+  'dashscope-bailian': {
+    title: '百炼 DashScope',
+    summary: '聊天走百炼 OpenAI 兼容地址；多模态 Embedding 可走百炼原生接口。',
+    providerPlaceholder: 'dashscope',
+    baseURLPlaceholder: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    baseURLHint: 'Base URL 只用于聊天兼容层；LangChain 会请求 compatible-mode/v1/chat/completions，百炼多模态 Embedding 会自动改走原生 /api/v1/services/embeddings/multimodal-embedding/multimodal-embedding。',
+    apiKeyPlaceholder: 'DASHSCOPE_API_KEY',
+    apiKeyHint: '填写 DashScope API Key，不需要 Bearer 前缀；留空保持已保存密钥不变。',
+    clientTypeHint: '当前不是 @langchain/community 的 AlibabaTongyi 包；聊天使用 @langchain/openai + 百炼 compatible-mode。',
+    embeddingHint: '纯文本选 OpenAI 兼容文本；图片、视频或融合向量选百炼原生多模态，运行时使用 https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding。',
+  },
+  'searchxng': {
+    title: 'SearchXNG',
+    summary: '搜索型 Provider，只做 search-only 登记，不参与 LLM 场景模型路由。',
+    providerPlaceholder: 'searchxng',
+    baseURLPlaceholder: 'https://search.example.com',
+    baseURLHint: '填写 SearchXNG 服务地址；当前 Provider 模型池不会使用它发起 LLM 请求。',
+    apiKeyPlaceholder: '可选',
+    apiKeyHint: '如网关需要鉴权再填写；否则可保持为空。',
+    clientTypeHint: '搜索型 Provider 不需要聊天接入类型。',
+    embeddingHint: '搜索型 Provider 不配置 Embedding。',
+  },
+  'tavily': {
+    title: 'Tavily',
+    summary: '搜索型 Provider。当前联网搜索运行时主要读取管理助手 Web 搜索里的 Tavily API Key。',
+    providerPlaceholder: 'tavily',
+    baseURLPlaceholder: 'https://api.tavily.com',
+    baseURLHint: 'Tavily 搜索代码固定请求 https://api.tavily.com/search；这里主要用于 Provider 登记展示。',
+    apiKeyPlaceholder: 'tvly-...',
+    apiKeyHint: '联网搜索密钥在下方管理助手 Web 搜索配置中保存；这里的 Provider API Key 不进入 LLM 模型路由。',
+    clientTypeHint: '搜索型 Provider 不需要聊天接入类型。',
+    embeddingHint: '搜索型 Provider 不配置 Embedding。',
+  },
+}
 
 const tabOptions: Array<{ key: AiConsoleTab, label: string }> = [
   { key: 'channel_models', label: '渠道和模型' },
@@ -265,6 +365,7 @@ const providers = ref<ProviderDraftItem[]>([])
 const defaultsForm = reactive<DefaultsPayload>({
   defaultModel: '',
   embeddingModel: '',
+  visionModel: '',
   documentModel: '',
 })
 const sceneItems = ref<SceneItem[]>([])
@@ -313,6 +414,10 @@ const modelEditorForm = reactive<ProviderModelItem>({
   model: '',
   label: '',
   format: 'openai-compatible',
+  capabilities: ['chat'],
+  clientType: 'langchain',
+  embeddingApiStyle: 'openai-compatible-text',
+  embeddingDimensions: 1024,
   enabled: true,
   providerInputPricePer1M: null,
   providerOutputPricePer1M: null,
@@ -328,7 +433,16 @@ const modelEditorForm = reactive<ProviderModelItem>({
 const modelPullSelectorVisible = ref(false)
 const pulledProviderModels = ref<ProviderPullItem[]>([])
 const pulledProviderFetchedAt = ref('')
+const pulledProviderMeta = reactive({
+  providerId: '',
+  providerName: '',
+  provider: '',
+  baseURL: '',
+  endpoint: '',
+  nativeEmbeddingEndpoint: '',
+})
 const modelPullFilterKeyword = ref('')
+const modelPullCapabilityFilter = ref<ModelCapability | 'all'>('all')
 const selectedPulledModels = ref<string[]>([])
 const expandedModelPullSeriesKeys = ref<string[]>([])
 
@@ -449,9 +563,90 @@ function resolveProviderCapability(type: ProviderType): ProviderCapability {
   return type === 'searchxng' || type === 'tavily' ? 'search' : 'llm'
 }
 
+function modelCapabilityLabel(value: ModelCapability): string {
+  return modelCapabilityOptions.find(item => item.value === value)?.label || value
+}
+
+function modelCapabilityColor(value: ModelCapability): string {
+  return modelCapabilityOptions.find(item => item.value === value)?.color || 'gray'
+}
+
+function normalizeModelCapability(value: unknown): ModelCapability | null {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'llm' || normalized === 'text-generation')
+    return 'chat'
+  if (normalized === 'chat' || normalized === 'vision' || normalized === 'embedding' || normalized === 'image-gen' || normalized === 'video-gen')
+    return normalized
+  if (normalized === 'image' || normalized === 'image-generation' || normalized === 'image_generation')
+    return 'image-gen'
+  if (normalized === 'video' || normalized === 'video-generation' || normalized === 'video_generation')
+    return 'video-gen'
+  return null
+}
+
+function inferModelCapabilities(model: string, label = '', rawText = ''): ModelCapability[] {
+  const text = `${model} ${label} ${rawText}`.toLowerCase()
+  const result = new Set<ModelCapability>()
+  if (/(?:^|[-_:./\s])(?:text-)?embed(?:ding)?(?:[-_:./\s]|$)|embedding|bge|gte|e5-|multimodal-embedding/.test(text))
+    result.add('embedding')
+  if (!result.has('embedding') && /(?:^|[-_:./\s])(?:qwen[-_.:]?vl|vl|vision|gpt-4o|gpt-4\.1|gpt-4[-_.:]?vision|gemini[-_.:]?pro[-_.:]?vision)(?:[-_:./\s]|$)/.test(text))
+    result.add('vision')
+  if (/wanx|(?:^|[-_:./\s])(?:dall[-_.:]?e|gpt-image|image-generation|stable-diffusion|flux|cogview|t2i)(?:[-_:./\s]|$)/.test(text))
+    result.add('image-gen')
+  if (/(?:^|[-_:./\s])(?:sora|kling|cogvideo|video-generation|text-to-video|image-to-video|t2v|i2v|wan.*video)(?:[-_:./\s]|$)/.test(text))
+    result.add('video-gen')
+  if (!result.has('embedding') && !result.has('image-gen') && !result.has('video-gen'))
+    result.add('chat')
+  return modelCapabilityOptions.map(item => item.value).filter(item => result.has(item))
+}
+
+function inferEmbeddingApiStyleForModel(model: string, providerType: ProviderType, fallback: EmbeddingApiStyle = 'openai-compatible-text'): EmbeddingApiStyle {
+  const normalized = String(model || '').toLowerCase()
+  if (
+    providerType === 'dashscope-bailian'
+    && (
+      normalized.includes('tongyi-embedding-vision')
+      || normalized.includes('embedding-vision')
+      || normalized.includes('vl-embedding')
+      || normalized.includes('multimodal-embedding')
+      || normalized.includes('qwen3-vl-embedding')
+    )
+  ) {
+    return 'bailian-multimodal'
+  }
+  return fallback
+}
+
+function normalizeModelCapabilities(raw: unknown, fallback: ModelCapability[]): ModelCapability[] {
+  const values = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(/[,|\s]+/g)
+      : []
+  const normalized = values
+    .map(item => normalizeModelCapability(item))
+    .filter((item): item is ModelCapability => Boolean(item))
+  const source = normalized.length > 0 ? normalized : fallback
+  const sourceSet = new Set(source)
+  return modelCapabilityOptions.map(item => item.value).filter(item => sourceSet.has(item))
+}
+
+function modelHasCapability(item: Pick<ProviderModelItem, 'capabilities'>, capability: ModelCapability): boolean {
+  return Array.isArray(item.capabilities) && item.capabilities.includes(capability)
+}
+
+function primaryModelCapability(item: Pick<ProviderPullItem, 'capabilities'>): ModelCapability | 'other' {
+  return Array.isArray(item.capabilities) ? item.capabilities[0] || 'other' : 'other'
+}
+
+function sanitizeModelFormatForProvider(providerType: ProviderType, format: ModelFormat): ModelFormat {
+  return providerType === 'dashscope-bailian' ? 'openai-compatible' : format
+}
+
 function cloneModelItem(item: ProviderModelItem): ProviderModelItem {
   return {
     ...item,
+    capabilities: [...item.capabilities],
   }
 }
 
@@ -519,12 +714,21 @@ function normalizePricing(item: Pick<ProviderModelItem, 'providerInputPricePer1M
   }
 }
 
-function normalizeModelItem(item: ProviderModelItem): ProviderModelItem {
+function normalizeModelItem(item: ProviderModelItem, providerType: ProviderType = providerEditorForm.type): ProviderModelItem {
   const pricing = normalizePricing(item)
+  const model = String(item.model || '').trim()
+  const label = String(item.label || item.model || '').trim() || model
+  const capabilities = normalizeModelCapabilities(item.capabilities, inferModelCapabilities(model, label))
+  const isEmbedding = capabilities.includes('embedding')
   return {
     ...item,
-    model: String(item.model || '').trim(),
-    label: String(item.label || item.model || '').trim() || String(item.model || '').trim(),
+    model,
+    label,
+    format: sanitizeModelFormatForProvider(providerType, item.format || 'openai-compatible'),
+    capabilities,
+    clientType: 'langchain',
+    embeddingApiStyle: isEmbedding ? inferEmbeddingApiStyleForModel(model, providerType, item.embeddingApiStyle || 'openai-compatible-text') : undefined,
+    embeddingDimensions: isEmbedding ? Number(item.embeddingDimensions || 1024) : undefined,
     currency: String(item.currency || 'USD').trim().toUpperCase() || 'USD',
     inputPricePer1M: pricing.inputPricePer1M,
     outputPricePer1M: pricing.outputPricePer1M,
@@ -548,10 +752,23 @@ function buildImportedPriceText(item: Pick<ProviderModelItem, 'providerInputPric
   return `输入 ${input} · 输出 ${output}`
 }
 
+function normalizePullItem(item: ProviderPullItem): ProviderPullItem {
+  const model = String(item.model || '').trim()
+  const label = String(item.label || model).trim() || model
+  return {
+    ...item,
+    model,
+    label,
+    capabilities: normalizeModelCapabilities(item.capabilities, inferModelCapabilities(model, label, item.rawText || '')),
+    currency: String(item.currency || 'USD').trim().toUpperCase() || 'USD',
+    rawText: String(item.rawText || ''),
+  }
+}
+
 function normalizeProviderDraft(provider: ProviderDraftItem): ProviderDraftItem {
   const capability = resolveProviderCapability(provider.type)
   const models = capability === 'llm'
-    ? provider.models.map(item => normalizeModelItem(item)).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+    ? provider.models.map(item => normalizeModelItem(item, provider.type)).sort((a, b) => a.model.localeCompare(b.model, 'en'))
     : []
   const hasApiKey = provider.apiKeyMode === 'clear'
     ? false
@@ -625,6 +842,10 @@ function mergePulledModels(currentItems: ProviderModelItem[], pulled: ProviderPu
       model: item.model,
       label: current?.label || item.label || item.model,
       format: current?.format || 'openai-compatible',
+      capabilities: normalizeModelCapabilities(current?.capabilities, item.capabilities),
+      clientType: 'langchain',
+      embeddingApiStyle: current?.embeddingApiStyle || inferEmbeddingApiStyleForModel(item.model, providerEditorForm.type),
+      embeddingDimensions: current?.embeddingDimensions || (item.capabilities.includes('embedding') ? 1024 : undefined),
       enabled: current?.enabled ?? true,
       providerInputPricePer1M: item.inputPricePer1M,
       providerOutputPricePer1M: item.outputPricePer1M,
@@ -664,6 +885,7 @@ const llmProviderOptions = computed(() => {
 })
 
 const providerEditorSupportsModels = computed(() => providerEditorForm.capability === 'llm')
+const providerEditorTypeGuide = computed(() => providerTypeGuides[providerEditorForm.type] || providerTypeGuides['openai-compatible'])
 
 const providerEditorModelRows = computed(() => {
   return [...providerEditorForm.models].map(item => normalizeModelItem(item)).sort((a, b) => a.model.localeCompare(b.model, 'en'))
@@ -671,13 +893,47 @@ const providerEditorModelRows = computed(() => {
 
 const currentModelPoolNameSet = computed(() => new Set(providerEditorForm.models.map(item => item.model)))
 
+const normalizedModelPullFilterKeyword = computed(() => String(modelPullFilterKeyword.value || '').trim().toLowerCase())
+
+function modelPullSearchText(item: ProviderPullItem): string {
+  return [
+    item.model,
+    item.label,
+    item.provider,
+    item.pricingText,
+    item.sourceEndpoint,
+    item.rawText,
+    ...item.capabilities,
+    ...item.capabilities.map(capability => modelCapabilityLabel(capability)),
+  ].filter(Boolean).join(' ').toLowerCase()
+}
+
+function matchesModelPullFilter(item: ProviderPullItem, keyword: string): boolean {
+  if (!keyword)
+    return true
+  return modelPullSearchText(item).includes(keyword)
+}
+
+const filteredPulledModels = computed(() => {
+  const keyword = normalizedModelPullFilterKeyword.value
+  const capability = modelPullCapabilityFilter.value
+  return pulledProviderModels.value.filter((item) => {
+    if (capability !== 'all' && !item.capabilities.includes(capability))
+      return false
+    return matchesModelPullFilter(item, keyword)
+  })
+})
+
 const modelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
   const groups = new Map<string, ModelPullSeriesGroup>()
-  for (const item of pulledProviderModels.value) {
+  for (const item of filteredPulledModels.value) {
+    const capability = primaryModelCapability(item)
     const series = resolveModelSeries(item)
-    const currentGroup = groups.get(series.key) || { key: series.key, label: series.label, items: [] }
+    const key = `${capability}:${series.key}`
+    const capabilityLabel = capability === 'other' ? '其他' : modelCapabilityLabel(capability)
+    const currentGroup = groups.get(key) || { key, label: `${capabilityLabel} / ${series.label}`, capability, items: [] }
     currentGroup.items.push(item)
-    groups.set(series.key, currentGroup)
+    groups.set(key, currentGroup)
   }
   return Array.from(groups.values()).map(group => ({
     ...group,
@@ -685,37 +941,25 @@ const modelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
   }))
 })
 
-const normalizedModelPullFilterKeyword = computed(() => String(modelPullFilterKeyword.value || '').trim().toLowerCase())
-
-function matchesModelPullFilter(item: Pick<ProviderPullItem, 'model' | 'label'>, keyword: string): boolean {
-  if (!keyword)
-    return true
-  return `${item.model} ${item.label}`.toLowerCase().includes(keyword)
-}
-
 const filteredModelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
-  const keyword = normalizedModelPullFilterKeyword.value
-  if (!keyword)
-    return modelPullSeriesGroups.value
   return modelPullSeriesGroups.value
-    .map(group => ({
-      ...group,
-      items: group.items.filter(item => matchesModelPullFilter(item, keyword)),
-    }))
-    .filter(group => group.items.length > 0)
 })
 
 const filteredPulledModelCount = computed(() => filteredModelPullSeriesGroups.value.reduce((count, group) => count + group.items.length, 0))
 const selectedPulledModelSet = computed(() => new Set(selectedPulledModels.value))
 const selectedPulledModelCount = computed(() => selectedPulledModels.value.length)
-const allPulledModelsChecked = computed(() => pulledProviderModels.value.length > 0 && selectedPulledModelCount.value === pulledProviderModels.value.length)
-const allPulledModelsIndeterminate = computed(() => selectedPulledModelCount.value > 0 && selectedPulledModelCount.value < pulledProviderModels.value.length)
+const allPulledModelsChecked = computed(() => filteredPulledModels.value.length > 0 && filteredPulledModels.value.every(item => selectedPulledModelSet.value.has(item.model)))
+const allPulledModelsIndeterminate = computed(() => {
+  const selectedCount = filteredPulledModels.value.filter(item => selectedPulledModelSet.value.has(item.model)).length
+  return selectedCount > 0 && selectedCount < filteredPulledModels.value.length
+})
+const pulledEmbeddingCandidateCount = computed(() => pulledProviderModels.value.filter(item => item.capabilities.includes('embedding')).length)
 
 function resolveSceneModelCatalog(providerIds: string[], currentModels: string[] = []): Array<{ model: string, label: string, priceText: string }> {
   const providerSet = new Set(providerIds)
   const map = new Map<string, { model: string, label: string, priceText: string }>()
   for (const provider of providers.value.filter(item => item.capability === 'llm' && providerSet.has(item.id))) {
-    for (const model of provider.models.filter(item => item.enabled)) {
+    for (const model of provider.models.filter(item => item.enabled && modelHasCapability(item, 'chat'))) {
       if (!map.has(model.model)) {
         map.set(model.model, {
           model: model.model,
@@ -741,6 +985,26 @@ function resolveSceneModelCatalog(providerIds: string[], currentModels: string[]
 const sceneEditorModelOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.modelFallback))
 const sceneBatchModelOptions = computed(() => resolveSceneModelCatalog(sceneBatchForm.providerIds, sceneBatchForm.modelFallback))
 
+function resolveDefaultModelOptions(capability: ModelCapability): Array<{ model: string, label: string, providerName: string }> {
+  const map = new Map<string, { model: string, label: string, providerName: string }>()
+  for (const provider of providers.value.filter(item => item.capability === 'llm')) {
+    for (const model of provider.models.filter(item => item.enabled && modelHasCapability(item, capability))) {
+      if (!map.has(model.model)) {
+        map.set(model.model, {
+          model: model.model,
+          label: model.label,
+          providerName: provider.name,
+        })
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+}
+
+const defaultChatModelOptions = computed(() => resolveDefaultModelOptions('chat'))
+const defaultEmbeddingModelOptions = computed(() => resolveDefaultModelOptions('embedding'))
+const defaultVisionModelOptions = computed(() => resolveDefaultModelOptions('vision'))
+
 function normalizeSceneProviderIds(providerIds: string[]): string[] {
   const llmProviderIdSet = new Set(providers.value.filter(item => item.capability === 'llm').map(item => item.id))
   return dedupeStrings(providerIds).filter(item => llmProviderIdSet.has(item))
@@ -763,7 +1027,11 @@ function providerSummary(provider: ProviderDraftItem): string {
   if (provider.capability === 'search')
     return '仅搜索能力，不参与当前 LLM 场景模型路由'
   const enabledCount = provider.models.filter(item => item.enabled).length
-  return `模型 ${enabledCount}/${provider.models.length} · ${provider.clientType === 'langchain' ? 'LangChain' : provider.clientType}`
+  const capabilityText = modelCapabilityOptions
+    .map(option => `${option.label} ${provider.models.filter(item => modelHasCapability(item, option.value)).length}`)
+    .filter(item => !item.endsWith(' 0'))
+    .join(' · ')
+  return `模型 ${enabledCount}/${provider.models.length}${capabilityText ? ` · ${capabilityText}` : ''}`
 }
 
 function sceneProvidersPreview(scene: SceneItem): string {
@@ -808,7 +1076,7 @@ function applyConsolePayload(payload: ProvidersPayload): void {
   providers.value = (payload.providers || []).map((item) => {
     const draft = normalizeProviderDraft({
       ...item,
-      models: (item.models || []).map(model => normalizeModelItem(model)),
+      models: (item.models || []).map(model => normalizeModelItem(model, item.type)),
       apiKeyMode: 'keep',
       apiKey: '',
     })
@@ -816,6 +1084,7 @@ function applyConsolePayload(payload: ProvidersPayload): void {
   })
   defaultsForm.defaultModel = payload.defaults?.defaultModel || ''
   defaultsForm.embeddingModel = payload.defaults?.embeddingModel || ''
+  defaultsForm.visionModel = payload.defaults?.visionModel || ''
   defaultsForm.documentModel = payload.defaults?.documentModel || ''
   sceneDefinitions.value = payload.scenes?.definitions || []
   sceneItems.value = (payload.scenes?.items || []).map(item => ({
@@ -832,6 +1101,10 @@ function applyConsolePayload(payload: ProvidersPayload): void {
   adminAiForm.maxPageChars = Number(payload.adminAi.maxPageChars || 10000)
   adminAiForm.tavilyApiKeyMode = 'keep'
   adminAiForm.tavilyApiKey = ''
+}
+
+function resolveProviderApiKeyMode(provider: Pick<ProviderDraftItem, 'apiKey'>): SecretMode {
+  return String(provider.apiKey || '').trim() ? 'replace' : 'keep'
 }
 
 async function loadConsole() {
@@ -852,22 +1125,19 @@ async function loadConsole() {
 
 function buildProviderPayload(provider: ProviderDraftItem) {
   const normalized = normalizeProviderDraft(provider)
+  const apiKey = String(normalized.apiKey || '').trim()
   return {
     id: normalized.id,
     name: normalized.name,
     type: normalized.type,
     provider: normalized.provider,
-    clientType: normalized.clientType,
     baseURL: normalized.baseURL,
     enabled: normalized.enabled,
     timeoutMs: Number(normalized.timeoutMs || 15000),
     maxRetries: Number(normalized.maxRetries || 2),
-    apiKeyMode: normalized.apiKeyMode,
-    apiKey: normalized.apiKey,
-    embeddingApiStyle: normalized.embeddingApiStyle,
-    embeddingDimensions: Number(normalized.embeddingDimensions || 1024),
-    visionModel: normalized.visionModel,
-    models: normalized.models.map(item => normalizeModelItem(item)),
+    apiKeyMode: resolveProviderApiKeyMode(normalized),
+    apiKey,
+    models: normalized.models.map(item => normalizeModelItem(item, normalized.type)),
   }
 }
 
@@ -882,6 +1152,7 @@ async function saveConsole() {
         defaults: {
           defaultModel: defaultsForm.defaultModel,
           embeddingModel: defaultsForm.embeddingModel,
+          visionModel: defaultsForm.visionModel,
           documentModel: defaultsForm.documentModel,
         },
         scenes: {
@@ -964,6 +1235,8 @@ function syncProviderType(type: ProviderType) {
     providerEditorForm.models = []
     providerEditorForm.visionModel = ''
   }
+  if (providerEditorForm.capability === 'llm')
+    providerEditorForm.models = providerEditorForm.models.map(item => normalizeModelItem(item, type))
 }
 
 function handleProviderTypeChange(value: string | number | boolean | Record<string, unknown> | undefined) {
@@ -991,7 +1264,10 @@ function handleSceneBatchModelFallbackChange(value: string | number | boolean | 
 }
 
 function saveProviderDrawer() {
-  const normalized = normalizeProviderDraft(providerEditorForm)
+  const normalized = normalizeProviderDraft({
+    ...providerEditorForm,
+    apiKeyMode: resolveProviderApiKeyMode(providerEditorForm),
+  })
   const next = [...providers.value]
   const index = next.findIndex(item => item.id === normalized.id)
   if (index >= 0)
@@ -1020,6 +1296,10 @@ function openCreateModelDrawer() {
     model: '',
     label: '',
     format: 'openai-compatible',
+    capabilities: ['chat'],
+    clientType: 'langchain',
+    embeddingApiStyle: 'openai-compatible-text',
+    embeddingDimensions: 1024,
     enabled: true,
     providerInputPricePer1M: null,
     providerOutputPricePer1M: null,
@@ -1054,7 +1334,13 @@ function saveModelDrawer() {
     ...modelEditorForm,
     model,
     label: String(modelEditorForm.label || model).trim() || model,
+    capabilities: normalizeModelCapabilities(modelEditorForm.capabilities, inferModelCapabilities(model, modelEditorForm.label)),
+    clientType: 'langchain',
+    format: sanitizeModelFormatForProvider(providerEditorForm.type, modelEditorForm.format),
   })
+  if (providerEditorForm.type === 'dashscope-bailian' && modelEditorForm.format === 'response') {
+    Message.warning('百炼 DashScope 当前仅支持 openai-compatible 格式，已自动改为 openai-compatible。')
+  }
   const nextItems = [...providerEditorForm.models]
   const existingIndex = nextItems.findIndex(item => item.model === model)
   if (existingIndex >= 0)
@@ -1080,9 +1366,19 @@ function setSelectedPulledModels(models: string[]) {
 }
 
 function openModelPullSelector(payload: ProviderModelsPayload) {
-  pulledProviderModels.value = [...(payload.items || [])].sort((a, b) => a.model.localeCompare(b.model, 'en'))
+  pulledProviderModels.value = [...(payload.items || [])]
+    .map(item => normalizePullItem(item))
+    .filter(item => item.model)
+    .sort((a, b) => a.model.localeCompare(b.model, 'en'))
   pulledProviderFetchedAt.value = payload.fetchedAt || ''
+  pulledProviderMeta.providerId = payload.providerId || providerEditorForm.id
+  pulledProviderMeta.providerName = payload.providerName || providerEditorForm.name
+  pulledProviderMeta.provider = payload.provider || providerEditorForm.provider
+  pulledProviderMeta.baseURL = payload.baseURL || providerEditorForm.baseURL
+  pulledProviderMeta.endpoint = payload.endpoint || pulledProviderModels.value[0]?.sourceEndpoint || ''
+  pulledProviderMeta.nativeEmbeddingEndpoint = payload.nativeEmbeddingEndpoint || ''
   modelPullFilterKeyword.value = ''
+  modelPullCapabilityFilter.value = 'all'
   setSelectedPulledModels(pulledProviderModels.value.map(item => item.model))
   expandedModelPullSeriesKeys.value = []
   modelPullSelectorVisible.value = true
@@ -1090,6 +1386,7 @@ function openModelPullSelector(payload: ProviderModelsPayload) {
 
 function closeModelPullSelector() {
   modelPullFilterKeyword.value = ''
+  modelPullCapabilityFilter.value = 'all'
   modelPullSelectorVisible.value = false
 }
 
@@ -1123,7 +1420,14 @@ function togglePulledGroup(items: ProviderPullItem[], checked: boolean) {
 }
 
 function toggleAllPulledModels(checked: boolean) {
-  setSelectedPulledModels(checked ? pulledProviderModels.value.map(item => item.model) : [])
+  const next = new Set(selectedPulledModels.value)
+  for (const item of filteredPulledModels.value) {
+    if (checked)
+      next.add(item.model)
+    else
+      next.delete(item.model)
+  }
+  setSelectedPulledModels(Array.from(next))
 }
 
 function isModelPullSeriesExpanded(key: string): boolean {
@@ -1170,7 +1474,7 @@ async function pullProviderModels() {
         body: {
           providerId: providerEditorForm.id,
           draftProvider: buildProviderPayload(providerEditorForm),
-          apiKeyMode: providerEditorForm.apiKeyMode,
+          apiKeyMode: resolveProviderApiKeyMode(providerEditorForm),
           apiKey: providerEditorForm.apiKey,
         },
       },
@@ -1214,7 +1518,7 @@ async function testProvider() {
       body: {
         providerId: providerEditorForm.id,
         draftProvider: buildProviderPayload(providerEditorForm),
-        apiKeyMode: providerEditorForm.apiKeyMode,
+        apiKeyMode: resolveProviderApiKeyMode(providerEditorForm),
         apiKey: providerEditorForm.apiKey,
         model: testModel,
       },
@@ -1471,6 +1775,40 @@ onMounted(async () => {
             </div>
           </template>
 
+          <div class="mb-4 px-4 py-4 border border-slate-200 rounded-lg bg-slate-50">
+            <div class="mb-3">
+              <div class="text-sm text-slate-900 font-medium">
+                默认能力模型
+              </div>
+              <div class="text-xs text-slate-500">
+                默认聊天、Embedding、视觉分别从模型池中按能力选择；接入细节在具体模型里配置。
+              </div>
+            </div>
+            <div class="gap-3 grid md:grid-cols-3">
+              <a-form-item label="默认聊天模型">
+                <a-select v-model="defaultsForm.defaultModel" allow-search allow-clear placeholder="选择 chat 模型">
+                  <a-option v-for="item in defaultChatModelOptions" :key="`default-chat-${item.model}`" :value="item.model">
+                    {{ item.model }} <span class="text-xs text-slate-400">({{ item.providerName }})</span>
+                  </a-option>
+                </a-select>
+              </a-form-item>
+              <a-form-item label="默认 Embedding 模型">
+                <a-select v-model="defaultsForm.embeddingModel" allow-search allow-clear placeholder="选择 embedding 模型">
+                  <a-option v-for="item in defaultEmbeddingModelOptions" :key="`default-embedding-${item.model}`" :value="item.model">
+                    {{ item.model }} <span class="text-xs text-slate-400">({{ item.providerName }})</span>
+                  </a-option>
+                </a-select>
+              </a-form-item>
+              <a-form-item label="默认视觉模型">
+                <a-select v-model="defaultsForm.visionModel" allow-search allow-clear placeholder="选择 vision 模型">
+                  <a-option v-for="item in defaultVisionModelOptions" :key="`default-vision-${item.model}`" :value="item.model">
+                    {{ item.model }} <span class="text-xs text-slate-400">({{ item.providerName }})</span>
+                  </a-option>
+                </a-select>
+              </a-form-item>
+            </div>
+          </div>
+
           <a-table :data="providerRows" :pagination="false" row-key="id">
             <template #columns>
               <a-table-column title="Provider" data-index="name" :width="260">
@@ -1538,7 +1876,7 @@ onMounted(async () => {
       </a-alert>
 
       <a-alert type="info" :show-icon="true">
-        默认对话走「项目聊天」场景，默认文档分析走「文档分析」场景；Embedding 不再单独在这里配置，跟随 Provider 自身的 embedding 配置生效。
+        默认对话走「项目聊天」场景，默认文档分析走「文档分析」场景；Embedding 与视觉模型从模型池能力配置中解析。
       </a-alert>
 
       <a-card :bordered="false" class="rounded-3xl shadow-sm">
@@ -1805,85 +2143,82 @@ onMounted(async () => {
       <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
         <div class="gap-4 grid">
           <a-alert v-if="!configMasterKeyReady" type="warning" :show-icon="true">
-            当前未配置 master key。你可以先用当前输入的 API Key 测试与拉取模型，但保存时不会持久化替换密钥。
+            当前未配置 master key。你可以先用当前输入的 API Key 测试与拉取模型，但保存时不会持久化新密钥。
+          </a-alert>
+          <a-alert type="info" :show-icon="true">
+            <div class="space-y-1">
+              <div class="font-medium">
+                {{ providerEditorTypeGuide.title }}
+              </div>
+              <div>{{ providerEditorTypeGuide.summary }}</div>
+              <div class="text-xs text-slate-500">
+                {{ providerEditorTypeGuide.baseURLHint }}
+              </div>
+            </div>
           </a-alert>
 
-          <div class="gap-4 grid md:grid-cols-2">
-            <a-form-item label="Provider 名称">
-              <a-input v-model="providerEditorForm.name" placeholder="用于后台展示" />
-            </a-form-item>
-            <a-form-item label="Provider 类型">
-              <a-select v-model="providerEditorForm.type" @change="handleProviderTypeChange">
-                <a-option v-for="item in providerTypeOptions" :key="item.value" :value="item.value">
-                  {{ item.label }}
-                </a-option>
-              </a-select>
-            </a-form-item>
-            <a-form-item label="Provider 标识">
-              <a-input v-model="providerEditorForm.provider" placeholder="例如 newapi / tavily" />
-            </a-form-item>
-            <a-form-item label="启用">
-              <a-switch v-model="providerEditorForm.enabled" />
-            </a-form-item>
-            <a-form-item label="Base URL">
-              <a-input v-model="providerEditorForm.baseURL" placeholder="https://your-provider.example" />
-            </a-form-item>
-            <a-form-item label="API Key 模式">
-              <a-select v-model="providerEditorForm.apiKeyMode">
-                <a-option value="keep">
-                  保持不变
-                </a-option>
-                <a-option value="replace">
-                  替换密钥
-                </a-option>
-                <a-option value="clear">
-                  清空密钥
-                </a-option>
-              </a-select>
-            </a-form-item>
-            <a-form-item label="API Key">
-              <a-input-password
-                v-model="providerEditorForm.apiKey"
-                placeholder="测试/拉取优先使用当前输入；保存持久化需选择替换"
-                autocomplete="new-password"
-                allow-clear
-              />
-            </a-form-item>
-            <a-form-item label="超时(ms)">
-              <a-input-number v-model="providerEditorForm.timeoutMs" :min="1000" :step="1000" class="w-full" />
-            </a-form-item>
-            <a-form-item label="重试次数">
-              <a-input-number v-model="providerEditorForm.maxRetries" :min="0" :max="10" class="w-full" />
-            </a-form-item>
-            <a-form-item v-if="providerEditorSupportsModels" label="聊天接入类型">
-              <a-select v-model="providerEditorForm.clientType">
-                <a-option value="langchain">
-                  LangChain
-                </a-option>
-                <a-option value="bailian-native">
-                  百炼原生 SDK
-                </a-option>
-                <a-option value="coze-sdk">
-                  Coze SDK
-                </a-option>
-              </a-select>
-            </a-form-item>
-            <a-form-item v-if="providerEditorSupportsModels" label="Embedding 接入类型">
-              <a-select v-model="providerEditorForm.embeddingApiStyle">
-                <a-option value="openai-compatible-text">
-                  OpenAI 兼容文本
-                </a-option>
-                <a-option value="bailian-multimodal">
-                  百炼原生多模态
-                </a-option>
-              </a-select>
-            </a-form-item>
-            <a-form-item v-if="providerEditorSupportsModels" label="Embedding 维度">
-              <a-input-number v-model="providerEditorForm.embeddingDimensions" :min="64" :step="64" class="w-full" />
-            </a-form-item>
-            <a-form-item v-if="providerEditorSupportsModels" label="视觉模型">
-              <a-input v-model="providerEditorForm.visionModel" placeholder="可选，例如 gpt-4.1-mini / qwen-vl" allow-clear />
-            </a-form-item>
+          <div class="px-4 py-4 border border-slate-200 rounded-lg bg-white space-y-3">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                基础信息
+              </div>
+              <div class="text-xs text-slate-500">
+                Provider 只保存连接身份；模型能力与接入细节在模型池里维护。
+              </div>
+            </div>
+            <div class="gap-4 grid md:grid-cols-2">
+              <a-form-item label="Provider 名称">
+                <a-input v-model="providerEditorForm.name" placeholder="用于后台展示" />
+              </a-form-item>
+              <a-form-item label="Provider 类型">
+                <a-select v-model="providerEditorForm.type" @change="handleProviderTypeChange">
+                  <a-option v-for="item in providerTypeOptions" :key="item.value" :value="item.value">
+                    {{ item.label }}
+                  </a-option>
+                </a-select>
+              </a-form-item>
+              <a-form-item label="Provider 标识">
+                <a-input v-model="providerEditorForm.provider" :placeholder="providerEditorTypeGuide.providerPlaceholder" />
+              </a-form-item>
+              <a-form-item label="启用">
+                <a-switch v-model="providerEditorForm.enabled" />
+              </a-form-item>
+            </div>
+          </div>
+
+          <div class="px-4 py-4 border border-slate-200 rounded-lg bg-white space-y-3">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                连接与密钥
+              </div>
+            </div>
+            <a-alert type="info" :show-icon="true">
+              <div class="text-xs leading-relaxed">
+                {{ providerEditorTypeGuide.clientTypeHint }} {{ providerEditorTypeGuide.baseURLHint }}
+              </div>
+            </a-alert>
+            <div class="gap-4 grid md:grid-cols-2">
+              <a-form-item label="Base URL">
+                <a-input v-model="providerEditorForm.baseURL" :placeholder="providerEditorTypeGuide.baseURLPlaceholder" />
+              </a-form-item>
+              <a-form-item label="API Key">
+                <a-input-password
+                  v-model="providerEditorForm.apiKey"
+                  :placeholder="providerEditorTypeGuide.apiKeyPlaceholder"
+                  autocomplete="new-password"
+                  allow-clear
+                />
+                <div class="text-xs text-slate-500 leading-relaxed mt-1">
+                  {{ providerEditorTypeGuide.apiKeyHint }}
+                </div>
+              </a-form-item>
+              <a-form-item label="超时(ms)">
+                <a-input-number v-model="providerEditorForm.timeoutMs" :min="1000" :step="1000" class="w-full" />
+              </a-form-item>
+              <a-form-item label="重试次数">
+                <a-input-number v-model="providerEditorForm.maxRetries" :min="0" :max="10" class="w-full" />
+              </a-form-item>
+            </div>
           </div>
 
           <div class="text-sm text-slate-500 flex flex-wrap gap-3 items-center">
@@ -1917,7 +2252,7 @@ onMounted(async () => {
                     Provider 模型池
                   </div>
                   <div class="text-xs text-slate-500">
-                    每个 LLM Provider 维护自己的模型池与价格覆盖。
+                    每个 LLM Provider 维护自己的模型池、能力标签、接入参数与价格覆盖。
                   </div>
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -1947,6 +2282,19 @@ onMounted(async () => {
                         <div class="text-xs text-slate-500">
                           {{ scope.record.label }}
                         </div>
+                      </div>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="能力" data-index="capabilities" :width="220">
+                    <template #cell="scope">
+                      <div class="flex flex-wrap gap-1">
+                        <a-tag
+                          v-for="capability in scope.record.capabilities"
+                          :key="`${scope.record.model}-${capability}`"
+                          :color="modelCapabilityColor(capability)"
+                        >
+                          {{ modelCapabilityLabel(capability) }}
+                        </a-tag>
                       </div>
                     </template>
                   </a-table-column>
@@ -1986,7 +2334,7 @@ onMounted(async () => {
             </div>
           </template>
           <a-alert v-else type="info" :show-icon="true">
-            SearchXNG / Tavily 属于 search-only Provider，当前不会进入 LLM 模型池，也不能绑定到这些 LLM 场景。
+            {{ providerEditorTypeGuide.summary }} {{ providerEditorTypeGuide.apiKeyHint }}
           </a-alert>
         </div>
       </div>
@@ -2013,20 +2361,40 @@ onMounted(async () => {
       <div class="pr-2 max-h-[70vh] overflow-y-auto">
         <div class="space-y-4">
           <a-alert type="info" :show-icon="true">
-            拉取结果会先按系列分组展示。你可以全选、按系列勾选，或继续精确到单个模型后再导入。
+            <div class="space-y-1">
+              <div>
+                当前 Provider：{{ pulledProviderMeta.providerName || pulledProviderMeta.providerId }} / {{ pulledProviderMeta.provider }}
+              </div>
+              <div class="text-xs">
+                聊天 Base URL：{{ pulledProviderMeta.baseURL || '-' }}；模型列表端点：{{ pulledProviderMeta.endpoint || '-' }}
+              </div>
+              <div v-if="pulledProviderMeta.nativeEmbeddingEndpoint" class="text-xs">
+                百炼多模态 Embedding 运行端点：{{ pulledProviderMeta.nativeEmbeddingEndpoint }}
+              </div>
+              <div class="text-xs">
+                候选模型会按能力和系列分组展示，可按能力过滤、搜索模型名、展示名、能力标签或 Provider 原始字段。
+              </div>
+            </div>
           </a-alert>
 
-          <a-input
-            v-model="modelPullFilterKeyword"
-            allow-clear
-            placeholder="按模型名或展示名筛选"
-          />
+          <div class="gap-3 grid md:grid-cols-[220px_1fr]">
+            <a-select v-model="modelPullCapabilityFilter">
+              <a-option v-for="item in modelPullCapabilityFilters" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </a-option>
+            </a-select>
+            <a-input
+              v-model="modelPullFilterKeyword"
+              allow-clear
+              placeholder="按模型名、展示名、能力或 Provider 原始字段筛选"
+            />
+          </div>
 
           <div class="px-4 py-3 rounded-2xl bg-slate-50 flex flex-wrap gap-3 items-center justify-between">
             <div class="text-sm text-slate-600 flex flex-wrap gap-3 items-center">
               <span>拉取时间：{{ formatTime(pulledProviderFetchedAt) }}</span>
               <span>候选模型：{{ pulledProviderModels.length }}</span>
-              <span v-if="modelPullFilterKeyword">筛选结果：{{ filteredPulledModelCount }}</span>
+              <span>筛选结果：{{ filteredPulledModelCount }}</span>
               <span>已选：{{ selectedPulledModelCount }}</span>
             </div>
             <div class="flex flex-wrap gap-3 items-center">
@@ -2059,6 +2427,9 @@ onMounted(async () => {
                 </a-checkbox>
                 <a-tag color="arcoblue">
                   {{ group.items.length }} 个
+                </a-tag>
+                <a-tag v-if="group.capability !== 'other'" :color="modelCapabilityColor(group.capability)">
+                  {{ modelCapabilityLabel(group.capability) }}
                 </a-tag>
               </div>
               <a-button
@@ -2093,6 +2464,13 @@ onMounted(async () => {
                     <a-tag :color="currentModelPoolNameSet.has(item.model) ? 'gold' : 'green'">
                       {{ currentModelPoolNameSet.has(item.model) ? '已在模型池' : '新模型' }}
                     </a-tag>
+                    <a-tag
+                      v-for="capability in item.capabilities"
+                      :key="`${item.model}-pull-${capability}`"
+                      :color="modelCapabilityColor(capability)"
+                    >
+                      {{ modelCapabilityLabel(capability) }}
+                    </a-tag>
                   </div>
                   <div class="text-xs text-slate-500 mt-1 break-all">
                     {{ item.label || item.model }}
@@ -2106,6 +2484,9 @@ onMounted(async () => {
             </div>
           </div>
 
+          <a-alert v-if="pulledEmbeddingCandidateCount === 0" type="warning" :show-icon="true">
+            未从该 Provider 拉取到 Embedding 模型，可手动新增 text-embedding-v4；百炼多模态可新增 tongyi-embedding-vision-plus 并选择“百炼原生多模态”。
+          </a-alert>
           <a-empty v-if="filteredModelPullSeriesGroups.length === 0" description="没有匹配的模型" />
         </div>
       </div>
@@ -2136,16 +2517,72 @@ onMounted(async () => {
           <a-form-item label="展示名称">
             <a-input v-model="modelEditorForm.label" placeholder="用于后台展示" />
           </a-form-item>
-          <a-form-item label="格式">
-            <a-select v-model="modelEditorForm.format">
-              <a-option value="openai-compatible">
-                openai-compatible
-              </a-option>
-              <a-option value="response">
-                response
-              </a-option>
-            </a-select>
+          <a-form-item label="模型能力">
+            <a-checkbox-group v-model="modelEditorForm.capabilities">
+              <div class="flex flex-wrap gap-2">
+                <a-checkbox v-for="item in modelCapabilityOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </a-checkbox>
+              </div>
+            </a-checkbox-group>
+            <div class="text-xs text-slate-500 mt-1">
+              场景绑定会按能力过滤：LLM 场景只选择聊天模型，知识库向量只选择 Embedding 模型，视觉投影只选择视觉模型。
+            </div>
           </a-form-item>
+          <div v-if="modelEditorForm.capabilities.includes('chat')" class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                聊天模型
+              </div>
+              <div class="text-xs text-slate-500">
+                当前聊天接入固定使用 LangChain；百炼走 @langchain/openai + compatible-mode/v1。
+              </div>
+            </div>
+            <a-form-item label="格式">
+              <a-select v-model="modelEditorForm.format">
+                <a-option value="openai-compatible">
+                  openai-compatible
+                </a-option>
+                <a-option v-if="providerEditorForm.type !== 'dashscope-bailian'" value="response">
+                  response
+                </a-option>
+              </a-select>
+              <div v-if="providerEditorForm.type === 'dashscope-bailian'" class="text-xs text-slate-500 mt-1">
+                DashScope 当前限定为 openai-compatible，避免走 Responses 客户端。
+              </div>
+            </a-form-item>
+          </div>
+          <div v-if="modelEditorForm.capabilities.includes('embedding')" class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                Embedding 模型
+              </div>
+              <div class="text-xs text-slate-500">
+                纯文本向量用 OpenAI 兼容文本；百炼图片、视频或融合向量用百炼原生多模态，运行时不走 compatible-mode。
+              </div>
+            </div>
+            <a-form-item label="Embedding 接入类型">
+              <a-select v-model="modelEditorForm.embeddingApiStyle">
+                <a-option value="openai-compatible-text">
+                  OpenAI 兼容文本
+                </a-option>
+                <a-option value="bailian-multimodal">
+                  百炼原生多模态
+                </a-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="Embedding 维度">
+              <a-input-number v-model="modelEditorForm.embeddingDimensions" :min="64" :step="64" class="w-full" />
+            </a-form-item>
+          </div>
+          <div v-if="modelEditorForm.capabilities.includes('vision') || modelEditorForm.capabilities.includes('image-gen') || modelEditorForm.capabilities.includes('video-gen')" class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50">
+            <div class="text-sm text-slate-900 font-medium">
+              视觉与生成能力
+            </div>
+            <div class="text-xs text-slate-500 mt-1">
+              视觉模型通过 vision 能力参与图片理解；image-gen / video-gen 先作为后续生成场景路由标签保留。
+            </div>
+          </div>
           <a-form-item label="启用">
             <a-switch v-model="modelEditorForm.enabled" />
           </a-form-item>

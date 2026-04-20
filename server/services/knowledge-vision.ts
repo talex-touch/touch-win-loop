@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { extractKnowledgeKeywords, toKnowledgeText } from '~~/server/services/knowledge-ai'
 import { normalizeAiRuntimeProvider } from '~~/server/utils/ai-runtime'
+import { resolvePlatformAiRuntimeByCapability } from '~~/server/utils/platform-ai-channels'
 import { normalizePlatformAiClientType } from '~~/server/utils/platform-ai-client'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { runWithRetry } from '~~/server/utils/retry'
@@ -85,16 +86,18 @@ export async function analyzeKnowledgeVisualProjection(input: {
   event?: H3Event
 }): Promise<KnowledgeVisualProjectionResult> {
   const { runtime } = await readEffectiveRuntimeSettings(input.event)
-  const provider = normalizeAiRuntimeProvider(runtime.ai.provider)
-  const model = normalizeString(runtime.ai.visionModel)
+  const visionRuntime = resolvePlatformAiRuntimeByCapability(runtime, 'vision', runtime.ai.visionModel)
+  const visionAi = visionRuntime?.ai || runtime.ai
+  const provider = normalizeAiRuntimeProvider(visionAi.provider)
+  const model = normalizeString(visionRuntime?.modelConfig.model || runtime.ai.visionModel)
   const fallback = buildFallbackProjection(input.textFallback || '')
 
   if (
     !input.imageBuffer.length
     || !model
-    || !normalizeString(runtime.ai.provider)
-    || !normalizeString(runtime.ai.baseURL)
-    || !normalizeString(runtime.ai.apiKey)
+    || !normalizeString(visionAi.provider)
+    || !normalizeString(visionAi.baseURL)
+    || !normalizeString(visionAi.apiKey)
     || input.imageBuffer.length > MAX_VISION_IMAGE_BYTES
   ) {
     return {
@@ -108,18 +111,18 @@ export async function analyzeKnowledgeVisualProjection(input: {
 
   const chatModel = createChatModel({
     provider,
-    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
-    baseURL: runtime.ai.baseURL,
-    apiKey: runtime.ai.apiKey,
+    clientType: normalizePlatformAiClientType(visionAi.clientType),
+    baseURL: visionAi.baseURL,
+    apiKey: visionAi.apiKey,
     model,
-    format: provider === 'response' ? 'response' : 'openai-compatible',
+    format: visionRuntime?.ai.format || 'openai-compatible',
     temperature: 0.1,
-    topP: runtime.ai.topP,
-    maxTokens: runtime.ai.maxTokens,
-    presencePenalty: runtime.ai.presencePenalty,
-    frequencyPenalty: runtime.ai.frequencyPenalty,
-    timeoutMs: runtime.ai.timeoutMs,
-    maxRetries: runtime.ai.maxRetries,
+    topP: visionAi.topP,
+    maxTokens: visionAi.maxTokens,
+    presencePenalty: visionAi.presencePenalty,
+    frequencyPenalty: visionAi.frequencyPenalty,
+    timeoutMs: visionAi.timeoutMs,
+    maxRetries: visionAi.maxRetries,
   })
 
   const structuredModel = chatModel.withStructuredOutput(visualProjectionSchema, {
@@ -131,7 +134,7 @@ export async function analyzeKnowledgeVisualProjection(input: {
   const textFallback = normalizeString(input.textFallback)
 
   const result = await runWithRetry<z.infer<typeof visualProjectionSchema>>({
-    maxRetries: Math.max(0, Math.min(6, Number(runtime.ai.maxRetries || 0))),
+    maxRetries: Math.max(0, Math.min(6, Number(visionAi.maxRetries || 0))),
     run: async () => {
       return visualProjectionSchema.parse(await structuredModel.invoke([
         new SystemMessage([
