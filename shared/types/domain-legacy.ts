@@ -1140,7 +1140,16 @@ export interface DesignAssetModel {
 export interface DesignPageMetadata extends Record<string, unknown> {
   clipToPage?: boolean
   workspaceBackground?: string
+  export?: DesignPageExportMetadata
   libraryOrigin?: CanvasLibraryOriginMetadata
+}
+
+export interface DesignPageExportMetadata extends Record<string, unknown> {
+  width?: number
+  height?: number
+  scale?: number
+  backgroundMode?: 'transparent' | 'solid' | 'gradient'
+  sizePresetKey?: string
 }
 
 export interface DesignPageModel {
@@ -1220,6 +1229,7 @@ export interface DesignFrameModel {
   y: number
   width: number
   height: number
+  rotation?: number
   locked?: boolean
   templateKey?: string
   deviceFramePresetKey?: string

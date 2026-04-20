@@ -92,11 +92,11 @@ export default defineEventHandler(async (event) => {
       testedAt: new Date().toISOString(),
       rtc: {
         ...resolvedRtcProbe,
-        configured: resolvedRtcProbe.configured ?? true,
+        configured: 'configured' in resolvedRtcProbe ? resolvedRtcProbe.configured : true,
       },
       asr: {
         ...resolvedAsrProbe,
-        configured: resolvedAsrProbe.configured ?? true,
+        configured: 'configured' in resolvedAsrProbe ? resolvedAsrProbe.configured : true,
       },
     }
 

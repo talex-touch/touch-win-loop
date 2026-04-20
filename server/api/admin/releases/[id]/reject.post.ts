@@ -49,7 +49,7 @@ export default defineEventHandler(async (event) => {
     }, 40374)
   }
 
-  const body = await readBody<{ reason?: string }>(event).catch(() => ({}))
+  const body = await readBody<{ reason?: string }>(event).catch((): { reason?: string } => ({}))
 
   try {
     const version = await withTransaction(event, async (db) => {

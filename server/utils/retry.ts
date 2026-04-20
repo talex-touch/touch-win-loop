@@ -34,8 +34,7 @@ export async function runWithRetry<T>(options: RetryOptions<T>): Promise<RetryRe
       if (options.shouldRetryOnError && !options.shouldRetryOnError({
         attempt: attempts,
         error,
-      }))
-        break
+      })) { break }
       if (attempts > options.maxRetries)
         break
     }

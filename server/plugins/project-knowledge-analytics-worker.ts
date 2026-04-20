@@ -110,7 +110,7 @@ async function processSingleAnalyticsJob(): Promise<'idle' | 'succeeded' | 'fail
     })
     captureServerException(error, {
       module: 'project-knowledge-analytics-worker',
-      jobId: job.id,
+      taskId: job.id,
       projectId: job.projectId,
       traceId: randomUUID(),
     })

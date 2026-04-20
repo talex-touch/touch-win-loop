@@ -1,19 +1,20 @@
 import type {
   ArchitectureImportResult,
   DataSourceConnector,
-  SchemaImportResult,
   SceneDocument,
+  SchemaImportResult,
 } from '~~/shared/types/domain'
-import { readFile, readdir } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve as resolvePath } from 'node:path'
+import process from 'node:process'
 import { Client as PgClient } from 'pg'
 import YAML from 'yaml'
 import {
   importArchitectureFromMetadata,
   importFromDDL,
   importFromMermaid,
-  renderCompositionAssetToSvg,
   relayoutSceneDocument,
+  renderCompositionAssetToSvg,
 } from '~~/shared/utils/scene-document'
 
 interface PostgresColumnRow {
@@ -348,6 +349,8 @@ export async function introspectDatabase(input: {
         defaultValue?: string
         comment?: string
         isPrimaryKey?: boolean
+        referencesTable?: string
+        referencesColumn?: string
       }>
       primaryKeys: string[]
       foreignKeys: Array<{

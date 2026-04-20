@@ -1,3 +1,4 @@
+import type { FeishuBitableSyncItemEntityType } from '~~/shared/types/domain'
 import {
   batchUpdateFeishuBitableRecords,
   getFeishuTenantAccessToken,
@@ -124,7 +125,7 @@ async function handleEmbeddingUpsert(
     id: string
     syncItemId: string | null
     runId: string | null
-    scope: 'contest' | 'track' | 'track_timeline' | 'resource'
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     externalId: string
     sourceHash: string
@@ -195,7 +196,7 @@ async function handleSearchIndexRefresh(
     id: string
     syncItemId: string | null
     runId: string | null
-    scope: 'contest' | 'track' | 'track_timeline' | 'resource'
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     externalId: string
     sourceHash: string
@@ -235,7 +236,7 @@ async function handleEntityAnalysis(
     id: string
     syncItemId: string | null
     runId: string | null
-    scope: 'contest' | 'track' | 'track_timeline' | 'resource'
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     externalId: string
     sourceHash: string

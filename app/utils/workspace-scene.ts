@@ -1,3 +1,4 @@
+import type { IndexKey, TLContent } from 'tldraw'
 import type {
   AiCanvasAssistSourceFormat,
   AiCanvasAssistTemplate,
@@ -394,7 +395,7 @@ async function createTldrawRuntimeSnapshot(input: {
       bindings: Array<Record<string, unknown>>
       rootShapeIds: string[]
       assets: Array<Record<string, unknown>>
-      schema: Record<string, unknown>
+      schema: unknown
     } = {
       shapes: [],
       bindings: [],
@@ -406,7 +407,7 @@ async function createTldrawRuntimeSnapshot(input: {
     const membership = buildFrameMembership(input.document)
     const frameIdMap = new Map<string, string>()
     const shapeIdMap = new Map<string, string>()
-    let index = 'a1'
+    let index = 'a1' as IndexKey
 
     const frameDefaultProps = editor.getShapeUtil('frame').getDefaultProps()
     const geoDefaultProps = editor.getShapeUtil('geo').getDefaultProps()
@@ -569,7 +570,7 @@ async function createTldrawRuntimeSnapshot(input: {
       }
     }
 
-    editor.putContentOntoCurrentPage(content, {
+    editor.putContentOntoCurrentPage(content as unknown as TLContent, {
       preserveIds: true,
       select: false,
     })
@@ -577,7 +578,7 @@ async function createTldrawRuntimeSnapshot(input: {
     const snapshot = tldraw.getSnapshot(editor.store)
     return isRecord(snapshot) && isRecord(snapshot.document)
       ? snapshot.document as Record<string, unknown>
-      : snapshot as Record<string, unknown>
+      : snapshot as unknown as Record<string, unknown>
   }
   finally {
     editor.dispose()

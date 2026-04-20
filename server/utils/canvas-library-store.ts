@@ -12,11 +12,18 @@ import type {
   CanvasLibraryItemVersion,
   CanvasLibraryOriginMetadata,
   CanvasLibraryTemplateTarget,
+  DesignAssetDeviceShellViewportRect,
   Resource,
   SceneDocument,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import * as Y from 'yjs'
+import {
+  applyProjectCollabUpdate,
+  createProjectCollabResource,
+  getProjectCollabSnapshot,
+  getProjectResourceById,
+} from '~~/server/utils/project-resource-store'
 import {
   applyCanvasLibraryOriginToSceneDocument,
   extractCanvasLibraryFrameTemplate,
@@ -25,12 +32,6 @@ import {
   sceneDocumentFromUnknown,
   serializeSceneDocument,
 } from '~~/shared/utils/scene-document'
-import {
-  applyProjectCollabUpdate,
-  createProjectCollabResource,
-  getProjectCollabSnapshot,
-  getProjectResourceById,
-} from '~~/server/utils/project-resource-store'
 
 interface CanvasLibraryItemRow {
   id: string
@@ -119,6 +120,16 @@ function normalizeTags(value: unknown): string[] {
     .filter(Boolean)
 }
 
+function normalizeDeviceShellViewportRect(value: unknown): DesignAssetDeviceShellViewportRect {
+  const record = normalizeRecord(value)
+  return {
+    x: Math.max(0, toInteger(record.x, 0)),
+    y: Math.max(0, toInteger(record.y, 0)),
+    width: Math.max(0, toInteger(record.width, 0)),
+    height: Math.max(0, toInteger(record.height, 0)),
+  }
+}
+
 function sanitizeSlugPart(value: string): string {
   return value
     .trim()
@@ -182,11 +193,12 @@ function normalizeCanvasLibraryPayload(
   value: unknown,
 ): CanvasLibraryItemPayload {
   const parsed = parseJsonValue(value)
-  if (payloadType === 'scene_document')
+  if (payloadType === 'scene_document') {
     return sceneDocumentFromUnknown(parsed, {
       fallbackDrawMode: 'composition',
       fallbackSourceType: 'image_mockup',
     })
+  }
   return parsed as CanvasLibraryItemPayload
 }
 
@@ -386,10 +398,10 @@ export async function getCanvasLibraryItemDetail(
     publishedOnly?: boolean
   },
 ): Promise<{
-      item: CanvasLibraryItem
-      draftVersion: CanvasLibraryItemVersion | null
-      publishedVersion: CanvasLibraryItemVersion | null
-    } | null> {
+  item: CanvasLibraryItem
+  draftVersion: CanvasLibraryItemVersion | null
+  publishedVersion: CanvasLibraryItemVersion | null
+} | null> {
   const itemResult = await db.query<CanvasLibraryItemRow>(
     `SELECT
       id,
@@ -474,10 +486,10 @@ export async function createCanvasLibraryItem(
     publishNow?: boolean
   },
 ): Promise<{
-      item: CanvasLibraryItem
-      draftVersion: CanvasLibraryItemVersion | null
-      publishedVersion: CanvasLibraryItemVersion | null
-    }> {
+  item: CanvasLibraryItem
+  draftVersion: CanvasLibraryItemVersion | null
+  publishedVersion: CanvasLibraryItemVersion | null
+}> {
   const itemId = randomUUID()
   const now = new Date().toISOString()
   const slug = await resolveUniqueCanvasLibrarySlug(
@@ -569,10 +581,10 @@ export async function updateCanvasLibraryItem(
     notes?: string
   },
 ): Promise<{
-      item: CanvasLibraryItem
-      draftVersion: CanvasLibraryItemVersion | null
-      publishedVersion: CanvasLibraryItemVersion | null
-    }> {
+  item: CanvasLibraryItem
+  draftVersion: CanvasLibraryItemVersion | null
+  publishedVersion: CanvasLibraryItemVersion | null
+}> {
   const current = await getCanvasLibraryItemDetail(db, { itemId: input.itemId })
   if (!current)
     throw new Error('CANVAS_LIBRARY_ITEM_NOT_FOUND')
@@ -649,10 +661,10 @@ export async function publishCanvasLibraryItem(
     actorUserId: string
   },
 ): Promise<{
-      item: CanvasLibraryItem
-      draftVersion: CanvasLibraryItemVersion | null
-      publishedVersion: CanvasLibraryItemVersion | null
-    }> {
+  item: CanvasLibraryItem
+  draftVersion: CanvasLibraryItemVersion | null
+  publishedVersion: CanvasLibraryItemVersion | null
+}> {
   const current = await getCanvasLibraryItemDetail(db, { itemId: input.itemId })
   if (!current)
     throw new Error('CANVAS_LIBRARY_ITEM_NOT_FOUND')
@@ -684,10 +696,10 @@ export async function archiveCanvasLibraryItem(
     actorUserId: string
   },
 ): Promise<{
-      item: CanvasLibraryItem
-      draftVersion: CanvasLibraryItemVersion | null
-      publishedVersion: CanvasLibraryItemVersion | null
-    }> {
+  item: CanvasLibraryItem
+  draftVersion: CanvasLibraryItemVersion | null
+  publishedVersion: CanvasLibraryItemVersion | null
+}> {
   const current = await getCanvasLibraryItemDetail(db, { itemId: input.itemId })
   if (!current)
     throw new Error('CANVAS_LIBRARY_ITEM_NOT_FOUND')
@@ -723,10 +735,10 @@ export async function publishCanvasLibraryItemFromDesign(
     publishNow?: boolean
   },
 ): Promise<{
-      item: CanvasLibraryItem
-      draftVersion: CanvasLibraryItemVersion | null
-      publishedVersion: CanvasLibraryItemVersion | null
-    }> {
+  item: CanvasLibraryItem
+  draftVersion: CanvasLibraryItemVersion | null
+  publishedVersion: CanvasLibraryItemVersion | null
+}> {
   const resource = await getProjectResourceById(db, {
     projectId: input.projectId,
     resourceId: input.designResourceId,
@@ -748,7 +760,7 @@ export async function publishCanvasLibraryItemFromDesign(
       : input.scope === 'page'
         ? normalizeString(extractCanvasLibraryPageTemplate(sceneDocument, normalizeString(input.pageId))?.page.name)
         : normalizeString(resource.title))
-    || '未命名模板'
+      || '未命名模板'
 
   if (input.scope === 'scene') {
     const payload = extractCanvasLibrarySceneTemplate(sceneDocument)
@@ -893,7 +905,7 @@ export function buildCanvasLibraryAssetPayload(input: {
 
   return {
     ...payload,
-    viewportRect: normalizeRecord(input.viewportRect),
+    viewportRect: normalizeDeviceShellViewportRect(input.viewportRect),
     cornerRadius: Math.max(0, toInteger(input.cornerRadius, 0)),
     presetKeys: normalizeTags(input.presetKeys),
     maskPath: normalizeString(input.maskPath) || undefined,

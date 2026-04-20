@@ -1,6 +1,5 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
-  Contest,
   ContestLevel,
   ContestReleaseContestSnapshot,
   ContestReleaseResourceSnapshot,
@@ -9,8 +8,8 @@ import type {
   ContestReleaseTrackSnapshot,
   ContestReleaseTrackTimelineSnapshot,
   PolicyLibraryItemSnapshot,
-  PolicyLibraryReleaseSnapshot,
   PolicyLibraryItemStatus,
+  PolicyLibraryReleaseSnapshot,
   ReleaseDiffSummary,
   ReleaseReviewAction,
   ReleaseReviewLog,
@@ -643,7 +642,7 @@ export async function listReleaseQueue(
     limit?: number
   } = {},
 ): Promise<ReleaseVersion[]> {
-  const statuses = input.statuses?.length
+  const statuses: ReleaseVersionStatus[] = input.statuses?.length
     ? input.statuses
     : ['pending_first_review', 'pending_second_review', 'approved']
   return listReleaseScopedVersions(db, {
@@ -701,11 +700,12 @@ async function buildContestLiveBaseSnapshot(
     externalId: contestExternalId,
   })
   const contestId = normalizeText(contestRef?.entityId)
-  if (!contestId)
+  if (!contestId) {
     return {
       snapshot: createEmptyContestSnapshot(contestExternalId),
       liveEntityId: null,
     }
+  }
 
   const detail = await getContestDetail(db, {
     contestId,

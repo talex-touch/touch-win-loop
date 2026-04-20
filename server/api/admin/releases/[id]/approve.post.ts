@@ -57,7 +57,7 @@ export default defineEventHandler(async (event) => {
     }, 40373)
   }
 
-  const body = await readBody<{ stage?: ReviewStage }>(event).catch(() => ({}))
+  const body = await readBody<{ stage?: ReviewStage }>(event).catch((): { stage?: ReviewStage } => ({}))
   const stage = normalizeStage(body?.stage)
 
   try {

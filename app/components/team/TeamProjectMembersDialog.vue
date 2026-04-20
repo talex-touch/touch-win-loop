@@ -62,6 +62,8 @@ const emit = defineEmits<{
   removeMember: [userId: string]
 }>()
 
+const editableProjectMemberRoles: ProjectMemberRole[] = ['manager', 'editor', 'viewer']
+
 const modelVisible = computed({
   get: () => props.visible,
   set: (value: boolean) => {
@@ -288,7 +290,7 @@ const modelVisible = computed({
                     class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-7 focus:border-blue-500"
                   >
                     <option
-                      v-for="role in ['manager', 'editor', 'viewer']"
+                      v-for="role in editableProjectMemberRoles"
                       :key="`team-project-member-role-${member.userId}-${role}`"
                       :value="role"
                     >

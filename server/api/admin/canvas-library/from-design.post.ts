@@ -71,9 +71,7 @@ export default defineEventHandler(async (event) => {
       error.message === 'DESIGN_RESOURCE_NOT_FOUND'
       || error.message === 'DESIGN_RESOURCE_SNAPSHOT_NOT_FOUND'
       || error.message === 'DESIGN_TEMPLATE_SCOPE_NOT_FOUND'
-    )) {
-      return null
-    }
+    )) { return null }
     throw error
   })
 

@@ -25,11 +25,11 @@ export default defineEventHandler(async (event) => {
     const result = await listPublishedMockupProjectCatalog(db)
     return {
       ...result,
-      categories: result.categories.map((category) => ({
+      categories: result.categories.map(category => ({
         ...category,
-        models: category.models.map((model) => ({
+        models: category.models.map(model => ({
           ...model,
-          variants: model.variants.map((variant) => ({
+          variants: model.variants.map(variant => ({
             ...variant,
             shellAssetUrl: variant.shellAssetItemId
               ? `/api/projects/${projectId}/design-library/items/${variant.shellAssetItemId}/asset`

@@ -54,8 +54,8 @@ function applyAiDraft() {
   if (['registration', 'submission', 'preliminary', 'final', 'other'].includes(nodeType))
     form.nodeType = nodeType as TimelineNodeType
 
-  form.startAt = toDatetimeLocal(payload.startAt)
-  form.endAt = toDatetimeLocal(payload.endAt)
+  form.startAt = toDatetimeLocal(String(payload.startAt || ''))
+  form.endAt = toDatetimeLocal(String(payload.endAt || ''))
   form.note = String(payload.note || '')
   form.sourceLink = String(payload.sourceLink || '')
   draftText.value = 'AI 草稿已应用到表单，请点击“保存”。'

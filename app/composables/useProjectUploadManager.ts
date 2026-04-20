@@ -198,7 +198,7 @@ function areProjectSessionListsEqual(
     return false
   return left.every((session, index) => {
     const rightSession = right[index]
-    return Boolean(rightSession) && areProjectSessionsEqual(session, rightSession)
+    return rightSession ? areProjectSessionsEqual(session, rightSession) : false
   })
 }
 

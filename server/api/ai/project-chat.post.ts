@@ -148,11 +148,7 @@ export default defineEventHandler(async (event) => {
         detail,
         injectedPrompt,
         localContext: knowledgeContext.summaryText,
-        knowledge: {
-          citations: knowledgeContext.citations,
-          warning: knowledgeContext.warning,
-          usedFallback: knowledgeContext.usedFallback,
-        },
+        knowledge: knowledgeContext,
       }
     })
   }

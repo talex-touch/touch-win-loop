@@ -1,6 +1,6 @@
 import type { H3Event } from 'h3'
-import type { ApiResponse } from '~~/shared/types/domain'
 import type { RuntimeSettings } from '~~/server/utils/env'
+import type { ApiResponse } from '~~/shared/types/domain'
 import { defineEventHandler, setResponseStatus } from 'h3'
 import { fail as failResponse, ok as okResponse } from '~~/server/utils/api'
 import { readRuntimeSettings } from '~~/server/utils/env'

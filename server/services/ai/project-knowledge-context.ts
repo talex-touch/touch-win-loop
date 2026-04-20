@@ -3,9 +3,9 @@ import type { Queryable } from '~~/server/utils/db'
 import type {
   ProjectKnowledgeCitation,
   ProjectKnowledgeIndexSourceStatus,
-  ProjectKnowledgeSourceStatus,
   ProjectKnowledgeModality,
   ProjectKnowledgeProjectionType,
+  ProjectKnowledgeSourceStatus,
   Resource,
 } from '~~/shared/types/domain'
 import type { ProjectKnowledgeMessagePayload } from '~~/shared/types/domain-legacy'
@@ -13,7 +13,6 @@ import { buildProjectResourceLocalContext } from '~~/server/services/ai/project-
 import {
   createKnowledgeEmbedding,
   extractKnowledgeKeywords,
-  toKnowledgeText,
 } from '~~/server/services/knowledge-ai'
 import {
   buildProjectKnowledgeIndexDashboard,

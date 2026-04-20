@@ -1,3 +1,4 @@
+import type { PlatformAiProviderType } from '~~/server/utils/platform-ai-channels'
 import type {
   PlatformAiClientType,
   ProjectKnowledgeEmbeddingApiStyle,
@@ -14,10 +15,10 @@ import {
   buildPlatformAiChannelsJson,
   buildPlatformAiRegistryJson,
   getPlatformAiChannelDefinitions,
+
   resolvePlatformAiModelCatalogJson,
   resolvePlatformAiModelPricingJson,
   resolvePlatformAiRegistry,
-  type PlatformAiProviderType,
 } from '~~/server/utils/platform-ai-channels'
 import {
   normalizePlatformAiClientType,

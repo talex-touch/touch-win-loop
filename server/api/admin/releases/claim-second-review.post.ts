@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
     }, 40376)
   }
 
-  const body = await readBody<{ scopeKind?: ReleaseScopeKind }>(event).catch(() => ({}))
+  const body = await readBody<{ scopeKind?: ReleaseScopeKind }>(event).catch((): { scopeKind?: ReleaseScopeKind } => ({}))
   const scopeKind = normalizeScopeKind(body?.scopeKind)
 
   const version = await withTransaction(event, async (db) => {

@@ -231,7 +231,8 @@ export default defineEventHandler(async (event) => {
     }, 40097)
   }
 
-  if (!request.context?.selectionRange?.isCollapsed) {
+  const selectionRange = request.context?.selectionRange
+  if (!selectionRange?.isCollapsed) {
     setResponseStatus(event, 400)
     return fail('文档自动补齐只支持折叠光标。', {
       startedAt,
@@ -349,7 +350,7 @@ export default defineEventHandler(async (event) => {
             channelPrompt: channelRuntime.prompt,
             resourceTitle: request.context?.resourceTitle || resourceCheck.title,
             markdown: request.context?.markdown || '',
-            selectionRange: request.context?.selectionRange,
+            selectionRange,
             signal,
           }),
         })

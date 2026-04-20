@@ -273,17 +273,17 @@ const summaryCards = computed(() => {
 
 <template>
   <div class="space-y-4">
-    <div class="flex items-center justify-between gap-3">
+    <div class="flex gap-3 items-center justify-between">
       <div>
-        <h1 class="text-xl font-semibold text-slate-900">
+        <h1 class="text-xl text-slate-900 font-semibold">
           知识索引 Worker 监控
         </h1>
-        <p class="mt-1 text-sm text-slate-500">
+        <p class="text-sm text-slate-500 mt-1">
           查看索引调度健康、任务积压、失败分布和项目级 backlog。
         </p>
       </div>
-      <div class="flex items-center gap-2">
-        <label class="flex items-center gap-2 text-sm text-slate-600">
+      <div class="flex gap-2 items-center">
+        <label class="text-sm text-slate-600 flex gap-2 items-center">
           <input v-model="autoRefresh" type="checkbox">
           自动刷新
         </label>
@@ -293,37 +293,37 @@ const summaryCards = computed(() => {
       </div>
     </div>
 
-    <div v-if="errorText" class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+    <div v-if="errorText" class="text-sm text-rose-700 px-4 py-3 border border-rose-200 rounded-xl bg-rose-50">
       {{ errorText }}
     </div>
 
-    <div v-if="loading && !payload" class="rounded-xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
+    <div v-if="loading && !payload" class="text-sm text-slate-500 px-4 py-6 border border-slate-200 rounded-xl bg-white">
       正在加载知识索引监控...
     </div>
 
     <template v-else-if="payload">
-      <section class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section class="gap-3 grid md:grid-cols-2 xl:grid-cols-4">
         <article
           v-for="item in summaryCards"
           :key="item.label"
-          class="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+          class="px-4 py-4 border border-slate-200 rounded-2xl bg-white"
         >
-          <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+          <p class="text-[11px] text-slate-500 tracking-[0.16em] font-semibold uppercase">
             {{ item.label }}
           </p>
-          <p class="mt-2 text-2xl font-semibold text-slate-900">
+          <p class="text-2xl text-slate-900 font-semibold mt-2">
             {{ item.value }}
           </p>
-          <p class="mt-1 text-xs leading-5 text-slate-500">
+          <p class="text-xs text-slate-500 leading-5 mt-1">
             {{ item.hint }}
           </p>
         </article>
       </section>
 
-      <section class="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-        <div class="flex flex-wrap items-end gap-3">
+      <section class="px-4 py-4 border border-slate-200 rounded-2xl bg-white">
+        <div class="flex flex-wrap gap-3 items-end">
           <label class="space-y-1">
-            <span class="block text-xs font-medium text-slate-600">时间窗口</span>
+            <span class="text-xs text-slate-600 font-medium block">时间窗口</span>
             <select v-model="filters.days" class="dense-input min-w-[120px]">
               <option :value="7">7 天</option>
               <option :value="14">14 天</option>
@@ -332,7 +332,7 @@ const summaryCards = computed(() => {
             </select>
           </label>
           <label class="space-y-1">
-            <span class="block text-xs font-medium text-slate-600">任务状态</span>
+            <span class="text-xs text-slate-600 font-medium block">任务状态</span>
             <select v-model="filters.status" class="dense-input min-w-[140px]">
               <option value="">全部</option>
               <option value="queued">queued</option>
@@ -344,7 +344,7 @@ const summaryCards = computed(() => {
             </select>
           </label>
           <label class="space-y-1">
-            <span class="block text-xs font-medium text-slate-600">阶段</span>
+            <span class="text-xs text-slate-600 font-medium block">阶段</span>
             <select v-model="filters.stage" class="dense-input min-w-[140px]">
               <option value="">全部</option>
               <option value="queued">queued</option>
@@ -355,20 +355,20 @@ const summaryCards = computed(() => {
             </select>
           </label>
           <label class="space-y-1">
-            <span class="block text-xs font-medium text-slate-600">项目 ID</span>
+            <span class="text-xs text-slate-600 font-medium block">项目 ID</span>
             <input v-model="filters.projectId" class="dense-input min-w-[220px]" type="text" placeholder="可选">
           </label>
-          <label class="space-y-1 flex-1 min-w-[220px]">
-            <span class="block text-xs font-medium text-slate-600">检索</span>
+          <label class="flex-1 min-w-[220px] space-y-1">
+            <span class="text-xs text-slate-600 font-medium block">检索</span>
             <input v-model="filters.q" class="dense-input w-full" type="text" placeholder="任务 / 项目 / 资源 / 错误">
           </label>
         </div>
       </section>
 
-      <section class="grid gap-4 xl:grid-cols-[1.25fr,0.75fr]">
-        <div class="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-          <div class="flex items-center justify-between gap-3">
-            <h2 class="text-sm font-semibold text-slate-900">
+      <section class="gap-4 grid xl:grid-cols-[1.25fr,0.75fr]">
+        <div class="px-4 py-4 border border-slate-200 rounded-2xl bg-white">
+          <div class="flex gap-3 items-center justify-between">
+            <h2 class="text-sm text-slate-900 font-semibold">
               队列与趋势
             </h2>
             <span class="text-xs text-slate-500">
@@ -376,43 +376,79 @@ const summaryCards = computed(() => {
             </span>
           </div>
 
-          <div class="mt-3 grid gap-3 md:grid-cols-4">
-            <div class="rounded-xl bg-slate-50 px-3 py-3">
-              <p class="text-[11px] text-slate-500">queued</p>
-              <p class="mt-1 text-lg font-semibold text-slate-900">{{ payload.queue.queuedCount }}</p>
+          <div class="mt-3 gap-3 grid md:grid-cols-4">
+            <div class="px-3 py-3 rounded-xl bg-slate-50">
+              <p class="text-[11px] text-slate-500">
+                queued
+              </p>
+              <p class="text-lg text-slate-900 font-semibold mt-1">
+                {{ payload.queue.queuedCount }}
+              </p>
             </div>
-            <div class="rounded-xl bg-sky-50 px-3 py-3">
-              <p class="text-[11px] text-slate-500">processing</p>
-              <p class="mt-1 text-lg font-semibold text-sky-700">{{ payload.queue.processingCount }}</p>
+            <div class="px-3 py-3 rounded-xl bg-sky-50">
+              <p class="text-[11px] text-slate-500">
+                processing
+              </p>
+              <p class="text-lg text-sky-700 font-semibold mt-1">
+                {{ payload.queue.processingCount }}
+              </p>
             </div>
-            <div class="rounded-xl bg-rose-50 px-3 py-3">
-              <p class="text-[11px] text-slate-500">failed</p>
-              <p class="mt-1 text-lg font-semibold text-rose-700">{{ payload.queue.failedCount }}</p>
+            <div class="px-3 py-3 rounded-xl bg-rose-50">
+              <p class="text-[11px] text-slate-500">
+                failed
+              </p>
+              <p class="text-lg text-rose-700 font-semibold mt-1">
+                {{ payload.queue.failedCount }}
+              </p>
             </div>
-            <div class="rounded-xl bg-amber-50 px-3 py-3">
-              <p class="text-[11px] text-slate-500">stale</p>
-              <p class="mt-1 text-lg font-semibold text-amber-700">{{ payload.queue.staleCount }}</p>
+            <div class="px-3 py-3 rounded-xl bg-amber-50">
+              <p class="text-[11px] text-slate-500">
+                stale
+              </p>
+              <p class="text-lg text-amber-700 font-semibold mt-1">
+                {{ payload.queue.staleCount }}
+              </p>
             </div>
           </div>
 
           <div class="mt-4 overflow-x-auto">
-            <table class="min-w-full text-sm">
+            <table class="text-sm min-w-full">
               <thead>
-                <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
-                  <th class="py-2 pr-3 font-medium">日期</th>
-                  <th class="py-2 pr-3 font-medium">任务数</th>
-                  <th class="py-2 pr-3 font-medium">成功</th>
-                  <th class="py-2 pr-3 font-medium">失败</th>
-                  <th class="py-2 font-medium">成功率</th>
+                <tr class="text-xs text-slate-500 text-left border-b border-slate-200">
+                  <th class="font-medium py-2 pr-3">
+                    日期
+                  </th>
+                  <th class="font-medium py-2 pr-3">
+                    任务数
+                  </th>
+                  <th class="font-medium py-2 pr-3">
+                    成功
+                  </th>
+                  <th class="font-medium py-2 pr-3">
+                    失败
+                  </th>
+                  <th class="font-medium py-2">
+                    成功率
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in payload.trend" :key="item.day" class="border-b border-slate-100">
-                  <td class="py-2 pr-3">{{ item.day }}</td>
-                  <td class="py-2 pr-3">{{ item.tasks }}</td>
-                  <td class="py-2 pr-3 text-emerald-700">{{ item.succeeded }}</td>
-                  <td class="py-2 pr-3 text-rose-700">{{ item.failed }}</td>
-                  <td class="py-2">{{ item.successRate }}%</td>
+                  <td class="py-2 pr-3">
+                    {{ item.day }}
+                  </td>
+                  <td class="py-2 pr-3">
+                    {{ item.tasks }}
+                  </td>
+                  <td class="text-emerald-700 py-2 pr-3">
+                    {{ item.succeeded }}
+                  </td>
+                  <td class="text-rose-700 py-2 pr-3">
+                    {{ item.failed }}
+                  </td>
+                  <td class="py-2">
+                    {{ item.successRate }}%
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -420,18 +456,20 @@ const summaryCards = computed(() => {
         </div>
 
         <div class="space-y-4">
-          <section class="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-            <div class="flex items-center justify-between gap-3">
-              <h2 class="text-sm font-semibold text-slate-900">多模态片段分布</h2>
+          <section class="px-4 py-4 border border-slate-200 rounded-2xl bg-white">
+            <div class="flex gap-3 items-center justify-between">
+              <h2 class="text-sm text-slate-900 font-semibold">
+                多模态片段分布
+              </h2>
               <span class="text-xs text-slate-500">按 chunk kind 汇总已写入索引</span>
             </div>
             <ul class="mt-3 space-y-2">
               <li
                 v-for="item in payload.chunkKinds"
                 :key="`${item.chunkKind}-${item.count}`"
-                class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"
+                class="px-3 py-3 border border-slate-100 rounded-xl bg-slate-50"
               >
-                <div class="flex items-center justify-between gap-3">
+                <div class="flex gap-3 items-center justify-between">
                   <span class="text-sm text-slate-800">{{ item.chunkKind }}</span>
                   <span class="text-xs text-slate-500">{{ item.count }}</span>
                 </div>
@@ -442,16 +480,22 @@ const summaryCards = computed(() => {
             </ul>
           </section>
 
-          <section class="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-            <h2 class="text-sm font-semibold text-slate-900">Top Errors</h2>
+          <section class="px-4 py-4 border border-slate-200 rounded-2xl bg-white">
+            <h2 class="text-sm text-slate-900 font-semibold">
+              Top Errors
+            </h2>
             <ul class="mt-3 space-y-2">
               <li
                 v-for="item in payload.topErrors"
                 :key="`${item.errorText}-${item.count}`"
-                class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"
+                class="px-3 py-3 border border-slate-100 rounded-xl bg-slate-50"
               >
-                <p class="text-sm text-slate-800">{{ item.errorText }}</p>
-                <p class="mt-1 text-xs text-slate-500">出现 {{ item.count }} 次</p>
+                <p class="text-sm text-slate-800">
+                  {{ item.errorText }}
+                </p>
+                <p class="text-xs text-slate-500 mt-1">
+                  出现 {{ item.count }} 次
+                </p>
               </li>
               <li v-if="payload.topErrors.length === 0" class="text-sm text-slate-500">
                 当前没有失败错误聚类。
@@ -459,24 +503,26 @@ const summaryCards = computed(() => {
             </ul>
           </section>
 
-          <section class="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-            <h2 class="text-sm font-semibold text-slate-900">Recent Runs</h2>
+          <section class="px-4 py-4 border border-slate-200 rounded-2xl bg-white">
+            <h2 class="text-sm text-slate-900 font-semibold">
+              Recent Runs
+            </h2>
             <ul class="mt-3 space-y-2">
               <li
                 v-for="run in payload.worker.recentRuns.slice(0, 8)"
                 :key="run.id"
-                class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"
+                class="px-3 py-3 border border-slate-100 rounded-xl bg-slate-50"
               >
-                <div class="flex items-center justify-between gap-3">
-                  <span class="text-sm font-medium text-slate-900">{{ formatDateTime(run.startedAt) }}</span>
+                <div class="flex gap-3 items-center justify-between">
+                  <span class="text-sm text-slate-900 font-medium">{{ formatDateTime(run.startedAt) }}</span>
                   <span class="text-xs" :class="run.success ? 'text-emerald-700' : 'text-rose-700'">
                     {{ run.success ? '成功' : '失败' }}
                   </span>
                 </div>
-                <p class="mt-1 text-xs text-slate-500">
+                <p class="text-xs text-slate-500 mt-1">
                   耗时 {{ formatDurationMs(run.durationMs) }} · 处理 {{ run.processedTaskCount }} · 成功 {{ run.succeededTaskCount }} · 失败 {{ run.failedTaskCount }}
                 </p>
-                <p v-if="run.errorMessage" class="mt-1 text-xs text-rose-600">
+                <p v-if="run.errorMessage" class="text-xs text-rose-600 mt-1">
                   {{ run.errorMessage }}
                 </p>
               </li>
@@ -485,54 +531,86 @@ const summaryCards = computed(() => {
         </div>
       </section>
 
-      <section class="grid gap-4 xl:grid-cols-2">
-        <section class="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-          <h2 class="text-sm font-semibold text-slate-900">项目积压 Top</h2>
+      <section class="gap-4 grid xl:grid-cols-2">
+        <section class="px-4 py-4 border border-slate-200 rounded-2xl bg-white">
+          <h2 class="text-sm text-slate-900 font-semibold">
+            项目积压 Top
+          </h2>
           <div class="mt-3 overflow-x-auto">
-            <table class="min-w-full text-sm">
+            <table class="text-sm min-w-full">
               <thead>
-                <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
-                  <th class="py-2 pr-3 font-medium">项目</th>
-                  <th class="py-2 pr-3 font-medium">积压</th>
-                  <th class="py-2 pr-3 font-medium">processing</th>
-                  <th class="py-2 pr-3 font-medium">failed</th>
-                  <th class="py-2 font-medium">stale</th>
+                <tr class="text-xs text-slate-500 text-left border-b border-slate-200">
+                  <th class="font-medium py-2 pr-3">
+                    项目
+                  </th>
+                  <th class="font-medium py-2 pr-3">
+                    积压
+                  </th>
+                  <th class="font-medium py-2 pr-3">
+                    processing
+                  </th>
+                  <th class="font-medium py-2 pr-3">
+                    failed
+                  </th>
+                  <th class="font-medium py-2">
+                    stale
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in payload.projectBacklog" :key="item.projectId" class="border-b border-slate-100">
                   <td class="py-2 pr-3">
                     <div>
-                      <p class="font-medium text-slate-900">{{ item.projectTitle }}</p>
-                      <p class="text-xs text-slate-500">{{ item.projectId }}</p>
+                      <p class="text-slate-900 font-medium">
+                        {{ item.projectTitle }}
+                      </p>
+                      <p class="text-xs text-slate-500">
+                        {{ item.projectId }}
+                      </p>
                     </div>
                   </td>
-                  <td class="py-2 pr-3">{{ item.backlogCount }}</td>
-                  <td class="py-2 pr-3 text-sky-700">{{ item.processingCount }}</td>
-                  <td class="py-2 pr-3 text-rose-700">{{ item.failedCount }}</td>
-                  <td class="py-2 text-amber-700">{{ item.staleCount }}</td>
+                  <td class="py-2 pr-3">
+                    {{ item.backlogCount }}
+                  </td>
+                  <td class="text-sky-700 py-2 pr-3">
+                    {{ item.processingCount }}
+                  </td>
+                  <td class="text-rose-700 py-2 pr-3">
+                    {{ item.failedCount }}
+                  </td>
+                  <td class="text-amber-700 py-2">
+                    {{ item.staleCount }}
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
         </section>
 
-        <section class="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-          <h2 class="text-sm font-semibold text-slate-900">最近失败任务</h2>
+        <section class="px-4 py-4 border border-slate-200 rounded-2xl bg-white">
+          <h2 class="text-sm text-slate-900 font-semibold">
+            最近失败任务
+          </h2>
           <ul class="mt-3 space-y-2">
             <li
               v-for="item in payload.recentFailures"
               :key="item.taskId"
-              class="rounded-xl border border-rose-100 bg-rose-50 px-3 py-3"
+              class="px-3 py-3 border border-rose-100 rounded-xl bg-rose-50"
             >
-              <div class="flex items-center justify-between gap-3">
+              <div class="flex gap-3 items-center justify-between">
                 <div>
-                  <p class="text-sm font-medium text-slate-900">{{ item.resourceTitle }}</p>
-                  <p class="text-xs text-slate-500">{{ item.projectTitle }} · {{ item.stage }} / {{ item.status }}</p>
+                  <p class="text-sm text-slate-900 font-medium">
+                    {{ item.resourceTitle }}
+                  </p>
+                  <p class="text-xs text-slate-500">
+                    {{ item.projectTitle }} · {{ item.stage }} / {{ item.status }}
+                  </p>
                 </div>
                 <span class="text-xs text-slate-500">{{ formatDateTime(item.updatedAt) }}</span>
               </div>
-              <p class="mt-2 text-xs leading-5 text-rose-700">{{ item.errorMessage }}</p>
+              <p class="text-xs text-rose-700 leading-5 mt-2">
+                {{ item.errorMessage }}
+              </p>
             </li>
             <li v-if="payload.recentFailures.length === 0" class="text-sm text-slate-500">
               当前没有最近失败任务。
@@ -541,43 +619,63 @@ const summaryCards = computed(() => {
         </section>
       </section>
 
-      <section class="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="text-sm font-semibold text-slate-900">任务列表</h2>
+      <section class="px-4 py-4 border border-slate-200 rounded-2xl bg-white">
+        <div class="flex gap-3 items-center justify-between">
+          <h2 class="text-sm text-slate-900 font-semibold">
+            任务列表
+          </h2>
           <div class="text-xs text-slate-500">
             共 {{ payload.tasks.total }} 条
           </div>
         </div>
 
         <div class="mt-3 overflow-x-auto">
-          <table class="min-w-full text-sm">
+          <table class="text-sm min-w-full">
             <thead>
-              <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
-                <th class="py-2 pr-3 font-medium">更新时间</th>
-                <th class="py-2 pr-3 font-medium">项目 / 资源</th>
-                <th class="py-2 pr-3 font-medium">任务</th>
-                <th class="py-2 pr-3 font-medium">源状态</th>
-                <th class="py-2 pr-3 font-medium">耗时</th>
-                <th class="py-2 font-medium">错误</th>
+              <tr class="text-xs text-slate-500 text-left border-b border-slate-200">
+                <th class="font-medium py-2 pr-3">
+                  更新时间
+                </th>
+                <th class="font-medium py-2 pr-3">
+                  项目 / 资源
+                </th>
+                <th class="font-medium py-2 pr-3">
+                  任务
+                </th>
+                <th class="font-medium py-2 pr-3">
+                  源状态
+                </th>
+                <th class="font-medium py-2 pr-3">
+                  耗时
+                </th>
+                <th class="font-medium py-2">
+                  错误
+                </th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in payload.tasks.items" :key="item.taskId" class="border-b border-slate-100 align-top">
+              <tr v-for="item in payload.tasks.items" :key="item.taskId" class="align-top border-b border-slate-100">
                 <td class="py-3 pr-3">
                   <div>
                     <p>{{ formatDateTime(item.updatedAt) }}</p>
-                    <p class="text-xs text-slate-500">{{ item.taskId }}</p>
+                    <p class="text-xs text-slate-500">
+                      {{ item.taskId }}
+                    </p>
                   </div>
                 </td>
                 <td class="py-3 pr-3">
                   <div>
-                    <p class="font-medium text-slate-900">{{ item.projectTitle }}</p>
-                    <p class="mt-1 text-xs text-slate-500">{{ item.resourceTitle }}</p>
+                    <p class="text-slate-900 font-medium">
+                      {{ item.projectTitle }}
+                    </p>
+                    <p class="text-xs text-slate-500 mt-1">
+                      {{ item.resourceTitle }}
+                    </p>
                   </div>
                 </td>
                 <td class="py-3 pr-3">
                   <div class="space-y-1">
-                    <span class="inline-flex rounded-full border px-2 py-0.5 text-[11px]" :class="resolveTaskStatusTone(item.taskStatus)">
+                    <span class="text-[11px] px-2 py-0.5 border rounded-full inline-flex" :class="resolveTaskStatusTone(item.taskStatus)">
                       {{ item.taskStatus }}
                     </span>
                     <p class="text-xs text-slate-500">
@@ -587,20 +685,24 @@ const summaryCards = computed(() => {
                 </td>
                 <td class="py-3 pr-3">
                   <div>
-                    <p class="font-medium text-slate-900">{{ item.sourceStatus || 'unknown' }}</p>
-                    <p class="mt-1 text-xs text-slate-500">{{ item.sourceProgressPercent }}% · ETA {{ formatEtaSeconds(item.sourceEtaSeconds) }}</p>
+                    <p class="text-slate-900 font-medium">
+                      {{ item.sourceStatus || 'unknown' }}
+                    </p>
+                    <p class="text-xs text-slate-500 mt-1">
+                      {{ item.sourceProgressPercent }}% · ETA {{ formatEtaSeconds(item.sourceEtaSeconds) }}
+                    </p>
                   </div>
                 </td>
                 <td class="py-3 pr-3">
                   <div>
                     <p>{{ formatDurationMs(item.durationMs) }}</p>
-                    <p v-if="!item.finishedAt && item.runningDurationMs > 0" class="mt-1 text-xs text-slate-500">
+                    <p v-if="!item.finishedAt && item.runningDurationMs > 0" class="text-xs text-slate-500 mt-1">
                       已运行 {{ formatDurationMs(item.runningDurationMs) }}
                     </p>
                   </div>
                 </td>
                 <td class="py-3">
-                  <p class="text-xs leading-5 text-slate-600">
+                  <p class="text-xs text-slate-600 leading-5">
                     {{ item.errorMessage || '无' }}
                   </p>
                 </td>
@@ -609,7 +711,7 @@ const summaryCards = computed(() => {
           </table>
         </div>
 
-        <div class="mt-4 flex items-center justify-between gap-3 text-sm">
+        <div class="text-sm mt-4 flex gap-3 items-center justify-between">
           <button
             class="dense-btn"
             type="button"

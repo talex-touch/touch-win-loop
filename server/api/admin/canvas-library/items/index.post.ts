@@ -62,6 +62,7 @@ export default defineEventHandler(async (event) => {
       attempts: 1,
     }, 40091)
   }
+  const payload = body.payload
 
   const created = await withTransaction(event, async (db) => {
     return createCanvasLibraryItem(db, {
@@ -76,7 +77,7 @@ export default defineEventHandler(async (event) => {
       cover: body.cover || null,
       source: body.source || 'admin_upload',
       payloadType: body.payloadType as CanvasLibraryItemPayloadType,
-      payload: body.payload,
+      payload,
       previewPayload: body.previewPayload,
       notes: body.notes,
       publishNow: Boolean(body.publish),

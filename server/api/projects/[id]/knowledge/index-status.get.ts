@@ -3,8 +3,8 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { buildProjectKnowledgeIndexDashboard } from '~~/server/utils/project-knowledge-store'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
+import { buildProjectKnowledgeIndexDashboard } from '~~/server/utils/project-knowledge-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()

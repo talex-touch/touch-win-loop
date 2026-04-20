@@ -5,7 +5,7 @@ definePageMeta({
 
 const route = useRoute()
 const contestId = computed(() => {
-  const value = route.params.id
+  const value = (route.params as { id?: string | string[] }).id
   return Array.isArray(value) ? (value[0] || '') : String(value || '')
 })
 </script>

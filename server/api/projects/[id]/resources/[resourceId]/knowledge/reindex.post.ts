@@ -3,9 +3,9 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { reindexProjectKnowledgeSourceByResourceId } from '~~/server/utils/project-knowledge-store'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
 import { teamCanManageProject } from '~~/server/utils/project-access-store'
+import { reindexProjectKnowledgeSourceByResourceId } from '~~/server/utils/project-knowledge-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()

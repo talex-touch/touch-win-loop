@@ -9,11 +9,11 @@ import { createProjectMeetingSession } from '~~/server/services/meeting/project-
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { createAiChatSession } from '~~/server/utils/chat-store'
+import { withTransaction } from '~~/server/utils/db'
 import {
   normalizeDefenseRealtimeMediaMode,
   normalizeDefenseRealtimeProvider,
 } from '~~/server/utils/defense-realtime'
-import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
 import { upsertProjectDefenseSessionState } from '~~/server/utils/project-defense-store'

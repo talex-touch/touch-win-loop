@@ -214,7 +214,7 @@ function averageVector(vectors: number[][]): number[] {
   const result = Array.from({ length: size }, () => 0)
   for (const vector of vectors) {
     for (let index = 0; index < size; index += 1)
-      result[index] += vector[index] || 0
+      result[index] = (result[index] || 0) + (vector[index] || 0)
   }
   return result.map(value => value / vectors.length)
 }
@@ -814,6 +814,8 @@ export async function materializeProjectKnowledgeRelations(
     for (let rightIndex = leftIndex + 1; rightIndex < sourceVectors.length; rightIndex += 1) {
       const left = sourceVectors[leftIndex]
       const right = sourceVectors[rightIndex]
+      if (!left || !right)
+        continue
       const score = cosineSimilarity(left.vector, right.vector)
       if (score < 0.97)
         continue

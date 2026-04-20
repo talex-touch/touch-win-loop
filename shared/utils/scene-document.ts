@@ -17,10 +17,11 @@ import type {
   DesignConstraintVertical,
   DesignElementModel,
   DesignElementStyle,
-  DesignFrameKind,
   DesignFrameDeviceScreenTransform,
+  DesignFrameKind,
   DesignFrameLayoutPadding,
   DesignFrameModel,
+  DesignPageExportMetadata,
   DesignPageModel,
   DesignTemplateManifest,
   DeviceFramePreset,
@@ -49,8 +50,8 @@ import type {
   SchemaModel,
   SchemaTableModel,
 } from '../types/domain-legacy'
-import { parseMockupDevicePresetKey } from './mockup-device-catalog'
 import YAML from 'yaml'
+import { parseMockupDevicePresetKey } from './mockup-device-catalog'
 
 const DEFAULT_ARTBOARD_WIDTH = 1600
 const DEFAULT_ARTBOARD_HEIGHT = 900
@@ -88,6 +89,16 @@ interface ResolvedDesignFrameGrid {
   margin: number
   gutter: number
   visible: boolean
+}
+type DesignExportBackgroundMode = 'transparent' | 'solid' | 'gradient'
+export type DeviceArrangementLayoutPresetKey = 'solo' | 'duo-overlap' | 'trio-fan' | 'desktop-phone' | 'grid'
+export type DeviceArrangementExportSizePresetKey = 'square' | 'portrait-4-5' | 'wide-16-9' | 'story-9-16' | 'custom'
+interface ResolvedDesignPageExport {
+  width: number
+  height: number
+  scale: number
+  backgroundMode: DesignExportBackgroundMode
+  sizePresetKey: string
 }
 interface ResolvedDesignFrameExport {
   includePageOverlays: boolean
@@ -384,6 +395,66 @@ function resolveDesignPageWorkspaceBackgroundValue(
     || fallback
 }
 
+function normalizeDesignExportBackgroundMode(
+  value: unknown,
+  fallback: DesignExportBackgroundMode = 'transparent',
+): DesignExportBackgroundMode {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'solid' || normalized === 'gradient' || normalized === 'transparent')
+    return normalized
+  return fallback
+}
+
+function normalizeRotationDegrees(value: unknown): number {
+  const raw = toFiniteNumber(value, 0)
+  if (!raw)
+    return 0
+  let normalized = raw % 360
+  if (normalized > 180)
+    normalized -= 360
+  if (normalized <= -180)
+    normalized += 360
+  return Math.round(normalized * 1000) / 1000
+}
+
+export function resolveDesignPageExportMetadata(value: unknown): ResolvedDesignPageExport {
+  const source = normalizeRecord(value)
+  return {
+    width: Math.max(0, Math.round(toFiniteNumber(source.width, 0))),
+    height: Math.max(0, Math.round(toFiniteNumber(source.height, 0))),
+    scale: Math.max(1, toFiniteNumber(source.scale, 1)),
+    backgroundMode: normalizeDesignExportBackgroundMode(source.backgroundMode, 'transparent'),
+    sizePresetKey: normalizeString(source.sizePresetKey) || '',
+  }
+}
+
+function normalizeDesignPageExportMetadata(value: unknown): DesignPageExportMetadata | undefined {
+  const source = normalizeRecord(value)
+  const metadata: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(source)) {
+    if (key === 'width' || key === 'height' || key === 'scale' || key === 'backgroundMode' || key === 'sizePresetKey')
+      continue
+    metadata[key] = entry
+  }
+
+  const width = Math.max(0, Math.round(toFiniteNumber(source.width, 0)))
+  const height = Math.max(0, Math.round(toFiniteNumber(source.height, 0)))
+  const scale = Math.max(1, toFiniteNumber(source.scale, 1))
+  const backgroundMode = normalizeDesignExportBackgroundMode(source.backgroundMode, 'transparent')
+  const sizePresetKey = normalizeString(source.sizePresetKey)
+  if (width > 0)
+    metadata.width = width
+  if (height > 0)
+    metadata.height = height
+  if (scale !== 1)
+    metadata.scale = scale
+  if (backgroundMode !== 'transparent')
+    metadata.backgroundMode = backgroundMode
+  if (sizePresetKey)
+    metadata.sizePresetKey = sizePresetKey
+  return Object.keys(metadata).length > 0 ? metadata as DesignPageExportMetadata : undefined
+}
+
 function createDefaultDesignPage(input: Partial<DesignPageModel> = {}): DesignPageModel {
   const workspaceBackground = resolveDesignPageWorkspaceBackgroundValue(
     input.background,
@@ -431,7 +502,7 @@ function normalizeDesignPageMetadata(value: unknown): DesignPageModel['metadata'
   const source = normalizeRecord(value)
   const metadata: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(source)) {
-    if (key === 'clipToPage' || key === 'workspaceBackground')
+    if (key === 'clipToPage' || key === 'workspaceBackground' || key === 'export')
       continue
     metadata[key] = entry
   }
@@ -439,6 +510,9 @@ function normalizeDesignPageMetadata(value: unknown): DesignPageModel['metadata'
     metadata.clipToPage = source.clipToPage
   if (normalizeString(source.workspaceBackground))
     metadata.workspaceBackground = normalizeString(source.workspaceBackground)
+  const exportMetadata = normalizeDesignPageExportMetadata(source.export)
+  if (exportMetadata)
+    metadata.export = exportMetadata
   return Object.keys(metadata).length > 0 ? metadata as DesignPageModel['metadata'] : undefined
 }
 
@@ -1270,6 +1344,7 @@ function normalizeDesignFrameModel(value: unknown, index: number, fallbackPageId
     y: toFiniteNumber(source.y, 120),
     width: toPositiveNumber(source.width, DEFAULT_ARTBOARD_WIDTH),
     height: toPositiveNumber(source.height, DEFAULT_ARTBOARD_HEIGHT),
+    rotation: normalizeRotationDegrees(source.rotation),
     locked: Boolean(source.locked),
     templateKey: normalizeString(source.templateKey) || undefined,
     deviceFramePresetKey: normalizeString(source.deviceFramePresetKey) || undefined,
@@ -2951,8 +3026,45 @@ function resolveFrameRect(frame: DesignFrameModel): DesignRect {
   }
 }
 
+function resolveRotatedRectBounds(rect: DesignRect, rotation: unknown): DesignRect {
+  const degrees = normalizeRotationDegrees(rotation)
+  if (!degrees)
+    return rect
+
+  const radians = (degrees * Math.PI) / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const cx = rect.x + rect.width / 2
+  const cy = rect.y + rect.height / 2
+  const points = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y + rect.height },
+    { x: rect.x, y: rect.y + rect.height },
+  ].map((point) => {
+    const dx = point.x - cx
+    const dy = point.y - cy
+    return {
+      x: cx + dx * cos - dy * sin,
+      y: cy + dx * sin + dy * cos,
+    }
+  })
+  const xs = points.map(point => point.x)
+  const ys = points.map(point => point.y)
+  const minX = Math.min(...xs)
+  const minY = Math.min(...ys)
+  const maxX = Math.max(...xs)
+  const maxY = Math.max(...ys)
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(1, maxX - minX),
+    height: Math.max(1, maxY - minY),
+  }
+}
+
 function resolveFrameExportRect(composition: CompositionModel, frame: DesignFrameModel): DesignRect {
-  return resolveFrameRect(frame)
+  return resolveRotatedRectBounds(resolveFrameRect(frame), frame.rotation)
 }
 
 function isRectFullyInsideFrameBounds(rect: DesignRect, frame: DesignFrameModel): boolean {
@@ -3217,9 +3329,7 @@ export function groupDesignElementsInSceneDocument(
     return normalizeString(element.pageId) === pageId
       && normalizeString(element.frameId) === normalizeString(frameId)
       && normalizeString(element.parentId) === normalizeString(parentId)
-  })) {
-    return finalizeCompositionSceneDocument(base, composition)
-  }
+  })) { return finalizeCompositionSceneDocument(base, composition) }
 
   const targetFrame = frameId
     ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === frameId) || null
@@ -4266,15 +4376,21 @@ function renderDesignFrameMarkup(
   const frameElements = resolveDisplayCompositionElementsForFrame(composition, frame)
   const preset = resolveDeviceFramePreset(frame.deviceFramePresetKey || composition.deviceFramePresetKey || 'iphone-16-pro')
   const frameDeviceConfig = resolveFrameDeviceConfig(frame)
+  const wrapFrameMarkup = (markup: string): string => {
+    const rotation = normalizeRotationDegrees(frame.rotation)
+    const transform = rotation
+      ? ` transform="rotate(${rotation} ${frameX + frameWidth / 2} ${frameY + frameHeight / 2})"`
+      : ''
+    return `<g${transform}>${markup}</g>`
+  }
 
   if (frame.kind === 'diagram') {
-    return `<g>
+    return wrapFrameMarkup(`
       <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${frameRadius}" ry="${frameRadius}" fill="#f8fafc" stroke="#cbd5e1" />
       ${frameLabel}
       <g transform="translate(${frameX}, ${frameY + 32})">
         ${renderEmbeddedSceneMarkup(frame.embeddedScene, frameWidth, frameHeight - 40)}
-      </g>
-    </g>`
+      </g>`)
   }
 
   if (frame.kind === 'device_artboard') {
@@ -4304,14 +4420,14 @@ function renderDesignFrameMarkup(
           width: frameWidth,
           height: frameHeight,
         })
-    return `<g>
+    return wrapFrameMarkup(`
       ${frameLabel}
       ${shellMarkup}
-    </g>`
+    `)
   }
 
   if (frame.kind === 'device_mockup') {
-    return `<g>
+    return wrapFrameMarkup(`
       <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${frameRadius}" ry="${frameRadius}" fill="${backgroundFill}" />
       ${frameLabel}
       ${renderDeviceSurfaceMarkup(composition, frame, preset, {
@@ -4320,7 +4436,7 @@ function renderDesignFrameMarkup(
         width: frameWidth,
         height: frameHeight,
       })}
-    </g>`
+    `)
   }
 
   if (frame.kind === 'freeform' || frame.kind === 'template') {
@@ -4336,21 +4452,21 @@ function renderDesignFrameMarkup(
         </defs>
         <g clip-path="url(#${clipId})">${overlayMarkup}</g>`
       : overlayMarkup
-    return `<g>
+    return wrapFrameMarkup(`
       <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${frameRadius}" ry="${frameRadius}" fill="${backgroundFill}" stroke="${resolveDesignFrameSurfaceBorderColor(frame)}" />
       ${frameLabel}
       ${overlayGroup}
-    </g>`
+    `)
   }
 
   const elementMarkup = frameElements
     .map(element => renderDesignElementMarkup(element, themeTokens, frameX, frameY))
     .join('')
-  return `<g>
+  return wrapFrameMarkup(`
     <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${frameRadius}" ry="${frameRadius}" fill="${backgroundFill}" />
     ${frameLabel}
     ${elementMarkup}
-  </g>`
+  `)
 }
 
 function stripQuotedWrappers(value: string): string {
@@ -5531,6 +5647,7 @@ function createDesignFrameFromInput(
       y,
       width: toPositiveNumber(input.width, defaultDeviceFrameSize.width),
       height: toPositiveNumber(input.height, defaultDeviceFrameSize.height),
+      rotation: input.rotation,
       locked: Boolean(input.locked),
       templateKey: normalizeString(input.templateKey) || composition.templateKey,
       deviceFramePresetKey,
@@ -5571,6 +5688,7 @@ function createDesignFrameFromInput(
       y,
       width: toPositiveNumber(input.width, legacyFrame.width),
       height: toPositiveNumber(input.height, legacyFrame.height),
+      rotation: input.rotation,
       locked: typeof input.locked === 'boolean' ? input.locked : legacyFrame.locked,
       elements: ensureArray(input.elements).length > 0 ? ensureArray(input.elements) : legacyFrame.elements,
       metadata: {
@@ -5600,6 +5718,7 @@ function createDesignFrameFromInput(
       y,
       width: toPositiveNumber(input.width, defaultSize.width),
       height: toPositiveNumber(input.height, defaultSize.height),
+      rotation: input.rotation,
       locked: Boolean(input.locked),
       deviceFramePresetKey,
       elements: defaultElements,
@@ -5629,6 +5748,7 @@ function createDesignFrameFromInput(
       y,
       width: toPositiveNumber(input.width, defaultSize.width),
       height: toPositiveNumber(input.height, defaultSize.height),
+      rotation: input.rotation,
       locked: Boolean(input.locked),
       elements: ensureArray(input.elements),
       embeddedScene,
@@ -5656,6 +5776,7 @@ function createDesignFrameFromInput(
     y,
     width: toPositiveNumber(input.width, defaultSize.width),
     height: toPositiveNumber(input.height, defaultSize.height),
+    rotation: input.rotation,
     locked: Boolean(input.locked),
     templateKey: normalizeString(input.templateKey) || undefined,
     deviceFramePresetKey: normalizeString(input.deviceFramePresetKey) || undefined,
@@ -6190,7 +6311,6 @@ export function appendDesignPageToSceneDocument(
 ): SceneDocument {
   const { base, composition } = resolveCompositionDocumentState(document)
   const pageIndex = ensureArray(composition.pages).length + 1
-  const currentPage = resolveCompositionCurrentPage(composition)
   const nextWorkspaceBackground = resolveDesignPageWorkspaceBackgroundValue(
     input.background,
     input.metadata,
@@ -7157,7 +7277,9 @@ export function renderCompositionAssetToSvg(
   const pageFrames = resolveCompositionFramesForPage(composition, page.id)
   const singleFrame = ensureArray(pageFrames).find(frame => normalizeString(frame.id) === normalizeString(options.frameId)) || null
   const exportFrames = singleFrame ? [singleFrame] : pageFrames
-  const padding = singleFrame ? 0 : Math.max(48, Math.round(toFiniteNumber(options.padding, 80)))
+  const pageExport = resolveDesignPageExportMetadata(normalizeRecord(page.metadata).export)
+  const hasFixedPageExportSize = !singleFrame && pageExport.width > 0 && pageExport.height > 0
+  const padding = singleFrame || hasFixedPageExportSize ? 0 : Math.max(48, Math.round(toFiniteNumber(options.padding, 80)))
   const pageElements = singleFrame
     ? resolveFrameVisiblePageOverlayElements(composition, singleFrame)
     : resolveDisplayCompositionElementsForPage(composition, page.id)
@@ -7186,12 +7308,16 @@ export function renderCompositionAssetToSvg(
   })()
   const width = singleFrame
     ? Math.round(exportBounds.width)
+    : hasFixedPageExportSize
+      ? pageExport.width
     : Math.max(DEFAULT_ARTBOARD_WIDTH, Math.round(exportBounds.width + padding * 2))
   const height = singleFrame
     ? Math.round(exportBounds.height)
+    : hasFixedPageExportSize
+      ? pageExport.height
     : Math.max(DEFAULT_ARTBOARD_HEIGHT, Math.round(exportBounds.height + padding * 2))
-  const offsetX = singleFrame ? -exportBounds.x : padding - exportBounds.x
-  const offsetY = singleFrame ? -exportBounds.y : padding - exportBounds.y
+  const offsetX = singleFrame ? -exportBounds.x : hasFixedPageExportSize ? 0 : padding - exportBounds.x
+  const offsetY = singleFrame ? -exportBounds.y : hasFixedPageExportSize ? 0 : padding - exportBounds.y
   const themeTokens = singleFrame
     ? resolveFrameThemeTokens(composition, singleFrame)
     : normalizeThemeTokens(composition.themeTokens, defaultCompositionModel(composition.templateKey).themeTokens)
@@ -7201,7 +7327,7 @@ export function renderCompositionAssetToSvg(
     themeTokens.background || '#ffffff',
   )
   const accent = resolveThemeColorToken(themeTokens.accent, themeTokens, '#38bdf8')
-  const backgroundMode = options.backgroundMode || (singleFrame ? 'solid' : 'transparent')
+  const backgroundMode = options.backgroundMode || (singleFrame ? 'solid' : pageExport.backgroundMode)
   const deviceFrameKey = normalizeString(
     singleFrame?.deviceFramePresetKey
     || exportFrames.find(frame => frame.kind === 'device_mockup')?.deviceFramePresetKey

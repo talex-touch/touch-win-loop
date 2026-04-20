@@ -207,9 +207,9 @@ export function resourceDisplayTitle(resource: Resource): string {
   return '未命名文档'
 }
 
-export function isCollabResource(resource: Resource): boolean {
-  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  const kind = String(resource.resourceKind || '').trim().toLowerCase()
+export function isCollabResource(resource: Resource | null | undefined): boolean {
+  const source = String(resource?.source || resource?.sourceType || '').trim().toLowerCase()
+  const kind = String(resource?.resourceKind || '').trim().toLowerCase()
   return source === 'collab' || kind === 'markdown' || kind === 'draw'
 }
 

@@ -80,7 +80,7 @@ onMounted(loadItems)
     </PageHeader>
 
     <SectionCard>
-      <FilterBar class="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+      <FilterBar class="gap-2 grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
         <a-select v-model="statusFilter" allow-clear size="small" placeholder="全部状态">
           <a-option value="active">
             active

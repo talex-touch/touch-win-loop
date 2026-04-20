@@ -1,5 +1,6 @@
 import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import type {
+  AiCanvasAssistSourceFormat,
   AiCanvasAssistTemplate,
   AiWorkspaceDocumentAction,
   AiWorkspaceRequest,
@@ -60,6 +61,7 @@ const DOCUMENT_ASSIST_CHANNEL_KEYS: PlatformAiChannelKey[] = [
   'workspace_document_complete_context',
   'workspace_document_restructure',
 ]
+const SCENE_SOURCE_FORMATS: AiCanvasAssistSourceFormat[] = ['mermaid', 'markdown_outline', 'ddl', 'architecture']
 
 function toText(value: unknown): string {
   return String(value || '').trim()
@@ -76,6 +78,11 @@ function normalizeInteractionIntent(value: unknown): WorkspaceAiInteractionInten
 
 function normalizeActionSource(value: unknown): WorkspaceAiActionSource {
   return toText(value) === 'toolbar' ? 'toolbar' : 'composer'
+}
+
+function normalizeSceneSourceFormat(value: unknown): AiCanvasAssistSourceFormat | undefined {
+  const text = toText(value) as AiCanvasAssistSourceFormat
+  return SCENE_SOURCE_FORMATS.includes(text) ? text : undefined
 }
 
 function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined): AiWorkspaceRequest {
@@ -121,7 +128,7 @@ function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined):
       workflowLayoutPreset: toText(context.workflowLayoutPreset) as WorkflowLayoutPreset | undefined,
       sceneHash: toText(context.sceneHash),
       sceneSourceText: toText(context.sceneSourceText),
-      sceneSourceFormat: toText(context.sceneSourceFormat),
+      sceneSourceFormat: normalizeSceneSourceFormat(context.sceneSourceFormat),
       sceneAction: toText(context.sceneAction) as WorkflowDraftAction | undefined,
       sceneTemplate: toText(context.sceneTemplate) as AiCanvasAssistTemplate | undefined,
       sceneArchitectureView: toText(context.sceneArchitectureView) as WorkflowArchitectureView | undefined,
@@ -574,11 +581,7 @@ export default defineEventHandler(async (event) => {
           projectSettingsSummary: summarizeProjectSettings(projectSettings),
           projectOutlineSummary: summarizeOutline(projectOutline),
           resourceSummary: knowledgeContext.summaryText,
-          knowledge: {
-            citations: knowledgeContext.citations,
-            warning: knowledgeContext.warning,
-            usedFallback: knowledgeContext.usedFallback,
-          },
+          knowledge: knowledgeContext,
         }
       })
       throwIfAborted(abortController.signal)
@@ -732,7 +735,7 @@ export default defineEventHandler(async (event) => {
                   sceneDraft: execution.data.data.sceneDraft,
                 }
               : {}),
-            knowledge: execution.data.data.knowledge || contextBundle.knowledge,
+            knowledge: contextBundle.knowledge,
           },
           createdByUserId: user.id,
         })
@@ -826,7 +829,7 @@ export default defineEventHandler(async (event) => {
         documentDraft: persisted.documentDraft,
         workflowDraft: persisted.workflowDraft,
         sceneDraft: persisted.sceneDraft,
-        knowledge: execution.data.data.knowledge || contextBundle.knowledge,
+        knowledge: contextBundle.knowledge,
       }
 
       throwIfAborted(abortController.signal)

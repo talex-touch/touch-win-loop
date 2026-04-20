@@ -379,7 +379,7 @@ onBeforeUnmount(() => {
           }"
           type="button"
           :role="typeof item.checked === 'boolean' ? 'menuitemcheckbox' : 'menuitem'"
-          :aria-checked="typeof item.checked === 'boolean' ? String(Boolean(item.checked)) : undefined"
+          :aria-checked="typeof item.checked === 'boolean' ? item.checked : undefined"
           :disabled="item.disabled"
           @click="emit('select', item.key)"
         >

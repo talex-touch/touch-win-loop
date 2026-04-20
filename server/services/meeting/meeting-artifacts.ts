@@ -8,8 +8,8 @@ import type {
 import { Buffer } from 'node:buffer'
 import { readFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
-import { buildServerApiEndpoint } from '~~/server/utils/api-url'
 import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildServerApiEndpoint } from '~~/server/utils/api-url'
 import * as projectResourceStore from '~~/server/utils/project-resource-store'
 
 const MEETING_MEMORY_SECTION_DIVIDER = '\n\n---\n\n'
@@ -265,21 +265,22 @@ export async function persistMeetingNotesResource(
         resourceId: input.meeting.recordingResourceId,
       })
     : null
+  const meetingMemoryProjectId = normalizeString(meetingMemory.projectId) || input.meeting.projectId
   const nextMemory = buildMeetingMemoryMarkdown({
-    existingMarkdown: meetingMemory.content,
+    existingMarkdown: meetingMemory.content || '',
     meeting: input.meeting,
     summary: input.summary,
     recordingResource,
   })
 
   await projectResourceStore.overwriteProjectMarkdownCollabResource(db, {
-    projectId: meetingMemory.projectId,
+    projectId: meetingMemoryProjectId,
     resourceId: meetingMemory.id,
     actorUserId: input.actorUserId,
     markdown: nextMemory.markdown,
   })
   await projectResourceStore.patchProjectResourceMetadata(db, {
-    projectId: meetingMemory.projectId,
+    projectId: meetingMemoryProjectId,
     resourceId: meetingMemory.id,
     actorUserId: input.actorUserId,
     title: projectResourceStore.PROJECT_MEETING_MEMORY_RESOURCE_TITLE,
@@ -291,7 +292,7 @@ export async function persistMeetingNotesResource(
     availability: 'login_required',
   })
   return projectResourceStore.mergeProjectResourceMetadata(db, {
-    projectId: meetingMemory.projectId,
+    projectId: meetingMemoryProjectId,
     resourceId: meetingMemory.id,
     actorUserId: input.actorUserId,
     metadata: {

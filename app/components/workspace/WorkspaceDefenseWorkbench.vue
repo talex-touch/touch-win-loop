@@ -71,7 +71,7 @@ const emit = defineEmits<{
 }>()
 
 const workbenchNow = ref(Date.now())
-let workbenchClockTimer: ReturnType<typeof window.setInterval> | null = null
+let workbenchClockTimer: number | null = null
 
 onMounted(() => {
   workbenchClockTimer = window.setInterval(() => {
@@ -1090,8 +1090,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__realtime {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 255, 0.98));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 255, 0.98));
 }
 
 .workspace-defense-workbench__realtime-shell {

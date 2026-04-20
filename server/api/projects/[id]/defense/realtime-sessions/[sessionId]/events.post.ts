@@ -3,13 +3,13 @@ import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { getAiChatSessionById } from '~~/server/utils/chat-store'
+import { withTransaction } from '~~/server/utils/db'
 import {
   buildDefenseRealtimeEventKey,
   mergeDefenseRealtimeSessionMeta,
   normalizeDefenseRealtimeProvider,
   resolveDefenseRealtimeStage,
 } from '~~/server/utils/defense-realtime'
-import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import {
   createProjectDefenseTurns,

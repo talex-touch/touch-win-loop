@@ -1,4 +1,5 @@
 import type {
+  CompositionBlock,
   CompositionModel,
   DesignAssetModel,
   DesignDocumentV1,
@@ -76,6 +77,16 @@ function cloneDesignAsset(asset: DesignAssetModel): DesignAssetModel {
   }
 }
 
+function cloneCompositionBlock(block: CompositionBlock): CompositionBlock {
+  return {
+    ...block,
+    items: block.items
+      ? block.items.map(item => ({ ...item }))
+      : undefined,
+    metadata: block.metadata ? { ...block.metadata } : undefined,
+  }
+}
+
 function cloneCompositionModel(composition: CompositionModel): CompositionModel {
   return {
     ...composition,
@@ -88,12 +99,7 @@ function cloneCompositionModel(composition: CompositionModel): CompositionModel 
     layoutRules: composition.layoutRules ? { ...composition.layoutRules } : undefined,
     allowedBlocks: composition.allowedBlocks ? [...composition.allowedBlocks] : undefined,
     exportPresets: composition.exportPresets ? [...composition.exportPresets] : undefined,
-    blocks: composition.blocks
-      ? composition.blocks.map(block => ({
-          ...block,
-          items: ensureArray(block.items).map(item => ({ ...item })),
-        }))
-      : undefined,
+    blocks: composition.blocks?.map(cloneCompositionBlock),
     metadata: composition.metadata ? { ...composition.metadata } : undefined,
   }
 }
@@ -133,12 +139,7 @@ export function sceneDocumentToDesignDocument(value: SceneDocument | unknown): D
     exportPresets: composition.exportPresets ? [...composition.exportPresets] : undefined,
     aspectRatio: normalizeString(composition.aspectRatio) || undefined,
     deviceFramePresetKey: normalizeString(composition.deviceFramePresetKey) || undefined,
-    blocks: composition.blocks
-      ? composition.blocks.map(block => ({
-          ...block,
-          items: ensureArray(block.items).map(item => ({ ...item })),
-        }))
-      : undefined,
+    blocks: composition.blocks?.map(cloneCompositionBlock),
     metadata: normalized.metadata ? { ...normalized.metadata } : undefined,
     createdAt: normalizeString(normalized.createdAt) || undefined,
     updatedAt: normalizeString(normalized.updatedAt) || undefined,
@@ -191,13 +192,7 @@ export function designDocumentFromUnknown(value: unknown): DesignDocumentV1 {
     exportPresets: ensureArray(value.exportPresets).map(item => normalizeString(item)).filter(Boolean),
     aspectRatio: normalizeString(value.aspectRatio) || undefined,
     deviceFramePresetKey: normalizeString(value.deviceFramePresetKey) || undefined,
-    blocks: ensureArray(value.blocks).map((block) => {
-      const source = isRecord(block) ? block : {}
-      return {
-        ...source,
-        items: ensureArray(source.items).map(item => ({ ...(isRecord(item) ? item : {}) })),
-      }
-    }),
+    blocks: ensureArray(value.blocks).map(cloneCompositionBlock),
     metadata: isRecord(value.metadata) ? { ...value.metadata } : undefined,
     createdAt: normalizeString(value.createdAt) || undefined,
     updatedAt: normalizeString(value.updatedAt) || undefined,
@@ -234,12 +229,7 @@ export function designDocumentToSceneDocument(value: DesignDocumentV1 | unknown)
       exportPresets: normalized.exportPresets ? [...normalized.exportPresets] : undefined,
       aspectRatio: normalizeString(normalized.aspectRatio) || undefined,
       deviceFramePresetKey: normalizeString(normalized.deviceFramePresetKey) || undefined,
-      blocks: normalized.blocks
-        ? normalized.blocks.map(block => ({
-            ...block,
-            items: ensureArray(block.items).map(item => ({ ...item })),
-          }))
-        : undefined,
+      blocks: normalized.blocks?.map(cloneCompositionBlock),
       metadata: normalized.metadata ? { ...normalized.metadata } : undefined,
     },
     metadata: normalized.metadata ? { ...normalized.metadata } : undefined,

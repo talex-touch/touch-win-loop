@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import type {
+  DesignCanvasInteractionContext,
+  DesignCanvasSelectionState,
+} from '~~/app/composables/useDesignCanvasSelection'
+import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
+import type {
   DesignAssetModel,
   DesignElementModel,
   DesignFrameModel,
   DesignPageModel,
 } from '~~/shared/types/domain'
 import type { WorkspaceCollabCursorUser } from '~/components/workspace/collab/presence'
-import type {
-  DesignCanvasInteractionContext,
-  DesignCanvasSelectionState,
-} from '~~/app/composables/useDesignCanvasSelection'
-import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
 import {
   createEmptyDesignCanvasSelectionState,
 } from '~~/app/composables/useDesignCanvasSelection'
@@ -34,9 +34,9 @@ const props = withDefaults(defineProps<{
   mockupScreenEditingFrameId?: string
   pendingImagePlacement?: {
     src: string
-    name?: string
-    intrinsicWidth?: number
-    intrinsicHeight?: number
+    name: string
+    intrinsicWidth: number
+    intrinsicHeight: number
     assetId?: string
     mimeType?: string
   } | null
@@ -76,7 +76,7 @@ const emit = defineEmits<{
   'update-frame-positions': [payload: { positions: Array<{ frameId: string, x: number, y: number }>, historyMergeKey?: string }]
   'update-frame-size': [payload: { frameId: string, x?: number, y?: number, width?: number, height?: number, historyMergeKey?: string }]
   'viewport-change': [payload: { x: number, y: number, zoom: number }]
-  updateCollabCursor: [value: { cursorX?: number, cursorY?: number }]
+  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
   'create-element': [payload: Partial<DesignElementModel>]
   'update-element': [payload: { elementId: string, patch: Partial<DesignElementModel>, historyMergeKey?: string }]
   'update-elements': [payload: { patches: Array<{ elementId: string, patch: Partial<DesignElementModel> }>, historyMergeKey?: string }]
@@ -90,7 +90,7 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="relative h-full min-h-0 w-full"
+    class="h-full min-h-0 w-full relative"
     data-testid="workspace-design-canvaskit-bridge"
   >
     <WorkspaceDesignCanvasKitHost

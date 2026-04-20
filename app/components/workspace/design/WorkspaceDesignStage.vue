@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import type {
+  DesignCanvasInteractionContext,
+  DesignCanvasSelectionState,
+} from '~~/app/composables/useDesignCanvasSelection'
+import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
+import type {
   DesignAssetModel,
   DesignElementModel,
   DesignFrameModel,
   DesignPageModel,
 } from '~~/shared/types/domain'
 import type { WorkspaceCollabCursorUser } from '~/components/workspace/collab/presence'
-import type {
-  DesignCanvasInteractionContext,
-  DesignCanvasSelectionState,
-} from '~~/app/composables/useDesignCanvasSelection'
-import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   createEmptyDesignCanvasSelectionState,
@@ -25,14 +25,6 @@ import {
   resolveDesignFrameProjectionLayoutForFrames,
 } from '~~/shared/utils/scene-document'
 import WorkspaceDesignCanvas from './WorkspaceDesignCanvas.client.vue'
-
-const POINTER_GESTURE_THRESHOLD = 4
-const MIN_CANVAS_ZOOM = 0.1
-const MAX_CANVAS_ZOOM = 2.5
-const MIN_ELEMENT_WIDTH = 24
-const MIN_ELEMENT_HEIGHT = 24
-const ROTATE_HANDLE_OFFSET = 28
-const RESIZE_HANDLE_SIZE = 12
 
 const props = withDefaults(defineProps<{
   page?: DesignPageModel | null
@@ -73,7 +65,6 @@ const props = withDefaults(defineProps<{
   mockupScreenEditingFrameId: '',
   disabled: false,
 })
-
 const emit = defineEmits<{
   'update-selection': [payload: DesignCanvasSelectionState]
   'open-frame': [frameId: string]
@@ -83,7 +74,7 @@ const emit = defineEmits<{
   'update-frame-positions': [payload: { positions: Array<{ frameId: string, x: number, y: number }>, historyMergeKey?: string }]
   'update-frame-size': [payload: { frameId: string, x?: number, y?: number, width?: number, height?: number, historyMergeKey?: string }]
   'viewport-change': [payload: { x: number, y: number, zoom: number }]
-  updateCollabCursor: [value: { cursorX?: number, cursorY?: number }]
+  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
   'create-element': [payload: Partial<DesignElementModel>]
   'update-element': [payload: { elementId: string, patch: Partial<DesignElementModel>, historyMergeKey?: string }]
   'update-elements': [payload: { patches: Array<{ elementId: string, patch: Partial<DesignElementModel> }>, historyMergeKey?: string }]
@@ -92,8 +83,15 @@ const emit = defineEmits<{
   'edit-mockup-screen': [payload: { frameId: string }]
   'update-mockup-screen-transform': [payload: { frameId: string, offsetX: number, offsetY: number, historyMergeKey?: string }]
 }>()
+const POINTER_GESTURE_THRESHOLD = 4
+const MIN_CANVAS_ZOOM = 0.1
+const MAX_CANVAS_ZOOM = 2.5
+const MIN_ELEMENT_WIDTH = 24
+const MIN_ELEMENT_HEIGHT = 24
+const ROTATE_HANDLE_OFFSET = 28
+const RESIZE_HANDLE_SIZE = 12
 
-type OverlayElementItem = {
+interface OverlayElementItem {
   displayKey: string
   element: DesignElementModel
   ownerFrame: DesignFrameModel | null
@@ -103,7 +101,7 @@ type OverlayElementItem = {
   rect: { x: number, y: number, width: number, height: number }
   clipped: boolean
 }
-type CreateDraft = {
+interface CreateDraft {
   frameId?: string
   startX: number
   startY: number
@@ -111,7 +109,7 @@ type CreateDraft = {
   currentY: number
   points?: Array<{ x: number, y: number }>
 }
-type ElementSelectionDraft = {
+interface ElementSelectionDraft {
   startClientX: number
   startClientY: number
   currentClientX: number
@@ -120,7 +118,7 @@ type ElementSelectionDraft = {
   additive: boolean
   previewElementIds: string[]
 }
-type ElementDragDraft = {
+interface ElementDragDraft {
   targetElementId: string
   displayFrameId: string
   startClientX: number
@@ -134,7 +132,7 @@ type ElementDragDraft = {
   editingFrameId: string
 }
 type ResizeHandleDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-type ElementTransformDraft = {
+interface ElementTransformDraft {
   mode: 'resize' | 'rotate'
   targetElementId: string
   editingFrameId: string
@@ -161,13 +159,13 @@ type ElementTransformDraft = {
 }
 type SvgStrokeLineCap = 'butt' | 'inherit' | 'round' | 'square'
 type SvgStrokeLineJoin = 'bevel' | 'inherit' | 'miter' | 'round'
-type TransformBadgeSnapshot = {
+interface TransformBadgeSnapshot {
   style: Record<string, string>
   text: string
   status?: string
   fading: boolean
 }
-type MockupScreenDragDraft = {
+interface MockupScreenDragDraft {
   frameId: string
   startClientX: number
   startClientY: number
@@ -832,7 +830,7 @@ function resolveRenderedElementLocalGeometry(item: OverlayElementItem): {
 function resolveElementLayoutDetachPatch(item: OverlayElementItem): Partial<DesignElementModel> {
   const frameUsesAutoLayout = Boolean(
     item.ownerFrame
-      && resolveDesignFrameLayoutMetadata(item.ownerFrame.metadata?.layout).mode === 'auto',
+    && resolveDesignFrameLayoutMetadata(item.ownerFrame.metadata?.layout).mode === 'auto',
   )
   const hasConstraints = Boolean(item.element.metadata?.constraints)
   const layoutSizing = normalizeString(item.element.metadata?.layoutSizing)
@@ -1154,9 +1152,10 @@ function canInteractWithOverlayElement(item: OverlayElementItem): boolean {
 
   const editingFrameId = normalizeString(props.selectionState.editingFrameId)
   const activeDisplayFrameId = resolveSelectionDisplayFrameId()
-  if (editingFrameId)
+  if (editingFrameId) {
     return item.ownerFrameId === editingFrameId
       && item.displayFrameId === (activeDisplayFrameId || editingFrameId)
+  }
 
   if (props.interactionContext.isDeepSelectModifierPressed)
     return true
@@ -1324,10 +1323,12 @@ function applyElementResizeDelta(
     top += localDelta.y
 
   if (right - left < MIN_ELEMENT_WIDTH) {
-    if (handle.includes('w'))
+    if (handle.includes('w')) {
       left = right - MIN_ELEMENT_WIDTH
-    else if (handle.includes('e'))
+    }
+    else if (handle.includes('e')) {
       right = left + MIN_ELEMENT_WIDTH
+    }
     else {
       const centerX = (left + right) / 2
       left = centerX - MIN_ELEMENT_WIDTH / 2
@@ -1335,10 +1336,12 @@ function applyElementResizeDelta(
     }
   }
   if (bottom - top < MIN_ELEMENT_HEIGHT) {
-    if (handle.includes('n'))
+    if (handle.includes('n')) {
       top = bottom - MIN_ELEMENT_HEIGHT
-    else if (handle.includes('s'))
+    }
+    else if (handle.includes('s')) {
       bottom = top + MIN_ELEMENT_HEIGHT
+    }
     else {
       const centerY = (top + bottom) / 2
       top = centerY - MIN_ELEMENT_HEIGHT / 2
@@ -1763,7 +1766,7 @@ function handleOverlayPointerUp(): void {
   const draft = elementDragDraft.value
   if (draft.dragging && draft.activeElementIds.length) {
     emit('update-elements', {
-      patches: draft.activeElementIds.map((elementId) => ({
+      patches: draft.activeElementIds.map(elementId => ({
         elementId,
         patch: {
           ...(draft.basePatches[elementId] || {}),
@@ -1773,11 +1776,11 @@ function handleOverlayPointerUp(): void {
       })),
       historyMergeKey: 'element-drag',
     })
-      emit('update-selection', createElementSelectionState(draft.activeElementIds, {
-        primaryElementId: draft.targetElementId,
-        editingFrameId: draft.editingFrameId,
-        displayFrameId: draft.displayFrameId,
-      }))
+    emit('update-selection', createElementSelectionState(draft.activeElementIds, {
+      primaryElementId: draft.targetElementId,
+      editingFrameId: draft.editingFrameId,
+      displayFrameId: draft.displayFrameId,
+    }))
     elementDragDraft.value = null
     return
   }
@@ -1806,8 +1809,9 @@ function handleOverlayPointerUp(): void {
 }
 
 function handleElementDragStart(event: PointerEvent, item: OverlayElementItem): void {
-  if (!canDragOverlayElement(item))
+  if (!canDragOverlayElement(item)) {
     return
+  }
   ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
   elementDragDraft.value = {
     targetElementId: item.element.id,
@@ -1927,7 +1931,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="relative h-full min-h-0 w-full overflow-hidden" data-testid="workspace-design-stage">
+  <div class="h-full min-h-0 w-full relative overflow-hidden" data-testid="workspace-design-stage">
     <WorkspaceDesignCanvas
       :page="props.page"
       :frames="props.frames"
@@ -1954,7 +1958,7 @@ onBeforeUnmount(() => {
 
     <div
       ref="overlayRootRef"
-      class="absolute inset-0 z-10 overflow-hidden"
+      class="inset-0 absolute z-10 overflow-hidden"
       :class="overlayCapturesCanvasPointer ? 'pointer-events-auto' : 'pointer-events-none'"
       @pointerdown="handleOverlayPanePointerDown"
       @pointermove="handleOverlayPointerMove"
@@ -1962,7 +1966,7 @@ onBeforeUnmount(() => {
       @pointercancel="handleOverlayPointerUp"
       @wheel.capture.prevent="handleOverlayWheel"
     >
-      <svg class="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+      <svg class="h-full w-full pointer-events-none inset-0 absolute overflow-visible">
         <g v-for="grid in visibleFrameGrids" :key="`grid-${grid.frame.id}`">
           <rect
             :x="grid.frame.x * viewport.zoom + viewport.x"
@@ -2002,10 +2006,10 @@ onBeforeUnmount(() => {
 
       <div
         v-if="activeMockupScreenRectStyle"
-        class="pointer-events-none absolute rounded-[20px] border border-sky-400/75 bg-sky-300/10 shadow-[0_0_0_1px_rgba(125,211,252,0.16)]"
+        class="border border-sky-400/75 rounded-[20px] bg-sky-300/10 pointer-events-none shadow-[0_0_0_1px_rgba(125,211,252,0.16)] absolute"
         :style="activeMockupScreenRectStyle"
       >
-        <div class="absolute left-2 top-2 rounded-full bg-slate-950/75 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-100">
+        <div class="text-[10px] text-sky-100 tracking-[0.12em] font-semibold px-2 py-1 rounded-full bg-slate-950/75 uppercase left-2 top-2 absolute">
           Screen Crop
         </div>
       </div>
@@ -2013,7 +2017,7 @@ onBeforeUnmount(() => {
       <div
         v-for="item in overlayElements"
         :key="item.displayKey"
-        class="absolute select-none"
+        class="select-none absolute"
         :class="[
           canInteractWithOverlayElement(item) ? 'pointer-events-auto' : 'pointer-events-none',
         ]"
@@ -2127,14 +2131,14 @@ onBeforeUnmount(() => {
 
       <div
         v-if="selectedTransformBoxStyle"
-        class="absolute pointer-events-none"
+        class="pointer-events-none absolute"
         :style="selectedTransformBoxStyle"
         @wheel.prevent.stop="handleOverlayWheel"
       >
-        <div class="absolute inset-0 rounded-[2px] border border-[#2f6bff]" />
-        <div class="absolute left-1/2 top-0 h-6 w-px -translate-x-1/2 -translate-y-full bg-[#2f6bff]/70" />
+        <div class="border border-[#2f6bff] rounded-[2px] inset-0 absolute" />
+        <div class="bg-[#2f6bff]/70 h-6 w-px left-1/2 top-0 absolute -translate-x-1/2 -translate-y-full" />
         <button
-          class="absolute rounded-full border border-[#2f6bff] bg-white pointer-events-auto"
+          class="border border-[#2f6bff] rounded-full bg-white pointer-events-auto absolute"
           :style="{
             ...(rotateHandleStyle || {}),
             width: `${RESIZE_HANDLE_SIZE}px`,
@@ -2147,7 +2151,7 @@ onBeforeUnmount(() => {
         <button
           v-for="handle in resizeHandleDefinitions"
           :key="handle.direction"
-          class="absolute rounded-[2px] border border-[#2f6bff] bg-white pointer-events-auto"
+          class="border border-[#2f6bff] rounded-[2px] bg-white pointer-events-auto absolute"
           :style="{
             ...handle.style,
             cursor: handle.cursor,
@@ -2162,13 +2166,13 @@ onBeforeUnmount(() => {
 
       <div
         v-if="liveTransformBadge"
-        class="absolute inline-flex items-center gap-1 rounded-[7px] border border-[#2f6bff]/18 bg-[#2f6bff] px-1.5 py-[3px] text-[8px] font-semibold leading-none text-white shadow-[0_4px_12px_rgba(47,107,255,0.16)] whitespace-nowrap min-w-max pointer-events-none"
+        class="text-[8px] text-white leading-none font-semibold px-1.5 py-[3px] border border-[#2f6bff]/18 rounded-[7px] bg-[#2f6bff] inline-flex gap-1 min-w-max pointer-events-none whitespace-nowrap shadow-[0_4px_12px_rgba(47,107,255,0.16)] items-center absolute"
         :style="liveTransformBadge.style"
       >
         <span>{{ liveTransformBadge.text }}</span>
         <span
           v-if="liveTransformBadge.status"
-          class="rounded-full border border-white/18 bg-white/14 px-1 py-[1px] text-[7px] font-semibold leading-none text-white/92"
+          class="text-[7px] text-white/92 leading-none font-semibold px-1 py-[1px] border border-white/18 rounded-full bg-white/14"
         >
           {{ liveTransformBadge.status }}
         </span>
@@ -2176,14 +2180,14 @@ onBeforeUnmount(() => {
 
       <div
         v-if="transformBadgeGhost"
-        class="absolute inline-flex items-center gap-1 rounded-[7px] border border-[#2f6bff]/18 bg-[#2f6bff] px-1.5 py-[3px] text-[8px] font-semibold leading-none text-white shadow-[0_4px_12px_rgba(47,107,255,0.16)] whitespace-nowrap min-w-max pointer-events-none transition-opacity duration-150 ease-out"
+        class="text-[8px] text-white leading-none font-semibold px-1.5 py-[3px] border border-[#2f6bff]/18 rounded-[7px] bg-[#2f6bff] inline-flex gap-1 min-w-max pointer-events-none whitespace-nowrap shadow-[0_4px_12px_rgba(47,107,255,0.16)] transition-opacity duration-150 ease-out items-center absolute"
         :class="transformBadgeGhost.fading ? 'opacity-0' : 'opacity-100'"
         :style="transformBadgeGhost.style"
       >
         <span>{{ transformBadgeGhost.text }}</span>
         <span
           v-if="transformBadgeGhost.status"
-          class="rounded-full border border-white/18 bg-white/14 px-1 py-[1px] text-[7px] font-semibold leading-none text-white/92"
+          class="text-[7px] text-white/92 leading-none font-semibold px-1 py-[1px] border border-white/18 rounded-full bg-white/14"
         >
           {{ transformBadgeGhost.status }}
         </span>
@@ -2191,13 +2195,13 @@ onBeforeUnmount(() => {
 
       <div
         v-if="createDraftRectStyle"
-        class="pointer-events-none absolute border-2 border-dashed border-sky-500/80 bg-sky-200/10"
+        class="border-2 border-sky-500/80 border-dashed bg-sky-200/10 pointer-events-none absolute"
         :style="createDraftRectStyle"
       />
 
       <div
         v-else-if="elementSelectionDraft?.selecting"
-        class="pointer-events-none absolute border-2 border-dashed border-sky-500/80 bg-sky-200/10"
+        class="border-2 border-sky-500/80 border-dashed bg-sky-200/10 pointer-events-none absolute"
         :style="{
           left: `${Math.min(elementSelectionDraft.startClientX, elementSelectionDraft.currentClientX) - (overlayRootRef?.getBoundingClientRect().left || 0)}px`,
           top: `${Math.min(elementSelectionDraft.startClientY, elementSelectionDraft.currentClientY) - (overlayRootRef?.getBoundingClientRect().top || 0)}px`,
@@ -2207,7 +2211,7 @@ onBeforeUnmount(() => {
         }"
       />
 
-      <svg v-if="createDraftPathPoints" class="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+      <svg v-if="createDraftPathPoints" class="h-full w-full pointer-events-none inset-0 absolute overflow-visible">
         <polyline
           :points="createDraftPathPoints"
           fill="none"

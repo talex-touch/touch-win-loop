@@ -39,6 +39,17 @@ export function normalizeDefenseRealtimeConnectionState(value: unknown): Defense
   return 'idle'
 }
 
+function normalizeDefenseRealtimeBootstrapState(value: unknown): DefenseRealtimeSessionMeta['bootstrapState'] {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'bootstrapping')
+    return 'bootstrapping'
+  if (normalized === 'ready')
+    return 'ready'
+  if (normalized === 'error')
+    return 'error'
+  return normalized === 'idle' ? 'idle' : undefined
+}
+
 export function normalizeDefenseRealtimeSessionMeta(
   value: Partial<DefenseRealtimeSessionMeta> | null | undefined,
 ): DefenseRealtimeSessionMeta {
@@ -47,7 +58,7 @@ export function normalizeDefenseRealtimeSessionMeta(
     mediaMode: normalizeDefenseRealtimeMediaMode(value?.mediaMode),
     transport: normalizeString(value?.transport).toLowerCase() === 'rtc_sidecar' ? 'rtc_sidecar' : 'websocket',
     connectionState: normalizeDefenseRealtimeConnectionState(value?.connectionState),
-    bootstrapState: normalizeString(value?.bootstrapState) || undefined,
+    bootstrapState: normalizeDefenseRealtimeBootstrapState(value?.bootstrapState),
     providerSessionId: normalizeString(value?.providerSessionId) || null,
     conversationId: normalizeString(value?.conversationId) || null,
     linkedMeetingId: normalizeString(value?.linkedMeetingId) || null,

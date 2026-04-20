@@ -8,7 +8,7 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
-export default defineApiHandler(async ({ event, runtime: fallbackRuntime, fail, ok }) => {
+export default defineApiHandler(async ({ event, fail, ok }) => {
   const { runtime } = await readEffectiveMeetingRuntimeSettings(event)
   const shareKey = normalizeString(getRouterParam(event, 'shareKey'))
   const body = await readBody<{ displayName?: string }>(event).catch(() => ({} as { displayName?: string }))

@@ -4,8 +4,8 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { updateMockupDeviceModel } from '~~/server/utils/mockup-device-store'
+import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 interface PatchMockupDeviceModelBody {
   slug?: string
@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
   const nextModelName = body.modelName !== undefined ? normalizeString(body.modelName) : undefined
   const nextTitle = body.title !== undefined
     ? normalizeString(body.title)
-    : (nextModelName ? nextModelName : undefined)
+    : (nextModelName || undefined)
   const detail = await withTransaction(event, async (db) => {
     return updateMockupDeviceModel(db, {
       modelId,

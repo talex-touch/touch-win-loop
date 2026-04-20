@@ -449,10 +449,6 @@ function resolveProviderCapability(type: ProviderType): ProviderCapability {
   return type === 'searchxng' || type === 'tavily' ? 'search' : 'llm'
 }
 
-function isProviderLlm(provider: Pick<ProviderDraftItem, 'capability'> | null | undefined): boolean {
-  return provider?.capability === 'llm'
-}
-
 function cloneModelItem(item: ProviderModelItem): ProviderModelItem {
   return {
     ...item,
@@ -665,22 +661,6 @@ const llmProviderOptions = computed(() => {
       provider: item.provider,
       enabled: item.enabled,
     }))
-})
-
-const enabledGlobalModelOptions = computed(() => {
-  const map = new Map<string, { model: string, label: string, priceText: string }>()
-  for (const provider of providers.value.filter(item => item.capability === 'llm')) {
-    for (const model of provider.models.filter(item => item.enabled)) {
-      if (!map.has(model.model)) {
-        map.set(model.model, {
-          model: model.model,
-          label: model.label,
-          priceText: buildPriceText(model),
-        })
-      }
-    }
-  }
-  return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
 })
 
 const providerEditorSupportsModels = computed(() => providerEditorForm.capability === 'llm')
@@ -1458,7 +1438,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="ai-prompts-page space-y-4 w-full min-w-0">
+  <div class="ai-prompts-page min-w-0 w-full space-y-4">
     <a-tabs v-model:active-key="activeTab" type="rounded">
       <a-tab-pane v-for="tab in tabOptions" :key="tab.key" :title="tab.label" />
     </a-tabs>
@@ -1468,7 +1448,7 @@ onMounted(async () => {
         {{ consoleError }}
       </a-alert>
 
-      <a-spin :loading="consoleLoading || saving" class="block w-full">
+      <a-spin :loading="consoleLoading || saving" class="w-full block">
         <a-card :bordered="false" class="rounded-3xl shadow-sm">
           <template #title>
             <div class="flex flex-wrap gap-4 items-center justify-between">
@@ -1930,10 +1910,10 @@ onMounted(async () => {
           </div>
 
           <template v-if="providerEditorSupportsModels">
-            <div class="px-4 py-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-3">
+            <div class="px-4 py-4 border border-slate-200 rounded-2xl bg-slate-50 space-y-3">
               <div class="flex flex-wrap gap-3 items-center justify-between">
                 <div>
-                  <div class="text-sm font-medium text-slate-900">
+                  <div class="text-sm text-slate-900 font-medium">
                     Provider 模型池
                   </div>
                   <div class="text-xs text-slate-500">

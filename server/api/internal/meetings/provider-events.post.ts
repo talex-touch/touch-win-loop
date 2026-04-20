@@ -37,15 +37,6 @@ interface ProviderEventBody {
   metadata?: Record<string, unknown>
 }
 
-interface LiveKitWebhookBody {
-  event?: string
-  room?: Record<string, unknown>
-  participant?: Record<string, unknown>
-  track?: Record<string, unknown>
-  egressInfo?: Record<string, unknown>
-  egress_info?: Record<string, unknown>
-}
-
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
@@ -269,7 +260,7 @@ export default defineEventHandler(async (event) => {
     }
     throw error
   }
-  const rawBody = await readRawBody(event, 'utf8').catch(() => '')
+  const rawBody = (await readRawBody(event, 'utf8').catch(() => '')) || ''
   if (!rtc.verifyWebhook({ headers: event.node.req.headers as Record<string, unknown>, rawBody })) {
     setResponseStatus(event, 401)
     return fail('invalid meeting webhook signature', {
@@ -283,7 +274,7 @@ export default defineEventHandler(async (event) => {
 
   const parsedBody = resolveRawBody(rawBody)
   const body = normalizeString(parsedBody.event) && !normalizeString(parsedBody.eventType)
-    ? normalizeLiveKitWebhookBody(parsedBody as LiveKitWebhookBody)
+    ? normalizeLiveKitWebhookBody(parsedBody)
     : parsedBody as ProviderEventBody
   const eventType = normalizeString(body?.eventType).toLowerCase()
   const provider = normalizeString(body?.provider) || rtc.provider

@@ -968,11 +968,12 @@ function resolveChannelCandidates(
 
   const requestedModels = dedupeStrings(channel.modelFallback)
   let modelOrder = requestedModels.filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model)))
-  let usedFallback = modelOrder.length === 0
+  const usedFallback = modelOrder.length === 0
 
-  if (modelOrder.length === 0)
+  if (modelOrder.length === 0) {
     modelOrder = resolveDefaultModelsForChannel(channel.key, defaults, eligibleProviders)
       .filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model)))
+  }
 
   const candidates: PlatformAiResolvedChannelCandidate[] = []
   let candidateIndex = 0

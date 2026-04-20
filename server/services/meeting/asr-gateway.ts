@@ -282,9 +282,11 @@ async function transcribeOpenAiCompatibleChunk(input: {
   let lastError: Error | null = null
 
   for (const model of EMBEDDED_ASR_FALLBACK_MODELS) {
+    const wavBytes = new Uint8Array(input.wavBuffer.byteLength)
+    wavBytes.set(input.wavBuffer)
     const formData = new FormData()
     formData.set('model', model)
-    formData.set('file', new Blob([input.wavBuffer], { type: 'audio/wav' }), `${input.sessionId}-${input.participantIdentity}-${input.eventSeq}.wav`)
+    formData.set('file', new Blob([wavBytes], { type: 'audio/wav' }), `${input.sessionId}-${input.participantIdentity}-${input.eventSeq}.wav`)
 
     try {
       const response = await fetchWithTimeout({

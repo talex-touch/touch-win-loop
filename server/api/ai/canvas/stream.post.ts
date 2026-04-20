@@ -1,5 +1,4 @@
 import type {
-  AiCanvasAssistAction,
   AiCanvasAssistRequest,
   AiCanvasAssistSourceFormat,
   AiCanvasAssistStreamEvent,
@@ -9,7 +8,6 @@ import { createEventStream, setResponseStatus } from 'h3'
 import {
   normalizeCanvasAction,
   normalizeCanvasTemplate,
-  resolveCanvasSourceFormat,
   runCanvasAssistGeneration,
   toCanvasAssistText,
 } from '~~/server/services/ai/canvas-assist'
@@ -228,7 +226,6 @@ export default defineEventHandler(async (event) => {
         }
       })
 
-      const sourceFormat = resolveCanvasSourceFormat(request.template)
       const execution = await runCanvasAssistGeneration({
         runtime,
         action: request.action,

@@ -8,6 +8,7 @@ import type {
   ProjectSettingsSnapshot,
   ProjectWorkspaceViewPreference,
   ProjectWorkspaceViewState,
+  Resource,
   WorkspaceDisplayPreferenceSnapshot,
 } from '~~/shared/types/domain'
 import type {
@@ -97,7 +98,7 @@ interface UseWorkspaceProjectSettingsDraftBehaviorOptions {
   clearProjectSettingsAdaptationDirty: (contestId: string) => void
   isProjectSettingsAdaptationDirty: (contestId: string) => boolean
   projectSettingsBindingMap: ComputedRef<Map<string, WorkspaceProjectContestBindingForm>>
-  resources: Ref<Array<{ id: string }>> | ComputedRef<Array<{ id: string }>>
+  resources: Ref<Resource[]> | ComputedRef<Resource[]>
   askDeviceRestoreConfirm: (title: string, content: string) => Promise<'sync' | 'keep'>
   applyProjectWorkspaceViewState: (state: ProjectWorkspaceViewState) => void
   syncProjectWorkspaceViewState: () => Promise<void>
