@@ -14,14 +14,14 @@ it('关闭全部标签后保持空标签态，不再自动补 dashboard', async 
     readFile(PROJECT_WORKSPACE_FILE, 'utf8'),
   ])
 
-  assert.match(tabsComposableSource, /const openTabs = ref<WorkspaceMainTab\[]>\(\[\]\)/, 'tabs composable 初始状态仍会自动补 dashboard')
+  assert.match(tabsComposableSource, /const openTabs = ref<WorkspaceMainTab\[\]>\(\[\]\)/, 'tabs composable 初始状态仍会自动补 dashboard')
   assert.match(tabsComposableSource, /const activeTabId = ref<WorkspaceMainTabId \| ''>\(''\)/, 'tabs composable 初始激活态仍会自动补 dashboard')
   assert.doesNotMatch(tabsComposableSource, /const nextTabs = resolvedTabs\s*:\s*options\.fixedTabs\.filter\(tab => tab\.id === 'dashboard'\)/, 'tabs composable 仍会在 props 为空时补 dashboard')
 
   assert.doesNotMatch(mainPanelSource, /if \(nextTabIds\.length === 0\)[\s\S]*dashboard/, '主面板仍会在无标签页时本地补 dashboard')
   assert.doesNotMatch(mainPanelSource, /return \['dashboard'\]/, '主面板仍会把空 tabs 迁移回 dashboard')
 
-  assert.match(workspaceSource, /const openMainTabs = ref<WorkspaceMainTabId\[]>\(\[\]\)/, '项目页 openMainTabs 初始态仍会自动补 dashboard')
+  assert.match(workspaceSource, /const openMainTabs = ref<WorkspaceMainTabId\[\]>\(\[\]\)/, '项目页 openMainTabs 初始态仍会自动补 dashboard')
   assert.match(workspaceSource, /const activeMainTabId = ref<WorkspaceMainTabId \| ''>\(''\)/, '项目页 activeMainTabId 初始态仍会自动补 dashboard')
   assert.match(workspaceSource, /openMainTabs\.value = \[\]/, '项目页在项目清空时未保持空标签态')
   assert.match(workspaceSource, /activeMainTabId\.value = ''/, '项目页在项目清空时未清空激活标签')

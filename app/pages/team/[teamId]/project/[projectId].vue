@@ -109,6 +109,9 @@ import type {
   WorkspaceOutlineNode,
   WorkspaceOutlineSection,
 } from '~/utils/workspace-outline'
+import type {
+  WorkspaceProjectPageBootstrapDeferredTaskId as WorkspaceBootstrapDeferredTaskId,
+} from '~/utils/workspace-project-page-helpers'
 import { Message } from '@arco-design/web-vue'
 import {
   formatFileSize,
@@ -231,6 +234,13 @@ import {
   sortByUpdatedAtDesc,
   validateUploadFiles,
 } from '~/utils/workspace-project-helpers'
+import {
+  buildWorkspaceBackgroundBootstrapTasks,
+  resolveWorkspaceResourceTabSyncState,
+  shouldPersistWorkspaceViewState,
+  shouldSyncWorkspaceCollabBinding,
+  shouldSyncWorkspaceMeetingSelection,
+} from '~/utils/workspace-project-page-helpers'
 import {
   buildFreeformCollabValueFromSceneDraft,
   buildSceneDraftKey,
@@ -1220,20 +1230,6 @@ let workspaceBootstrapRequestId = 0
 const workspaceBootstrapStartedAt = ref(0)
 
 type WorkspaceBootstrapMark = 'bootstrap:start' | 'bootstrap:shell-ready' | 'bootstrap:active-tab-ready' | 'bootstrap:overlay-hidden' | 'bootstrap:background-complete'
-type WorkspaceBootstrapDeferredTaskId
-  = 'resource-library'
-    | 'resource-recycle'
-    | 'resource-shares'
-    | 'members'
-    | 'outline'
-    | 'settings'
-    | 'contest-detail'
-    | 'topic-boards'
-    | 'ai-changes'
-    | 'issues'
-    | 'meetings'
-    | 'chat-sessions'
-    | 'defense-personas'
 
 interface WorkspaceActiveTabLoadResult {
   deferredTaskIds: Set<WorkspaceBootstrapDeferredTaskId>
@@ -11476,29 +11472,24 @@ watch([activeProjectId, selectedContestId, selectedTrackId], async () => {
 })
 
 watch(resources, (nextResources) => {
-  const workflowResource = nextResources.find(item => isWorkflowCanvasResource(item)) || null
-  if (workflowResource && !flowResourceId.value)
-    flowResourceId.value = workflowResource.id
-
-  if (flowResourceId.value && !nextResources.some(item => item.id === flowResourceId.value)) {
-    const shouldDispose = collabBindingResourceId.value === flowResourceId.value && activeMainTabId.value === 'flow'
-    flowResourceId.value = ''
-    if (shouldDispose)
-      disposeCollabDocBinding(true)
-  }
-
-  const visibleResourceIds = new Set(nextResources.map(resource => resource.id))
-  const nextOpenTabs = openMainTabs.value.filter((tabId) => {
-    if (!tabId.startsWith('resource:'))
-      return true
-    return visibleResourceIds.has(tabId.slice('resource:'.length))
+  const tabSyncState = resolveWorkspaceResourceTabSyncState({
+    resources: nextResources,
+    flowResourceId: flowResourceId.value,
+    collabBindingResourceId: collabBindingResourceId.value,
+    activeMainTabId: activeMainTabId.value,
+    openMainTabs: openMainTabs.value,
+    previewResourceId: previewResourceId.value,
+    isWorkflowCanvasResource,
   })
-  const tabStateChanged = nextOpenTabs.length !== openMainTabs.value.length
-    || nextOpenTabs.some((tabId, index) => tabId !== openMainTabs.value[index])
-  const previewResourceMissing = Boolean(previewResourceId.value && !visibleResourceIds.has(previewResourceId.value))
-  if (previewResourceMissing)
+
+  if (flowResourceId.value !== tabSyncState.nextFlowResourceId)
+    flowResourceId.value = tabSyncState.nextFlowResourceId
+  if (tabSyncState.disposeCollabBinding)
+    disposeCollabDocBinding(true)
+  if (tabSyncState.previewResourceMissing)
     closeProjectResourcePreview(previewResourceId.value)
-  if (tabStateChanged) {
+  if (tabSyncState.tabStateChanged) {
+    const nextOpenTabs = tabSyncState.nextOpenMainTabs
     openMainTabs.value = nextOpenTabs
     if (!openMainTabs.value.includes(activeMainTabId.value as typeof openMainTabs.value[number]))
       activeMainTabId.value = openMainTabs.value[0] || ''
@@ -11703,80 +11694,6 @@ async function loadActiveWorkspaceCriticalTabData(
   return result
 }
 
-function buildWorkspaceBackgroundBootstrapTasks(
-  restoredViewState: HydratedProjectWorkspaceViewStateResult,
-  selectedContestIdFromState: string,
-  skippedTaskIds: Set<WorkspaceBootstrapDeferredTaskId>,
-) {
-  const tasks: Array<{
-    id: WorkspaceBootstrapDeferredTaskId
-    run: () => Promise<unknown>
-  }> = [
-    {
-      id: 'resource-library',
-      run: () => loadProjectResourceLibrary(),
-    },
-    {
-      id: 'resource-recycle',
-      run: () => loadProjectRecycleResources(),
-    },
-    {
-      id: 'resource-shares',
-      run: () => loadProjectResourceShares(),
-    },
-    {
-      id: 'members',
-      run: () => loadWorkspaceMemberManagement(),
-    },
-    {
-      id: 'outline',
-      run: () => loadProjectOutline(),
-    },
-    {
-      id: 'settings',
-      run: () => loadProjectSettings(selectedContestIdFromState),
-    },
-    {
-      id: 'contest-detail',
-      run: () => loadSelectedContestDetail(selectedContestIdFromState),
-    },
-    {
-      id: 'topic-boards',
-      run: () => loadTopicBoards(),
-    },
-    {
-      id: 'ai-changes',
-      run: () => loadAiChangeRequests(),
-    },
-    {
-      id: 'issues',
-      run: () => loadProjectIssues(),
-    },
-    {
-      id: 'meetings',
-      run: () => loadProjectMeetings({
-        fallbackToFirst: false,
-        preferredMeetingId: restoredViewState.state.activeMeetingId,
-        hydrateSelectedDetail: false,
-      }),
-    },
-    {
-      id: 'chat-sessions',
-      run: () => loadChatSessions({
-        preferredSessionId: restoredViewState.state.activeChatSessionId,
-        autoCreate: false,
-        fallbackToFirst: !restoredViewState.state.activeChatSessionId,
-      }),
-    },
-    {
-      id: 'defense-personas',
-      run: () => loadDefensePersonas(),
-    },
-  ]
-
-  return tasks.filter(task => !skippedTaskIds.has(task.id))
-}
-
 async function runWorkspaceBackgroundBootstrap(
   projectId: string,
   requestId: number,
@@ -11784,11 +11701,24 @@ async function runWorkspaceBackgroundBootstrap(
   selectedContestIdFromState: string,
   skippedTaskIds: Set<WorkspaceBootstrapDeferredTaskId>,
 ): Promise<void> {
-  const tasks = buildWorkspaceBackgroundBootstrapTasks(
+  const tasks = buildWorkspaceBackgroundBootstrapTasks({
     restoredViewState,
     selectedContestIdFromState,
     skippedTaskIds,
-  )
+    loadProjectResourceLibrary,
+    loadProjectRecycleResources,
+    loadProjectResourceShares,
+    loadWorkspaceMemberManagement,
+    loadProjectOutline,
+    loadProjectSettings,
+    loadSelectedContestDetail,
+    loadTopicBoards,
+    loadAiChangeRequests,
+    loadProjectIssues,
+    loadProjectMeetings,
+    loadChatSessions,
+    loadDefensePersonas,
+  })
   let draftHydrationResult: ProjectSettingsDraftHydrationResult | null = null
 
   if (tasks.length === 0) {
@@ -11828,20 +11758,22 @@ async function runWorkspaceBackgroundBootstrap(
 }
 
 watch([activeProjectId, activeMainTabId], async ([projectId, nextTabId], [previousProjectId, previousTabId]) => {
-  if (!projectId)
-    return
-  if (workspaceCriticalLoading.value)
-    return
-  if (projectId === previousProjectId && nextTabId === previousTabId)
-    return
+  if (!shouldSyncWorkspaceMeetingSelection({
+    projectId,
+    nextTabId,
+    previousProjectId,
+    previousTabId,
+    workspaceCriticalLoading: workspaceCriticalLoading.value,
+  })) { return }
   await syncActiveMainTabMeetingSelection(nextTabId)
 }, { immediate: true })
 
 watch(activeMainTabId, async (next, previous) => {
-  if (next === previous)
-    return
-  if (workspaceCriticalLoading.value)
-    return
+  if (!shouldSyncWorkspaceCollabBinding({
+    nextTabId: next,
+    previousTabId: previous,
+    workspaceCriticalLoading: workspaceCriticalLoading.value,
+  })) { return }
   await syncActiveMainTabCollabBinding(next)
 })
 
@@ -11864,10 +11796,11 @@ watch(
     rightSidebarUserCollapsed,
   ],
   () => {
-    if (!activeProjectId.value || projectWorkspaceViewHydrating.value)
-      return
-    if (workspaceSidebarResizeState.active)
-      return
+    if (!shouldPersistWorkspaceViewState({
+      activeProjectId: activeProjectId.value,
+      projectWorkspaceViewHydrating: projectWorkspaceViewHydrating.value,
+      sidebarResizeActive: workspaceSidebarResizeState.active,
+    })) { return }
     void syncProjectWorkspaceViewState()
   },
   { deep: true },
