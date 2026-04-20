@@ -1346,6 +1346,22 @@ CREATE TABLE IF NOT EXISTS project_knowledge_index_tasks (
     CHECK (source_resource_id IS NOT NULL OR linked_contest_resource_id IS NOT NULL)
 );
 
+CREATE TABLE IF NOT EXISTS project_knowledge_analytics_jobs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  job_type TEXT NOT NULL CHECK (job_type IN ('relations_refresh', 'snapshot_capture', 'semantic_layout_refresh')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'succeeded', 'failed', 'cancelled')),
+  snapshot_type TEXT CHECK (snapshot_type IN ('hourly', 'manual')),
+  target_source_id TEXT REFERENCES project_knowledge_sources(id) ON DELETE CASCADE,
+  payload_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  result_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  error_message TEXT NOT NULL DEFAULT '',
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 DO $$
 BEGIN
   BEGIN
@@ -1440,6 +1456,69 @@ BEGIN
       'meeting_transcript'
     ));
 END $$;
+
+CREATE TABLE IF NOT EXISTS project_knowledge_index_snapshots (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  snapshot_type TEXT NOT NULL CHECK (snapshot_type IN ('hourly', 'manual')),
+  summary_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  diagnostics_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  visuals_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_knowledge_relations (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  snapshot_id TEXT REFERENCES project_knowledge_index_snapshots(id) ON DELETE SET NULL,
+  source_node_type TEXT NOT NULL CHECK (source_node_type IN ('source', 'chunk')),
+  source_node_id TEXT NOT NULL,
+  target_node_type TEXT NOT NULL CHECK (target_node_type IN ('source', 'chunk')),
+  target_node_id TEXT NOT NULL,
+  relation_type TEXT NOT NULL CHECK (relation_type IN ('belongs_to', 'derived_from', 'similar_to', 'aligned_to', 'references', 'duplicated_with')),
+  score DOUBLE PRECISION NOT NULL DEFAULT 0,
+  evidence_metric TEXT NOT NULL DEFAULT '',
+  evidence_model TEXT NOT NULL DEFAULT '',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_knowledge_semantic_layouts (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  snapshot_id TEXT REFERENCES project_knowledge_index_snapshots(id) ON DELETE SET NULL,
+  layout_type TEXT NOT NULL CHECK (layout_type IN ('chunk_space', 'document_galaxy', 'multimodal_bridge')),
+  algorithm TEXT NOT NULL CHECK (algorithm IN ('umap3d', 'pca3d')),
+  status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready', 'degraded', 'failed')),
+  point_count INTEGER NOT NULL DEFAULT 0,
+  cluster_count INTEGER NOT NULL DEFAULT 0,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_knowledge_semantic_points (
+  id TEXT PRIMARY KEY,
+  layout_id TEXT NOT NULL REFERENCES project_knowledge_semantic_layouts(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  node_type TEXT NOT NULL CHECK (node_type IN ('source', 'chunk', 'cluster')),
+  node_id TEXT NOT NULL,
+  level TEXT NOT NULL CHECK (level IN ('cluster', 'document', 'chunk')),
+  cluster_id TEXT NOT NULL DEFAULT '',
+  modality TEXT NOT NULL DEFAULT 'unknown',
+  embedding_status TEXT NOT NULL DEFAULT 'missing' CHECK (embedding_status IN ('native', 'derived', 'fallback', 'missing', 'failed')),
+  importance DOUBLE PRECISION NOT NULL DEFAULT 0,
+  label TEXT NOT NULL DEFAULT '',
+  x DOUBLE PRECISION NOT NULL DEFAULT 0,
+  y DOUBLE PRECISION NOT NULL DEFAULT 0,
+  z DOUBLE PRECISION NOT NULL DEFAULT 0,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(layout_id, node_type, node_id, level)
+);
 
 CREATE TABLE IF NOT EXISTS canvas_library_items (
   id TEXT PRIMARY KEY,
@@ -2866,10 +2945,25 @@ CREATE INDEX IF NOT EXISTS idx_project_knowledge_index_tasks_status_updated
   ON project_knowledge_index_tasks(project_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_knowledge_index_tasks_resource
   ON project_knowledge_index_tasks(project_id, source_resource_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_knowledge_analytics_jobs_project_status
+  ON project_knowledge_analytics_jobs(project_id, job_type, status, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_knowledge_analytics_jobs_active_unique
+  ON project_knowledge_analytics_jobs(project_id, job_type, COALESCE(target_source_id, ''), COALESCE(snapshot_type, ''))
+  WHERE status IN ('pending', 'processing');
 CREATE INDEX IF NOT EXISTS idx_project_knowledge_chunks_project_source
   ON project_knowledge_chunks(project_id, source_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_knowledge_chunks_project_resource
   ON project_knowledge_chunks(project_id, source_resource_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_knowledge_index_snapshots_project_captured
+  ON project_knowledge_index_snapshots(project_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_knowledge_relations_project_source
+  ON project_knowledge_relations(project_id, source_node_type, source_node_id, relation_type, score DESC);
+CREATE INDEX IF NOT EXISTS idx_project_knowledge_relations_project_target
+  ON project_knowledge_relations(project_id, target_node_type, target_node_id, relation_type, score DESC);
+CREATE INDEX IF NOT EXISTS idx_project_knowledge_semantic_layouts_project_type
+  ON project_knowledge_semantic_layouts(project_id, layout_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_knowledge_semantic_points_layout_level
+  ON project_knowledge_semantic_points(layout_id, level, importance DESC);
 CREATE INDEX IF NOT EXISTS idx_project_resource_comment_threads_resource_updated ON project_resource_comment_threads(project_id, resource_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_resource_comment_threads_status ON project_resource_comment_threads(project_id, resource_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_resource_comment_messages_thread_created ON project_resource_comment_messages(thread_id, created_at ASC);

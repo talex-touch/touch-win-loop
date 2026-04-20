@@ -12599,6 +12599,10 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
       :loopy-data-last-error="projectKnowledgeWorker.lastError || ''"
       :loopy-data-has-active-work="projectKnowledgeHasActiveWork"
       :loopy-data-disabled="!activeProjectId"
+      :loopy-data-relations-updated-at="projectKnowledgeDashboard?.analytics.relationsUpdatedAt || ''"
+      :loopy-data-snapshot-updated-at="projectKnowledgeDashboard?.analytics.snapshotUpdatedAt || ''"
+      :loopy-data-semantic-layout-updated-at="projectKnowledgeDashboard?.analytics.semanticLayoutUpdatedAt || ''"
+      :loopy-data-analytics-all-ready="projectKnowledgeDashboard?.analytics.allReady || false"
       @open-loopy-data="openLoopyDataPanel"
     />
 

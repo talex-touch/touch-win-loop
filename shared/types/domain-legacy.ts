@@ -397,6 +397,16 @@ export type ProjectKnowledgeModality = 'text' | 'image' | 'audio' | 'video' | 'd
 export type PlatformAiClientType = 'langchain' | 'bailian-native' | 'coze-sdk'
 export type ProjectKnowledgeEmbeddingApiStyle = 'openai-compatible-text' | 'bailian-multimodal'
 export type ProjectKnowledgeEmbeddingInputType = 'text' | 'image' | 'video' | 'multi_images' | 'fused'
+export type ProjectKnowledgeEmbeddingStatus = 'native' | 'derived' | 'fallback' | 'missing' | 'failed'
+export type ProjectKnowledgeProvenanceSourceType = 'native' | 'ocr' | 'asr' | 'vision_summary' | 'fallback_template'
+export type ProjectKnowledgeRelationType = 'belongs_to' | 'derived_from' | 'similar_to' | 'aligned_to' | 'references' | 'duplicated_with'
+export type ProjectKnowledgeRelationNodeType = 'source' | 'chunk'
+export type ProjectKnowledgeAnalyticsJobType = 'relations_refresh' | 'snapshot_capture' | 'semantic_layout_refresh'
+export type ProjectKnowledgeAnalyticsJobStatus = 'pending' | 'processing' | 'succeeded' | 'failed' | 'cancelled'
+export type ProjectKnowledgeSnapshotType = 'hourly' | 'manual'
+export type ProjectKnowledgeSemanticLayoutType = 'chunk_space' | 'document_galaxy' | 'multimodal_bridge'
+export type ProjectKnowledgeSemanticLayoutAlgorithm = 'umap3d' | 'pca3d'
+export type ProjectKnowledgeSemanticLayoutLevel = 'cluster' | 'document' | 'chunk'
 
 export type ProjectKnowledgeProjectionType
   = 'document_text'
@@ -426,6 +436,13 @@ export interface ProjectKnowledgeChunkMetadata {
   embeddingInputType?: ProjectKnowledgeEmbeddingInputType
   embeddingDimensions?: number
   embeddingFusionUsed?: boolean
+  embeddingStatus?: ProjectKnowledgeEmbeddingStatus
+  embeddingQualityScore?: number
+  sourceConfidence?: number
+  stageSuccessRatio?: number
+  modalitySupportWeight?: number
+  neighborhoodConsistency?: number
+  provenanceSourceType?: ProjectKnowledgeProvenanceSourceType
 }
 
 export type ProjectKnowledgeIndexHealthState
@@ -479,6 +496,18 @@ export interface ProjectKnowledgeIndexDiagnostics {
   issues: ProjectKnowledgeIndexDiagnosticIssue[]
 }
 
+export interface ProjectKnowledgeAnalyticsFreshness {
+  relationsUpdatedAt?: string | null
+  snapshotUpdatedAt?: string | null
+  semanticLayoutUpdatedAt?: string | null
+  latestSnapshotType?: ProjectKnowledgeSnapshotType | null
+  relationsJobStatus?: ProjectKnowledgeAnalyticsJobStatus | null
+  snapshotJobStatus?: ProjectKnowledgeAnalyticsJobStatus | null
+  semanticLayoutJobStatus?: ProjectKnowledgeAnalyticsJobStatus | null
+  staleKinds: Array<'relations' | 'snapshot' | 'semantic_layout'>
+  allReady: boolean
+}
+
 export interface ProjectKnowledgeIndexVisualCountItem {
   label: string
   count: number
@@ -518,6 +547,30 @@ export interface ProjectKnowledgeIndexTopologyLink {
   targetId: string
 }
 
+export interface ProjectKnowledgeHealthMatrixCell {
+  modality: ProjectKnowledgeModality | 'unknown'
+  embeddingStatus: ProjectKnowledgeEmbeddingStatus
+  count: number
+}
+
+export interface ProjectKnowledgePipelineStageMetric {
+  stage: 'ingest' | 'normalize' | 'parse' | 'chunk' | 'annotate' | 'embed' | 'validate' | 'index' | 'relate'
+  status: 'pending' | 'running' | 'success' | 'degraded' | 'failed' | 'blocked'
+  inputCount: number
+  outputCount: number
+  errorCount: number
+  latencyMs: number
+  modelName: string
+  fallbackUsed: boolean
+  qualityScore: number
+}
+
+export interface ProjectKnowledgeClusterMetric {
+  clusterCompactness: number
+  nearestNeighborConsistency: number
+  crossModalAlignmentScore: number
+}
+
 export interface ProjectKnowledgeIndexVisuals {
   stageFunnel: ProjectKnowledgeIndexVisualCountItem[]
   failureReasons: ProjectKnowledgeIndexVisualCountItem[]
@@ -535,6 +588,9 @@ export interface ProjectKnowledgeIndexVisuals {
     links: ProjectKnowledgeIndexTopologyLink[]
   }
   starfieldNodes: ProjectKnowledgeIndexTopologyNode[]
+  healthMatrix: ProjectKnowledgeHealthMatrixCell[]
+  pipelineMetrics: ProjectKnowledgePipelineStageMetric[]
+  clusterMetrics: ProjectKnowledgeClusterMetric
 }
 
 export interface ProjectKnowledgeCitation {
@@ -624,17 +680,170 @@ export interface ProjectKnowledgeIndexSummary {
   lastRefreshedAt: string
 }
 
+export interface ProjectKnowledgeRelation {
+  id: string
+  projectId: string
+  snapshotId?: string | null
+  sourceNodeType: ProjectKnowledgeRelationNodeType
+  sourceNodeId: string
+  targetNodeType: ProjectKnowledgeRelationNodeType
+  targetNodeId: string
+  relationType: ProjectKnowledgeRelationType
+  score: number
+  evidenceMetric: string
+  evidenceModel: string
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectKnowledgeAnalyticsJob {
+  id: string
+  projectId: string
+  jobType: ProjectKnowledgeAnalyticsJobType
+  status: ProjectKnowledgeAnalyticsJobStatus
+  snapshotType?: ProjectKnowledgeSnapshotType | null
+  targetSourceId?: string | null
+  payloadJson: Record<string, unknown>
+  resultJson: Record<string, unknown>
+  errorMessage: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectKnowledgeIndexSnapshot {
+  id: string
+  projectId: string
+  snapshotType: ProjectKnowledgeSnapshotType
+  summary: ProjectKnowledgeIndexSummary
+  diagnostics: ProjectKnowledgeIndexDiagnostics
+  visuals: ProjectKnowledgeIndexVisuals
+  capturedAt: string
+}
+
+export interface ProjectKnowledgeSemanticCluster {
+  id: string
+  label: string
+  nodeCount: number
+  modality: ProjectKnowledgeModality | 'mixed' | 'unknown'
+  embeddingStatus: ProjectKnowledgeEmbeddingStatus
+  centroid: {
+    x: number
+    y: number
+    z: number
+  }
+}
+
+export interface ProjectKnowledgeSemanticPoint {
+  id: string
+  layoutId: string
+  nodeType: ProjectKnowledgeRelationNodeType | 'cluster'
+  nodeId: string
+  level: ProjectKnowledgeSemanticLayoutLevel
+  x: number
+  y: number
+  z: number
+  clusterId: string
+  modality: ProjectKnowledgeModality | 'mixed' | 'unknown'
+  embeddingStatus: ProjectKnowledgeEmbeddingStatus
+  importance: number
+  label: string
+  metadata: Record<string, unknown>
+}
+
+export interface ProjectKnowledgeSemanticLayout {
+  id: string
+  projectId: string
+  layoutType: ProjectKnowledgeSemanticLayoutType
+  algorithm: ProjectKnowledgeSemanticLayoutAlgorithm
+  pointCount: number
+  clusterCount: number
+  status: 'ready' | 'degraded' | 'failed'
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
 export interface ProjectKnowledgeIndexDashboard {
   summary: ProjectKnowledgeIndexSummary
   runtime: ProjectKnowledgeIndexRuntimeStatus
   worker: ProjectKnowledgeIndexWorkerStatus
   diagnostics: ProjectKnowledgeIndexDiagnostics
+  analytics: ProjectKnowledgeAnalyticsFreshness
   processing: ProjectKnowledgeIndexSourceStatus[]
   recentCompleted: ProjectKnowledgeIndexSourceStatus[]
   failed: ProjectKnowledgeIndexSourceStatus[]
   sources: ProjectKnowledgeIndexSourceStatus[]
   tasks: ProjectKnowledgeIndexTaskSnapshot[]
   visuals: ProjectKnowledgeIndexVisuals
+}
+
+export interface ProjectKnowledgeExplorerPayload {
+  summary: ProjectKnowledgeIndexSummary
+  diagnostics: ProjectKnowledgeIndexDiagnostics
+  analytics: ProjectKnowledgeAnalyticsFreshness
+  visuals: ProjectKnowledgeIndexVisuals
+  filters: {
+    modalities: Array<ProjectKnowledgeModality | 'unknown'>
+    embeddingStatuses: ProjectKnowledgeEmbeddingStatus[]
+    provenanceSourceTypes: ProjectKnowledgeProvenanceSourceType[]
+    models: string[]
+    resourceKinds: string[]
+  }
+}
+
+export interface ProjectKnowledgeRelationsPayload {
+  projectId: string
+  analytics: ProjectKnowledgeAnalyticsFreshness
+  nodes: Array<{
+    id: string
+    nodeType: ProjectKnowledgeRelationNodeType
+    label: string
+    modality: ProjectKnowledgeModality | 'unknown'
+    embeddingStatus: ProjectKnowledgeEmbeddingStatus
+    provenanceSourceType?: ProjectKnowledgeProvenanceSourceType | ''
+    resourceKind?: string
+    sourceId?: string
+    importance: number
+    metadata: Record<string, unknown>
+  }>
+  relations: ProjectKnowledgeRelation[]
+}
+
+export interface ProjectKnowledgeSemanticLayoutPayload {
+  projectId: string
+  analytics: ProjectKnowledgeAnalyticsFreshness
+  layout: ProjectKnowledgeSemanticLayout | null
+  clusters: ProjectKnowledgeSemanticCluster[]
+  points: ProjectKnowledgeSemanticPoint[]
+  selectionSummary: {
+    totalPoints: number
+    returnedPoints: number
+    level: ProjectKnowledgeSemanticLayoutLevel
+    layoutType: ProjectKnowledgeSemanticLayoutType
+  }
+}
+
+export interface ProjectKnowledgeNodeDetail {
+  nodeId: string
+  nodeType: ProjectKnowledgeRelationNodeType
+  label: string
+  contentPreview: string
+  modality: ProjectKnowledgeModality | 'unknown'
+  embeddingStatus: ProjectKnowledgeEmbeddingStatus
+  embeddingProvider: string
+  embeddingModel: string
+  embeddingDimensions: number
+  embeddingQualityScore: number
+  provenanceSourceType?: ProjectKnowledgeProvenanceSourceType | ''
+  sourceConfidence: number
+  neighborhoodConsistency: number
+  metadata: Record<string, unknown>
+  pipelineLog: ProjectKnowledgeIndexTaskSnapshot[]
+  nearestNeighbors: ProjectKnowledgeRelation[]
+  alignedNeighbors: ProjectKnowledgeRelation[]
 }
 
 export type DrawMode = 'freeform' | 'diagram' | 'schema' | 'architecture' | 'composition'

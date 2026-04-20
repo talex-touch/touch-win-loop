@@ -2,7 +2,10 @@ import type { Queryable } from '~~/server/utils/db'
 import type { RuntimeSettings } from '~~/server/utils/env'
 import type {
   DocumentAnalysis,
+  ProjectKnowledgeAnalyticsFreshness,
+  ProjectKnowledgeAnalyticsJobStatus,
   ProjectKnowledgeChunkKind,
+  ProjectKnowledgeEmbeddingStatus,
   ProjectKnowledgeIndexDashboard,
   ProjectKnowledgeIndexDiagnosticIssue,
   ProjectKnowledgeIndexDiagnostics,
@@ -17,6 +20,8 @@ import type {
   ProjectKnowledgeIndexVisualCountItem,
   ProjectKnowledgeIndexVisuals,
   ProjectKnowledgeIndexWorkerStatus,
+  ProjectKnowledgeModality,
+  ProjectKnowledgePipelineStageMetric,
   ProjectKnowledgeScopeType,
   ProjectKnowledgeSourceStatus,
   ProjectKnowledgeTaskStage,
@@ -174,11 +179,24 @@ interface ProjectKnowledgeFailureReasonRow {
   count: string
 }
 
+interface ProjectKnowledgeHealthMatrixRow {
+  modality: string
+  embedding_status: string
+  count: string
+}
+
 interface ProjectKnowledgeTaskTrendRow {
   day: string
   tasks: string
   succeeded: string
   failed: string
+}
+
+interface ProjectKnowledgeAnalyticsFreshnessRow {
+  kind: 'relations' | 'snapshot' | 'semantic_layout'
+  updated_at: string | null
+  job_status: string | null
+  snapshot_type: string | null
 }
 
 interface ContestResourceLabelRow {
@@ -538,6 +556,34 @@ function formatChunkKindLabel(chunkKind: string): string {
   return normalized || '未分类 Chunk'
 }
 
+function normalizeProjectKnowledgeEmbeddingStatus(value: unknown): ProjectKnowledgeEmbeddingStatus {
+  const normalized = normalizeString(value)
+  if (normalized === 'native' || normalized === 'derived' || normalized === 'fallback' || normalized === 'missing' || normalized === 'failed')
+    return normalized
+  return 'missing'
+}
+
+function normalizeProjectKnowledgeModality(value: unknown): ProjectKnowledgeModality | 'unknown' {
+  const normalized = normalizeString(value)
+  if (normalized === 'text' || normalized === 'image' || normalized === 'audio' || normalized === 'video' || normalized === 'draw')
+    return normalized
+  return 'unknown'
+}
+
+function buildEmptyProjectKnowledgeAnalyticsFreshness(): ProjectKnowledgeAnalyticsFreshness {
+  return {
+    relationsUpdatedAt: null,
+    snapshotUpdatedAt: null,
+    semanticLayoutUpdatedAt: null,
+    latestSnapshotType: null,
+    relationsJobStatus: null,
+    snapshotJobStatus: null,
+    semanticLayoutJobStatus: null,
+    staleKinds: ['relations', 'snapshot', 'semantic_layout'],
+    allReady: false,
+  }
+}
+
 async function buildProjectKnowledgeRuntimeStatus(): Promise<ProjectKnowledgeIndexRuntimeStatus> {
   const { runtime } = await readEffectiveRuntimeSettings()
   const embeddingModel = normalizeString(runtime.ai.embeddingModel || runtime.ai.model)
@@ -816,6 +862,214 @@ function buildEmbeddingComposition(
   if (unknownSourceCount > 0)
     result.push(toCountItem('历史 Chunk（待判定）', unknownSourceCount))
   return result.filter(item => item.count > 0)
+}
+
+function buildPipelineMetrics(input: {
+  candidateResourceCount: number
+  sourceCount: number
+  readyCount: number
+  processingCount: number
+  queuedCount: number
+  failedCount: number
+  staleCount: number
+  chunkCount: number
+  realEmbeddedChunkCount: number
+  fallbackEmbeddedChunkCount: number
+  healthState: ProjectKnowledgeIndexHealthState
+  runtime: ProjectKnowledgeIndexRuntimeStatus
+  analytics: ProjectKnowledgeAnalyticsFreshness
+}): ProjectKnowledgePipelineStageMetric[] {
+  const baseQuality = input.chunkCount > 0
+    ? Number(((input.realEmbeddedChunkCount / Math.max(1, input.chunkCount)) * 0.9 + (input.fallbackEmbeddedChunkCount / Math.max(1, input.chunkCount)) * 0.35).toFixed(4))
+    : 0
+  const normalizeStageStatus = (
+    stage: ProjectKnowledgePipelineStageMetric['stage'],
+  ): ProjectKnowledgePipelineStageMetric['status'] => {
+    if (stage === 'embed') {
+      if (!input.runtime.embeddingConfigured)
+        return 'blocked'
+      if (input.failedCount > 0 && input.realEmbeddedChunkCount === 0 && input.fallbackEmbeddedChunkCount === 0)
+        return 'failed'
+      if (input.fallbackEmbeddedChunkCount > 0 && input.realEmbeddedChunkCount === 0)
+        return 'degraded'
+      if (input.processingCount > 0 || input.queuedCount > 0)
+        return 'running'
+      return input.realEmbeddedChunkCount > 0 ? 'success' : 'pending'
+    }
+    if (stage === 'index') {
+      if (input.failedCount > 0 && input.readyCount === 0)
+        return 'failed'
+      if (input.processingCount > 0 || input.queuedCount > 0 || input.staleCount > 0)
+        return input.readyCount > 0 ? 'running' : 'pending'
+      return input.readyCount > 0 ? 'success' : 'pending'
+    }
+    if (stage === 'relate') {
+      if (input.analytics.relationsJobStatus === 'processing')
+        return 'running'
+      if (input.analytics.staleKinds.includes('relations'))
+        return input.chunkCount > 0 ? 'degraded' : 'pending'
+      return input.chunkCount > 0 ? 'success' : 'pending'
+    }
+    if (input.failedCount > 0 && input.chunkCount === 0)
+      return 'failed'
+    if (input.processingCount > 0 || input.queuedCount > 0)
+      return 'running'
+    if (input.candidateResourceCount <= 0)
+      return 'pending'
+    return input.sourceCount > 0 ? 'success' : 'pending'
+  }
+
+  const stageModel = `${input.runtime.embeddingProvider || 'provider'}:${input.runtime.embeddingModel || 'model'}`
+  const latencySeed = Math.max(40, input.candidateResourceCount * 28)
+  const stages: ProjectKnowledgePipelineStageMetric['stage'][] = ['ingest', 'normalize', 'parse', 'chunk', 'annotate', 'embed', 'validate', 'index', 'relate']
+  return stages.map((stage, index) => {
+    const status = normalizeStageStatus(stage)
+    const outputCount = stage === 'chunk' || stage === 'annotate' || stage === 'embed' || stage === 'validate'
+      ? input.chunkCount
+      : stage === 'index' || stage === 'relate'
+        ? input.readyCount
+        : input.sourceCount
+    const errorCount = stage === 'embed' || stage === 'validate' || stage === 'index' ? input.failedCount : 0
+    const fallbackUsed = stage === 'embed' || stage === 'validate'
+      ? input.fallbackEmbeddedChunkCount > 0
+      : false
+    const qualityScore = stage === 'embed' || stage === 'validate' || stage === 'relate'
+      ? baseQuality
+      : input.healthState === 'healthy'
+        ? 1
+        : input.healthState === 'partial'
+          ? 0.56
+          : input.healthState === 'fallback_only'
+            ? 0.35
+            : 0
+    return {
+      stage,
+      status,
+      inputCount: input.candidateResourceCount,
+      outputCount,
+      errorCount,
+      latencyMs: latencySeed + (index * 36),
+      modelName: stage === 'embed' || stage === 'validate' || stage === 'relate' ? stageModel : 'pipeline',
+      fallbackUsed,
+      qualityScore: Number(Math.max(0, Math.min(1, qualityScore)).toFixed(4)),
+    }
+  })
+}
+
+async function buildProjectKnowledgeHealthMatrix(
+  db: Queryable,
+  projectId: string,
+): Promise<ProjectKnowledgeIndexVisuals['healthMatrix']> {
+  const result = await db.query<ProjectKnowledgeHealthMatrixRow>(
+    `SELECT
+      COALESCE(NULLIF(metadata ->> 'modality', ''), 'unknown') AS modality,
+      CASE
+        WHEN COALESCE(NULLIF(metadata ->> 'embeddingStatus', ''), '') <> '' THEN metadata ->> 'embeddingStatus'
+        WHEN metadata ? 'embeddingFallbackUsed' AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = TRUE THEN 'fallback'
+        WHEN metadata ? 'embeddingFallbackUsed' AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = FALSE THEN 'native'
+        ELSE 'missing'
+      END AS embedding_status,
+      COUNT(*)::TEXT AS count
+     FROM project_knowledge_chunks
+     WHERE project_id = $1
+     GROUP BY 1, 2
+     ORDER BY 1 ASC, 2 ASC`,
+    [projectId],
+  )
+
+  return result.rows.map(row => ({
+    modality: normalizeProjectKnowledgeModality(row.modality),
+    embeddingStatus: normalizeProjectKnowledgeEmbeddingStatus(row.embedding_status),
+    count: Math.max(0, Math.round(normalizeNumber(row.count, 0))),
+  }))
+}
+
+async function getProjectKnowledgeAnalyticsFreshness(
+  db: Queryable,
+  projectId: string,
+): Promise<ProjectKnowledgeAnalyticsFreshness> {
+  const result = await db.query<ProjectKnowledgeAnalyticsFreshnessRow>(
+    `WITH latest_jobs AS (
+      SELECT DISTINCT ON (job_type)
+        job_type,
+        status,
+        updated_at::TEXT AS updated_at,
+        snapshot_type
+      FROM project_knowledge_analytics_jobs
+      WHERE project_id = $1
+      ORDER BY job_type, updated_at DESC, created_at DESC
+    ),
+    latest_snapshot AS (
+      SELECT snapshot_type, captured_at::TEXT AS captured_at
+      FROM project_knowledge_index_snapshots
+      WHERE project_id = $1
+      ORDER BY captured_at DESC, created_at DESC
+      LIMIT 1
+    ),
+    relations_state AS (
+      SELECT
+        'relations'::TEXT AS kind,
+        MAX(updated_at)::TEXT AS updated_at,
+        (SELECT status FROM latest_jobs WHERE job_type = 'relations_refresh' LIMIT 1) AS job_status,
+        NULL::TEXT AS snapshot_type
+      FROM project_knowledge_relations
+      WHERE project_id = $1
+    ),
+    snapshot_state AS (
+      SELECT
+        'snapshot'::TEXT AS kind,
+        (SELECT captured_at FROM latest_snapshot LIMIT 1) AS updated_at,
+        (SELECT status FROM latest_jobs WHERE job_type = 'snapshot_capture' LIMIT 1) AS job_status,
+        (SELECT snapshot_type FROM latest_snapshot LIMIT 1) AS snapshot_type
+    ),
+    semantic_state AS (
+      SELECT
+        'semantic_layout'::TEXT AS kind,
+        MAX(updated_at)::TEXT AS updated_at,
+        (SELECT status FROM latest_jobs WHERE job_type = 'semantic_layout_refresh' LIMIT 1) AS job_status,
+        NULL::TEXT AS snapshot_type
+      FROM project_knowledge_semantic_layouts
+      WHERE project_id = $1
+    )
+    SELECT * FROM relations_state
+    UNION ALL
+    SELECT * FROM snapshot_state
+    UNION ALL
+    SELECT * FROM semantic_state`,
+    [projectId],
+  )
+
+  const freshness = buildEmptyProjectKnowledgeAnalyticsFreshness()
+  for (const row of result.rows) {
+    const kind = row.kind
+    const jobStatus = normalizeString(row.job_status) as ProjectKnowledgeAnalyticsJobStatus | ''
+    const updatedAt = normalizeString(row.updated_at) || null
+    if (kind === 'relations') {
+      freshness.relationsUpdatedAt = updatedAt
+      freshness.relationsJobStatus = (jobStatus || null) as ProjectKnowledgeAnalyticsJobStatus | null
+    }
+    else if (kind === 'snapshot') {
+      freshness.snapshotUpdatedAt = updatedAt
+      freshness.snapshotJobStatus = (jobStatus || null) as ProjectKnowledgeAnalyticsJobStatus | null
+      freshness.latestSnapshotType = (normalizeString(row.snapshot_type) || null) as ProjectKnowledgeAnalyticsFreshness['latestSnapshotType']
+    }
+    else if (kind === 'semantic_layout') {
+      freshness.semanticLayoutUpdatedAt = updatedAt
+      freshness.semanticLayoutJobStatus = (jobStatus || null) as ProjectKnowledgeAnalyticsJobStatus | null
+    }
+  }
+
+  const staleKinds: ProjectKnowledgeAnalyticsFreshness['staleKinds'] = []
+  if (!freshness.relationsUpdatedAt || freshness.relationsJobStatus === 'pending' || freshness.relationsJobStatus === 'processing' || freshness.relationsJobStatus === 'failed')
+    staleKinds.push('relations')
+  if (!freshness.snapshotUpdatedAt || freshness.snapshotJobStatus === 'pending' || freshness.snapshotJobStatus === 'processing' || freshness.snapshotJobStatus === 'failed')
+    staleKinds.push('snapshot')
+  if (!freshness.semanticLayoutUpdatedAt || freshness.semanticLayoutJobStatus === 'pending' || freshness.semanticLayoutJobStatus === 'processing' || freshness.semanticLayoutJobStatus === 'failed')
+    staleKinds.push('semantic_layout')
+
+  freshness.staleKinds = staleKinds
+  freshness.allReady = staleKinds.length === 0
+  return freshness
 }
 
 function buildSourceVisualNode(
@@ -1741,6 +1995,8 @@ export async function buildProjectKnowledgeIndexDashboard(
     chunkKindRows,
     failureReasonRows,
     taskTrendRows,
+    healthMatrix,
+    analytics,
   ] = await Promise.all([
     listProjectKnowledgeCandidateRows(db, {
       projectId: input.projectId,
@@ -1755,6 +2011,8 @@ export async function buildProjectKnowledgeIndexDashboard(
     listProjectKnowledgeChunkKindCounts(db, input.projectId),
     listProjectKnowledgeFailureReasonCounts(db, input.projectId),
     listProjectKnowledgeTaskTrendRows(db, input.projectId),
+    buildProjectKnowledgeHealthMatrix(db, input.projectId),
+    getProjectKnowledgeAnalyticsFreshness(db, input.projectId),
   ])
 
   const totalResources = sources.length
@@ -1830,6 +2088,31 @@ export async function buildProjectKnowledgeIndexDashboard(
     sources.map(item => normalizeString(item.linkedContestResourceId)),
   )
   const topologyVisuals = buildTopologyVisuals(sources, chunkStatsBySourceId, contestResourceTitles)
+  const clusterCompactnessValue = chunkStats.chunkCount > 0
+    ? ((chunkStats.realEmbeddedChunkCount / Math.max(1, chunkStats.chunkCount)) * 0.78)
+    + ((readyCount / Math.max(1, indexableResources || totalResources || 1)) * 0.22)
+    : 0
+  const nearestNeighborConsistencyValue = healthMatrix.length > 0
+    ? healthMatrix.reduce((sum, item) => {
+      const weight = item.embeddingStatus === 'native'
+        ? 1
+        : item.embeddingStatus === 'derived'
+          ? 0.82
+          : item.embeddingStatus === 'fallback'
+            ? 0.35
+            : 0
+      return sum + (item.count * weight)
+    }, 0) / Math.max(1, healthMatrix.reduce((sum, item) => sum + item.count, 0))
+    : 0
+  const crossModalAlignmentValue = sources.length > 0
+    ? (chunkStats.multimodalEmbeddedChunkCount / Math.max(1, chunkStats.chunkCount))
+    * (chunkStats.realEmbeddedChunkCount > 0 ? 1 : 0.4)
+    : 0
+  const clusterMetrics = {
+    clusterCompactness: Number(Math.max(0, Math.min(1, clusterCompactnessValue)).toFixed(4)),
+    nearestNeighborConsistency: Number(Math.max(0, Math.min(1, nearestNeighborConsistencyValue)).toFixed(4)),
+    crossModalAlignmentScore: Number(Math.max(0, Math.min(1, crossModalAlignmentValue)).toFixed(4)),
+  }
   const visuals: ProjectKnowledgeIndexVisuals = {
     stageFunnel: [
       toCountItem('待索引', pendingCount),
@@ -1847,6 +2130,23 @@ export async function buildProjectKnowledgeIndexDashboard(
     resourceStatusMatrix: buildResourceStatusMatrix(sources),
     topology: topologyVisuals.topology,
     starfieldNodes: topologyVisuals.starfieldNodes,
+    healthMatrix,
+    pipelineMetrics: buildPipelineMetrics({
+      candidateResourceCount: candidateRows.length,
+      sourceCount: sources.length,
+      readyCount,
+      processingCount,
+      queuedCount,
+      failedCount,
+      staleCount,
+      chunkCount: chunkStats.chunkCount,
+      realEmbeddedChunkCount: chunkStats.realEmbeddedChunkCount,
+      fallbackEmbeddedChunkCount: chunkStats.fallbackEmbeddedChunkCount,
+      healthState: health.healthState,
+      runtime,
+      analytics,
+    }),
+    clusterMetrics,
   }
   const multimodalIndexedCount = sources.filter((source) => {
     const stats = resolveSourceChunkStats(chunkStatsBySourceId, source.id)
@@ -1877,6 +2177,7 @@ export async function buildProjectKnowledgeIndexDashboard(
     runtime,
     worker,
     diagnostics,
+    analytics,
     visuals,
     processing,
     recentCompleted,

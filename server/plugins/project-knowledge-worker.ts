@@ -8,7 +8,9 @@ import type {
   ProjectKnowledgeChunkMetadata,
   ProjectKnowledgeEmbeddingApiStyle,
   ProjectKnowledgeEmbeddingInputType,
+  ProjectKnowledgeEmbeddingStatus,
   ProjectKnowledgeModality,
+  ProjectKnowledgeProvenanceSourceType,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { analyzePdfBufferWithDocAi } from '~~/server/services/document/analysis'
@@ -17,6 +19,7 @@ import { analyzeKnowledgeVisualProjection } from '~~/server/services/knowledge-v
 import { getDocumentStorage } from '~~/server/storage/document-storage'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+import { scheduleProjectKnowledgeAnalyticsRefresh } from '~~/server/utils/project-knowledge-analytics-store'
 import {
   claimNextQueuedProjectKnowledgeIndexTask,
   completeProjectKnowledgeTaskFailure,
@@ -190,6 +193,61 @@ function buildChunkMetadata(input: ProjectKnowledgeChunkMetadata & Record<string
         return [key, value]
       }),
   )
+}
+
+function resolveProvenanceSourceType(input: {
+  metadata: Record<string, unknown>
+  embeddingFallbackUsed: boolean
+}): ProjectKnowledgeProvenanceSourceType {
+  if (input.embeddingFallbackUsed || input.metadata.fallbackUsed === true)
+    return 'fallback_template'
+  const projectionType = normalizeString(input.metadata.projectionType)
+  const projectionSource = normalizeString(input.metadata.projectionSource)
+  if (projectionType === 'image_ocr')
+    return 'ocr'
+  if (projectionType === 'meeting_transcript')
+    return 'asr'
+  if (projectionType === 'image_summary' || projectionSource === 'vision_model')
+    return 'vision_summary'
+  return 'native'
+}
+
+function resolveEmbeddingStatus(input: {
+  provenanceSourceType: ProjectKnowledgeProvenanceSourceType
+  embeddingFallbackUsed: boolean
+}): ProjectKnowledgeEmbeddingStatus {
+  if (input.embeddingFallbackUsed)
+    return 'fallback'
+  if (input.provenanceSourceType === 'ocr' || input.provenanceSourceType === 'asr' || input.provenanceSourceType === 'vision_summary')
+    return 'derived'
+  return 'native'
+}
+
+function resolveSourceConfidence(metadata: Record<string, unknown>): number {
+  return normalizeConfidence(metadata.sourceConfidence ?? metadata.confidence, 0.72)
+}
+
+function resolveModalitySupportWeight(input: {
+  metadata: Record<string, unknown>
+  embeddingApiStyle: ProjectKnowledgeEmbeddingApiStyle
+}): number {
+  const modality = normalizeString(input.metadata.modality) as ProjectKnowledgeModality | ''
+  if (input.embeddingApiStyle === 'bailian-multimodal') {
+    if (modality === 'image' || modality === 'video')
+      return 1
+    if (modality === 'audio')
+      return 0.82
+    if (modality === 'draw')
+      return 0.78
+    return 0.96
+  }
+  if (modality === 'image' || modality === 'video')
+    return 0.52
+  if (modality === 'audio')
+    return 0.46
+  if (modality === 'draw')
+    return 0.68
+  return 1
 }
 
 function reindexChunks(chunks: WorkerChunk[]): WorkerChunk[] {
@@ -1040,26 +1098,51 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
         sourceHash: context.processedSourceHash,
         indexVersion: context.source.indexVersion,
         chunks: embeddedChunks.map(item => ({
-          chunkIndex: item.chunkIndex,
-          chunkKind: item.chunkKind,
-          title: item.title,
-          content: item.content,
-          citationLabel: item.citationLabel,
-          pageNumber: item.pageNumber,
-          sectionLabel: item.sectionLabel,
-          metadata: {
-            ...normalizeRecord(item.metadata),
-            ...buildChunkMetadata({
-              embeddingProvider: item.embeddingProvider,
-              embeddingModel: item.embeddingModel,
+          ...(function () {
+            const existingMetadata = normalizeRecord(item.metadata)
+            const provenanceSourceType = resolveProvenanceSourceType({
+              metadata: existingMetadata,
               embeddingFallbackUsed: item.embeddingFallbackUsed,
+            })
+            const embeddingStatus = resolveEmbeddingStatus({
+              provenanceSourceType,
+              embeddingFallbackUsed: item.embeddingFallbackUsed,
+            })
+            const sourceConfidence = resolveSourceConfidence(existingMetadata)
+            const modalitySupportWeight = resolveModalitySupportWeight({
+              metadata: existingMetadata,
               embeddingApiStyle: item.embeddingApiStyle,
-              embeddingInputType: item.embeddingInputType,
-              embeddingDimensions: item.embeddingDimensions,
-              embeddingFusionUsed: item.embeddingFusionUsed,
-            }),
-          },
-          embedding: item.embedding,
+            })
+            return {
+              chunkIndex: item.chunkIndex,
+              chunkKind: item.chunkKind,
+              title: item.title,
+              content: item.content,
+              citationLabel: item.citationLabel,
+              pageNumber: item.pageNumber,
+              sectionLabel: item.sectionLabel,
+              metadata: {
+                ...existingMetadata,
+                ...buildChunkMetadata({
+                  embeddingProvider: item.embeddingProvider,
+                  embeddingModel: item.embeddingModel,
+                  embeddingFallbackUsed: item.embeddingFallbackUsed,
+                  embeddingApiStyle: item.embeddingApiStyle,
+                  embeddingInputType: item.embeddingInputType,
+                  embeddingDimensions: item.embeddingDimensions,
+                  embeddingFusionUsed: item.embeddingFusionUsed,
+                  provenanceSourceType,
+                  embeddingStatus,
+                  sourceConfidence,
+                  stageSuccessRatio: 1,
+                  modalitySupportWeight,
+                  neighborhoodConsistency: 0,
+                  embeddingQualityScore: 0,
+                }),
+              },
+              embedding: item.embedding,
+            }
+          })(),
         })),
       })
 
@@ -1075,6 +1158,14 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
           realEmbeddedChunkCount: embeddedChunks.filter(item => !item.embeddingFallbackUsed).length,
           fallbackEmbeddedChunkCount: embeddedChunks.filter(item => item.embeddingFallbackUsed).length,
         },
+      })
+    })
+
+    await withTransaction(undefined, async (db) => {
+      await scheduleProjectKnowledgeAnalyticsRefresh(db, {
+        projectId: context.source.projectId,
+        snapshotType: 'manual',
+        targetSourceId: context.source.id,
       })
     })
   }

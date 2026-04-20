@@ -36,6 +36,10 @@ const props = withDefaults(defineProps<{
   loopyDataLastError?: string
   loopyDataHasActiveWork?: boolean
   loopyDataDisabled?: boolean
+  loopyDataRelationsUpdatedAt?: string
+  loopyDataSnapshotUpdatedAt?: string
+  loopyDataSemanticLayoutUpdatedAt?: string
+  loopyDataAnalyticsAllReady?: boolean
 }>(), {
   statusLine: '',
   loading: false,
@@ -70,6 +74,10 @@ const props = withDefaults(defineProps<{
   loopyDataLastError: '',
   loopyDataHasActiveWork: false,
   loopyDataDisabled: false,
+  loopyDataRelationsUpdatedAt: '',
+  loopyDataSnapshotUpdatedAt: '',
+  loopyDataSemanticLayoutUpdatedAt: '',
+  loopyDataAnalyticsAllReady: false,
 })
 
 const emit = defineEmits<{
@@ -276,6 +284,13 @@ const loopyDataTooltipLastRunText = computed(() => {
   return '-'
 })
 
+function formatTooltipDateTime(value: string): string {
+  const normalized = String(value || '').trim()
+  if (!normalized)
+    return '-'
+  return new Date(normalized).toLocaleString('zh-CN', { hour12: false })
+}
+
 function openLoopyData(): void {
   if (props.loopyDataDisabled)
     return
@@ -359,6 +374,16 @@ function openLoopyData(): void {
             <div class="workspace-status-loopy__tooltip-row">
               <span class="workspace-status-loopy__tooltip-label">当前进度</span>
               <span class="workspace-status-loopy__tooltip-value">{{ normalizedLoopyDataProgressPercent }}%</span>
+            </div>
+            <div class="workspace-status-loopy__tooltip-row">
+              <span class="workspace-status-loopy__tooltip-label">关系 / 快照 / 语义</span>
+              <span class="workspace-status-loopy__tooltip-value">
+                {{ formatTooltipDateTime(props.loopyDataRelationsUpdatedAt || '') }} / {{ formatTooltipDateTime(props.loopyDataSnapshotUpdatedAt || '') }} / {{ formatTooltipDateTime(props.loopyDataSemanticLayoutUpdatedAt || '') }}
+              </span>
+            </div>
+            <div class="workspace-status-loopy__tooltip-row">
+              <span class="workspace-status-loopy__tooltip-label">Analytics</span>
+              <span class="workspace-status-loopy__tooltip-value">{{ props.loopyDataAnalyticsAllReady ? 'ready' : 'stale' }}</span>
             </div>
             <div class="workspace-status-loopy__tooltip-row">
               <span class="workspace-status-loopy__tooltip-label">最近成功</span>
