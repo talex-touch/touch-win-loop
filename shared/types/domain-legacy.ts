@@ -4242,6 +4242,83 @@ export interface FeishuBitableSyncItemPreviewRequest {
   autoSync?: FeishuBitableAutoSyncConfig | Record<string, unknown>
 }
 
+export type FeishuBitableRecordLocatorType = 'auto' | 'externalId' | 'recordId' | 'rowNumber'
+
+export type FeishuBitableSimulateBusinessStatus = 'created' | 'updated' | 'skipped' | 'error' | 'filtered'
+
+export interface FeishuBitableSimulateRecordRequest extends FeishuBitableSyncItemPreviewRequest {
+  locatorType?: FeishuBitableRecordLocatorType
+  locatorValue?: string
+}
+
+export interface FeishuBitableSimulateSourceField {
+  fieldName: string
+  textValue: string
+  rawValue: unknown
+}
+
+export interface FeishuBitableSimulateAutoSyncResult {
+  enabled: boolean
+  recordStatusField: string
+  syncStatusField: string
+  recordStatusValue: string
+  syncStatusValue: string
+  completedValues: string[]
+  pendingValues: string[]
+  recordStatusMatched: boolean
+  syncStatusMatched: boolean
+  matched: boolean
+  reason?: 'record_status' | 'sync_status' | 'record_status_and_sync_status'
+}
+
+export interface FeishuBitableSimulateMappingField {
+  targetKey: string
+  sourceField: string
+  computed: string
+  rawValue?: unknown
+  value: string
+  required: boolean
+  missing: boolean
+  personaSlot: boolean
+  error?: string
+}
+
+export interface FeishuBitableSimulateBusinessResult {
+  status: FeishuBitableSimulateBusinessStatus
+  externalId: string
+  entityId?: string
+  reasonCode?: string
+  message?: string
+  missingFields: string[]
+  summaryCounts?: {
+    createdCount: number
+    updatedCount: number
+    skippedCount: number
+  }
+}
+
+export interface FeishuBitableSimulateWritebackPreview {
+  enabled: boolean
+  fields: Record<string, unknown>
+}
+
+export interface FeishuBitableSimulateRecordResult {
+  locator: {
+    requestedType: FeishuBitableRecordLocatorType
+    requestedValue: string
+    matchedBy: FeishuBitableRecordLocatorType
+    rowNumber: number
+    recordId: string
+  }
+  sourceFields: FeishuBitableSimulateSourceField[]
+  autoSync: FeishuBitableSimulateAutoSyncResult
+  mappedColumns: string[]
+  mappedFields: FeishuBitableSimulateMappingField[]
+  fieldDiagnostics: FeishuFieldDiagnosticItem[]
+  business: FeishuBitableSimulateBusinessResult
+  writebackPreview: FeishuBitableSimulateWritebackPreview
+}
+
 export interface FeishuConfigValidationResult {
   valid: boolean
   errors: string[]

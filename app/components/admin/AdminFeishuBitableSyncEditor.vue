@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import type {
   ApiResponse,
+  FeishuBitableRecordLocatorType,
+  FeishuBitableSimulateBusinessStatus,
+  FeishuBitableSimulateRecordRequest,
+  FeishuBitableSimulateRecordResult,
   FeishuBitableSync,
   FeishuBitableSyncDetail,
   FeishuBitableSyncEnvironment,
@@ -244,6 +248,13 @@ const SCHEDULE_MODE_OPTIONS: SelectOption<FeishuTaskScheduleMode>[] = [
   { value: 'cron', label: 'Cron 表达式' },
 ]
 
+const SIMULATE_LOCATOR_OPTIONS: Array<SelectOption<FeishuBitableRecordLocatorType>> = [
+  { value: 'auto', label: '自动识别' },
+  { value: 'externalId', label: '业务编号' },
+  { value: 'recordId', label: 'recordId' },
+  { value: 'rowNumber', label: '行号' },
+]
+
 const SYNC_ENVIRONMENT_OPTIONS: Array<SelectOption<string> & { tagColor: string }> = [
   { value: '', label: '未标记', tagColor: 'gray' },
   { value: 'test', label: '测试环境', tagColor: 'gold' },
@@ -347,6 +358,7 @@ const savingItem = ref(false)
 const savingSync = ref(false)
 const runningItem = ref(false)
 const previewingItem = ref(false)
+const simulatingRecord = ref(false)
 const loadingSync = ref(false)
 const loadingItem = ref(false)
 const loadingTables = ref(false)
@@ -377,6 +389,8 @@ const writebackDraftText = ref(JSON.stringify(buildDefaultSyncItemConfig('contes
 const syncDetail = ref<FeishuBitableSyncDetail | null>(null)
 const currentItem = ref<FeishuBitableSyncItemDetail | null>(null)
 const previewResult = ref<FeishuBitableSyncItemPreviewResult | null>(null)
+const simulateResult = ref<FeishuBitableSimulateRecordResult | null>(null)
+const simulateErrorText = ref('')
 const fieldInspection = ref<FeishuFieldInspectionItem[]>([])
 const fieldInspectionError = ref('')
 const currentItemLogVisible = ref(false)
@@ -417,6 +431,11 @@ const itemForm = reactive({
   optionsText: JSON.stringify(buildDefaultSyncItemConfig('contest').options, null, 2),
   autoSyncText: JSON.stringify(buildDefaultSyncItemConfig('contest').autoSync, null, 2),
   writebackText: JSON.stringify(buildDefaultSyncItemConfig('contest').writeback, null, 2),
+})
+
+const simulateForm = reactive({
+  locatorType: 'auto' as FeishuBitableRecordLocatorType,
+  locatorValue: '',
 })
 
 const optionForm = reactive<SyncOptionFormState>({
@@ -1358,6 +1377,10 @@ function resetCurrentItemState() {
   resetCurrentItemLogState()
   currentItem.value = null
   previewResult.value = null
+  simulateResult.value = null
+  simulateErrorText.value = ''
+  simulateForm.locatorType = 'auto'
+  simulateForm.locatorValue = ''
   fieldInspection.value = []
   fieldInspectionError.value = ''
   mappingWizardBindings.value = []
@@ -1673,6 +1696,10 @@ async function loadItemDetail(itemId: string) {
     currentItem.value = data
     fillItemForm(data)
     previewResult.value = null
+    simulateResult.value = null
+    simulateErrorText.value = ''
+    simulateForm.locatorType = 'auto'
+    simulateForm.locatorValue = ''
     await loadViews()
     await inspectFields()
   }
@@ -1702,6 +1729,8 @@ function closeItemDrawer() {
   closeNestedConfigDrawers()
   itemDrawerVisible.value = false
   previewResult.value = null
+  simulateResult.value = null
+  simulateErrorText.value = ''
   fieldInspectionError.value = ''
   emit('itemChange', '')
 }
@@ -2314,6 +2343,34 @@ async function saveSyncInfo() {
   }
 }
 
+function buildCurrentItemDraft(): FeishuBitableSyncItemPreviewRequest {
+  writeMappingWizardToJson(false)
+  syncOptionsFormToJson(false)
+  syncAutoSyncFormToJson(false)
+  syncWritebackFormToJson(false)
+  const mapping = parseJsonText(itemForm.mappingText, '字段映射')
+  const options = parseJsonText(itemForm.optionsText, '同步选项')
+  const autoSync = parseJsonText(autoSyncDraftText.value, '自动同步配置')
+  const writeback = parseJsonText(itemForm.writebackText, '状态回填配置')
+  const draft: FeishuBitableSyncItemPreviewRequest = {
+    source: {
+      appToken: itemForm.appToken.trim(),
+      appName: itemForm.appName.trim(),
+      tableId: itemForm.tableId.trim(),
+      tableName: itemForm.tableName.trim(),
+      viewId: itemForm.viewId.trim(),
+      viewName: itemForm.viewName.trim(),
+      sourceUrl: itemForm.sourceUrl.trim(),
+    },
+    entityType: itemForm.entityType,
+    mapping,
+    options,
+    autoSync,
+    writeback,
+  }
+  return draft
+}
+
 async function previewCurrentItem() {
   if (archivedReadonly.value) {
     setError('当前同步信息已归档，只允许查看，不允许执行预检。')
@@ -2324,30 +2381,7 @@ async function previewCurrentItem() {
   previewingItem.value = true
   clearFeedback()
   try {
-    writeMappingWizardToJson(false)
-    syncOptionsFormToJson(false)
-    syncAutoSyncFormToJson(false)
-    syncWritebackFormToJson(false)
-    const mapping = parseJsonText(itemForm.mappingText, '字段映射')
-    const options = parseJsonText(itemForm.optionsText, '同步选项')
-    const autoSync = parseJsonText(autoSyncDraftText.value, '自动同步配置')
-    const writeback = parseJsonText(itemForm.writebackText, '状态回填配置')
-    const draft: FeishuBitableSyncItemPreviewRequest = {
-      source: {
-        appToken: itemForm.appToken.trim(),
-        appName: itemForm.appName.trim(),
-        tableId: itemForm.tableId.trim(),
-        tableName: itemForm.tableName.trim(),
-        viewId: itemForm.viewId.trim(),
-        viewName: itemForm.viewName.trim(),
-        sourceUrl: itemForm.sourceUrl.trim(),
-      },
-      entityType: itemForm.entityType,
-      mapping,
-      options,
-      autoSync,
-      writeback,
-    }
+    const draft = buildCurrentItemDraft()
     const data = await requestApi<FeishuBitableSyncItemPreviewResult>(
       endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/preview`),
       {
@@ -2364,6 +2398,45 @@ async function previewCurrentItem() {
   }
   finally {
     previewingItem.value = false
+  }
+}
+
+async function simulateCurrentItemRecord() {
+  if (!normalizedSyncId.value || !currentItem.value)
+    return
+  const locatorValue = toText(simulateForm.locatorValue)
+  if (!locatorValue) {
+    simulateErrorText.value = '请先输入业务编号、recordId 或行号。'
+    simulateResult.value = null
+    return
+  }
+
+  simulatingRecord.value = true
+  simulateErrorText.value = ''
+  simulateResult.value = null
+  clearFeedback()
+  try {
+    const draft: FeishuBitableSimulateRecordRequest = {
+      ...buildCurrentItemDraft(),
+      locatorType: simulateForm.locatorType,
+      locatorValue: locatorValue,
+    }
+    const data = await requestApi<FeishuBitableSimulateRecordResult>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/simulate-record`),
+      {
+        method: 'POST',
+        body: draft,
+      },
+      '模拟执行失败。',
+    )
+    simulateResult.value = data
+    setSuccess('单行模拟完成。')
+  }
+  catch (error: any) {
+    simulateErrorText.value = String(error?.data?.message || error?.message || '模拟执行失败。')
+  }
+  finally {
+    simulatingRecord.value = false
   }
 }
 
@@ -2483,6 +2556,50 @@ function previewActionSummary(result: FeishuBitableSyncItemPreviewResult | null)
   if (!result)
     return '尚未执行预检。'
   return `抓取 ${result.fetchedCount} / 新增 ${result.createdCount} / 更新 ${result.updatedCount} / 跳过 ${result.skippedCount} / 错误 ${result.errorCount}`
+}
+
+function simulateBusinessStatusLabel(status?: FeishuBitableSimulateBusinessStatus): string {
+  if (status === 'created')
+    return '预计新增'
+  if (status === 'updated')
+    return '预计更新'
+  if (status === 'skipped')
+    return '业务跳过'
+  if (status === 'filtered')
+    return '规则过滤'
+  if (status === 'error')
+    return '模拟错误'
+  return '-'
+}
+
+function simulateBusinessStatusColor(status?: FeishuBitableSimulateBusinessStatus): string {
+  if (status === 'created' || status === 'updated')
+    return 'green'
+  if (status === 'filtered')
+    return 'gold'
+  if (status === 'skipped')
+    return 'orange'
+  if (status === 'error')
+    return 'red'
+  return 'gray'
+}
+
+function simulateRuleHitText(result: FeishuBitableSimulateRecordResult | null): string {
+  if (!result)
+    return '尚未模拟。'
+  if (!result.autoSync.enabled)
+    return '未启用自动同步规则，真实手动执行会直接进入业务校验。'
+  return result.autoSync.matched
+    ? '规则命中，真实执行会进入业务校验。'
+    : '规则未命中，真实执行会在自动同步过滤阶段停止。'
+}
+
+function simulateWritebackJsonText(result: FeishuBitableSimulateRecordResult | null): string {
+  return JSON.stringify(result?.writebackPreview?.fields || {}, null, 2)
+}
+
+function simulateMissingFieldsText(result: FeishuBitableSimulateRecordResult | null): string {
+  return result?.business.missingFields?.length ? result.business.missingFields.join(' / ') : '-'
 }
 
 function diagnosticClass(level: FeishuFieldDiagnosticItem['level']): string {
@@ -2921,8 +3038,8 @@ watch(() => props.selectedItemId, (value) => {
       :title="currentItem ? `配置同步项：${currentItem.name}` : '配置同步项'"
       width="1320px"
       :footer="false"
-      :mask-closable="!(savingItem || previewingItem || runningItem)"
-      :closable="!(savingItem || previewingItem || runningItem)"
+      :mask-closable="!(savingItem || previewingItem || runningItem || simulatingRecord)"
+      :closable="!(savingItem || previewingItem || runningItem || simulatingRecord)"
       @cancel="closeItemDrawer"
     >
       <div class="space-y-4">
@@ -3306,6 +3423,207 @@ watch(() => props.selectedItemId, (value) => {
                   </label>
                 </template>
               </div>
+            </section>
+
+            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+              <div class="flex flex-wrap gap-3 items-start justify-between">
+                <div>
+                  <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                    单行模拟
+                  </h3>
+                  <p class="text-[11px] text-slate-500 m-0 mt-1">
+                    只读读取当前视图中的一行，按当前 Drawer 草稿输出规则命中 / 字段映射 / 业务结果 / 回填预览，不创建 run，不写回飞书。
+                  </p>
+                </div>
+                <a-tag v-if="simulateResult" size="small" :color="simulateResult.autoSync.matched ? 'green' : 'gold'">
+                  {{ simulateRuleHitText(simulateResult) }}
+                </a-tag>
+              </div>
+
+              <div class="gap-2 grid md:grid-cols-[160px_1fr_auto]">
+                <a-select
+                  v-model="simulateForm.locatorType"
+                  size="small"
+                  :popup-container="selectPopupContainer"
+                >
+                  <a-option v-for="option in SIMULATE_LOCATOR_OPTIONS" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </a-option>
+                </a-select>
+                <a-input
+                  v-model="simulateForm.locatorValue"
+                  size="small"
+                  allow-clear
+                  placeholder="输入业务编号、recordId 或当前视图 1-based 行号"
+                  @keyup.enter="simulateCurrentItemRecord"
+                />
+                <a-button size="small" type="primary" :loading="simulatingRecord" @click="simulateCurrentItemRecord">
+                  模拟执行
+                </a-button>
+              </div>
+              <p class="text-[10px] text-slate-500 m-0">
+                业务编号按当前映射解析出的 externalId 匹配；行号按飞书当前视图接口返回顺序解释。
+              </p>
+              <p v-if="simulateErrorText" class="text-[11px] text-rose-600 m-0">
+                {{ simulateErrorText }}
+              </p>
+
+              <template v-if="simulateResult">
+                <div class="flex flex-wrap gap-2">
+                  <a-tag size="small" color="arcoblue">
+                    recordId: {{ simulateResult.locator.recordId }}
+                  </a-tag>
+                  <a-tag size="small">
+                    行号: {{ simulateResult.locator.rowNumber }}
+                  </a-tag>
+                  <a-tag size="small" color="purple">
+                    命中方式: {{ simulateResult.locator.matchedBy }}
+                  </a-tag>
+                </div>
+
+                <div class="gap-3 grid xl:grid-cols-3">
+                  <div class="p-3 border border-slate-200 rounded bg-slate-50 text-[11px] space-y-2">
+                    <div class="flex items-center justify-between">
+                      <p class="text-slate-900 font-medium m-0">
+                        规则命中
+                      </p>
+                      <a-tag size="small" :color="simulateResult.autoSync.matched ? 'green' : 'gold'">
+                        {{ simulateResult.autoSync.matched ? '命中' : '未命中' }}
+                      </a-tag>
+                    </div>
+                    <p class="text-slate-600 m-0">
+                      {{ simulateRuleHitText(simulateResult) }}
+                    </p>
+                    <p class="m-0">
+                      {{ simulateResult.autoSync.recordStatusField || '记录状态' }}：{{ simulateResult.autoSync.recordStatusValue || '-' }}
+                      <span :class="simulateResult.autoSync.recordStatusMatched ? 'text-emerald-700' : 'text-amber-700'">
+                        {{ simulateResult.autoSync.recordStatusMatched ? '命中' : '未命中' }}
+                      </span>
+                    </p>
+                    <p class="m-0">
+                      {{ simulateResult.autoSync.syncStatusField || '同步信息' }}：{{ simulateResult.autoSync.syncStatusValue || '-' }}
+                      <span :class="simulateResult.autoSync.syncStatusMatched ? 'text-emerald-700' : 'text-amber-700'">
+                        {{ simulateResult.autoSync.syncStatusMatched ? '命中' : '未命中' }}
+                      </span>
+                    </p>
+                    <p class="text-slate-500 m-0">
+                      期望：{{ simulateResult.autoSync.completedValues.join(' / ') || '-' }} + {{ simulateResult.autoSync.pendingValues.join(' / ') || '-' }}
+                    </p>
+                  </div>
+
+                  <div class="p-3 border border-slate-200 rounded bg-slate-50 text-[11px] space-y-2">
+                    <div class="flex items-center justify-between">
+                      <p class="text-slate-900 font-medium m-0">
+                        业务结果
+                      </p>
+                      <a-tag size="small" :color="simulateBusinessStatusColor(simulateResult.business.status)">
+                        {{ simulateBusinessStatusLabel(simulateResult.business.status) }}
+                      </a-tag>
+                    </div>
+                    <p class="m-0">
+                      externalId：{{ simulateResult.business.externalId || '-' }}
+                    </p>
+                    <p class="m-0">
+                      原因码：{{ simulateResult.business.reasonCode || '-' }}
+                    </p>
+                    <p class="m-0">
+                      缺失字段：{{ simulateMissingFieldsText(simulateResult) }}
+                    </p>
+                    <p v-if="simulateResult.business.message" class="text-slate-600 m-0">
+                      {{ simulateResult.business.message }}
+                    </p>
+                  </div>
+
+                  <div class="p-3 border border-slate-200 rounded bg-slate-50 text-[11px] space-y-2">
+                    <p class="text-slate-900 font-medium m-0">
+                      回填预览
+                    </p>
+                    <p class="text-slate-500 m-0">
+                      {{ simulateResult.writebackPreview.enabled ? '如果真实执行到业务阶段，会按下面字段回填。' : '当前未启用回填。' }}
+                    </p>
+                    <pre class="text-[10px] text-slate-700 m-0 p-2 rounded bg-white border border-slate-200 overflow-x-auto">{{ simulateWritebackJsonText(simulateResult) }}</pre>
+                  </div>
+                </div>
+
+                <div class="space-y-2">
+                  <p class="text-[11px] text-slate-900 font-medium m-0">
+                    字段映射
+                  </p>
+                  <div class="border border-slate-200 rounded overflow-auto">
+                    <table class="text-[11px] text-left min-w-full border-collapse">
+                      <thead class="bg-slate-50">
+                        <tr>
+                          <th class="px-3 py-2 border-b border-slate-200 whitespace-nowrap">
+                            平台字段
+                          </th>
+                          <th class="px-3 py-2 border-b border-slate-200 whitespace-nowrap">
+                            来源列 / transform
+                          </th>
+                          <th class="px-3 py-2 border-b border-slate-200 whitespace-nowrap">
+                            解析值
+                          </th>
+                          <th class="px-3 py-2 border-b border-slate-200 whitespace-nowrap">
+                            状态
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="field in simulateResult.mappedFields" :key="`simulate-field-${field.targetKey}`" class="align-top">
+                          <td class="px-3 py-2 border-b border-slate-100 whitespace-nowrap">
+                            <span class="text-slate-900">{{ mappingOptionLabel(field.targetKey) }}</span>
+                            <a-tag v-if="field.personaSlot" size="small" color="purple" class="ml-1">
+                              人设槽位
+                            </a-tag>
+                          </td>
+                          <td class="text-slate-500 px-3 py-2 border-b border-slate-100 min-w-[180px]">
+                            <div>{{ field.sourceField || '-' }}</div>
+                            <div v-if="field.computed" class="text-[10px] mt-1 break-all">
+                              {{ field.computed }}
+                            </div>
+                          </td>
+                          <td class="text-slate-700 px-3 py-2 border-b border-slate-100 min-w-[220px] break-words">
+                            {{ field.value || '空值' }}
+                            <p v-if="field.error" class="text-[10px] text-rose-600 m-0 mt-1">
+                              {{ field.error }}
+                            </p>
+                          </td>
+                          <td class="px-3 py-2 border-b border-slate-100 whitespace-nowrap">
+                            <a-tag size="small" :color="field.missing ? 'gold' : 'green'">
+                              {{ field.missing ? '为空' : '有值' }}
+                            </a-tag>
+                            <a-tag v-if="field.required" size="small" color="red" class="ml-1">
+                              必填
+                            </a-tag>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="space-y-2">
+                  <p class="text-[11px] text-slate-900 font-medium m-0">
+                    源字段原值
+                  </p>
+                  <div class="gap-2 grid md:grid-cols-2 xl:grid-cols-3">
+                    <div
+                      v-for="field in simulateResult.sourceFields.slice(0, 12)"
+                      :key="`simulate-source-${field.fieldName}`"
+                      class="text-[10px] p-2 border border-slate-200 rounded bg-slate-50"
+                    >
+                      <p class="text-slate-500 m-0 break-all">
+                        {{ field.fieldName }}
+                      </p>
+                      <p class="text-slate-800 m-0 mt-1 break-words">
+                        {{ field.textValue || '空值' }}
+                      </p>
+                    </div>
+                  </div>
+                  <p v-if="simulateResult.sourceFields.length > 12" class="text-[10px] text-slate-400 m-0">
+                    仅展示前 12 个源字段；完整原值可用 recordId 在飞书侧定位。
+                  </p>
+                </div>
+              </template>
             </section>
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
@@ -3867,8 +4185,8 @@ watch(() => props.selectedItemId, (value) => {
       :title="currentItem ? `基础映射：${currentItem.name}` : '基础映射'"
       width="1040px"
       :footer="false"
-      :mask-closable="!(savingItem || previewingItem || runningItem)"
-      :closable="!(savingItem || previewingItem || runningItem)"
+      :mask-closable="!(savingItem || previewingItem || runningItem || simulatingRecord)"
+      :closable="!(savingItem || previewingItem || runningItem || simulatingRecord)"
     >
       <div class="space-y-4">
         <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
@@ -4014,8 +4332,8 @@ watch(() => props.selectedItemId, (value) => {
       :title="currentItem ? `回填配置：${currentItem.name}` : '回填配置'"
       width="860px"
       :footer="false"
-      :mask-closable="!(savingItem || previewingItem || runningItem)"
-      :closable="!(savingItem || previewingItem || runningItem)"
+      :mask-closable="!(savingItem || previewingItem || runningItem || simulatingRecord)"
+      :closable="!(savingItem || previewingItem || runningItem || simulatingRecord)"
     >
       <div class="space-y-4">
         <a-alert v-if="feedbackError" type="error" :show-icon="true">
@@ -4138,8 +4456,8 @@ watch(() => props.selectedItemId, (value) => {
       :title="currentItem ? `自动同步规则：${currentItem.name}` : '自动同步规则'"
       width="860px"
       :footer="false"
-      :mask-closable="!(savingItem || previewingItem || runningItem)"
-      :closable="!(savingItem || previewingItem || runningItem)"
+      :mask-closable="!(savingItem || previewingItem || runningItem || simulatingRecord)"
+      :closable="!(savingItem || previewingItem || runningItem || simulatingRecord)"
     >
       <div class="space-y-4">
         <a-alert v-if="feedbackError" type="error" :show-icon="true">

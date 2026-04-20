@@ -9,6 +9,13 @@ import type {
   ContestReleaseTrackSnapshot,
   ContestReleaseTrackTimelineSnapshot,
   FeishuBitableAutoSyncConfig,
+  FeishuBitableRecordLocatorType,
+  FeishuBitableSimulateAutoSyncResult,
+  FeishuBitableSimulateBusinessResult,
+  FeishuBitableSimulateMappingField,
+  FeishuBitableSimulateRecordRequest,
+  FeishuBitableSimulateRecordResult,
+  FeishuBitableSimulateSourceField,
   FeishuBitableSourceConfig,
   FeishuBitableSyncItemEntityType,
   FeishuBitableSyncItemPreviewRequest,
@@ -3082,6 +3089,421 @@ export async function previewFeishuBitableSyncItem(
   },
 ): Promise<FeishuBitableSyncItemPreviewResult> {
   return previewFeishuBitableSyncItemById(event, {
+    syncItemId: input.syncItemId,
+    actorUserId: input.actorUserId,
+    draft: input.draft,
+  })
+}
+
+function normalizeRecordLocatorType(raw: unknown): FeishuBitableRecordLocatorType {
+  return raw === 'externalId' || raw === 'recordId' || raw === 'rowNumber'
+    ? raw
+    : 'auto'
+}
+
+function describeMappedTargetSource(mapping: NormalizedMapping, targetKey: string): {
+  sourceField: string
+  computed: string
+} {
+  const computed = toText(mapping.computedMap[targetKey])
+  const sourceField = targetKey === 'externalId'
+    ? mapping.externalIdField
+    : targetKey === 'contestExternalId'
+      ? mapping.contestExternalIdField
+      : targetKey === 'trackExternalId'
+        ? mapping.trackExternalIdField
+        : toText(mapping.fieldMap[targetKey])
+
+  if (sourceField)
+    return { sourceField, computed }
+  if (computed)
+    return { sourceField: 'transform', computed }
+  if (hasOwn(mapping.defaults, targetKey))
+    return { sourceField: '默认值', computed }
+  return { sourceField: '', computed }
+}
+
+function isRequiredTargetField(entityType: FeishuBitableSyncItemEntityType, targetKey: string): boolean {
+  return (REQUIRED_TARGET_FIELDS[entityType] || []).includes(targetKey)
+}
+
+function buildSimulateSourceFields(record: FeishuBitableRecord): FeishuBitableSimulateSourceField[] {
+  return Object.entries(record.fields || {})
+    .map(([fieldName, rawValue]) => ({
+      fieldName,
+      rawValue,
+      textValue: normalizePreviewCell(rawValue) || '空值',
+    }))
+    .sort((a, b) => a.fieldName.localeCompare(b.fieldName))
+}
+
+async function buildSimulateMappedFields(input: {
+  entityType: FeishuBitableSyncItemEntityType
+  record: FeishuBitableRecord
+  mapping: NormalizedMapping
+  resolver: RecordValueResolver
+}): Promise<FeishuBitableSimulateMappingField[]> {
+  const fields: FeishuBitableSimulateMappingField[] = []
+  for (const targetKey of TARGET_PREVIEW_FIELDS[input.entityType] || []) {
+    const descriptor = describeMappedTargetSource(input.mapping, targetKey)
+    const personaSlot = input.entityType === 'persona' && PERSONA_SLOT_FIELD_KEYS.includes(targetKey as typeof PERSONA_SLOT_FIELD_KEYS[number])
+    const required = isRequiredTargetField(input.entityType, targetKey)
+    try {
+      const rawValue = descriptor.sourceField && descriptor.sourceField !== 'transform' && descriptor.sourceField !== '默认值'
+        ? pickField(input.record, descriptor.sourceField)
+        : targetKey === 'externalId' || targetKey === 'contestExternalId' || targetKey === 'trackExternalId'
+          ? undefined
+          : await input.resolver.getValue(targetKey)
+      const value = await resolveMappedPreviewValue(input.resolver, targetKey)
+      fields.push({
+        targetKey,
+        sourceField: descriptor.sourceField,
+        computed: descriptor.computed,
+        ...(rawValue === undefined ? {} : { rawValue }),
+        value,
+        required,
+        missing: required ? !value : personaSlot ? !value : false,
+        personaSlot,
+      })
+    }
+    catch (error) {
+      fields.push({
+        targetKey,
+        sourceField: descriptor.sourceField,
+        computed: descriptor.computed,
+        value: '',
+        required,
+        missing: required || personaSlot,
+        personaSlot,
+        error: error instanceof Error ? error.message : String(error || 'TRANSFORM_ERROR'),
+      })
+    }
+  }
+  return fields
+}
+
+function buildSimulateAutoSyncResult(
+  record: FeishuBitableRecord,
+  autoSync: NormalizedAutoSync,
+): FeishuBitableSimulateAutoSyncResult {
+  if (!autoSync.enabled) {
+    return {
+      enabled: false,
+      recordStatusField: autoSync.recordStatusField,
+      syncStatusField: autoSync.syncStatusField,
+      recordStatusValue: '',
+      syncStatusValue: '',
+      completedValues: [...autoSync.completedValues],
+      pendingValues: [...autoSync.pendingValues],
+      recordStatusMatched: true,
+      syncStatusMatched: true,
+      matched: true,
+    }
+  }
+
+  const recordStatusValue = pickFieldText(record, autoSync.recordStatusField)
+  const syncStatusValue = pickFieldText(record, autoSync.syncStatusField)
+  const recordStatusMatched = autoSync.completedValues.includes(recordStatusValue)
+  const syncStatusMatched = autoSync.pendingValues.includes(syncStatusValue)
+  const matched = recordStatusMatched && syncStatusMatched
+  return {
+    enabled: true,
+    recordStatusField: autoSync.recordStatusField,
+    syncStatusField: autoSync.syncStatusField,
+    recordStatusValue: recordStatusValue || '空值',
+    syncStatusValue: syncStatusValue || '空值',
+    completedValues: [...autoSync.completedValues],
+    pendingValues: [...autoSync.pendingValues],
+    recordStatusMatched,
+    syncStatusMatched,
+    matched,
+    reason: matched ? undefined : resolveAutoSyncMismatchReason(recordStatusMatched, syncStatusMatched),
+  }
+}
+
+function parsePositiveRowNumber(raw: string): number {
+  const normalized = toText(raw)
+  if (!/^\d+$/.test(normalized))
+    throw new Error('行号必须是正整数。')
+  const rowNumber = Number(normalized)
+  if (!Number.isSafeInteger(rowNumber) || rowNumber < 1)
+    throw new Error('行号必须是正整数。')
+  return rowNumber
+}
+
+async function locateSimulateRecord(input: {
+  records: FeishuBitableRecord[]
+  mapping: NormalizedMapping
+  requestedType: FeishuBitableRecordLocatorType
+  requestedValue: string
+}): Promise<{
+  record: FeishuBitableRecord
+  rowNumber: number
+  matchedBy: FeishuBitableRecordLocatorType
+}> {
+  const locatorValue = toText(input.requestedValue)
+  if (!locatorValue)
+    throw new Error('请先输入业务编号、recordId 或行号。')
+  if (!input.records.length)
+    throw new Error('当前视图没有可模拟的飞书源行。')
+
+  const byRecordId = (): { record: FeishuBitableRecord, rowNumber: number, matchedBy: FeishuBitableRecordLocatorType } | null => {
+    const index = input.records.findIndex(record => record.recordId === locatorValue)
+    if (index < 0)
+      return null
+    const record = input.records[index]
+    if (!record)
+      return null
+    return { record, rowNumber: index + 1, matchedBy: 'recordId' }
+  }
+
+  const byRowNumber = (): { record: FeishuBitableRecord, rowNumber: number, matchedBy: FeishuBitableRecordLocatorType } => {
+    const rowNumber = parsePositiveRowNumber(locatorValue)
+    if (rowNumber > input.records.length)
+      throw new Error(`行号超出当前视图记录范围：当前共 ${input.records.length} 行。`)
+    const record = input.records[rowNumber - 1]
+    if (!record)
+      throw new Error(`行号超出当前视图记录范围：当前共 ${input.records.length} 行。`)
+    return { record, rowNumber, matchedBy: 'rowNumber' }
+  }
+
+  const byExternalId = async (): Promise<{ record: FeishuBitableRecord, rowNumber: number, matchedBy: FeishuBitableRecordLocatorType } | null> => {
+    for (const [index, record] of input.records.entries()) {
+      const resolver = createRecordResolver(record, input.mapping)
+      const externalId = await resolver.getSpecialText('externalId')
+      if (externalId === locatorValue)
+        return { record, rowNumber: index + 1, matchedBy: 'externalId' }
+    }
+    return null
+  }
+
+  if (input.requestedType === 'recordId') {
+    const match = byRecordId()
+    if (!match)
+      throw new Error(`未找到 recordId=${locatorValue} 的飞书源行。`)
+    return match
+  }
+
+  if (input.requestedType === 'rowNumber')
+    return byRowNumber()
+
+  if (input.requestedType === 'externalId') {
+    const match = await byExternalId()
+    if (!match)
+      throw new Error(`未找到 externalId=${locatorValue} 的飞书源行。`)
+    return match
+  }
+
+  const recordIdMatch = byRecordId()
+  if (recordIdMatch)
+    return recordIdMatch
+
+  const externalIdMatch = await byExternalId()
+  if (externalIdMatch)
+    return externalIdMatch
+
+  if (/^\d+$/.test(locatorValue))
+    return byRowNumber()
+
+  throw new Error(`未找到 ${locatorValue} 对应的飞书源行。`)
+}
+
+function buildSimulateWritebackPreview(input: {
+  writeback: NormalizedWriteback
+  business: ApplyRecordResult | null
+}): Record<string, unknown> {
+  if (!input.writeback.enabled || !input.business)
+    return {}
+
+  const fields = buildWritebackFields({
+    config: input.writeback,
+    result: input.business,
+    entityId: input.business.entityId || '',
+    runId: 'SIMULATE',
+    triggerSource: 'manual',
+  })
+  const normalizedFields: Record<string, unknown> = {}
+  for (const [fieldName, value] of Object.entries(fields)) {
+    const key = toText(fieldName)
+    if (key)
+      normalizedFields[key] = normalizeWritebackValue(value)
+  }
+  return normalizedFields
+}
+
+async function simulateFeishuBitableSyncItemRecordById(
+  event: H3Event,
+  input: {
+    syncItemId: string
+    actorUserId: string
+    draft?: FeishuBitableSimulateRecordRequest
+  },
+): Promise<FeishuBitableSimulateRecordResult> {
+  const configAndTask = await withClient(event, async (db) => {
+    const config = await readFeishuIntegrationConfig(db)
+    const task = await getFeishuBitableSyncItemById(db, input.syncItemId)
+    return { config, task }
+  })
+
+  if (!configAndTask.config.enabled)
+    throw new Error('FEISHU_INTEGRATION_DISABLED')
+  if (!configAndTask.task)
+    throw new Error('FEISHU_BITABLE_SYNC_ITEM_NOT_FOUND')
+
+  const task = configAndTask.task
+  const sourceOverride = parseJsonObject(input.draft?.source)
+  const source: FeishuBitableSourceConfig = {
+    appToken: resolvePreviewOverrideString(sourceOverride, 'appToken', toText(task.source?.appToken) || toText(task.appToken)),
+    tableId: resolvePreviewOverrideString(sourceOverride, 'tableId', toText(task.source?.tableId) || toText(task.tableId)),
+    viewId: resolvePreviewOverrideString(sourceOverride, 'viewId', toText(task.source?.viewId) || toText(task.viewId)),
+    appName: resolvePreviewOverrideString(sourceOverride, 'appName', toText(task.source?.appName)),
+    tableName: resolvePreviewOverrideString(sourceOverride, 'tableName', toText(task.source?.tableName)),
+    viewName: resolvePreviewOverrideString(sourceOverride, 'viewName', toText(task.source?.viewName)),
+    sourceUrl: resolvePreviewOverrideString(sourceOverride, 'sourceUrl', toText(task.source?.sourceUrl)),
+  }
+  const entityType = isEntityType(input.draft?.entityType) ? input.draft.entityType : (task.entityType || 'contest')
+  const mappingRaw = input.draft && hasOwn(input.draft, 'mapping') ? input.draft.mapping : task.mapping
+  const optionsRaw = input.draft && hasOwn(input.draft, 'options') ? input.draft.options : task.options
+  const autoSyncRaw = input.draft && hasOwn(input.draft, 'autoSync') ? input.draft.autoSync : task.autoSync
+  const writebackRaw = input.draft && hasOwn(input.draft, 'writeback')
+    ? input.draft.writeback
+    : (task.writeback || parseJsonObject(task.options).writeback)
+  const requestedType = normalizeRecordLocatorType(input.draft?.locatorType)
+  const requestedValue = toText(input.draft?.locatorValue)
+
+  const tenantAccessToken = await getFeishuTenantAccessToken(configAndTask.config)
+  const records = await listFeishuBitableRecords({
+    tenantAccessToken,
+    appToken: source.appToken,
+    tableId: source.tableId,
+    viewId: source.viewId,
+  })
+
+  return withClient(event, async (db) => {
+    const mapping = normalizeMapping(mappingRaw, optionsRaw, entityType)
+    const options = normalizeOptions(optionsRaw, mapping.defaults)
+    const autoSync = normalizeAutoSyncConfig(autoSyncRaw)
+    ensureAutoSyncConfigReady(autoSync)
+    validateAutoSyncFields(autoSync, records)
+    const writeback = normalizeWritebackConfig(writebackRaw, autoSync)
+    const sourceFields = new Set(collectRecordFieldNames(records))
+    const fieldDiagnostics: FeishuFieldDiagnosticItem[] = []
+    const fieldDiagnosticSeen = new Set<string>()
+
+    for (const diagnostic of buildStaticPreviewDiagnostics({
+      entityType,
+      mapping,
+      writeback,
+      sourceFields,
+    })) {
+      pushPreviewDiagnostic(fieldDiagnostics, fieldDiagnosticSeen, diagnostic, FIELD_DIAGNOSTIC_LIMIT)
+    }
+
+    const located = await locateSimulateRecord({
+      records,
+      mapping,
+      requestedType,
+      requestedValue,
+    })
+    const transformErrors: FeishuFieldDiagnosticItem[] = []
+    const resolver = createRecordResolver(located.record, mapping, {
+      onTransformError: (error) => {
+        const diagnostic = buildTransformDiagnostic(error)
+        transformErrors.push(diagnostic)
+        pushPreviewDiagnostic(fieldDiagnostics, fieldDiagnosticSeen, diagnostic, FIELD_DIAGNOSTIC_LIMIT)
+      },
+    })
+    const mappedFields = await buildSimulateMappedFields({
+      entityType,
+      record: located.record,
+      mapping,
+      resolver,
+    })
+    const autoSyncResult = buildSimulateAutoSyncResult(located.record, autoSync)
+    const externalId = await resolveExternalId(located.record, resolver)
+
+    let applyResult: ApplyRecordResult | null = null
+    let business: FeishuBitableSimulateBusinessResult
+    if (autoSync.enabled && !autoSyncResult.matched) {
+      business = {
+        status: 'filtered',
+        externalId: externalId || located.record.recordId,
+        reasonCode: autoSyncResult.reason,
+        message: '自动同步规则未命中，真实执行时不会进入业务同步，也不会回填飞书。',
+        missingFields: [],
+      }
+    }
+    else {
+      try {
+        applyResult = await applySingleRecord(db, {
+          actorUserId: input.actorUserId,
+          syncItemId: task.id,
+          entityType,
+          record: located.record,
+          mapping,
+          options,
+          resolver,
+          dryRun: true,
+          recordIndex: located.rowNumber - 1,
+        })
+        const diagnostic = buildReasonDiagnostic(applyResult, located.record.recordId)
+        if (diagnostic)
+          pushPreviewDiagnostic(fieldDiagnostics, fieldDiagnosticSeen, diagnostic, FIELD_DIAGNOSTIC_LIMIT)
+        business = {
+          status: applyResult.status,
+          externalId: applyResult.externalId || externalId || located.record.recordId,
+          entityId: applyResult.entityId,
+          reasonCode: applyResult.reasonCode,
+          message: applyResult.message,
+          missingFields: collectMissingRequiredFields(applyResult),
+          summaryCounts: applyResult.summaryCounts,
+        }
+      }
+      catch (error) {
+        business = {
+          status: 'error',
+          externalId: externalId || located.record.recordId,
+          reasonCode: 'SIMULATE_RECORD_ERROR',
+          message: error instanceof Error ? error.message : String(error || 'UNKNOWN_ERROR'),
+          missingFields: [],
+        }
+      }
+    }
+
+    return {
+      locator: {
+        requestedType,
+        requestedValue,
+        matchedBy: located.matchedBy,
+        rowNumber: located.rowNumber,
+        recordId: located.record.recordId,
+      },
+      sourceFields: buildSimulateSourceFields(located.record),
+      autoSync: autoSyncResult,
+      mappedColumns: [...TARGET_PREVIEW_FIELDS[entityType]],
+      mappedFields,
+      fieldDiagnostics,
+      business,
+      writebackPreview: {
+        enabled: writeback.enabled,
+        fields: buildSimulateWritebackPreview({
+          writeback,
+          business: applyResult,
+        }),
+      },
+    }
+  })
+}
+
+export async function simulateFeishuBitableSyncItemRecord(
+  event: H3Event,
+  input: {
+    syncItemId: string
+    actorUserId: string
+    draft?: FeishuBitableSimulateRecordRequest
+  },
+): Promise<FeishuBitableSimulateRecordResult> {
+  return simulateFeishuBitableSyncItemRecordById(event, {
     syncItemId: input.syncItemId,
     actorUserId: input.actorUserId,
     draft: input.draft,

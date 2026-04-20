@@ -65,6 +65,34 @@ const filters = reactive({
   recordId: '',
 })
 
+const hasActiveFilters = computed(() => Boolean(
+  filters.keyword
+  || filters.syncId
+  || filters.syncItemId
+  || filters.scope
+  || filters.externalId
+  || filters.recordId,
+))
+
+const currentFilterSummary = computed(() => {
+  const parts = [
+    filters.syncId ? `同步信息 ${filters.syncId}` : '',
+    filters.syncItemId ? `同步项 ${filters.syncItemId}` : '',
+    filters.scope ? `实体 ${scopeLabel(filters.scope)}` : '',
+    filters.externalId ? `externalId ${filters.externalId}` : '',
+    filters.recordId ? `recordId ${filters.recordId}` : '',
+    filters.keyword ? `关键词 ${filters.keyword}` : '',
+  ].filter(Boolean)
+  return parts.length ? parts.join(' / ') : '全部同步数据'
+})
+
+const emptyStateDescription = computed(() => {
+  const prefix = hasActiveFilters.value
+    ? '当前筛选没有已落库记录。'
+    : '当前还没有已落库同步数据。'
+  return `${prefix}这里仅展示已经进入平台落库的索引、external refs 或待审草稿；如果某次执行全部停在自动同步规则过滤阶段，规则过滤不会产生同步数据。`
+})
+
 function createApiRequestError(message: string, statusCode = 0): ApiRequestError {
   const error = new Error(message) as ApiRequestError
   error.statusCode = statusCode
@@ -262,10 +290,25 @@ function buildSyncConfigRoute(record: FeishuSyncedDataRecord) {
   }
 }
 
+function buildFilteredSyncConfigRoute() {
+  const query: Record<string, string> = {}
+  if (filters.syncItemId)
+    query.item = filters.syncItemId
+  if (readQueryValue(route.query.embed) === '1')
+    query.embed = '1'
+  return filters.syncId
+    ? { path: `/admin/integrations/feishu/bitables/${filters.syncId}`, query }
+    : { path: '/admin/integrations/feishu', query }
+}
+
 async function openSyncConfig(record: FeishuSyncedDataRecord) {
   if (!record.syncId)
     return
   await navigateTo(buildSyncConfigRoute(record))
+}
+
+async function openFilteredSyncConfig() {
+  await navigateTo(buildFilteredSyncConfigRoute())
 }
 
 async function onPageChange(page: number) {
@@ -320,6 +363,9 @@ watch(() => route.fullPath, () => {
       <p class="text-[11px] text-slate-500 mb-0 mt-2">
         支持按同步信息、同步项、scope、externalId、recordId 反查；状态“仅映射”表示 external refs 已落库但索引文档尚未生成。
       </p>
+      <p class="text-[11px] text-slate-500 mb-0 mt-1">
+        当前筛选：{{ currentFilterSummary }} / 总数：{{ resultPayload.total }}
+      </p>
     </SectionCard>
 
     <SectionCard v-if="loading">
@@ -329,6 +375,32 @@ watch(() => route.fullPath, () => {
     </SectionCard>
 
     <SectionCard v-else>
+      <div
+        v-if="!errorText && resultPayload.items.length === 0"
+        class="mb-4 p-4 border border-amber-200 rounded bg-amber-50 text-[12px] text-amber-900 space-y-3"
+      >
+        <div class="flex flex-wrap gap-3 items-start justify-between">
+          <div>
+            <p class="font-semibold m-0">
+              暂无可见同步数据
+            </p>
+            <p class="m-0 mt-1">
+              {{ emptyStateDescription }}
+            </p>
+            <p class="m-0 mt-1">
+              建议先回到同步配置查看执行日志，或在子表同步项 Drawer 里用“单行模拟”核对某一行的记录状态、同步信息与字段映射。
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <a-button size="small" type="primary" @click="openFilteredSyncConfig">
+              返回同步配置
+            </a-button>
+            <a-button size="small" @click="applyFilters(currentPage())">
+              刷新
+            </a-button>
+          </div>
+        </div>
+      </div>
       <a-table
         :columns="resultColumns"
         :data="resultPayload.items"
