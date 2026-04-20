@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import type {
   DesignAssetModel,
-  DesignFrameDeviceScreenTransform,
   DesignElementModel,
   DesignFrameDeviceMetadata,
+  DesignFrameDeviceScreenTransform,
   DesignFrameKind,
   DesignFrameModel,
   DesignPageModel,
@@ -11,40 +11,40 @@ import type {
   MockupProjectCatalog,
   MockupProjectCatalogModel,
   MockupProjectCatalogVariant,
-} from "~~/shared/types/domain";
-import { computed, reactive, ref, watch } from "vue";
+} from '~~/shared/types/domain'
+import { computed, reactive, ref, watch } from 'vue'
+import { parseMockupDevicePresetKey } from '~~/shared/utils/mockup-device-catalog'
 import {
-  resolveDesignPageWorkspaceBackground,
   resolveDesignFrameExportMetadata,
   resolveDesignFrameGridMetadata,
   resolveDesignFrameLayoutMetadata,
-} from "~~/shared/utils/scene-document";
-import { parseMockupDevicePresetKey } from "~~/shared/utils/mockup-device-catalog";
+  resolveDesignPageWorkspaceBackground,
+} from '~~/shared/utils/scene-document'
 
 const props = withDefaults(
   defineProps<{
-    page?: DesignPageModel | null;
-    frame?: DesignFrameModel | null;
-    element?: DesignElementModel | null;
-    elementFrame?: DesignFrameModel | null;
-    selectedFrameCount?: number;
-    selectedElementCount?: number;
-    deviceFramePresets?: DeviceFramePreset[];
-    mockupCatalog?: MockupProjectCatalog | null;
-    deviceArtboardOptions?: DeviceArtboardOption[];
-    deviceShellAssets?: DesignAssetModel[];
-    framePreviewMarkup?: string;
-    frameShellPreviewMarkup?: string;
-    mockupScreenEditingFrameId?: string;
-    designResourceId?: string;
-    collabDrawError?: string;
-    canOpenDiagramEditor?: boolean;
+    page?: DesignPageModel | null
+    frame?: DesignFrameModel | null
+    element?: DesignElementModel | null
+    elementFrame?: DesignFrameModel | null
+    selectedFrameCount?: number
+    selectedElementCount?: number
+    deviceFramePresets?: DeviceFramePreset[]
+    mockupCatalog?: MockupProjectCatalog | null
+    deviceArtboardOptions?: DeviceArtboardOption[]
+    deviceShellAssets?: DesignAssetModel[]
+    framePreviewMarkup?: string
+    frameShellPreviewMarkup?: string
+    mockupScreenEditingFrameId?: string
+    designResourceId?: string
+    collabDrawError?: string
+    canOpenDiagramEditor?: boolean
     diagramSourceFormat?:
-      | "mermaid"
-      | "markdown_outline"
-      | "ddl"
-      | "architecture";
-    diagramSourceText?: string;
+      | 'mermaid'
+      | 'markdown_outline'
+      | 'ddl'
+      | 'architecture'
+    diagramSourceText?: string
   }>(),
   {
     page: null,
@@ -57,80 +57,80 @@ const props = withDefaults(
     mockupCatalog: null,
     deviceArtboardOptions: () => [],
     deviceShellAssets: () => [],
-    framePreviewMarkup: "",
-    frameShellPreviewMarkup: "",
-    mockupScreenEditingFrameId: "",
-    designResourceId: "",
-    collabDrawError: "",
+    framePreviewMarkup: '',
+    frameShellPreviewMarkup: '',
+    mockupScreenEditingFrameId: '',
+    designResourceId: '',
+    collabDrawError: '',
     canOpenDiagramEditor: false,
-    diagramSourceFormat: "mermaid",
-    diagramSourceText: "",
+    diagramSourceFormat: 'mermaid',
+    diagramSourceText: '',
   },
-);
+)
 
 const emit = defineEmits<{
-  updatePage: [patch: Partial<DesignPageModel>];
-  updateFrame: [patch: Partial<DesignFrameModel>];
-  updateElement: [patch: Partial<DesignElementModel>];
-  toggleFramesLocked: [];
-  duplicateFrame: [];
-  removeFrame: [];
-  runSelectionCommand: [command: string];
-  "update:diagramSourceFormat": [
-    "mermaid" | "markdown_outline" | "ddl" | "architecture",
-  ];
-  "update:diagramSourceText": [string];
-  applyDiagramSource: [];
-  openDiagramEditor: [];
-  selectMockupVariant: [presetKey: string];
-  enterMockupScreenEdit: [];
-  exitMockupScreenEdit: [];
-  resetMockupScreenTransform: [];
-}>();
+  'updatePage': [patch: Partial<DesignPageModel>]
+  'updateFrame': [patch: Partial<DesignFrameModel>]
+  'updateElement': [patch: Partial<DesignElementModel>]
+  'toggleFramesLocked': []
+  'duplicateFrame': []
+  'removeFrame': []
+  'runSelectionCommand': [command: string]
+  'update:diagramSourceFormat': [
+    'mermaid' | 'markdown_outline' | 'ddl' | 'architecture',
+  ]
+  'update:diagramSourceText': [string]
+  'applyDiagramSource': []
+  'openDiagramEditor': []
+  'selectMockupVariant': [presetKey: string]
+  'enterMockupScreenEdit': []
+  'exitMockupScreenEdit': []
+  'resetMockupScreenTransform': []
+}>()
 
 const selectionCommands = [
-  { id: "group", label: "编组", icon: "group_work" },
-  { id: "ungroup", label: "解组", icon: "ungroup" },
-  { id: "bring-forward", label: "上移一层", icon: "vertical_align_top" },
-  { id: "send-backward", label: "下移一层", icon: "vertical_align_bottom" },
-  { id: "bring-to-front", label: "置于顶层", icon: "flip_to_front" },
-  { id: "send-to-back", label: "置于底层", icon: "flip_to_back" },
-  { id: "align-left", label: "左对齐", icon: "format_align_left" },
-  { id: "align-center-x", label: "水平居中", icon: "format_align_center" },
-  { id: "align-right", label: "右对齐", icon: "format_align_right" },
-  { id: "align-top", label: "顶对齐", icon: "vertical_align_top" },
-  { id: "align-center-y", label: "垂直居中", icon: "vertical_align_center" },
-  { id: "align-bottom", label: "底对齐", icon: "vertical_align_bottom" },
-  { id: "distribute-x", label: "横向分布", icon: "horizontal_distribute" },
-  { id: "distribute-y", label: "纵向分布", icon: "vertical_distribute" },
-  { id: "match-width", label: "等宽", icon: "straighten" },
-  { id: "match-height", label: "等高", icon: "straighten" },
-  { id: "mirror-x", label: "水平镜像", icon: "flip" },
-  { id: "mirror-y", label: "垂直镜像", icon: "flip" },
-  { id: "snap-grid", label: "吸附网格", icon: "grid_on" },
-] as const;
+  { id: 'group', label: '编组', icon: 'group_work' },
+  { id: 'ungroup', label: '解组', icon: 'ungroup' },
+  { id: 'bring-forward', label: '上移一层', icon: 'vertical_align_top' },
+  { id: 'send-backward', label: '下移一层', icon: 'vertical_align_bottom' },
+  { id: 'bring-to-front', label: '置于顶层', icon: 'flip_to_front' },
+  { id: 'send-to-back', label: '置于底层', icon: 'flip_to_back' },
+  { id: 'align-left', label: '左对齐', icon: 'format_align_left' },
+  { id: 'align-center-x', label: '水平居中', icon: 'format_align_center' },
+  { id: 'align-right', label: '右对齐', icon: 'format_align_right' },
+  { id: 'align-top', label: '顶对齐', icon: 'vertical_align_top' },
+  { id: 'align-center-y', label: '垂直居中', icon: 'vertical_align_center' },
+  { id: 'align-bottom', label: '底对齐', icon: 'vertical_align_bottom' },
+  { id: 'distribute-x', label: '横向分布', icon: 'horizontal_distribute' },
+  { id: 'distribute-y', label: '纵向分布', icon: 'vertical_distribute' },
+  { id: 'match-width', label: '等宽', icon: 'straighten' },
+  { id: 'match-height', label: '等高', icon: 'straighten' },
+  { id: 'mirror-x', label: '水平镜像', icon: 'flip' },
+  { id: 'mirror-y', label: '垂直镜像', icon: 'flip' },
+  { id: 'snap-grid', label: '吸附网格', icon: 'grid_on' },
+] as const
 
 const selectionCommandRows = [
   selectionCommands.slice(0, 8),
   selectionCommands.slice(8, 16),
   selectionCommands.slice(16),
-] as const;
+] as const
 
-type InspectorSectionScope = "element" | "frame" | "page";
-type DeviceArtboardOption = {
-  id: string;
-  name: string;
-  presetKey?: string;
-  pageId?: string;
-};
+type InspectorSectionScope = 'element' | 'frame' | 'page'
+interface DeviceArtboardOption {
+  id: string
+  name: string
+  presetKey?: string
+  pageId?: string
+}
 
-const sectionOpenState = reactive<Record<string, boolean>>({});
+const sectionOpenState = reactive<Record<string, boolean>>({})
 
 function resolveSectionKey(
   scope: InspectorSectionScope,
   sectionId: string,
 ): string {
-  return `${scope}:${sectionId}`;
+  return `${scope}:${sectionId}`
 }
 
 function isSectionOpen(
@@ -138,7 +138,7 @@ function isSectionOpen(
   sectionId: string,
   defaultOpen = false,
 ): boolean {
-  return sectionOpenState[resolveSectionKey(scope, sectionId)] ?? defaultOpen;
+  return sectionOpenState[resolveSectionKey(scope, sectionId)] ?? defaultOpen
 }
 
 function toggleSection(
@@ -146,8 +146,8 @@ function toggleSection(
   sectionId: string,
   defaultOpen = false,
 ): void {
-  const sectionKey = resolveSectionKey(scope, sectionId);
-  sectionOpenState[sectionKey] = !isSectionOpen(scope, sectionId, defaultOpen);
+  const sectionKey = resolveSectionKey(scope, sectionId)
+  sectionOpenState[sectionKey] = !isSectionOpen(scope, sectionId, defaultOpen)
 }
 
 function getSectionToggleLabel(
@@ -156,139 +156,141 @@ function getSectionToggleLabel(
   title: string,
   defaultOpen = false,
 ): string {
-  return `${isSectionOpen(scope, sectionId, defaultOpen) ? "收起" : "展开"}${title}`;
+  return `${isSectionOpen(scope, sectionId, defaultOpen) ? '收起' : '展开'}${title}`
 }
 
 const isTextElement = computed(() =>
-  ["text", "caption", "badge"].includes(props.element?.type || ""),
-);
-const isShapeElement = computed(() => props.element?.type === "shape");
-const isPathElement = computed(() => props.element?.type === "path");
-const isImageElement = computed(() => props.element?.type === "image");
+  ['text', 'caption', 'badge'].includes(props.element?.type || ''),
+)
+const isShapeElement = computed(() => props.element?.type === 'shape')
+const isPathElement = computed(() => props.element?.type === 'path')
+const isImageElement = computed(() => props.element?.type === 'image')
 const isMultiFrameSelection = computed(
   () => props.selectedFrameCount > 1 && !props.element,
-);
-const activeElementFrame = computed(() => props.elementFrame || null);
+)
+const activeElementFrame = computed(() => props.elementFrame || null)
 const activeElementFrameLayout = computed(() =>
   resolveDesignFrameLayoutMetadata(activeElementFrame.value?.metadata?.layout),
-);
+)
 const frameLayout = computed(() =>
   resolveDesignFrameLayoutMetadata(props.frame?.metadata?.layout),
-);
+)
 const frameGrid = computed(() =>
   resolveDesignFrameGridMetadata(props.frame?.metadata?.grid),
-);
+)
 const frameExport = computed(() =>
   resolveDesignFrameExportMetadata(
     props.frame?.metadata?.export,
     props.frame?.metadata?.exportWithVisiblePageOverlays !== false,
   ),
-);
+)
 const elementLayoutSizing = computed(() =>
-  String(props.element?.metadata?.layoutSizing || "fixed"),
-);
+  String(props.element?.metadata?.layoutSizing || 'fixed'),
+)
 const elementConstraints = computed(() => {
   return {
     horizontal: String(
-      props.element?.metadata?.constraints?.horizontal || "left",
+      props.element?.metadata?.constraints?.horizontal || 'left',
     ),
-    vertical: String(props.element?.metadata?.constraints?.vertical || "top"),
+    vertical: String(props.element?.metadata?.constraints?.vertical || 'top'),
     referenceWidth: Number(
-      props.element?.metadata?.constraints?.referenceWidth ||
-        activeElementFrame.value?.width ||
-        0,
+      props.element?.metadata?.constraints?.referenceWidth
+      || activeElementFrame.value?.width
+      || 0,
     ),
     referenceHeight: Number(
-      props.element?.metadata?.constraints?.referenceHeight ||
-        activeElementFrame.value?.height ||
-        0,
+      props.element?.metadata?.constraints?.referenceHeight
+      || activeElementFrame.value?.height
+      || 0,
     ),
-  };
-});
+  }
+})
 const pageViewportText = computed(() => {
-  if (!props.page) return "";
-  return `x ${Math.round(props.page.viewport?.x || 0)} / y ${Math.round(props.page.viewport?.y || 0)} / zoom ${Number(props.page.viewport?.zoom || 1).toFixed(2)}`;
-});
+  if (!props.page)
+    return ''
+  return `x ${Math.round(props.page.viewport?.x || 0)} / y ${Math.round(props.page.viewport?.y || 0)} / zoom ${Number(props.page.viewport?.zoom || 1).toFixed(2)}`
+})
 const showSelectionCommandBar = computed(() =>
   Boolean(props.element || props.frame),
-);
+)
 const elementInAutoLayoutFrame = computed(() =>
-  Boolean(props.element && activeElementFrameLayout.value.mode === "auto"),
-);
+  Boolean(props.element && activeElementFrameLayout.value.mode === 'auto'),
+)
 const selectionCommandDisabled = computed(() =>
   Boolean(props.element && elementInAutoLayoutFrame.value),
-);
+)
 const selectionCommandNote = computed(() => {
   if (selectionCommandDisabled.value)
-    return "自动布局容器内元素位置由 layout 求值，命令栏已禁用。";
-  return "";
-});
+    return '自动布局容器内元素位置由 layout 求值，命令栏已禁用。'
+  return ''
+})
 const frameClipContentEnabled = computed(
   () => props.frame?.metadata?.clipContent ?? true,
-);
+)
 const pageClipToPage = computed(() =>
   Boolean(props.page?.metadata?.clipToPage),
-);
+)
 const elementSupportsRadius = computed(() =>
   Boolean(
-    props.element &&
-    (isShapeElement.value ||
-      isImageElement.value ||
-      props.element.type === "badge"),
+    props.element
+    && (isShapeElement.value
+      || isImageElement.value
+      || props.element.type === 'badge'),
   ),
-);
+)
 const elementSupportsFill = computed(() =>
   Boolean(props.element && (isShapeElement.value || isTextElement.value)),
-);
+)
 const elementSupportsStroke = computed(() =>
   Boolean(props.element && (isShapeElement.value || isPathElement.value)),
-);
+)
 const elementSupportsConstraints = computed(() =>
   Boolean(
-    props.element &&
-    activeElementFrame.value &&
-    activeElementFrame.value.kind !== "diagram",
+    props.element
+    && activeElementFrame.value
+    && activeElementFrame.value.kind !== 'diagram',
   ),
-);
+)
 const frameSupportsLayout = computed(() =>
-  Boolean(props.frame && props.frame.kind !== "diagram"),
-);
+  Boolean(props.frame && props.frame.kind !== 'diagram'),
+)
 const frameSupportsVisualTokens = computed(() =>
-  Boolean(props.frame && props.frame.kind !== "diagram"),
-);
+  Boolean(props.frame && props.frame.kind !== 'diagram'),
+)
 const isDeviceArtboard = computed(
-  () => props.frame?.kind === "device_artboard",
-);
-const isDeviceMockup = computed(() => props.frame?.kind === "device_mockup");
+  () => props.frame?.kind === 'device_artboard',
+)
+const isDeviceMockup = computed(() => props.frame?.kind === 'device_mockup')
 const isDeviceFrame = computed(
   () => isDeviceArtboard.value || isDeviceMockup.value,
-);
-const frameKindValue = computed<DesignFrameKind | "">(() => {
-  if (!props.frame) return "";
-  return props.frame.kind;
-});
-const devicePresetSearch = ref("");
-const devicePreviewMode = ref<"screen" | "shell">("screen");
-const selectedMockupCategoryKey = ref("");
-const selectedMockupModelId = ref("");
+)
+const frameKindValue = computed<DesignFrameKind | ''>(() => {
+  if (!props.frame)
+    return ''
+  return props.frame.kind
+})
+const devicePresetSearch = ref('')
+const devicePreviewMode = ref<'screen' | 'shell'>('screen')
+const selectedMockupCategoryKey = ref('')
+const selectedMockupModelId = ref('')
 const frameDeviceMetadata = computed(() => {
-  const source = props.frame?.metadata?.device || {};
-  const shellMode = source.shellMode;
-  const screenScaleMode = source.screenScaleMode;
-  const screenTransform =
-    (source.screenTransform || {}) as Partial<DesignFrameDeviceScreenTransform>;
+  const source = props.frame?.metadata?.device || {}
+  const shellMode = source.shellMode
+  const screenScaleMode = source.screenScaleMode
+  const screenTransform
+    = (source.screenTransform || {}) as Partial<DesignFrameDeviceScreenTransform>
   return {
     shellMode:
-      shellMode === "none" ||
-      shellMode === "builtin" ||
-      shellMode === "external"
+      shellMode === 'none'
+      || shellMode === 'builtin'
+      || shellMode === 'external'
         ? shellMode
         : isDeviceArtboard.value
-          ? "none"
-          : "builtin",
-    shellAssetId: String(source.shellAssetId || "").trim() || undefined,
-    mockupSourceFrameId: String(source.mockupSourceFrameId || "").trim() || undefined,
-    screenScaleMode: screenScaleMode === "fill" ? "fill" : "fit",
+          ? 'none'
+          : 'builtin',
+    shellAssetId: String(source.shellAssetId || '').trim() || undefined,
+    mockupSourceFrameId: String(source.mockupSourceFrameId || '').trim() || undefined,
+    screenScaleMode: screenScaleMode === 'fill' ? 'fill' : 'fit',
     showSafeArea: Boolean(source.showSafeArea),
     screenTransform: {
       offsetX: toFiniteNumber(screenTransform.offsetX, 0),
@@ -298,174 +300,178 @@ const frameDeviceMetadata = computed(() => {
   } satisfies Required<
     Pick<
       DesignFrameDeviceMetadata,
-      "shellMode" | "screenScaleMode" | "showSafeArea" | "screenTransform"
+      'shellMode' | 'screenScaleMode' | 'showSafeArea' | 'screenTransform'
     >
-  > &
-    Pick<
-      DesignFrameDeviceMetadata,
-      "shellAssetId" | "mockupSourceFrameId"
-    >;
-});
+  >
+  & Pick<
+    DesignFrameDeviceMetadata,
+      'shellAssetId' | 'mockupSourceFrameId'
+  >
+})
 const frameDevicePreset = computed(() => {
-  if (!props.frame) return props.deviceFramePresets[0] || null;
+  if (!props.frame)
+    return props.deviceFramePresets[0] || null
   return (
     props.deviceFramePresets.find(
-      (preset) => preset.key === props.frame?.deviceFramePresetKey,
-    ) ||
-    props.deviceFramePresets[0] ||
-    null
-  );
-});
+      preset => preset.key === props.frame?.deviceFramePresetKey,
+    )
+    || props.deviceFramePresets[0]
+    || null
+  )
+})
 const filteredDeviceFramePresets = computed(() => {
-  const query = devicePresetSearch.value.trim().toLowerCase();
-  if (!query) return props.deviceFramePresets;
-  return props.deviceFramePresets.filter((preset) =>
+  const query = devicePresetSearch.value.trim().toLowerCase()
+  if (!query)
+    return props.deviceFramePresets
+  return props.deviceFramePresets.filter(preset =>
     [
       preset.title,
       preset.group,
       preset.platform,
       preset.key,
       `${preset.screenWidth}x${preset.screenHeight}`,
-    ].some((token) => String(token || "").toLowerCase().includes(query)),
-  );
-});
+    ].some(token => String(token || '').toLowerCase().includes(query)),
+  )
+})
 const groupedDeviceFramePresets = computed(() => {
-  const groups = new Map<string, DeviceFramePreset[]>();
+  const groups = new Map<string, DeviceFramePreset[]>()
   filteredDeviceFramePresets.value.forEach((preset) => {
-    const bucket = groups.get(preset.group) || [];
-    bucket.push(preset);
-    groups.set(preset.group, bucket);
-  });
+    const bucket = groups.get(preset.group) || []
+    bucket.push(preset)
+    groups.set(preset.group, bucket)
+  })
   return Array.from(groups.entries()).map(([group, items]) => ({
     group,
     items,
-  }));
-});
+  }))
+})
 const mockupCatalogVariantEntries = computed(() => {
   return (props.mockupCatalog?.categories || []).flatMap((category) => {
     return category.models.flatMap((model) => {
-      return model.variants.map((variant) => ({
+      return model.variants.map(variant => ({
         categoryKey: category.key,
         categoryTitle: category.title,
         model,
         variant,
-      }));
-    });
-  });
-});
+      }))
+    })
+  })
+})
 const currentMockupCatalogSelection = computed(() => {
-  const currentPresetKey = normalizeString(props.frame?.deviceFramePresetKey);
-  const parsedPresetKey = parseMockupDevicePresetKey(currentPresetKey);
+  const currentPresetKey = normalizeString(props.frame?.deviceFramePresetKey)
+  const parsedPresetKey = parseMockupDevicePresetKey(currentPresetKey)
   return (
     mockupCatalogVariantEntries.value.find(
-      (entry) =>
-        entry.variant.presetKey === currentPresetKey ||
-        (entry.model.slug === parsedPresetKey.modelSlug &&
-          (!parsedPresetKey.slotKey ||
-            entry.variant.slotKey === parsedPresetKey.slotKey)),
+      entry =>
+        entry.variant.presetKey === currentPresetKey
+        || (entry.model.slug === parsedPresetKey.modelSlug
+          && (!parsedPresetKey.slotKey
+            || entry.variant.slotKey === parsedPresetKey.slotKey)),
     ) || null
-  );
-});
+  )
+})
 const selectedMockupCategory = computed(() => {
-  const categoryKey =
-    normalizeString(selectedMockupCategoryKey.value) ||
-    currentMockupCatalogSelection.value?.categoryKey ||
-    props.mockupCatalog?.categories[0]?.key ||
-    "";
+  const categoryKey
+    = normalizeString(selectedMockupCategoryKey.value)
+      || currentMockupCatalogSelection.value?.categoryKey
+      || props.mockupCatalog?.categories[0]?.key
+      || ''
   return (
-    props.mockupCatalog?.categories.find((item) => item.key === categoryKey) ||
-    null
-  );
-});
+    props.mockupCatalog?.categories.find(item => item.key === categoryKey)
+    || null
+  )
+})
 const selectedMockupModel = computed<MockupProjectCatalogModel | null>(() => {
-  const modelId =
-    normalizeString(selectedMockupModelId.value) ||
-    currentMockupCatalogSelection.value?.model.id ||
-    selectedMockupCategory.value?.models[0]?.id ||
-    "";
+  const modelId
+    = normalizeString(selectedMockupModelId.value)
+      || currentMockupCatalogSelection.value?.model.id
+      || selectedMockupCategory.value?.models[0]?.id
+      || ''
   return (
-    selectedMockupCategory.value?.models.find((item) => item.id === modelId) ||
-    null
-  );
-});
+    selectedMockupCategory.value?.models.find(item => item.id === modelId)
+    || null
+  )
+})
 const currentMockupCatalogVariant = computed<MockupProjectCatalogVariant | null>(
   () => {
-    const currentPresetKey = normalizeString(props.frame?.deviceFramePresetKey);
+    const currentPresetKey = normalizeString(props.frame?.deviceFramePresetKey)
     return (
       selectedMockupModel.value?.variants.find(
-        (item) => item.presetKey === currentPresetKey,
-      ) ||
-      currentMockupCatalogSelection.value?.variant ||
-      selectedMockupModel.value?.variants[0] ||
-      null
-    );
+        item => item.presetKey === currentPresetKey,
+      )
+      || currentMockupCatalogSelection.value?.variant
+      || selectedMockupModel.value?.variants[0]
+      || null
+    )
   },
-);
+)
 const framePresetBound = computed(() =>
   Boolean(isDeviceArtboard.value && props.frame?.deviceFramePresetKey),
-);
+)
 const selectedShellAsset = computed(() => {
-  const shellAssetId = frameDeviceMetadata.value.shellAssetId;
-  if (!shellAssetId) return null;
+  const shellAssetId = frameDeviceMetadata.value.shellAssetId
+  if (!shellAssetId)
+    return null
   return (
-    props.deviceShellAssets.find((asset) => asset.id === shellAssetId) || null
-  );
-});
+    props.deviceShellAssets.find(asset => asset.id === shellAssetId) || null
+  )
+})
 const activeFramePreviewMarkup = computed(() => {
-  if (!isDeviceFrame.value) return "";
+  if (!isDeviceFrame.value)
+    return ''
   if (isDeviceArtboard.value) {
-    return devicePreviewMode.value === "shell"
+    return devicePreviewMode.value === 'shell'
       ? props.frameShellPreviewMarkup
-      : props.framePreviewMarkup;
+      : props.framePreviewMarkup
   }
-  return props.framePreviewMarkup || props.frameShellPreviewMarkup;
-});
+  return props.framePreviewMarkup || props.frameShellPreviewMarkup
+})
 const isMockupScreenEditing = computed(() => {
   return (
-    Boolean(props.frame?.id) &&
-    normalizeString(props.mockupScreenEditingFrameId) ===
-      normalizeString(props.frame?.id)
-  );
-});
+    Boolean(props.frame?.id)
+    && normalizeString(props.mockupScreenEditingFrameId)
+    === normalizeString(props.frame?.id)
+  )
+})
 
 function toFiniteNumber(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
 }
 
 function normalizeString(value: unknown): string {
-  return String(value || "").trim();
+  return String(value || '').trim()
 }
 
 function updatePageMetadata(patch: Record<string, unknown>): void {
-  emit("updatePage", {
+  emit('updatePage', {
     metadata: {
       ...(props.page?.metadata || {}),
       ...patch,
     },
-  });
+  })
 }
 
 const pageWorkspaceBackground = computed(() =>
   resolveDesignPageWorkspaceBackground(props.page),
-);
+)
 
 function updateFrameThemeTokens(patch: Record<string, string>): void {
-  emit("updateFrame", {
+  emit('updateFrame', {
     themeTokens: {
       ...(props.frame?.themeTokens || {}),
       ...patch,
     },
-  });
+  })
 }
 
 function updateFrameMetadata(patch: Record<string, unknown>): void {
-  emit("updateFrame", {
+  emit('updateFrame', {
     metadata: {
       ...(props.frame?.metadata || {}),
       ...patch,
     },
-  });
+  })
 }
 
 function updateFrameLayout(patch: Record<string, unknown>): void {
@@ -474,11 +480,11 @@ function updateFrameLayout(patch: Record<string, unknown>): void {
       ...(props.frame?.metadata?.layout || {}),
       ...patch,
     },
-  });
+  })
 }
 
 function updateFrameLayoutPadding(
-  axis: "top" | "right" | "bottom" | "left",
+  axis: 'top' | 'right' | 'bottom' | 'left',
   value: unknown,
 ): void {
   updateFrameLayout({
@@ -492,7 +498,7 @@ function updateFrameLayoutPadding(
         ),
       ),
     },
-  });
+  })
 }
 
 function updateFrameGrid(patch: Record<string, unknown>): void {
@@ -501,7 +507,7 @@ function updateFrameGrid(patch: Record<string, unknown>): void {
       ...(props.frame?.metadata?.grid || {}),
       ...patch,
     },
-  });
+  })
 }
 
 function updateFrameExport(patch: Record<string, unknown>): void {
@@ -510,7 +516,7 @@ function updateFrameExport(patch: Record<string, unknown>): void {
       ...(props.frame?.metadata?.export || {}),
       ...patch,
     },
-  });
+  })
 }
 
 function updateFrameDeviceMetadata(
@@ -521,56 +527,59 @@ function updateFrameDeviceMetadata(
       ...(props.frame?.metadata?.device || {}),
       ...patch,
     },
-  });
+  })
 }
 
 function handleFrameKindChange(nextKind: DesignFrameKind): void {
-  if (!props.frame) return;
-  const resolvedKind = nextKind;
+  if (!props.frame)
+    return
+  const resolvedKind = nextKind
   const patch: Partial<DesignFrameModel> = {
     kind: resolvedKind,
-  };
-  if (resolvedKind === "device_artboard") {
-    const preset = frameDevicePreset.value || props.deviceFramePresets[0] || null;
+  }
+  if (resolvedKind === 'device_artboard') {
+    const preset = frameDevicePreset.value || props.deviceFramePresets[0] || null
     if (preset) {
-      patch.deviceFramePresetKey = preset.key;
-      patch.width = preset.screenWidth;
-      patch.height = preset.screenHeight;
+      patch.deviceFramePresetKey = preset.key
+      patch.width = preset.screenWidth
+      patch.height = preset.screenHeight
     }
     patch.metadata = {
       ...(props.frame.metadata || {}),
       device: {
         ...(props.frame.metadata?.device || {}),
         shellMode:
-          frameDeviceMetadata.value.shellMode === "external"
-            ? "external"
-            : frameDeviceMetadata.value.shellMode === "none"
-              ? "none"
-              : "builtin",
+          frameDeviceMetadata.value.shellMode === 'external'
+            ? 'external'
+            : frameDeviceMetadata.value.shellMode === 'none'
+              ? 'none'
+              : 'builtin',
       },
-    };
+    }
   }
-  if (resolvedKind === "device_mockup") {
+  if (resolvedKind === 'device_mockup') {
     patch.metadata = {
       ...(props.frame.metadata || {}),
       device: {
         ...(props.frame.metadata?.device || {}),
         shellMode:
-          frameDeviceMetadata.value.shellMode === "external"
-            ? "external"
-            : "builtin",
+          frameDeviceMetadata.value.shellMode === 'external'
+            ? 'external'
+            : 'builtin',
         showSafeArea: false,
       },
-    };
+    }
   }
-  emit("updateFrame", patch);
+  emit('updateFrame', patch)
 }
 
 function handleDevicePresetChange(nextKey: string): void {
-  if (!props.frame) return;
-  const preset = props.deviceFramePresets.find((item) => item.key === nextKey);
-  if (!preset) return;
-  emit("updateFrame", {
+  if (!props.frame)
+    return
+  const preset = props.deviceFramePresets.find(item => item.key === nextKey)
+  if (!preset)
+    return
+  emit('updateFrame', {
     deviceFramePresetKey: preset.key,
     ...(isDeviceArtboard.value
       ? {
@@ -578,115 +587,120 @@ function handleDevicePresetChange(nextKey: string): void {
           height: preset.screenHeight,
         }
       : {}),
-  });
+  })
 }
 
 function bindCurrentDevicePreset(): void {
-  if (!props.frame || !isDeviceArtboard.value || !frameDevicePreset.value) return;
-  emit("updateFrame", {
+  if (!props.frame || !isDeviceArtboard.value || !frameDevicePreset.value)
+    return
+  emit('updateFrame', {
     deviceFramePresetKey: frameDevicePreset.value.key,
     width: frameDevicePreset.value.screenWidth,
     height: frameDevicePreset.value.screenHeight,
-  });
+  })
 }
 
 function clearDevicePresetBinding(): void {
-  if (!props.frame || !isDeviceArtboard.value) return;
-  emit("updateFrame", {
-    deviceFramePresetKey: "",
-  });
+  if (!props.frame || !isDeviceArtboard.value)
+    return
+  emit('updateFrame', {
+    deviceFramePresetKey: '',
+  })
 }
 
 function setFrameShellEnabled(enabled: boolean): void {
   updateFrameDeviceMetadata({
     shellMode: enabled
-      ? frameDeviceMetadata.value.shellMode === "external"
-        ? "external"
-        : "builtin"
-      : "none",
-  });
+      ? frameDeviceMetadata.value.shellMode === 'external'
+        ? 'external'
+        : 'builtin'
+      : 'none',
+  })
 }
 
 function syncMockupCatalogSelection(): void {
-  selectedMockupCategoryKey.value =
-    currentMockupCatalogSelection.value?.categoryKey ||
-    props.mockupCatalog?.categories[0]?.key ||
-    "";
-  selectedMockupModelId.value =
-    currentMockupCatalogSelection.value?.model.id ||
-    selectedMockupCategory.value?.models[0]?.id ||
-    "";
+  selectedMockupCategoryKey.value
+    = currentMockupCatalogSelection.value?.categoryKey
+      || props.mockupCatalog?.categories[0]?.key
+      || ''
+  selectedMockupModelId.value
+    = currentMockupCatalogSelection.value?.model.id
+      || selectedMockupCategory.value?.models[0]?.id
+      || ''
 }
 
 function handleMockupCategoryChange(nextCategoryKey: string): void {
-  selectedMockupCategoryKey.value = normalizeString(nextCategoryKey);
-  const category =
-    props.mockupCatalog?.categories.find(
-      (item) => item.key === selectedMockupCategoryKey.value,
-    ) || null;
-  const model = category?.models[0] || null;
-  selectedMockupModelId.value = model?.id || "";
-  const variant = model?.variants[0] || null;
-  if (variant) emit("selectMockupVariant", variant.presetKey);
+  selectedMockupCategoryKey.value = normalizeString(nextCategoryKey)
+  const category
+    = props.mockupCatalog?.categories.find(
+      item => item.key === selectedMockupCategoryKey.value,
+    ) || null
+  const model = category?.models[0] || null
+  selectedMockupModelId.value = model?.id || ''
+  const variant = model?.variants[0] || null
+  if (variant)
+    emit('selectMockupVariant', variant.presetKey)
 }
 
 function handleMockupModelChange(nextModelId: string): void {
-  selectedMockupModelId.value = normalizeString(nextModelId);
-  const variant = selectedMockupModel.value?.variants[0] || null;
-  if (variant) emit("selectMockupVariant", variant.presetKey);
+  selectedMockupModelId.value = normalizeString(nextModelId)
+  const variant = selectedMockupModel.value?.variants[0] || null
+  if (variant)
+    emit('selectMockupVariant', variant.presetKey)
 }
 
 function handleMockupVariantChange(nextPresetKey: string): void {
-  const presetKey = normalizeString(nextPresetKey);
-  if (!presetKey) return;
-  emit("selectMockupVariant", presetKey);
+  const presetKey = normalizeString(nextPresetKey)
+  if (!presetKey)
+    return
+  emit('selectMockupVariant', presetKey)
 }
 
 watch(
   () => [props.mockupCatalog, props.frame?.deviceFramePresetKey] as const,
   () => {
-    syncMockupCatalogSelection();
+    syncMockupCatalogSelection()
   },
   { immediate: true },
-);
+)
 
 function isDeviceShellAssetValid(
   asset?: DesignAssetModel | null,
 ): boolean {
-  const viewportRect = asset?.metadata?.deviceShell?.viewportRect;
-  const cornerRadius = Number(asset?.metadata?.deviceShell?.cornerRadius ?? -1);
+  const viewportRect = asset?.metadata?.deviceShell?.viewportRect
+  const cornerRadius = Number(asset?.metadata?.deviceShell?.cornerRadius ?? -1)
   return Boolean(
-    asset &&
-      viewportRect &&
-      Number(viewportRect.width) > 0 &&
-      Number(viewportRect.height) > 0 &&
-      Number.isFinite(cornerRadius) &&
-      cornerRadius >= 0,
-  );
+    asset
+    && viewportRect
+    && Number(viewportRect.width) > 0
+    && Number(viewportRect.height) > 0
+    && Number.isFinite(cornerRadius)
+    && cornerRadius >= 0,
+  )
 }
 
 function updateElementStyle(
   patch: Record<string, string | number | boolean | null>,
 ): void {
-  emit("updateElement", {
+  emit('updateElement', {
     style: {
       ...(props.element?.style || {}),
       ...patch,
     },
-  });
+  })
 }
 
 function updateElementMetadata(patch: Record<string, unknown>): void {
-  emit("updateElement", {
+  emit('updateElement', {
     metadata: {
       ...(props.element?.metadata || {}),
       ...patch,
     },
-  });
+  })
 }
 
 function updateElementConstraints(
-  axis: "horizontal" | "vertical",
+  axis: 'horizontal' | 'vertical',
   value: string,
 ): void {
   updateElementMetadata({
@@ -694,13 +708,13 @@ function updateElementConstraints(
       ...(props.element?.metadata?.constraints || {}),
       [axis]: value,
       referenceWidth:
-        activeElementFrame.value?.width ||
-        props.element?.metadata?.constraints?.referenceWidth,
+        activeElementFrame.value?.width
+        || props.element?.metadata?.constraints?.referenceWidth,
       referenceHeight:
-        activeElementFrame.value?.height ||
-        props.element?.metadata?.constraints?.referenceHeight,
+        activeElementFrame.value?.height
+        || props.element?.metadata?.constraints?.referenceHeight,
     },
-  });
+  })
 }
 </script>
 
@@ -713,7 +727,9 @@ function updateElementConstraints(
       v-if="props.collabDrawError"
       class="workspace-design-inspector__alert workspace-design-inspector__alert--danger"
     >
-      <p class="workspace-design-inspector__alert-title">文档同步异常</p>
+      <p class="workspace-design-inspector__alert-title">
+        文档同步异常
+      </p>
       <p class="workspace-design-inspector__alert-body">
         {{ props.collabDrawError }}
       </p>
@@ -785,7 +801,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">几何</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              几何
+            </h4>
             <p class="workspace-design-inspector__group-description">
               尺寸、旋转和基础内容。
             </p>
@@ -828,7 +846,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label class="workspace-design-inspector__field">
               <span class="workspace-design-inspector__label">y</span>
@@ -845,7 +863,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label class="workspace-design-inspector__field">
               <span class="workspace-design-inspector__label">width</span>
@@ -865,7 +883,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label class="workspace-design-inspector__field">
               <span class="workspace-design-inspector__label">height</span>
@@ -885,7 +903,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
           </div>
 
@@ -906,7 +924,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label
               v-if="elementSupportsRadius"
@@ -929,7 +947,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label
               v-if="isShapeElement"
@@ -982,7 +1000,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">布局</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              布局
+            </h4>
             <p class="workspace-design-inspector__group-description">
               最小布局语义只保留 sizing 和文本自适应。
             </p>
@@ -1058,7 +1078,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">约束</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              约束
+            </h4>
             <p class="workspace-design-inspector__group-description">
               仅相对父 frame 生效，支持 left / center / right / scale 与 top /
               center / bottom / scale。
@@ -1141,7 +1163,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">图层</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              图层
+            </h4>
             <p class="workspace-design-inspector__group-description">
               可见性、锁定和图层顺序。
             </p>
@@ -1189,7 +1213,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
           </div>
 
@@ -1203,17 +1227,15 @@ function updateElementConstraints(
             <div class="workspace-design-inspector__meta-row">
               <span class="workspace-design-inspector__meta-key">容器角色</span>
               <span class="workspace-design-inspector__meta-value">{{
-                props.element.metadata?.containerRole ||
-                (props.element.frameId ? "frame_child" : "page_root")
+                props.element.metadata?.containerRole
+                  || (props.element.frameId ? "frame_child" : "page_root")
               }}</span>
             </div>
             <div
               v-if="props.element.frameId"
               class="workspace-design-inspector__meta-row"
             >
-              <span class="workspace-design-inspector__meta-key"
-                >所属 Frame</span
-              >
+              <span class="workspace-design-inspector__meta-key">所属 Frame</span>
               <span class="workspace-design-inspector__meta-value">{{
                 props.element.frameId
               }}</span>
@@ -1240,7 +1262,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">填充</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              填充
+            </h4>
             <p class="workspace-design-inspector__group-description">
               v1 仅支持单 fill。
             </p>
@@ -1272,9 +1296,7 @@ function updateElementConstraints(
               v-if="isTextElement"
               class="workspace-design-inspector__field"
             >
-              <span class="workspace-design-inspector__label"
-                >文字颜色 / token</span
-              >
+              <span class="workspace-design-inspector__label">文字颜色 / token</span>
               <input
                 :value="String(props.element.style?.color || '')"
                 class="workspace-design-inspector__input"
@@ -1284,7 +1306,7 @@ function updateElementConstraints(
                     color: ($event.target as HTMLInputElement).value,
                   })
                 "
-              />
+              >
             </label>
             <label
               v-if="isTextElement"
@@ -1326,7 +1348,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label
               v-if="isTextElement"
@@ -1350,15 +1372,13 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label
               v-if="isShapeElement"
               class="workspace-design-inspector__field workspace-design-inspector__field--span-two"
             >
-              <span class="workspace-design-inspector__label"
-                >填充 / token</span
-              >
+              <span class="workspace-design-inspector__label">填充 / token</span>
               <input
                 :value="String(props.element.style?.fill || '')"
                 class="workspace-design-inspector__input"
@@ -1368,7 +1388,7 @@ function updateElementConstraints(
                     fill: ($event.target as HTMLInputElement).value,
                   })
                 "
-              />
+              >
             </label>
           </div>
         </div>
@@ -1383,7 +1403,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">描边</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              描边
+            </h4>
             <p class="workspace-design-inspector__group-description">
               v1 仅支持单 stroke。
             </p>
@@ -1412,9 +1434,7 @@ function updateElementConstraints(
             class="workspace-design-inspector__field-grid workspace-design-inspector__field-grid--two"
           >
             <label class="workspace-design-inspector__field">
-              <span class="workspace-design-inspector__label"
-                >描边 / token</span
-              >
+              <span class="workspace-design-inspector__label">描边 / token</span>
               <input
                 :value="String(props.element.style?.stroke || '')"
                 class="workspace-design-inspector__input"
@@ -1424,7 +1444,7 @@ function updateElementConstraints(
                     stroke: ($event.target as HTMLInputElement).value,
                   })
                 "
-              />
+              >
             </label>
             <label class="workspace-design-inspector__field">
               <span class="workspace-design-inspector__label">描边宽度</span>
@@ -1445,7 +1465,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
           </div>
         </div>
@@ -1459,7 +1479,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">效果</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              效果
+            </h4>
             <p class="workspace-design-inspector__group-description">
               v1 仅支持透明度和单阴影。
             </p>
@@ -1510,7 +1532,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label class="workspace-design-inspector__field">
               <span class="workspace-design-inspector__label">阴影</span>
@@ -1524,7 +1546,7 @@ function updateElementConstraints(
                     shadow: ($event.target as HTMLInputElement).value,
                   })
                 "
-              />
+              >
             </label>
           </div>
         </div>
@@ -1540,7 +1562,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">几何</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              几何
+            </h4>
             <p class="workspace-design-inspector__group-description">
               画板尺寸、位置与容器类型。
             </p>
@@ -1589,7 +1613,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label class="workspace-design-inspector__compact-field">
               <span class="workspace-design-inspector__compact-label">Y</span>
@@ -1605,7 +1629,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label class="workspace-design-inspector__compact-field">
               <span class="workspace-design-inspector__compact-label">W</span>
@@ -1626,7 +1650,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label class="workspace-design-inspector__compact-field">
               <span class="workspace-design-inspector__compact-label">H</span>
@@ -1647,14 +1671,12 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
             <label
               class="workspace-design-inspector__compact-field workspace-design-inspector__compact-field--span-two"
             >
-              <span class="workspace-design-inspector__compact-label"
-                >名称</span
-              >
+              <span class="workspace-design-inspector__compact-label">名称</span>
               <input
                 :value="props.frame.name"
                 class="workspace-design-inspector__compact-input"
@@ -1664,30 +1686,28 @@ function updateElementConstraints(
                     name: ($event.target as HTMLInputElement).value,
                   })
                 "
-              />
+              >
             </label>
             <label
               class="workspace-design-inspector__compact-field workspace-design-inspector__compact-field--select"
             >
-              <span class="workspace-design-inspector__compact-label"
-                >类型</span
-              >
-	              <select
-	                :value="frameKindValue"
-	                class="workspace-design-inspector__compact-input"
+              <span class="workspace-design-inspector__compact-label">类型</span>
+              <select
+                :value="frameKindValue"
+                class="workspace-design-inspector__compact-input"
                 @change="
                   handleFrameKindChange(
                     ($event.target as HTMLSelectElement).value as
                       DesignFrameKind,
                   )
                 "
-	              >
-	                <option value="freeform">freeform</option>
-	                <option value="template">template</option>
-	                <option value="device_mockup">device_mockup</option>
-	                <option value="device_artboard">device_artboard</option>
-	                <option value="diagram">diagram</option>
-	              </select>
+              >
+                <option value="freeform">freeform</option>
+                <option value="template">template</option>
+                <option value="device_mockup">device_mockup</option>
+                <option value="device_artboard">device_artboard</option>
+                <option value="diagram">diagram</option>
+              </select>
             </label>
           </div>
 
@@ -1799,7 +1819,7 @@ function updateElementConstraints(
                       $event.target as HTMLInputElement
                     ).value
                   "
-                />
+                >
               </label>
               <label class="workspace-design-inspector__field">
                 <span class="workspace-design-inspector__label">预设回退 / 兼容</span>
@@ -1911,7 +1931,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">布局</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              布局
+            </h4>
             <p class="workspace-design-inspector__group-description">
               仅实现 absolute / auto 单层 stack，grid 只做编辑辅助。
             </p>
@@ -1991,7 +2013,7 @@ function updateElementConstraints(
                       ),
                     })
                   "
-                />
+                >
               </label>
               <label class="workspace-design-inspector__field">
                 <span class="workspace-design-inspector__label">主轴对齐</span>
@@ -2012,9 +2034,7 @@ function updateElementConstraints(
                 </select>
               </label>
               <label class="workspace-design-inspector__field">
-                <span class="workspace-design-inspector__label"
-                  >交叉轴对齐</span
-                >
+                <span class="workspace-design-inspector__label">交叉轴对齐</span>
                 <select
                   :value="frameLayout.alignCross"
                   class="workspace-design-inspector__input"
@@ -2059,7 +2079,7 @@ function updateElementConstraints(
                         ($event.target as HTMLInputElement).value,
                       )
                     "
-                  />
+                  >
                 </label>
                 <label class="workspace-design-inspector__field">
                   <span class="workspace-design-inspector__label">right</span>
@@ -2075,7 +2095,7 @@ function updateElementConstraints(
                         ($event.target as HTMLInputElement).value,
                       )
                     "
-                  />
+                  >
                 </label>
                 <label class="workspace-design-inspector__field">
                   <span class="workspace-design-inspector__label">bottom</span>
@@ -2091,7 +2111,7 @@ function updateElementConstraints(
                         ($event.target as HTMLInputElement).value,
                       )
                     "
-                  />
+                  >
                 </label>
                 <label class="workspace-design-inspector__field">
                   <span class="workspace-design-inspector__label">left</span>
@@ -2107,7 +2127,7 @@ function updateElementConstraints(
                         ($event.target as HTMLInputElement).value,
                       )
                     "
-                  />
+                  >
                 </label>
               </div>
             </div>
@@ -2132,7 +2152,7 @@ function updateElementConstraints(
                       visible: ($event.target as HTMLInputElement).checked,
                     })
                   "
-                />
+                >
                 <span>显示编辑网格</span>
               </label>
               <div
@@ -2158,7 +2178,7 @@ function updateElementConstraints(
                         ),
                       })
                     "
-                  />
+                  >
                 </label>
                 <label class="workspace-design-inspector__field">
                   <span class="workspace-design-inspector__label">rows</span>
@@ -2180,7 +2200,7 @@ function updateElementConstraints(
                         ),
                       })
                     "
-                  />
+                  >
                 </label>
                 <label class="workspace-design-inspector__field">
                   <span class="workspace-design-inspector__label">margin</span>
@@ -2200,7 +2220,7 @@ function updateElementConstraints(
                         ),
                       })
                     "
-                  />
+                  >
                 </label>
                 <label class="workspace-design-inspector__field">
                   <span class="workspace-design-inspector__label">gutter</span>
@@ -2220,7 +2240,7 @@ function updateElementConstraints(
                         ),
                       })
                     "
-                  />
+                  >
                 </label>
               </div>
             </div>
@@ -2234,7 +2254,7 @@ function updateElementConstraints(
                     clipContent: ($event.target as HTMLInputElement).checked,
                   })
                 "
-              />
+              >
               <span>超出容器不显示</span>
             </label>
           </template>
@@ -2254,7 +2274,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">图层</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              图层
+            </h4>
             <p class="workspace-design-inspector__group-description">
               图层上下文信息。
             </p>
@@ -2308,7 +2330,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">填充</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              填充
+            </h4>
             <p class="workspace-design-inspector__group-description">
               仅保留会真实进入导出链路的 theme token。
             </p>
@@ -2338,9 +2362,7 @@ function updateElementConstraints(
               class="workspace-design-inspector__field-grid workspace-design-inspector__field-grid--two"
             >
               <label class="workspace-design-inspector__field">
-                <span class="workspace-design-inspector__label"
-                  >背景 / token</span
-                >
+                <span class="workspace-design-inspector__label">背景 / token</span>
                 <input
                   :value="props.frame.themeTokens?.background || ''"
                   class="workspace-design-inspector__input"
@@ -2350,12 +2372,10 @@ function updateElementConstraints(
                       background: ($event.target as HTMLInputElement).value,
                     })
                   "
-                />
+                >
               </label>
               <label class="workspace-design-inspector__field">
-                <span class="workspace-design-inspector__label"
-                  >强调 / token</span
-                >
+                <span class="workspace-design-inspector__label">强调 / token</span>
                 <input
                   :value="props.frame.themeTokens?.accent || ''"
                   class="workspace-design-inspector__input"
@@ -2365,7 +2385,7 @@ function updateElementConstraints(
                       accent: ($event.target as HTMLInputElement).value,
                     })
                   "
-                />
+                >
               </label>
             </div>
           </template>
@@ -2383,7 +2403,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">描边</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              描边
+            </h4>
             <p class="workspace-design-inspector__group-description">
               当前未为 frame 建模通用 stroke，右栏只保留说明。
             </p>
@@ -2420,7 +2442,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">效果</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              效果
+            </h4>
             <p class="workspace-design-inspector__group-description">
               当前未为 frame 提供独立 effect schema。
             </p>
@@ -2460,7 +2484,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">实时预览</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              实时预览
+            </h4>
             <p class="workspace-design-inspector__group-description">
               右栏预览直接复用导出链路，避免预览和导出走两套实现。
             </p>
@@ -2535,7 +2561,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">导出</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              导出
+            </h4>
             <p class="workspace-design-inspector__group-description">
               继续走 SVG-first 链路，再转 PNG。
             </p>
@@ -2600,7 +2628,7 @@ function updateElementConstraints(
                     ),
                   })
                 "
-              />
+              >
             </label>
           </div>
           <label class="workspace-design-inspector__check">
@@ -2613,7 +2641,7 @@ function updateElementConstraints(
                     .checked,
                 })
               "
-            />
+            >
             <span>导出时继承 page overlays</span>
           </label>
 
@@ -2641,7 +2669,7 @@ function updateElementConstraints(
                     ($event.target as HTMLInputElement).checked,
                   )
                 "
-              />
+              >
               <span>是否带壳</span>
             </label>
 
@@ -2740,16 +2768,14 @@ function updateElementConstraints(
                       },
                     })
                   "
-                />
+                >
               </label>
 
               <label
                 v-if="frameDeviceMetadata.shellMode === 'external'"
                 class="workspace-design-inspector__field workspace-design-inspector__field--span-two"
               >
-                <span class="workspace-design-inspector__label"
-                  >外部壳资源</span
-                >
+                <span class="workspace-design-inspector__label">外部壳资源</span>
                 <select
                   :value="frameDeviceMetadata.shellAssetId || ''"
                   class="workspace-design-inspector__input"
@@ -2775,7 +2801,6 @@ function updateElementConstraints(
                   </option>
                 </select>
               </label>
-
             </div>
 
             <div
@@ -2821,7 +2846,7 @@ function updateElementConstraints(
                     showSafeArea: ($event.target as HTMLInputElement).checked,
                   })
                 "
-              />
+              >
               <span>显示 Safe Area</span>
             </label>
 
@@ -2861,7 +2886,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h5 class="workspace-design-inspector__subsection-title">结构源</h5>
+            <h5 class="workspace-design-inspector__subsection-title">
+              结构源
+            </h5>
             <p class="workspace-design-inspector__group-description">
               右栏只保留轻量入口，复杂操作和 AI 生成/续改仍进入 Diagram 编辑态。
             </p>
@@ -2875,9 +2902,7 @@ function updateElementConstraints(
               aria-label="打开 Diagram 编辑态"
               @click="emit('openDiagramEditor')"
             >
-              <span class="material-symbols-outlined text-[18px]"
-                >open_in_new</span
-              >
+              <span class="material-symbols-outlined text-[18px]">open_in_new</span>
             </button>
             <button
               class="workspace-design-inspector__section-toggle"
@@ -2965,7 +2990,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">画板</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              画板
+            </h4>
             <p class="workspace-design-inspector__group-description">
               页面名称、工作区外观与基础导出语义。
             </p>
@@ -3004,7 +3031,7 @@ function updateElementConstraints(
                     name: ($event.target as HTMLInputElement).value,
                   })
                 "
-              />
+              >
             </label>
             <label class="workspace-design-inspector__field">
               <span class="workspace-design-inspector__label">工作区底色</span>
@@ -3017,7 +3044,7 @@ function updateElementConstraints(
                     workspaceBackground: ($event.target as HTMLInputElement).value,
                   })
                 "
-              />
+              >
             </label>
           </div>
         </div>
@@ -3031,7 +3058,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">导出</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              导出
+            </h4>
             <p class="workspace-design-inspector__group-description">
               页面级裁剪继续收敛到 clip 语义。
             </p>
@@ -3065,7 +3094,7 @@ function updateElementConstraints(
                   clipToPage: ($event.target as HTMLInputElement).checked,
                 })
               "
-            />
+            >
             <span>超出画板不显示</span>
           </label>
         </div>
@@ -3079,7 +3108,9 @@ function updateElementConstraints(
       >
         <div class="workspace-design-inspector__group-header">
           <div>
-            <h4 class="workspace-design-inspector__group-title">视口</h4>
+            <h4 class="workspace-design-inspector__group-title">
+              视口
+            </h4>
             <p class="workspace-design-inspector__group-description">
               当前编辑态 viewport 与 page meta。
             </p>
@@ -3212,8 +3243,7 @@ function updateElementConstraints(
   justify-content: center;
 }
 
-.workspace-design-inspector__command-row--adaptive
-  .workspace-design-inspector__command-item {
+.workspace-design-inspector__command-row--adaptive .workspace-design-inspector__command-item {
   flex: 1 1 0;
 }
 
@@ -3299,22 +3329,18 @@ function updateElementConstraints(
     transform 180ms ease;
 }
 
-.workspace-design-inspector__command-item--tooltip-above
-  .workspace-design-inspector__command-tooltip {
+.workspace-design-inspector__command-item--tooltip-above .workspace-design-inspector__command-tooltip {
   bottom: calc(100% + 10px);
   transform: translateX(-50%) translateY(4px);
 }
 
-.workspace-design-inspector__command-item--tooltip-below
-  .workspace-design-inspector__command-tooltip {
+.workspace-design-inspector__command-item--tooltip-below .workspace-design-inspector__command-tooltip {
   top: calc(100% + 10px);
   transform: translateX(-50%) translateY(-4px);
 }
 
-.workspace-design-inspector__command-item:hover
-  .workspace-design-inspector__command-tooltip,
-.workspace-design-inspector__command-item:focus-within
-  .workspace-design-inspector__command-tooltip {
+.workspace-design-inspector__command-item:hover .workspace-design-inspector__command-tooltip,
+.workspace-design-inspector__command-item:focus-within .workspace-design-inspector__command-tooltip {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }

@@ -24,8 +24,8 @@ describe('winloop image workflow sentry config', () => {
     assert.match(source, /if \(smokeJob\?\.conclusion === 'success'\)/)
   })
 
-  it('CI 中的 smoke 不再依赖 lint 和 typecheck 完成', () => {
-    assert.match(ciSource, /smoke:\s+runs-on: ubuntu-latest\s+timeout-minutes: 30\s+steps:/s)
-    assert.doesNotMatch(ciSource, /smoke:[\s\S]*?needs:\s*[\s\S]*?- lint[\s\S]*?- typecheck/s)
+  it('cI 中的 smoke 不再依赖 lint 和 typecheck 完成', () => {
+    assert.match(ciSource, /smoke:\s+runs-on: ubuntu-latest\s+timeout-minutes: 30\s+steps:/)
+    assert.doesNotMatch(ciSource, /smoke:[\s\S]*?needs:[\s\S]*?- lint[\s\S]*?- typecheck/)
   })
 })

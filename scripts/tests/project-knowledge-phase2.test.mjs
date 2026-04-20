@@ -21,7 +21,7 @@ const ADMIN_OPERATIONS_STORE_FILE = resolve(process.cwd(), 'server/utils/admin-o
 const PROJECT_KNOWLEDGE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-knowledge-store.ts')
 
 describe('project knowledge phase2', () => {
-  it('AI 返回协议与 assistant metadata 已扩展 knowledge 结构', async () => {
+  it('aI 返回协议与 assistant metadata 已扩展 knowledge 结构', async () => {
     const [typesSource, workspaceSource, projectChatSource, canvasSource] = await Promise.all([
       readFile(DOMAIN_TYPES_FILE, 'utf8'),
       readFile(WORKSPACE_STREAM_FILE, 'utf8'),

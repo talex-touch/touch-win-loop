@@ -118,7 +118,7 @@ it('项目页会话请求携带 projectId + mode 并在切模式时重载会话'
   const source = await readFile(WORKSPACE_PAGE_FILE, 'utf8')
   assert.match(
     source,
-    /endpoint\(`\/teams\/\$\{workspaceId\}\/chat\/sessions`\),[\s\S]*\{[\s\S]*projectId,[\s\S]*mode,[\s\S]*limit: 30/,
+    /endpoint\(`\/teams\/\$\{workspaceId\}\/chat\/sessions`\),[^{]*\{[\s\S]*projectId,[\s\S]*mode,[\s\S]*limit: 30/,
     '项目页会话列表请求未携带 projectId + mode',
   )
   assert.match(

@@ -175,7 +175,7 @@ function resolveMappingScoreTextClass(score: number): string {
         </div>
         <div class="flex gap-2 items-center">
           <div v-if="props.mappingRefreshing" class="text-[10px] text-slate-500 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white inline-flex gap-1.5 items-center">
-            <span class="inline-block rounded-full bg-blue-500 h-1.5 w-1.5 animate-pulse" />
+            <span class="rounded-full bg-blue-500 h-1.5 w-1.5 inline-block animate-pulse" />
             <span>刷新中</span>
           </div>
           <select

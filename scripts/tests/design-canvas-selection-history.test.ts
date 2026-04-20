@@ -1,7 +1,7 @@
-import { computed, nextTick, ref } from 'vue'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { computed, nextTick, ref } from 'vue'
 import {
   createEmptyDesignCanvasSelectionState,
   useDesignCanvasSelection,
@@ -201,7 +201,7 @@ describe('useDesignHistory', () => {
   })
 })
 
-describe('WorkspaceDesignPanel', () => {
+describe('workspaceDesignPanel', () => {
   it('默认空设计文档不会再创建 device mockup 封面 frame', async () => {
     const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
 

@@ -1,8 +1,8 @@
+import type { ComputedRef } from 'vue'
 import type {
   DesignElementModel,
   DesignFrameModel,
 } from '~~/shared/types/domain'
-import type { ComputedRef } from 'vue'
 import { computed, ref, watch } from 'vue'
 
 export type DesignCanvasSelectionScope = 'none' | 'frame' | 'element'

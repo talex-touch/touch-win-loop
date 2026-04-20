@@ -17,10 +17,10 @@ definePageMeta({
     <div class="text-center space-y-4">
       <div i-twemoji:waving-hand class="text-4xl inline-block animate-shake-x animate-duration-5000" />
       <div>
-        <h3 class="m-0 text-2xl font-semibold">
+        <h3 class="text-2xl font-semibold m-0">
           Hi
         </h3>
-        <p class="m-0 mt-2 text-lg wl-text-muted">
+        <p class="wl-text-muted text-lg m-0 mt-2">
           {{ name }}!
         </p>
       </div>
@@ -28,7 +28,7 @@ definePageMeta({
       <template v-if="user.otherNames.length">
         <div class="text-sm">
           <span class="opacity-60">也可以试试这些名字：</span>
-          <ul class="list-none m-0 mt-3 p-0 space-y-2">
+          <ul class="m-0 mt-3 p-0 list-none space-y-2">
             <li v-for="otherName in user.otherNames" :key="otherName">
               <router-link :to="`/hi/${otherName}`" replace class="text-blue-700 hover:underline">
                 {{ otherName }}

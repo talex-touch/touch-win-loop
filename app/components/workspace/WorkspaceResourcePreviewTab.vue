@@ -277,7 +277,7 @@ defineExpose({
           </div>
 
           <div v-else class="workspace-resource-preview-tab__markdown bg-white flex h-full min-h-0 w-full">
-            <div class="workspace-resource-preview-tab__markdown-editor flex min-w-0 flex-1 min-h-0">
+            <div class="workspace-resource-preview-tab__markdown-editor flex flex-1 min-h-0 min-w-0">
               <RichTextEditor
                 ref="richTextEditorRef"
                 :doc="props.collabMarkdownDoc"

@@ -1,41 +1,44 @@
 <script setup lang="ts">
+import type { DesignCanvasInteractionContext, DesignCanvasSelectionState } from '~~/app/composables/useDesignCanvasSelection'
+import type { DesignLayerTreeNode } from '~~/app/composables/useDesignLayerTree'
+import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
 import type {
-  ApiResponse,
   AiCanvasAssistAction,
   AiCanvasAssistRequest,
   AiCanvasAssistResult,
   AiCanvasAssistSourceFormat,
   AiCanvasAssistStreamEvent,
   AiCanvasAssistStreamEventType,
+  ApiResponse,
   CanvasLibraryBinaryAssetPayload,
   CanvasLibraryFrameTemplatePayload,
   CanvasLibraryItem,
   CanvasLibraryItemVersion,
   CanvasLibraryOriginMetadata,
   CanvasLibraryPageTemplatePayload,
+  ChatMessage,
   CompositionModel,
   DesignAssetModel,
-  SceneEditorEngine,
   DesignElementModel,
   DesignFrameKind,
   DesignFrameModel,
   DesignPageModel,
   DeviceFramePreset,
-  ChatMessage,
-  MockupProjectCatalog,
-  MockupProjectCatalogVariant,
-  Resource,
   GraphSourceEdge,
   GraphSourceGroup,
   GraphSourceModel,
   GraphSourceNode,
+  MockupProjectCatalog,
+  MockupProjectCatalogVariant,
+  Resource,
   SceneDocument,
+  SceneEditorEngine,
   WorkspaceFontSizePreset,
   WorkspaceTabSpacingPreset,
-} from "~~/shared/types/domain";
-import type { WorkspaceCollabCursorUser } from "~/components/workspace/collab/presence";
-import type { ContextMenuItem } from "~/components/ui/context-menu";
-import type { WorkspaceOutlineNode } from "~/utils/workspace-outline";
+} from '~~/shared/types/domain'
+import type { ContextMenuItem } from '~/components/ui/context-menu'
+import type { WorkspaceCollabCursorUser } from '~/components/workspace/collab/presence'
+import type { WorkspaceOutlineNode } from '~/utils/workspace-outline'
 import {
   computed,
   nextTick,
@@ -43,64 +46,61 @@ import {
   onMounted,
   ref,
   watch,
-} from "vue";
-import type { DesignEditorTool } from "~~/app/composables/useDesignToolController";
+} from 'vue'
 import {
   createEmptyDesignCanvasSelectionState,
-  type DesignCanvasInteractionContext,
-  type DesignCanvasSelectionState,
+
   useDesignCanvasSelection,
-} from "~~/app/composables/useDesignCanvasSelection";
+} from '~~/app/composables/useDesignCanvasSelection'
+import { useDesignEditorState } from '~~/app/composables/useDesignEditorState'
+import { useDesignHistory } from '~~/app/composables/useDesignHistory'
 import {
-  type DesignLayerTreeNode,
+
   useDesignLayerTree,
-} from "~~/app/composables/useDesignLayerTree";
-import { useDesignEditorState } from "~~/app/composables/useDesignEditorState";
-import { useDesignHistory } from "~~/app/composables/useDesignHistory";
+} from '~~/app/composables/useDesignLayerTree'
 import {
   resolveDesignToolByShortcut,
   resolveDesignToolPreset,
   useDesignToolController,
-} from "~~/app/composables/useDesignToolController";
+} from '~~/app/composables/useDesignToolController'
 import {
   designDocumentToSceneDocument,
   parseDesignDocumentString,
   sceneDocumentToDesignDocument,
   serializeDesignDocument,
-} from "~~/shared/utils/design-document";
+} from '~~/shared/utils/design-document'
 import {
-  appendDesignFrameToSceneDocument,
   appendDesignAssetToSceneDocument,
   appendDesignElementToSceneDocument,
+  appendDesignFrameToSceneDocument,
   appendDesignPageToSceneDocument,
   buildDesignAssetFromCanvasLibraryPayload,
   canDesignFrameCreateElements,
   createEmptySceneDocument,
   DEVICE_FRAME_PRESETS,
-  mergeCanvasLibraryFrameTemplate,
-  mergeCanvasLibraryPageTemplate,
   exportArchitectureModelToMermaid,
   exportSchemaModelToDDL,
+  groupDesignElementsInSceneDocument,
   importArchitectureFromMetadata,
   importFromDDL,
   importFromMarkdownOutline,
   importFromMermaid,
-  groupDesignElementsInSceneDocument,
+  mergeCanvasLibraryFrameTemplate,
+  mergeCanvasLibraryPageTemplate,
   parseSceneDocumentString,
+  registerRuntimeDeviceFramePresets,
   relayoutSceneDocument,
   removeDesignElementFromSceneDocument,
   removeDesignFrameFromSceneDocument,
   removeDesignPageFromSceneDocument,
+  renderCompositionAssetToSvg,
+  resolveCompositionElementsForFrame,
+  resolveCompositionElementsForPage,
   resolveDesignFrameEditableElements,
   resolveDesignFrameEditingBinding,
   resolveDesignFrameExportMetadata,
   resolveDeviceFramePreset,
   resolveDisplayCompositionElementsForPage,
-  resolveCompositionElementsForPage,
-  renderCompositionAssetToSvg,
-  registerRuntimeDeviceFramePresets,
-  resolveCompositionElementsForFrame,
-  resolveDesignPageWorkspaceBackground,
   sceneDocumentFromUnknown,
   serializeSceneDocument,
   setCurrentDesignPageInSceneDocument,
@@ -109,852 +109,897 @@ import {
   updateDesignElementInSceneDocument,
   updateDesignFrameInSceneDocument,
   updateDesignPageInSceneDocument,
-} from "~~/shared/utils/scene-document";
-import WLDesignContainer from "../wl-design/WLDesignContainer.vue";
-import WLDesignLayer from "../wl-design/WLDesignLayer.vue";
-import WLDesignLayout from "../wl-design/WLDesignLayout.vue";
-import UiContextMenu from "../ui/UiContextMenu.vue";
-import WorkspaceDesignCanvasKitBridge from "./design/WorkspaceDesignCanvasKitBridge.client.vue";
-import WorkspaceDesignInspector from "./design/WorkspaceDesignInspector.vue";
-import WorkspaceDesignSidebarTabs from "./design/WorkspaceDesignSidebarTabs.vue";
-import WorkspaceDesignStage from "./design/WorkspaceDesignStage.vue";
-import WorkspaceDesignToolbar from "./design/WorkspaceDesignToolbar.vue";
+} from '~~/shared/utils/scene-document'
+import UiContextMenu from '../ui/UiContextMenu.vue'
+import WLDesignContainer from '../wl-design/WLDesignContainer.vue'
+import WLDesignLayer from '../wl-design/WLDesignLayer.vue'
+import WLDesignLayout from '../wl-design/WLDesignLayout.vue'
+import WorkspaceDesignCanvasKitBridge from './design/WorkspaceDesignCanvasKitBridge.client.vue'
+import WorkspaceDesignInspector from './design/WorkspaceDesignInspector.vue'
+import WorkspaceDesignSidebarTabs from './design/WorkspaceDesignSidebarTabs.vue'
+import WorkspaceDesignStage from './design/WorkspaceDesignStage.vue'
+import WorkspaceDesignToolbar from './design/WorkspaceDesignToolbar.vue'
 
 // WorkspaceDesignCanvas 作为 Vue Flow stage 适配层继续保留在 WorkspaceDesignStage 内部。
 // buildDeviceMockupSceneDocument 仍由 scene-document 提供，兼容旧模板与新格式迁移。
 
-type DesignSidebarTab = "pages" | "frames" | "assets";
-type DesignStorageFormat = "scene_document" | "design_document_v1";
-type StageViewportState = { x: number; y: number; zoom: number };
-type SidebarLayerTreeRow = {
-  node: DesignLayerTreeNode;
-  depth: number;
-};
-type DesignFrameEditingOwnerState = {
-  displayFrame: DesignFrameModel;
-  ownerFrame: DesignFrameModel;
-  ownerPageId: string;
-  projected: boolean;
-};
-type StageDeepSelectionRequest = {
-  ownerFrameId: string;
-  ownerPageId: string;
-  displayFrameId: string;
-  ownerElementId?: string;
-};
-type PendingImagePlacement = {
-  src: string;
-  name: string;
-  intrinsicWidth: number;
-  intrinsicHeight: number;
-  assetId?: string;
-  mimeType?: string;
-};
+type DesignSidebarTab = 'pages' | 'frames' | 'assets'
+type DesignStorageFormat = 'scene_document' | 'design_document_v1'
+interface StageViewportState { x: number, y: number, zoom: number }
+interface SidebarLayerTreeRow {
+  node: DesignLayerTreeNode
+  depth: number
+}
+interface DesignFrameEditingOwnerState {
+  displayFrame: DesignFrameModel
+  ownerFrame: DesignFrameModel
+  ownerPageId: string
+  projected: boolean
+}
+interface StageDeepSelectionRequest {
+  ownerFrameId: string
+  ownerPageId: string
+  displayFrameId: string
+  ownerElementId?: string
+}
+interface PendingImagePlacement {
+  src: string
+  name: string
+  intrinsicWidth: number
+  intrinsicHeight: number
+  assetId?: string
+  mimeType?: string
+}
 
 const props = withDefaults(
   defineProps<{
-    modelValue?: string;
-    hasDesignResource?: boolean;
-    designResourceId?: string;
-    boundResourceId?: string;
-    projectId?: string;
-    workspaceId?: string;
-    currentUserId?: string;
-    isPlatformAdminUser?: boolean;
-    designPanelTitle?: string;
-    collabRevision?: number;
-    collabConnected?: boolean;
-    collabConnectionText?: string;
-    collabDrawError?: string;
-    collabPresenceCursors?: WorkspaceCollabCursorUser[];
-    designEditorEngine?: SceneEditorEngine | "";
-    fontSizePreset?: WorkspaceFontSizePreset | "";
-    tabSpacingPreset?: WorkspaceTabSpacingPreset | "";
+    modelValue?: string
+    hasDesignResource?: boolean
+    designResourceId?: string
+    boundResourceId?: string
+    projectId?: string
+    workspaceId?: string
+    currentUserId?: string
+    isPlatformAdminUser?: boolean
+    designPanelTitle?: string
+    collabRevision?: number
+    collabConnected?: boolean
+    collabConnectionText?: string
+    collabDrawError?: string
+    collabPresenceCursors?: WorkspaceCollabCursorUser[]
+    designEditorEngine?: SceneEditorEngine | ''
+    fontSizePreset?: WorkspaceFontSizePreset | ''
+    tabSpacingPreset?: WorkspaceTabSpacingPreset | ''
   }>(),
   {
-    modelValue: "",
+    modelValue: '',
     hasDesignResource: false,
-    designResourceId: "",
-    boundResourceId: "",
-    projectId: "",
-    workspaceId: "",
-    currentUserId: "",
+    designResourceId: '',
+    boundResourceId: '',
+    projectId: '',
+    workspaceId: '',
+    currentUserId: '',
     isPlatformAdminUser: false,
-    designPanelTitle: "设计画布",
+    designPanelTitle: '设计画布',
     collabRevision: 0,
     collabConnected: false,
-    collabConnectionText: "",
-    collabDrawError: "",
+    collabConnectionText: '',
+    collabDrawError: '',
     collabPresenceCursors: () => [],
-    designEditorEngine: "",
-    fontSizePreset: "",
-    tabSpacingPreset: "",
+    designEditorEngine: '',
+    fontSizePreset: '',
+    tabSpacingPreset: '',
   },
-);
+)
 
 const emit = defineEmits<{
-  "update:modelValue": [value: string];
-  updateCollabCursor: [value: { cursorX?: number, cursorY?: number }];
-  activateResource: [resourceId: string];
-  openResource: [resourceId: string];
-}>();
+  'update:modelValue': [value: string]
+  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
+  'activateResource': [resourceId: string]
+  'openResource': [resourceId: string]
+}>()
 
 const templateOptions = SYSTEM_SCENE_TEMPLATES.filter(
-  (template) => template.category === "composition",
-);
-const DEFAULT_TEMPLATE_KEY =
-  templateOptions[0]?.templateKey || "device-showcase";
-const DEFAULT_DEVICE_FRAME_KEY =
-  DEVICE_FRAME_PRESETS[0]?.key || "iphone-16-pro";
-const runtime = useRuntimeConfig();
-const { endpoint } = useApiEndpoint(runtime);
+  template => template.category === 'composition',
+)
+const DEFAULT_TEMPLATE_KEY
+  = templateOptions[0]?.templateKey || 'device-showcase'
+const DEFAULT_DEVICE_FRAME_KEY
+  = DEVICE_FRAME_PRESETS[0]?.key || 'iphone-16-pro'
+const runtime = useRuntimeConfig()
+const { endpoint } = useApiEndpoint(runtime)
 
 function resolvePersistedDesignEditorEngine(
   value: unknown,
-  fallback: SceneEditorEngine = "vueflow",
+  fallback: SceneEditorEngine = 'vueflow',
 ): SceneEditorEngine {
-  const normalized = normalizeString(value).toLowerCase();
+  const normalized = normalizeString(value).toLowerCase()
   if (
-    normalized === "vueflow" ||
-    normalized === "tldraw_legacy" ||
-    normalized === "canvaskit_wasm"
-  )
-    return normalized;
-  return fallback;
+    normalized === 'vueflow'
+    || normalized === 'tldraw_legacy'
+    || normalized === 'canvaskit_wasm'
+  ) {
+    return normalized
+  }
+  return fallback
 }
 
 const draftDocument = ref<SceneDocument>(
   createDefaultDesignSceneDocument(
-    resolvePersistedDesignEditorEngine(props.designEditorEngine, "vueflow"),
+    resolvePersistedDesignEditorEngine(props.designEditorEngine, 'vueflow'),
   ),
-);
+)
 const persistedDesignEditorEngine = ref<SceneEditorEngine>(
-  resolvePersistedDesignEditorEngine(props.designEditorEngine, "vueflow"),
-);
-const persistedDesignStorageFormat = ref<DesignStorageFormat>("scene_document");
-const panelRootRef = ref<HTMLElement | null>(null);
-const layerTreeRootRef = ref<HTMLElement | null>(null);
-const activeTool = ref<DesignEditorTool>("select");
-const stageViewportX = ref(0);
-const stageViewportY = ref(0);
-const stageViewportZoom = ref(1);
-const activeSidebarTab = ref<DesignSidebarTab>("pages");
-const sidebarCollapsed = ref(false);
-const inspectorCollapsed = ref(false);
-const actionMenuOpen = ref(false);
-const actionMenuRef = ref<HTMLElement | null>(null);
-const outlineHighlightedAssetId = ref("");
-const canvasLibrarySearch = ref("");
-const canvasLibraryItems = ref<CanvasLibraryItem[]>([]);
-const canvasLibraryLoading = ref(false);
-const canvasLibraryError = ref("");
-const mockupCatalog = ref<MockupProjectCatalog | null>(null);
-const mockupCatalogLoading = ref(false);
-const mockupCatalogError = ref("");
-const canvasLibraryActioningId = ref("");
-const canvasLibraryPublishScope = ref<"scene" | "page" | "frame">("scene");
-const canvasLibraryPublishTitle = ref("");
-const canvasLibraryPublishSummary = ref("");
-const canvasLibraryPublishTags = ref("");
-const collapsedLayerNodeIds = ref<string[]>([]);
-const layerTreeMenuVisible = ref(false);
-const layerTreeMenuNodeId = ref("");
-const layerTreeMenuItems = ref<ContextMenuItem[]>([]);
-const layerTreeMenuAnchorEl = ref<HTMLElement | null>(null);
-const inspectorHeaderEditing = ref(false);
-const inspectorHeaderDraft = ref("");
-const inspectorHeaderInputRef = ref<HTMLInputElement | null>(null);
-const syncingFromModel = ref(false);
-const lastAppliedSceneJson = ref("");
-const diagramEditorFrameId = ref("");
+  resolvePersistedDesignEditorEngine(props.designEditorEngine, 'vueflow'),
+)
+const persistedDesignStorageFormat = ref<DesignStorageFormat>('scene_document')
+const panelRootRef = ref<HTMLElement | null>(null)
+const layerTreeRootRef = ref<HTMLElement | null>(null)
+const activeTool = ref<DesignEditorTool>('select')
+const stageViewportX = ref(0)
+const stageViewportY = ref(0)
+const stageViewportZoom = ref(1)
+const activeSidebarTab = ref<DesignSidebarTab>('pages')
+const sidebarCollapsed = ref(false)
+const inspectorCollapsed = ref(false)
+const actionMenuOpen = ref(false)
+const actionMenuRef = ref<HTMLElement | null>(null)
+const outlineHighlightedAssetId = ref('')
+const canvasLibrarySearch = ref('')
+const canvasLibraryItems = ref<CanvasLibraryItem[]>([])
+const canvasLibraryLoading = ref(false)
+const canvasLibraryError = ref('')
+const mockupCatalog = ref<MockupProjectCatalog | null>(null)
+const mockupCatalogLoading = ref(false)
+const mockupCatalogError = ref('')
+const canvasLibraryActioningId = ref('')
+const canvasLibraryPublishScope = ref<'scene' | 'page' | 'frame'>('scene')
+const canvasLibraryPublishTitle = ref('')
+const canvasLibraryPublishSummary = ref('')
+const canvasLibraryPublishTags = ref('')
+const collapsedLayerNodeIds = ref<string[]>([])
+const layerTreeMenuVisible = ref(false)
+const layerTreeMenuNodeId = ref('')
+const layerTreeMenuItems = ref<ContextMenuItem[]>([])
+const layerTreeMenuAnchorEl = ref<HTMLElement | null>(null)
+const inspectorHeaderEditing = ref(false)
+const inspectorHeaderDraft = ref('')
+const inspectorHeaderInputRef = ref<HTMLInputElement | null>(null)
+const syncingFromModel = ref(false)
+const lastAppliedSceneJson = ref('')
+const diagramEditorFrameId = ref('')
 const diagramSourceFormat = ref<
-  "mermaid" | "markdown_outline" | "ddl" | "architecture"
->("mermaid");
-const diagramSourceText = ref("");
-const canvasAiPrompt = ref("");
-const canvasAiRunning = ref(false);
-const canvasAiPreviewPending = ref(false);
-const canvasAiError = ref("");
-const canvasAiAction = ref<AiCanvasAssistAction>("generate");
-const canvasAiTemplate = ref<AiCanvasAssistRequest["template"]>("flowchart");
-const canvasAiMessages = ref<ChatMessage[]>([]);
-const canvasAiRuntimeLoading = ref(false);
-const canvasAiRuntimeLoaded = ref(false);
-const canvasAiRuntimeError = ref("");
-const canvasAiRuntimeStatus = ref<Record<"canvasGenerate" | "canvasComplete" | "canvasRefine", {
+  'mermaid' | 'markdown_outline' | 'ddl' | 'architecture'
+>('mermaid')
+const diagramSourceText = ref('')
+const canvasAiPrompt = ref('')
+const canvasAiRunning = ref(false)
+const canvasAiPreviewPending = ref(false)
+const canvasAiError = ref('')
+const canvasAiAction = ref<AiCanvasAssistAction>('generate')
+const canvasAiTemplate = ref<AiCanvasAssistRequest['template']>('flowchart')
+const canvasAiMessages = ref<ChatMessage[]>([])
+const canvasAiRuntimeLoading = ref(false)
+const canvasAiRuntimeLoaded = ref(false)
+const canvasAiRuntimeError = ref('')
+const canvasAiRuntimeStatus = ref<Record<'canvasGenerate' | 'canvasComplete' | 'canvasRefine', {
   configured: boolean
   provider: string
   model: string
   reason: string
-}> | null>(null);
-const diagramSelectedGroupId = ref("");
-const diagramSelectedNodeId = ref("");
-const diagramSelectedEdgeId = ref("");
-const localPageViewportById = ref<Record<string, StageViewportState>>({});
-const temporaryHandToolActive = ref(false);
-const deepSelectModifierPressed = ref(false);
-const mockupScreenEditingFrameId = ref("");
-const pendingImagePlacement = ref<PendingImagePlacement | null>(null);
-const toolSwitchHint = ref("");
-let toolSwitchHintTimer: ReturnType<typeof setTimeout> | null = null;
-let outlineHighlightTimer: ReturnType<typeof setTimeout> | null = null;
+}> | null>(null)
+const diagramSelectedGroupId = ref('')
+const diagramSelectedNodeId = ref('')
+const diagramSelectedEdgeId = ref('')
+const localPageViewportById = ref<Record<string, StageViewportState>>({})
+const temporaryHandToolActive = ref(false)
+const deepSelectModifierPressed = ref(false)
+const mockupScreenEditingFrameId = ref('')
+const pendingImagePlacement = ref<PendingImagePlacement | null>(null)
+const toolSwitchHint = ref('')
+let toolSwitchHintTimer: ReturnType<typeof setTimeout> | null = null
+let outlineHighlightTimer: ReturnType<typeof setTimeout> | null = null
 
-const TOOL_SWITCH_HINT_DURATION = 1600;
+const TOOL_SWITCH_HINT_DURATION = 1600
 const CANVAS_AI_ACTION_FEATURE_KEYS = {
-  generate: "canvasGenerate",
-  complete: "canvasComplete",
-  refine: "canvasRefine",
-} as const;
+  generate: 'canvasGenerate',
+  complete: 'canvasComplete',
+  refine: 'canvasRefine',
+} as const
 
 const canvasAiStorageScopeKey = computed(() => {
-  const workspaceId = normalizeString(props.workspaceId);
-  const projectId = normalizeString(props.projectId);
-  const resourceId = normalizeString(props.boundResourceId || props.designResourceId);
-  if (!workspaceId || !projectId || !resourceId) return "";
-  return `workspace-design-canvas-ai:${workspaceId}:${projectId}:${resourceId}`;
-});
+  const workspaceId = normalizeString(props.workspaceId)
+  const projectId = normalizeString(props.projectId)
+  const resourceId = normalizeString(props.boundResourceId || props.designResourceId)
+  if (!workspaceId || !projectId || !resourceId)
+    return ''
+  return `workspace-design-canvas-ai:${workspaceId}:${projectId}:${resourceId}`
+})
 
 function toCanvasAiMessageMetadata(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  return { ...(value as Record<string, unknown>) };
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return undefined
+  return { ...(value as Record<string, unknown>) }
 }
 
 function restoreCanvasAiMessagesFromStorage(): void {
-  if (!import.meta.client) return;
+  if (!import.meta.client)
+    return
 
-  const storageKey = canvasAiStorageScopeKey.value;
+  const storageKey = canvasAiStorageScopeKey.value
   if (!storageKey) {
-    canvasAiMessages.value = [];
-    return;
+    canvasAiMessages.value = []
+    return
   }
 
   try {
-    const raw = window.localStorage.getItem(storageKey);
+    const raw = window.localStorage.getItem(storageKey)
     if (!raw) {
-      canvasAiMessages.value = [];
-      return;
+      canvasAiMessages.value = []
+      return
     }
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) {
-      canvasAiMessages.value = [];
-      return;
+      canvasAiMessages.value = []
+      return
     }
-    const nextMessages: ChatMessage[] = [];
+    const nextMessages: ChatMessage[] = []
     for (const item of parsed) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-      const record = item as Record<string, unknown>;
-      const role = normalizeString(record.role);
-      if (role !== "assistant" && role !== "user" && role !== "system") continue;
-      const content = normalizeString(record.content);
-      if (!content) continue;
+      if (!item || typeof item !== 'object' || Array.isArray(item))
+        continue
+      const record = item as Record<string, unknown>
+      const role = normalizeString(record.role)
+      if (role !== 'assistant' && role !== 'user' && role !== 'system')
+        continue
+      const content = normalizeString(record.content)
+      if (!content)
+        continue
       nextMessages.push({
         role,
         content,
         metadata: toCanvasAiMessageMetadata(record.metadata),
-      });
+      })
     }
-    canvasAiMessages.value = nextMessages.slice(-6);
+    canvasAiMessages.value = nextMessages.slice(-6)
   }
   catch {
-    canvasAiMessages.value = [];
+    canvasAiMessages.value = []
   }
 }
 
 function persistCanvasAiMessagesToStorage(): void {
-  if (!import.meta.client) return;
+  if (!import.meta.client)
+    return
 
-  const storageKey = canvasAiStorageScopeKey.value;
-  if (!storageKey) return;
+  const storageKey = canvasAiStorageScopeKey.value
+  if (!storageKey)
+    return
 
   if (canvasAiMessages.value.length === 0) {
-    window.localStorage.removeItem(storageKey);
-    return;
+    window.localStorage.removeItem(storageKey)
+    return
   }
 
   window.localStorage.setItem(
     storageKey,
     JSON.stringify(
-      canvasAiMessages.value.slice(-6).map((message) => ({
+      canvasAiMessages.value.slice(-6).map(message => ({
         role: message.role,
         content: normalizeString(message.content),
         metadata: toCanvasAiMessageMetadata(message.metadata),
       })),
     ),
-  );
+  )
 }
 
 const resolvedDesignPanelFontSizePreset = computed<WorkspaceFontSizePreset>(
-  () => props.fontSizePreset || "md",
-);
+  () => props.fontSizePreset || 'md',
+)
 const resolvedDesignPanelTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(
-  () => props.tabSpacingPreset || "default",
-);
+  () => props.tabSpacingPreset || 'default',
+)
 const layerTreeMenuFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
-  return props.fontSizePreset || "sm";
-});
+  return props.fontSizePreset || 'sm'
+})
 const layerTreeMenuSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
-  return props.tabSpacingPreset || "compact";
-});
+  return props.tabSpacingPreset || 'compact'
+})
 const layerTreeMetricsStyle = computed<Record<string, string>>(() => {
-  const style: Record<string, string> = {};
+  const style: Record<string, string> = {}
 
-  if (resolvedDesignPanelTabSpacingPreset.value === "ultra_compact") {
+  if (resolvedDesignPanelTabSpacingPreset.value === 'ultra_compact') {
     Object.assign(style, {
-      "--wl-design-layer-indent-base": "7px",
-      "--wl-design-layer-indent-step": "11px",
-      "--wl-design-layer-row-gap": "4px",
-      "--wl-design-layer-row-radius": "3px",
-      "--wl-design-layer-row-padding-y": "3px",
-      "--wl-design-layer-row-padding-right": "3.5px",
-      "--wl-design-layer-toggle-size": "19px",
-      "--wl-design-layer-action-size": "17px",
-      "--wl-design-layer-action-gap": "2px",
-    });
+      '--wl-design-layer-indent-base': '7px',
+      '--wl-design-layer-indent-step': '11px',
+      '--wl-design-layer-row-gap': '4px',
+      '--wl-design-layer-row-radius': '3px',
+      '--wl-design-layer-row-padding-y': '3px',
+      '--wl-design-layer-row-padding-right': '3.5px',
+      '--wl-design-layer-toggle-size': '19px',
+      '--wl-design-layer-action-size': '17px',
+      '--wl-design-layer-action-gap': '2px',
+    })
   }
-  else if (resolvedDesignPanelTabSpacingPreset.value === "compact") {
+  else if (resolvedDesignPanelTabSpacingPreset.value === 'compact') {
     Object.assign(style, {
-      "--wl-design-layer-indent-base": "8px",
-      "--wl-design-layer-indent-step": "12px",
-      "--wl-design-layer-row-gap": "5px",
-      "--wl-design-layer-row-radius": "3px",
-      "--wl-design-layer-row-padding-y": "3.5px",
-      "--wl-design-layer-row-padding-right": "4px",
-      "--wl-design-layer-toggle-size": "21px",
-      "--wl-design-layer-action-size": "19px",
-      "--wl-design-layer-action-gap": "2px",
-    });
+      '--wl-design-layer-indent-base': '8px',
+      '--wl-design-layer-indent-step': '12px',
+      '--wl-design-layer-row-gap': '5px',
+      '--wl-design-layer-row-radius': '3px',
+      '--wl-design-layer-row-padding-y': '3.5px',
+      '--wl-design-layer-row-padding-right': '4px',
+      '--wl-design-layer-toggle-size': '21px',
+      '--wl-design-layer-action-size': '19px',
+      '--wl-design-layer-action-gap': '2px',
+    })
   }
-  else if (resolvedDesignPanelTabSpacingPreset.value === "relaxed") {
+  else if (resolvedDesignPanelTabSpacingPreset.value === 'relaxed') {
     Object.assign(style, {
-      "--wl-design-layer-indent-base": "11px",
-      "--wl-design-layer-indent-step": "15px",
-      "--wl-design-layer-row-gap": "7px",
-      "--wl-design-layer-row-radius": "5px",
-      "--wl-design-layer-row-padding-y": "5.75px",
-      "--wl-design-layer-row-padding-right": "5px",
-      "--wl-design-layer-toggle-size": "25px",
-      "--wl-design-layer-action-size": "23px",
-      "--wl-design-layer-action-gap": "3px",
-    });
+      '--wl-design-layer-indent-base': '11px',
+      '--wl-design-layer-indent-step': '15px',
+      '--wl-design-layer-row-gap': '7px',
+      '--wl-design-layer-row-radius': '5px',
+      '--wl-design-layer-row-padding-y': '5.75px',
+      '--wl-design-layer-row-padding-right': '5px',
+      '--wl-design-layer-toggle-size': '25px',
+      '--wl-design-layer-action-size': '23px',
+      '--wl-design-layer-action-gap': '3px',
+    })
   }
-  else if (resolvedDesignPanelTabSpacingPreset.value === "spacious") {
+  else if (resolvedDesignPanelTabSpacingPreset.value === 'spacious') {
     Object.assign(style, {
-      "--wl-design-layer-indent-base": "12px",
-      "--wl-design-layer-indent-step": "17px",
-      "--wl-design-layer-row-gap": "8px",
-      "--wl-design-layer-row-radius": "6px",
-      "--wl-design-layer-row-padding-y": "6.25px",
-      "--wl-design-layer-row-padding-right": "6px",
-      "--wl-design-layer-toggle-size": "27px",
-      "--wl-design-layer-action-size": "24px",
-      "--wl-design-layer-action-gap": "4px",
-    });
+      '--wl-design-layer-indent-base': '12px',
+      '--wl-design-layer-indent-step': '17px',
+      '--wl-design-layer-row-gap': '8px',
+      '--wl-design-layer-row-radius': '6px',
+      '--wl-design-layer-row-padding-y': '6.25px',
+      '--wl-design-layer-row-padding-right': '6px',
+      '--wl-design-layer-toggle-size': '27px',
+      '--wl-design-layer-action-size': '24px',
+      '--wl-design-layer-action-gap': '4px',
+    })
   }
   else {
     Object.assign(style, {
-      "--wl-design-layer-indent-base": "9px",
-      "--wl-design-layer-indent-step": "13px",
-      "--wl-design-layer-row-gap": "6px",
-      "--wl-design-layer-row-radius": "4px",
-      "--wl-design-layer-row-padding-y": "4.6px",
-      "--wl-design-layer-row-padding-right": "4px",
-      "--wl-design-layer-toggle-size": "23px",
-      "--wl-design-layer-action-size": "21px",
-      "--wl-design-layer-action-gap": "2px",
-    });
+      '--wl-design-layer-indent-base': '9px',
+      '--wl-design-layer-indent-step': '13px',
+      '--wl-design-layer-row-gap': '6px',
+      '--wl-design-layer-row-radius': '4px',
+      '--wl-design-layer-row-padding-y': '4.6px',
+      '--wl-design-layer-row-padding-right': '4px',
+      '--wl-design-layer-toggle-size': '23px',
+      '--wl-design-layer-action-size': '21px',
+      '--wl-design-layer-action-gap': '2px',
+    })
   }
 
-  if (resolvedDesignPanelFontSizePreset.value === "xs") {
+  if (resolvedDesignPanelFontSizePreset.value === 'xs') {
     Object.assign(style, {
-      "--wl-design-layer-label-size": "10.5px",
-      "--wl-design-layer-label-line-height": "18px",
-      "--wl-design-layer-meta-size": "9px",
-      "--wl-design-layer-meta-line-height": "15px",
-      "--wl-design-layer-icon-size": "14px",
-      "--wl-design-layer-chevron-icon-size": "13px",
-      "--wl-design-layer-action-icon-size": "14px",
-    });
+      '--wl-design-layer-label-size': '10.5px',
+      '--wl-design-layer-label-line-height': '18px',
+      '--wl-design-layer-meta-size': '9px',
+      '--wl-design-layer-meta-line-height': '15px',
+      '--wl-design-layer-icon-size': '14px',
+      '--wl-design-layer-chevron-icon-size': '13px',
+      '--wl-design-layer-action-icon-size': '14px',
+    })
   }
-  else if (resolvedDesignPanelFontSizePreset.value === "sm") {
+  else if (resolvedDesignPanelFontSizePreset.value === 'sm') {
     Object.assign(style, {
-      "--wl-design-layer-label-size": "11px",
-      "--wl-design-layer-label-line-height": "18px",
-      "--wl-design-layer-meta-size": "9.25px",
-      "--wl-design-layer-meta-line-height": "15px",
-      "--wl-design-layer-icon-size": "14.5px",
-      "--wl-design-layer-chevron-icon-size": "13.5px",
-      "--wl-design-layer-action-icon-size": "14.5px",
-    });
+      '--wl-design-layer-label-size': '11px',
+      '--wl-design-layer-label-line-height': '18px',
+      '--wl-design-layer-meta-size': '9.25px',
+      '--wl-design-layer-meta-line-height': '15px',
+      '--wl-design-layer-icon-size': '14.5px',
+      '--wl-design-layer-chevron-icon-size': '13.5px',
+      '--wl-design-layer-action-icon-size': '14.5px',
+    })
   }
-  else if (resolvedDesignPanelFontSizePreset.value === "lg") {
+  else if (resolvedDesignPanelFontSizePreset.value === 'lg') {
     Object.assign(style, {
-      "--wl-design-layer-label-size": "12.5px",
-      "--wl-design-layer-label-line-height": "21px",
-      "--wl-design-layer-meta-size": "10px",
-      "--wl-design-layer-meta-line-height": "16px",
-      "--wl-design-layer-icon-size": "16px",
-      "--wl-design-layer-chevron-icon-size": "14.5px",
-      "--wl-design-layer-action-icon-size": "16px",
-    });
+      '--wl-design-layer-label-size': '12.5px',
+      '--wl-design-layer-label-line-height': '21px',
+      '--wl-design-layer-meta-size': '10px',
+      '--wl-design-layer-meta-line-height': '16px',
+      '--wl-design-layer-icon-size': '16px',
+      '--wl-design-layer-chevron-icon-size': '14.5px',
+      '--wl-design-layer-action-icon-size': '16px',
+    })
   }
-  else if (resolvedDesignPanelFontSizePreset.value === "xl") {
+  else if (resolvedDesignPanelFontSizePreset.value === 'xl') {
     Object.assign(style, {
-      "--wl-design-layer-label-size": "13px",
-      "--wl-design-layer-label-line-height": "22px",
-      "--wl-design-layer-meta-size": "10.5px",
-      "--wl-design-layer-meta-line-height": "17px",
-      "--wl-design-layer-icon-size": "16.5px",
-      "--wl-design-layer-chevron-icon-size": "15px",
-      "--wl-design-layer-action-icon-size": "16.5px",
-    });
+      '--wl-design-layer-label-size': '13px',
+      '--wl-design-layer-label-line-height': '22px',
+      '--wl-design-layer-meta-size': '10.5px',
+      '--wl-design-layer-meta-line-height': '17px',
+      '--wl-design-layer-icon-size': '16.5px',
+      '--wl-design-layer-chevron-icon-size': '15px',
+      '--wl-design-layer-action-icon-size': '16.5px',
+    })
   }
   else {
     Object.assign(style, {
-      "--wl-design-layer-label-size": "11.5px",
-      "--wl-design-layer-label-line-height": "19px",
-      "--wl-design-layer-meta-size": "9.5px",
-      "--wl-design-layer-meta-line-height": "15px",
-      "--wl-design-layer-icon-size": "15px",
-      "--wl-design-layer-chevron-icon-size": "14px",
-      "--wl-design-layer-action-icon-size": "15px",
-    });
+      '--wl-design-layer-label-size': '11.5px',
+      '--wl-design-layer-label-line-height': '19px',
+      '--wl-design-layer-meta-size': '9.5px',
+      '--wl-design-layer-meta-line-height': '15px',
+      '--wl-design-layer-icon-size': '15px',
+      '--wl-design-layer-chevron-icon-size': '14px',
+      '--wl-design-layer-action-icon-size': '15px',
+    })
   }
 
-  return style;
-});
+  return style
+})
 
 function resolveLayerTreeGuideMetrics(): {
-  indentBase: number;
-  indentStep: number;
-  toggleSize: number;
+  indentBase: number
+  indentStep: number
+  toggleSize: number
 } {
-  if (resolvedDesignPanelTabSpacingPreset.value === "ultra_compact") {
+  if (resolvedDesignPanelTabSpacingPreset.value === 'ultra_compact') {
     return {
       indentBase: 7,
       indentStep: 11,
       toggleSize: 19,
-    };
+    }
   }
-  if (resolvedDesignPanelTabSpacingPreset.value === "compact") {
+  if (resolvedDesignPanelTabSpacingPreset.value === 'compact') {
     return {
       indentBase: 8,
       indentStep: 12,
       toggleSize: 21,
-    };
+    }
   }
-  if (resolvedDesignPanelTabSpacingPreset.value === "relaxed") {
+  if (resolvedDesignPanelTabSpacingPreset.value === 'relaxed') {
     return {
       indentBase: 11,
       indentStep: 15,
       toggleSize: 25,
-    };
+    }
   }
-  if (resolvedDesignPanelTabSpacingPreset.value === "spacious") {
+  if (resolvedDesignPanelTabSpacingPreset.value === 'spacious') {
     return {
       indentBase: 12,
       indentStep: 17,
       toggleSize: 27,
-    };
+    }
   }
   return {
     indentBase: 9,
     indentStep: 13,
     toggleSize: 23,
-  };
+  }
 }
 
 function resolveLayerTreeRowPaddingLeft(depth: number): string {
-  const { indentBase, indentStep } = resolveLayerTreeGuideMetrics();
-  return `${indentBase + depth * indentStep}px`;
+  const { indentBase, indentStep } = resolveLayerTreeGuideMetrics()
+  return `${indentBase + depth * indentStep}px`
 }
 
 function resolveLayerTreeGuideLeft(depth: number): string {
-  const { indentBase, indentStep, toggleSize } = resolveLayerTreeGuideMetrics();
-  return `${indentBase + depth * indentStep + Math.round(toggleSize / 2)}px`;
+  const { indentBase, indentStep, toggleSize } = resolveLayerTreeGuideMetrics()
+  return `${indentBase + depth * indentStep + Math.round(toggleSize / 2)}px`
 }
 
 function resolveLayerTreeConnectorStyle(depth: number): Record<string, string> {
-  const { indentBase, indentStep, toggleSize } = resolveLayerTreeGuideMetrics();
-  const left = indentBase + (depth - 1) * indentStep + Math.round(toggleSize / 2);
-  const width = Math.max(indentStep - Math.round(toggleSize / 2), 7);
+  const { indentBase, indentStep, toggleSize } = resolveLayerTreeGuideMetrics()
+  const left = indentBase + (depth - 1) * indentStep + Math.round(toggleSize / 2)
+  const width = Math.max(indentStep - Math.round(toggleSize / 2), 7)
   return {
     left: `${left}px`,
     width: `${width}px`,
-  };
+  }
 }
 
 function normalizeString(value: unknown): string {
-  return String(value || "").trim();
+  return String(value || '').trim()
 }
 
 function resolveCanvasTemplateFromSourceFormat(
   sourceFormat: AiCanvasAssistSourceFormat,
-): AiCanvasAssistRequest["template"] {
-  if (sourceFormat === "markdown_outline") return "mindmap";
-  if (sourceFormat === "ddl") return "er";
-  if (sourceFormat === "architecture") return "architecture";
-  return "flowchart";
+): AiCanvasAssistRequest['template'] {
+  if (sourceFormat === 'markdown_outline')
+    return 'mindmap'
+  if (sourceFormat === 'ddl')
+    return 'er'
+  if (sourceFormat === 'architecture')
+    return 'architecture'
+  return 'flowchart'
 }
 
 function resolveCanvasSourceFormatFromTemplate(
-  template: AiCanvasAssistRequest["template"],
+  template: AiCanvasAssistRequest['template'],
 ): AiCanvasAssistSourceFormat {
-  if (template === "mindmap") return "markdown_outline";
-  if (template === "er") return "ddl";
-  if (template === "architecture") return "architecture";
-  return "mermaid";
+  if (template === 'mindmap')
+    return 'markdown_outline'
+  if (template === 'er')
+    return 'ddl'
+  if (template === 'architecture')
+    return 'architecture'
+  return 'mermaid'
 }
 
 function getCanvasAiFeatureStatus(action: AiCanvasAssistAction) {
   return canvasAiRuntimeStatus.value?.[CANVAS_AI_ACTION_FEATURE_KEYS[action]] || {
     configured: true,
-    provider: "",
-    model: "",
-    reason: "",
-  };
+    provider: '',
+    model: '',
+    reason: '',
+  }
 }
 
 function isCanvasAiActionEnabled(action: AiCanvasAssistAction): boolean {
-  if (!canvasAiRuntimeLoaded.value) return true;
-  return Boolean(getCanvasAiFeatureStatus(action).configured);
+  if (!canvasAiRuntimeLoaded.value)
+    return true
+  return Boolean(getCanvasAiFeatureStatus(action).configured)
 }
 
 const canvasAiAnyActionConfigured = computed(() => {
-  if (!canvasAiRuntimeLoaded.value) return true;
+  if (!canvasAiRuntimeLoaded.value)
+    return true
   return Object.values(canvasAiRuntimeStatus.value || {}).some(
     status => Boolean(status?.configured),
-  );
-});
+  )
+})
 
 const canvasAiInputDisabled = computed(() => {
-  if (canvasAiRunning.value) return true;
-  if (!canvasAiRuntimeLoaded.value) return false;
-  return !canvasAiAnyActionConfigured.value;
-});
+  if (canvasAiRunning.value)
+    return true
+  if (!canvasAiRuntimeLoaded.value)
+    return false
+  return !canvasAiAnyActionConfigured.value
+})
 
 const canvasAiStatusLabel = computed(() => {
-  if (canvasAiRunning.value) return "运行中";
-  if (canvasAiRuntimeLoading.value) return "检查中";
-  if (canvasAiRuntimeError.value) return "状态异常";
-  if (!canvasAiRuntimeLoaded.value) return "待确认";
-  return canvasAiAnyActionConfigured.value ? "已配置" : "未配置";
-});
+  if (canvasAiRunning.value)
+    return '运行中'
+  if (canvasAiRuntimeLoading.value)
+    return '检查中'
+  if (canvasAiRuntimeError.value)
+    return '状态异常'
+  if (!canvasAiRuntimeLoaded.value)
+    return '待确认'
+  return canvasAiAnyActionConfigured.value ? '已配置' : '未配置'
+})
 
 const canvasAiStatusClass = computed(() => {
   if (canvasAiRunning.value)
-    return "border-sky-400/60 bg-sky-400/10 text-sky-200";
+    return 'border-sky-400/60 bg-sky-400/10 text-sky-200'
   if (canvasAiRuntimeError.value)
-    return "border-amber-400/60 bg-amber-400/10 text-amber-200";
+    return 'border-amber-400/60 bg-amber-400/10 text-amber-200'
   if (!canvasAiRuntimeLoaded.value || canvasAiRuntimeLoading.value)
-    return "border-slate-700 bg-slate-900 text-slate-300";
+    return 'border-slate-700 bg-slate-900 text-slate-300'
   if (!canvasAiAnyActionConfigured.value)
-    return "border-rose-400/60 bg-rose-400/10 text-rose-200";
-  return "border-emerald-400/50 bg-emerald-400/10 text-emerald-200";
-});
+    return 'border-rose-400/60 bg-rose-400/10 text-rose-200'
+  return 'border-emerald-400/50 bg-emerald-400/10 text-emerald-200'
+})
 
 function buildCanvasAiUnavailableMessage(action: AiCanvasAssistAction): string {
-  return normalizeString(getCanvasAiFeatureStatus(action).reason) || "画布 AI 未配置，请先在后台完成模型与密钥配置。";
+  return normalizeString(getCanvasAiFeatureStatus(action).reason) || '画布 AI 未配置，请先在后台完成模型与密钥配置。'
 }
 
-function parseSseBlock(block: string): { eventType: string; dataText: string } | null {
+function parseSseBlock(block: string): { eventType: string, dataText: string } | null {
   const lines = block
-    .split("\n")
-    .map(line => line.replace(/\r$/, ""));
-  let eventType = "";
-  const dataLines: string[] = [];
+    .split('\n')
+    .map(line => line.replace(/\r$/, ''))
+  let eventType = ''
+  const dataLines: string[] = []
 
   for (const line of lines) {
-    if (!line) continue;
-    if (line.startsWith("event:")) {
-      eventType = line.slice(6).trim();
-      continue;
+    if (!line)
+      continue
+    if (line.startsWith('event:')) {
+      eventType = line.slice(6).trim()
+      continue
     }
-    if (line.startsWith("data:")) {
-      dataLines.push(line.slice(5).trim());
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim())
     }
   }
 
-  if (!eventType && dataLines.length === 0) return null;
+  if (!eventType && dataLines.length === 0)
+    return null
   return {
     eventType,
-    dataText: dataLines.join("\n"),
-  };
+    dataText: dataLines.join('\n'),
+  }
 }
 
 function previewCanvasAssistSource(
   sourceText: string,
   sourceFormat: AiCanvasAssistSourceFormat,
 ): boolean {
-  if (!normalizeString(sourceText)) return false;
+  if (!normalizeString(sourceText))
+    return false
 
-  if (sourceFormat === "markdown_outline") {
-    importFromMarkdownOutline(sourceText);
-    return true;
+  if (sourceFormat === 'markdown_outline') {
+    importFromMarkdownOutline(sourceText)
+    return true
   }
-  if (sourceFormat === "ddl") {
-    importFromDDL(sourceText);
-    return true;
+  if (sourceFormat === 'ddl') {
+    importFromDDL(sourceText)
+    return true
   }
-  if (sourceFormat === "architecture") {
-    importArchitectureFromMetadata(sourceText);
-    return true;
+  if (sourceFormat === 'architecture') {
+    importArchitectureFromMetadata(sourceText)
+    return true
   }
-  importFromMermaid(sourceText);
-  return true;
+  importFromMermaid(sourceText)
+  return true
 }
 
 async function loadCanvasAiRuntimeStatus(): Promise<void> {
-  canvasAiRuntimeLoading.value = true;
-  canvasAiRuntimeError.value = "";
+  canvasAiRuntimeLoading.value = true
+  canvasAiRuntimeError.value = ''
 
   try {
-    const response = await fetch(endpoint("/user/ai/runtime"), {
-      credentials: "include",
-    });
+    const response = await fetch(endpoint('/user/ai/runtime'), {
+      credentials: 'include',
+    })
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`HTTP ${response.status}`)
     }
 
     const payload = (await response.json()) as ApiResponse<{
-      canvasGenerate: { configured: boolean; provider: string; model: string; reason: string };
-      canvasComplete: { configured: boolean; provider: string; model: string; reason: string };
-      canvasRefine: { configured: boolean; provider: string; model: string; reason: string };
-    }>;
-    canvasAiRuntimeStatus.value = payload.data;
-    canvasAiRuntimeLoaded.value = true;
+      canvasGenerate: { configured: boolean, provider: string, model: string, reason: string }
+      canvasComplete: { configured: boolean, provider: string, model: string, reason: string }
+      canvasRefine: { configured: boolean, provider: string, model: string, reason: string }
+    }>
+    canvasAiRuntimeStatus.value = payload.data
+    canvasAiRuntimeLoaded.value = true
   }
   catch (error: any) {
-    canvasAiRuntimeStatus.value = null;
-    canvasAiRuntimeLoaded.value = false;
-    canvasAiRuntimeError.value = String(error?.message || "画布 AI 状态检查失败。");
+    canvasAiRuntimeStatus.value = null
+    canvasAiRuntimeLoaded.value = false
+    canvasAiRuntimeError.value = String(error?.message || '画布 AI 状态检查失败。')
   }
   finally {
-    canvasAiRuntimeLoading.value = false;
+    canvasAiRuntimeLoading.value = false
   }
 }
 
 function normalizeStageViewportState(
   value?: Partial<StageViewportState> | null,
 ): StageViewportState {
-  const resolvedX = Number(value?.x ?? 0);
-  const resolvedY = Number(value?.y ?? 0);
-  const resolvedZoom = Number(value?.zoom ?? 1);
+  const resolvedX = Number(value?.x ?? 0)
+  const resolvedY = Number(value?.y ?? 0)
+  const resolvedZoom = Number(value?.zoom ?? 1)
   return {
     x: Math.round(Number.isFinite(resolvedX) ? resolvedX : 0),
     y: Math.round(Number.isFinite(resolvedY) ? resolvedY : 0),
     zoom: Number.isFinite(resolvedZoom) && resolvedZoom > 0 ? resolvedZoom : 1,
-  };
+  }
 }
 
 function resolveStageViewportState(
   page?: DesignPageModel | null,
 ): StageViewportState {
-  const pageId = normalizeString(page?.id);
+  const pageId = normalizeString(page?.id)
   if (pageId && localPageViewportById.value[pageId])
-    return localPageViewportById.value[pageId]!;
-  return normalizeStageViewportState(page?.viewport);
+    return localPageViewportById.value[pageId]!
+  return normalizeStageViewportState(page?.viewport)
 }
 
 function syncStageViewportState(page?: DesignPageModel | null): void {
-  const nextViewport = resolveStageViewportState(page);
-  stageViewportX.value = nextViewport.x;
-  stageViewportY.value = nextViewport.y;
-  stageViewportZoom.value = nextViewport.zoom;
+  const nextViewport = resolveStageViewportState(page)
+  stageViewportX.value = nextViewport.x
+  stageViewportY.value = nextViewport.y
+  stageViewportZoom.value = nextViewport.zoom
 }
 
 function rememberStageViewportState(
   pageId: string,
   payload: StageViewportState,
 ): void {
-  const normalizedPageId = normalizeString(pageId);
-  if (!normalizedPageId) return;
+  const normalizedPageId = normalizeString(pageId)
+  if (!normalizedPageId)
+    return
 
   localPageViewportById.value = {
     ...localPageViewportById.value,
     [normalizedPageId]: normalizeStageViewportState(payload),
-  };
+  }
 }
 
 function closeActionMenu(): void {
-  actionMenuOpen.value = false;
+  actionMenuOpen.value = false
 }
 
 function closeLayerTreeMenu(): void {
-  layerTreeMenuVisible.value = false;
-  layerTreeMenuNodeId.value = "";
-  layerTreeMenuAnchorEl.value = null;
-  layerTreeMenuItems.value = [];
+  layerTreeMenuVisible.value = false
+  layerTreeMenuNodeId.value = ''
+  layerTreeMenuAnchorEl.value = null
+  layerTreeMenuItems.value = []
 }
 
 function toggleActionMenu(): void {
-  actionMenuOpen.value = !actionMenuOpen.value;
+  actionMenuOpen.value = !actionMenuOpen.value
 }
 
 function toggleSidebarCollapsed(): void {
-  closeActionMenu();
-  sidebarCollapsed.value = !sidebarCollapsed.value;
+  closeActionMenu()
+  sidebarCollapsed.value = !sidebarCollapsed.value
 }
 
 function toggleInspectorCollapsed(): void {
-  inspectorCollapsed.value = !inspectorCollapsed.value;
+  inspectorCollapsed.value = !inspectorCollapsed.value
 }
 
 function handleActionMenuPointerDown(event: PointerEvent): void {
-  const target = event.target;
+  const target = event.target
   if (
-    !actionMenuOpen.value ||
-    !actionMenuRef.value ||
-    !(target instanceof Node)
-  )
-    return;
-  if (!actionMenuRef.value.contains(target)) closeActionMenu();
+    !actionMenuOpen.value
+    || !actionMenuRef.value
+    || !(target instanceof Node)
+  ) {
+    return
+  }
+  if (!actionMenuRef.value.contains(target))
+    closeActionMenu()
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const tagName = target.tagName.toLowerCase();
-  return tagName === "input" || tagName === "textarea" || tagName === "select";
+  if (!(target instanceof HTMLElement))
+    return false
+  if (target.isContentEditable)
+    return true
+  const tagName = target.tagName.toLowerCase()
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select'
 }
 
 function shouldHandlePanelKeyboardEvent(event: KeyboardEvent): boolean {
-  if (isEditableKeyboardTarget(event.target)) return false;
-  if (!panelRootRef.value) return false;
-  const target = event.target;
+  if (isEditableKeyboardTarget(event.target))
+    return false
+  if (!panelRootRef.value)
+    return false
+  const target = event.target
   return target instanceof Node
     ? panelRootRef.value.contains(target)
-    : panelRootRef.value.contains(document.activeElement);
+    : panelRootRef.value.contains(document.activeElement)
 }
 
 function clearTransientInteractionState(): void {
-  temporaryHandToolActive.value = false;
-  deepSelectModifierPressed.value = false;
+  temporaryHandToolActive.value = false
+  deepSelectModifierPressed.value = false
 }
 
 function clearToolSwitchHintTimer(): void {
-  if (!toolSwitchHintTimer) return;
-  clearTimeout(toolSwitchHintTimer);
-  toolSwitchHintTimer = null;
+  if (!toolSwitchHintTimer)
+    return
+  clearTimeout(toolSwitchHintTimer)
+  toolSwitchHintTimer = null
 }
 
 function clearOutlineHighlightTimer(): void {
-  if (!outlineHighlightTimer) return;
-  clearTimeout(outlineHighlightTimer);
-  outlineHighlightTimer = null;
+  if (!outlineHighlightTimer)
+    return
+  clearTimeout(outlineHighlightTimer)
+  outlineHighlightTimer = null
 }
 
 function showToolSwitchHint(tool: DesignEditorTool): void {
-  const preset = resolveDesignToolPreset(tool);
-  if (!preset) return;
-  toolSwitchHint.value = `已切换到${preset.label}工具 · ${preset.shortcutLabel}`;
-  clearToolSwitchHintTimer();
+  const preset = resolveDesignToolPreset(tool)
+  if (!preset)
+    return
+  toolSwitchHint.value = `已切换到${preset.label}工具 · ${preset.shortcutLabel}`
+  clearToolSwitchHintTimer()
   toolSwitchHintTimer = setTimeout(() => {
-    toolSwitchHint.value = "";
-    toolSwitchHintTimer = null;
-  }, TOOL_SWITCH_HINT_DURATION);
+    toolSwitchHint.value = ''
+    toolSwitchHintTimer = null
+  }, TOOL_SWITCH_HINT_DURATION)
 }
 
 function setActiveDesignTool(tool: DesignEditorTool): void {
-  if (activeTool.value === tool) return;
-  designToolController.setActiveTool(tool);
-  showToolSwitchHint(tool);
+  if (activeTool.value === tool)
+    return
+  designToolController.setActiveTool(tool)
+  showToolSwitchHint(tool)
 }
 
 function syncModifierInteractionState(event: KeyboardEvent): void {
-  deepSelectModifierPressed.value = Boolean(event.metaKey || event.ctrlKey);
+  deepSelectModifierPressed.value = Boolean(event.metaKey || event.ctrlKey)
 }
 
 function handlePanelKeydown(event: KeyboardEvent): void {
-  syncModifierInteractionState(event);
-  if (!shouldHandlePanelKeyboardEvent(event)) return;
+  syncModifierInteractionState(event)
+  if (!shouldHandlePanelKeyboardEvent(event))
+    return
 
-  const key = normalizeString(event.key).toLowerCase();
-  const metaOrCtrl = event.metaKey || event.ctrlKey;
-  if (key === " " || key === "spacebar") {
-    event.preventDefault();
-    temporaryHandToolActive.value = true;
-    return;
+  const key = normalizeString(event.key).toLowerCase()
+  const metaOrCtrl = event.metaKey || event.ctrlKey
+  if (key === ' ' || key === 'spacebar') {
+    event.preventDefault()
+    temporaryHandToolActive.value = true
+    return
   }
 
-  if (metaOrCtrl && key === "z") {
-    event.preventDefault();
-    if (event.shiftKey) redoDesignChange();
-    else undoDesignChange();
-    return;
+  if (metaOrCtrl && key === 'z') {
+    event.preventDefault()
+    if (event.shiftKey)
+      redoDesignChange()
+    else undoDesignChange()
+    return
   }
 
-  if (metaOrCtrl && key === "y") {
-    event.preventDefault();
-    redoDesignChange();
-    return;
+  if (metaOrCtrl && key === 'y') {
+    event.preventDefault()
+    redoDesignChange()
+    return
   }
 
   if (!metaOrCtrl && !event.altKey) {
-    const nextTool = resolveDesignToolByShortcut(key);
+    const nextTool = resolveDesignToolByShortcut(key)
     if (nextTool) {
-      event.preventDefault();
-      setActiveDesignTool(nextTool);
-      return;
+      event.preventDefault()
+      setActiveDesignTool(nextTool)
+      return
     }
   }
 
-  if (key === "escape") {
-    if (actionMenuOpen.value) closeActionMenu();
+  if (key === 'escape') {
+    if (actionMenuOpen.value)
+      closeActionMenu()
     if (selectionState.value.editingFrameId) {
-      event.preventDefault();
-      designSelection.exitFrameEditing();
+      event.preventDefault()
+      designSelection.exitFrameEditing()
     }
-    return;
+    return
   }
 
-  if (key !== "enter" && key !== "return") return;
+  if (key !== 'enter' && key !== 'return')
+    return
 
   if (event.shiftKey && selectionState.value.editingFrameId) {
-    event.preventDefault();
-    designSelection.exitFrameEditing();
-    return;
+    event.preventDefault()
+    designSelection.exitFrameEditing()
+    return
   }
 
   if (
-    selectionState.value.scope !== "frame" ||
-    selectedFrames.value.length !== 1 ||
-    !selectedFrame.value
-  )
-    return;
+    selectionState.value.scope !== 'frame'
+    || selectedFrames.value.length !== 1
+    || !selectedFrame.value
+  ) {
+    return
+  }
 
-  if (!canDesignFrameCreateElements(selectedFrame.value)) return;
+  if (!canDesignFrameCreateElements(selectedFrame.value))
+    return
 
-  event.preventDefault();
-  enterFrameEditingFromSelection(selectedFrame.value);
+  event.preventDefault()
+  enterFrameEditingFromSelection(selectedFrame.value)
 }
 
 function handlePanelKeyup(event: KeyboardEvent): void {
-  syncModifierInteractionState(event);
-  const key = normalizeString(event.key).toLowerCase();
-  if (key === " " || key === "spacebar") temporaryHandToolActive.value = false;
+  syncModifierInteractionState(event)
+  const key = normalizeString(event.key).toLowerCase()
+  if (key === ' ' || key === 'spacebar')
+    temporaryHandToolActive.value = false
 }
 
 function cloneDesignElement(element: DesignElementModel): DesignElementModel {
   return {
     ...element,
     points: element.points
-      ? element.points.map((point) => ({ ...point }))
+      ? element.points.map(point => ({ ...point }))
       : undefined,
     style: element.style ? { ...element.style } : undefined,
     metadata: element.metadata ? { ...element.metadata } : undefined,
-  };
+  }
 }
 
 function dedupeDesignElements(
   elements: DesignElementModel[],
 ): DesignElementModel[] {
-  const elementMap = new Map<string, DesignElementModel>();
+  const elementMap = new Map<string, DesignElementModel>()
   for (const element of elements) {
-    const elementId = normalizeString(element.id);
-    if (!elementId) continue;
-    elementMap.set(elementId, element);
+    const elementId = normalizeString(element.id)
+    if (!elementId)
+      continue
+    elementMap.set(elementId, element)
   }
-  return [...elementMap.values()];
+  return [...elementMap.values()]
 }
 
 function cloneCompositionModel(
@@ -962,7 +1007,7 @@ function cloneCompositionModel(
 ): CompositionModel {
   return {
     ...composition,
-    pages: (composition.pages || []).map((page) => ({
+    pages: (composition.pages || []).map(page => ({
       ...page,
       frameIds: [...(page.frameIds || [])],
       viewport: {
@@ -972,28 +1017,28 @@ function cloneCompositionModel(
       },
       metadata: page.metadata ? { ...page.metadata } : undefined,
     })),
-    frames: (composition.frames || []).map((frame) => ({
+    frames: (composition.frames || []).map(frame => ({
       ...frame,
       elements: (() => {
         const resolvedElements = resolveCompositionElementsForFrame(
           composition,
           frame.id,
-        );
+        )
         return (
           resolvedElements.length > 0 ? resolvedElements : frame.elements || []
-        ).map(cloneDesignElement);
+        ).map(cloneDesignElement)
       })(),
       embeddedScene: frame.embeddedScene
         ? sceneDocumentFromUnknown(frame.embeddedScene, {
-            fallbackDrawMode: "diagram",
-            fallbackSourceType: "manual",
+            fallbackDrawMode: 'diagram',
+            fallbackSourceType: 'manual',
           })
         : undefined,
       themeTokens: frame.themeTokens ? { ...frame.themeTokens } : undefined,
       metadata: frame.metadata ? { ...frame.metadata } : undefined,
     })),
     elements: (composition.elements || []).map(cloneDesignElement),
-    assets: (composition.assets || []).map((asset) => ({
+    assets: (composition.assets || []).map(asset => ({
       ...asset,
       metadata: asset.metadata ? { ...asset.metadata } : undefined,
     })),
@@ -1002,37 +1047,37 @@ function cloneCompositionModel(
     layoutRules: { ...(composition.layoutRules || {}) },
     allowedBlocks: [...(composition.allowedBlocks || [])],
     exportPresets: [...(composition.exportPresets || [])],
-    blocks: (composition.blocks || []).map((block) => ({
+    blocks: (composition.blocks || []).map(block => ({
       ...block,
       metadata: block.metadata ? { ...block.metadata } : undefined,
     })),
     metadata: { ...(composition.metadata || {}) },
-  };
+  }
 }
 
 function sanitizeGraphId(value: unknown, fallback: string): string {
   const normalized = normalizeString(value)
     .toLowerCase()
-    .replace(/^["'`]+|["'`]+$/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9:_-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return normalized || fallback;
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9:_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || fallback
 }
 
 function cloneGraphSourceNode(node: GraphSourceNode): GraphSourceNode {
   return {
     ...node,
     metadata: node.metadata ? { ...node.metadata } : undefined,
-  };
+  }
 }
 
 function cloneGraphSourceEdge(edge: GraphSourceEdge): GraphSourceEdge {
   return {
     ...edge,
     metadata: edge.metadata ? { ...edge.metadata } : undefined,
-  };
+  }
 }
 
 function cloneGraphSourceGroup(group: GraphSourceGroup): GraphSourceGroup {
@@ -1040,15 +1085,15 @@ function cloneGraphSourceGroup(group: GraphSourceGroup): GraphSourceGroup {
     ...group,
     childNodeIds: [...(group.childNodeIds || [])],
     metadata: group.metadata ? { ...group.metadata } : undefined,
-  };
+  }
 }
 
 function escapeMermaidText(value: string): string {
   return normalizeString(value)
-    .replace(/\r?\n+/g, " ")
-    .replace(/\|/g, "/")
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"');
+    .replace(/\r?\n+/g, ' ')
+    .replace(/\|/g, '/')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
 }
 
 function cloneGraphSourceModel(model: GraphSourceModel): GraphSourceModel {
@@ -1059,18 +1104,18 @@ function cloneGraphSourceModel(model: GraphSourceModel): GraphSourceModel {
     groups: (model.groups || []).map(cloneGraphSourceGroup),
     sourceText: normalizeString(model.sourceText) || undefined,
     metadata: model.metadata ? { ...model.metadata } : undefined,
-  };
+  }
 }
 
 function exportGraphSourceToMermaid(model: GraphSourceModel): string {
-  const graph = cloneGraphSourceModel(model);
-  const header =
-    graph.diagramType === "flowchart"
-      ? "flowchart TD"
-      : `%% diagramType: ${graph.diagramType}\nflowchart TD`;
-  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
-  const renderedStandaloneNodes = new Set<string>();
-  const lines: string[] = [header];
+  const graph = cloneGraphSourceModel(model)
+  const header
+    = graph.diagramType === 'flowchart'
+      ? 'flowchart TD'
+      : `%% diagramType: ${graph.diagramType}\nflowchart TD`
+  const nodeById = new Map(graph.nodes.map(node => [node.id, node]))
+  const renderedStandaloneNodes = new Set<string>()
+  const lines: string[] = [header]
 
   for (const group of graph.groups || []) {
     lines.push(
@@ -1080,169 +1125,177 @@ function exportGraphSourceToMermaid(model: GraphSourceModel): string {
         childNodeIds: group.childNodeIds || [],
         metadata: group.metadata || {},
       })}`,
-    );
+    )
   }
 
   function renderNodeToken(nodeId: string): string {
-    const node = nodeById.get(nodeId);
+    const node = nodeById.get(nodeId)
     const safeId = sanitizeGraphId(
       node?.id || nodeId,
       `node-${renderedStandaloneNodes.size + 1}`,
-    );
-    const label = escapeMermaidText(node?.label || safeId);
-    return `${safeId}["${label}"]`;
+    )
+    const label = escapeMermaidText(node?.label || safeId)
+    return `${safeId}["${label}"]`
   }
 
   for (const edge of graph.edges || []) {
-    if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) continue;
-    renderedStandaloneNodes.add(edge.source);
-    renderedStandaloneNodes.add(edge.target);
-    const label = escapeMermaidText(edge.label || "");
+    if (!nodeById.has(edge.source) || !nodeById.has(edge.target))
+      continue
+    renderedStandaloneNodes.add(edge.source)
+    renderedStandaloneNodes.add(edge.target)
+    const label = escapeMermaidText(edge.label || '')
     lines.push(
       label
         ? `  ${renderNodeToken(edge.source)} -->|"${label}"| ${renderNodeToken(edge.target)}`
         : `  ${renderNodeToken(edge.source)} --> ${renderNodeToken(edge.target)}`,
-    );
+    )
   }
 
   for (const node of graph.nodes || []) {
-    if (renderedStandaloneNodes.has(node.id)) continue;
-    lines.push(`  ${renderNodeToken(node.id)}`);
+    if (renderedStandaloneNodes.has(node.id))
+      continue
+    lines.push(`  ${renderNodeToken(node.id)}`)
   }
 
-  if (lines.length === 1) lines.push('  empty["Untitled diagram"]');
+  if (lines.length === 1)
+    lines.push('  empty["Untitled diagram"]')
 
-  return lines.join("\n");
+  return lines.join('\n')
 }
 
 function ensureUniqueGraphNodeId(
   model: GraphSourceModel,
   rawId: string,
   fallback: string,
-  excludeId = "",
+  excludeId = '',
 ): string {
-  const baseId = sanitizeGraphId(rawId, fallback);
+  const baseId = sanitizeGraphId(rawId, fallback)
   const takenIds = new Set(
     (model.nodes || [])
-      .map((node) => node.id)
-      .filter((id) => id && id !== excludeId),
-  );
-  if (!takenIds.has(baseId)) return baseId;
+      .map(node => node.id)
+      .filter(id => id && id !== excludeId),
+  )
+  if (!takenIds.has(baseId))
+    return baseId
 
-  let cursor = 2;
-  let nextId = `${baseId}-${cursor}`;
+  let cursor = 2
+  let nextId = `${baseId}-${cursor}`
   while (takenIds.has(nextId)) {
-    cursor += 1;
-    nextId = `${baseId}-${cursor}`;
+    cursor += 1
+    nextId = `${baseId}-${cursor}`
   }
-  return nextId;
+  return nextId
 }
 
 function ensureUniqueGraphEdgeId(
   model: GraphSourceModel,
   rawId: string,
   fallback: string,
-  excludeId = "",
+  excludeId = '',
 ): string {
-  const baseId = sanitizeGraphId(rawId, fallback);
+  const baseId = sanitizeGraphId(rawId, fallback)
   const takenIds = new Set(
     (model.edges || [])
-      .map((edge) => edge.id)
-      .filter((id) => id && id !== excludeId),
-  );
-  if (!takenIds.has(baseId)) return baseId;
+      .map(edge => edge.id)
+      .filter(id => id && id !== excludeId),
+  )
+  if (!takenIds.has(baseId))
+    return baseId
 
-  let cursor = 2;
-  let nextId = `${baseId}-${cursor}`;
+  let cursor = 2
+  let nextId = `${baseId}-${cursor}`
   while (takenIds.has(nextId)) {
-    cursor += 1;
-    nextId = `${baseId}-${cursor}`;
+    cursor += 1
+    nextId = `${baseId}-${cursor}`
   }
-  return nextId;
+  return nextId
 }
 
 function ensureUniqueGraphGroupId(
   model: GraphSourceModel,
   rawId: string,
   fallback: string,
-  excludeId = "",
+  excludeId = '',
 ): string {
-  const baseId = sanitizeGraphId(rawId, fallback);
+  const baseId = sanitizeGraphId(rawId, fallback)
   const takenIds = new Set(
     (model.groups || [])
-      .map((group) => group.id)
-      .filter((id) => id && id !== excludeId),
-  );
-  if (!takenIds.has(baseId)) return baseId;
+      .map(group => group.id)
+      .filter(id => id && id !== excludeId),
+  )
+  if (!takenIds.has(baseId))
+    return baseId
 
-  let cursor = 2;
-  let nextId = `${baseId}-${cursor}`;
+  let cursor = 2
+  let nextId = `${baseId}-${cursor}`
   while (takenIds.has(nextId)) {
-    cursor += 1;
-    nextId = `${baseId}-${cursor}`;
+    cursor += 1
+    nextId = `${baseId}-${cursor}`
   }
-  return nextId;
+  return nextId
 }
 
 function resolveNodeGroupId(
   model: GraphSourceModel,
   nodeId: string,
-  fallbackGroupId = "",
+  fallbackGroupId = '',
 ): string {
-  const normalizedFallback = normalizeString(fallbackGroupId);
+  const normalizedFallback = normalizeString(fallbackGroupId)
   if (
-    normalizedFallback &&
-    (model.groups || []).some((group) => group.id === normalizedFallback)
-  )
-    return normalizedFallback;
+    normalizedFallback
+    && (model.groups || []).some(group => group.id === normalizedFallback)
+  ) {
+    return normalizedFallback
+  }
   return (
-    (model.groups || []).find((group) =>
+    (model.groups || []).find(group =>
       (group.childNodeIds || []).includes(nodeId),
-    )?.id || ""
-  );
+    )?.id || ''
+  )
 }
 
 function parseFrameMetric(value: unknown, fallback: number, min = 0): number {
-  const parsed = Math.round(Number(value));
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, parsed);
+  const parsed = Math.round(Number(value))
+  if (!Number.isFinite(parsed))
+    return fallback
+  return Math.max(min, parsed)
 }
 
 function createDefaultDesignSceneDocument(
-  editorEngine: SceneEditorEngine = "vueflow",
+  editorEngine: SceneEditorEngine = 'vueflow',
 ): SceneDocument {
   return createEmptySceneDocument({
-    drawMode: "composition",
-    sourceType: "manual",
+    drawMode: 'composition',
+    sourceType: 'manual',
     templateKey: DEFAULT_TEMPLATE_KEY,
     editorEngine,
-  });
+  })
 }
 
 function resolveIncomingDesignDocument(rawValue: string): {
-  document: SceneDocument;
-  shouldPersistNormalized: boolean;
-  persistedEditorEngine: SceneEditorEngine;
-  persistedStorageFormat: DesignStorageFormat;
+  document: SceneDocument
+  shouldPersistNormalized: boolean
+  persistedEditorEngine: SceneEditorEngine
+  persistedStorageFormat: DesignStorageFormat
 } {
   const fallbackEditorEngine = resolvePersistedDesignEditorEngine(
     props.designEditorEngine,
-    "vueflow",
-  );
-  const normalizedRawValue = normalizeString(rawValue);
+    'vueflow',
+  )
+  const normalizedRawValue = normalizeString(rawValue)
   if (!normalizedRawValue) {
     return {
       document: createDefaultDesignSceneDocument(fallbackEditorEngine),
       shouldPersistNormalized: true,
       persistedEditorEngine: fallbackEditorEngine,
       persistedStorageFormat:
-        fallbackEditorEngine === "canvaskit_wasm"
-          ? "design_document_v1"
-          : "scene_document",
-    };
+        fallbackEditorEngine === 'canvaskit_wasm'
+          ? 'design_document_v1'
+          : 'scene_document',
+    }
   }
 
-  const parsedDesignDocument = parseDesignDocumentString(normalizedRawValue);
+  const parsedDesignDocument = parseDesignDocumentString(normalizedRawValue)
   if (parsedDesignDocument) {
     return {
       document: relayoutSceneDocument(
@@ -1253,324 +1306,334 @@ function resolveIncomingDesignDocument(rawValue: string): {
         parsedDesignDocument.editorEngine,
         fallbackEditorEngine,
       ),
-      persistedStorageFormat: "design_document_v1",
-    };
+      persistedStorageFormat: 'design_document_v1',
+    }
   }
 
   const parsed = parseSceneDocumentString(normalizedRawValue, {
-    fallbackDrawMode: "composition",
-    fallbackSourceType: "image_mockup",
-  });
+    fallbackDrawMode: 'composition',
+    fallbackSourceType: 'image_mockup',
+  })
   const migratedFromLegacyDraw = Boolean(
     parsed.metadata?.migratedFromLegacyDraw,
-  );
+  )
 
   if (
-    migratedFromLegacyDraw ||
-    parsed.drawMode !== "composition" ||
-    parsed.sourceModel.kind !== "composition"
+    migratedFromLegacyDraw
+    || parsed.drawMode !== 'composition'
+    || parsed.sourceModel.kind !== 'composition'
   ) {
     return {
       document: createDefaultDesignSceneDocument(fallbackEditorEngine),
       shouldPersistNormalized: true,
       persistedEditorEngine: fallbackEditorEngine,
       persistedStorageFormat:
-        fallbackEditorEngine === "canvaskit_wasm"
-          ? "design_document_v1"
-          : "scene_document",
-    };
+        fallbackEditorEngine === 'canvaskit_wasm'
+          ? 'design_document_v1'
+          : 'scene_document',
+    }
   }
 
   const persistedEditorEngine = resolvePersistedDesignEditorEngine(
     parsed.editorEngine,
     fallbackEditorEngine,
-  );
+  )
   return {
     document: relayoutSceneDocument({
       ...parsed,
-      drawMode: "composition",
+      drawMode: 'composition',
       editorEngine: persistedEditorEngine,
     }),
     shouldPersistNormalized: false,
     persistedEditorEngine,
-    persistedStorageFormat: "scene_document",
-  };
+    persistedStorageFormat: 'scene_document',
+  }
 }
 
 function serializeOutgoingDesignDocument(document: SceneDocument): string {
   const normalizedDocument = {
     ...document,
-    drawMode: "composition" as const,
+    drawMode: 'composition' as const,
     editorEngine: persistedDesignEditorEngine.value,
-  };
+  }
   if (
-    persistedDesignStorageFormat.value === "design_document_v1" ||
-    persistedDesignEditorEngine.value === "canvaskit_wasm"
+    persistedDesignStorageFormat.value === 'design_document_v1'
+    || persistedDesignEditorEngine.value === 'canvaskit_wasm'
   ) {
     return serializeDesignDocument(
       sceneDocumentToDesignDocument(normalizedDocument),
-    );
+    )
   }
-  return serializeSceneDocument(normalizedDocument);
+  return serializeSceneDocument(normalizedDocument)
 }
 
 const isBoundToDesignResource = computed(() => {
-  const designResourceId = normalizeString(props.designResourceId);
-  const boundResourceId = normalizeString(props.boundResourceId);
-  return Boolean(designResourceId) && designResourceId === boundResourceId;
-});
+  const designResourceId = normalizeString(props.designResourceId)
+  const boundResourceId = normalizeString(props.boundResourceId)
+  return Boolean(designResourceId) && designResourceId === boundResourceId
+})
 
 const compositionModel = computed<CompositionModel>(() => {
-  return draftDocument.value.sourceModel.kind === "composition"
+  return draftDocument.value.sourceModel.kind === 'composition'
     ? draftDocument.value.sourceModel
-    : (createDefaultDesignSceneDocument().sourceModel as CompositionModel);
-});
+    : (createDefaultDesignSceneDocument().sourceModel as CompositionModel)
+})
 
-const pages = computed(() => compositionModel.value.pages || []);
+const pages = computed(() => compositionModel.value.pages || [])
 const currentPage = computed(() => {
   return (
     pages.value.find(
-      (page) =>
+      page =>
         page.id === normalizeString(compositionModel.value.currentPageId),
-    ) ||
-    pages.value[0] ||
-    null
-  );
-});
+    )
+    || pages.value[0]
+    || null
+  )
+})
 const currentPageFrames = computed(() => {
   return (compositionModel.value.frames || []).filter(
-    (frame) => frame.pageId === currentPage.value?.id,
-  );
-});
+    frame => frame.pageId === currentPage.value?.id,
+  )
+})
 const allFramesMap = computed(() => {
   return new Map(
-    (compositionModel.value.frames || []).map((frame) => [
+    (compositionModel.value.frames || []).map(frame => [
       normalizeString(frame.id),
       frame,
     ]),
-  );
-});
+  )
+})
 const imageAssets = computed(() => {
   return (compositionModel.value.assets || []).filter(
-    (asset) => asset.metadata?.role !== "device_shell",
-  );
-});
+    asset => asset.metadata?.role !== 'device_shell',
+  )
+})
 const deviceShellAssets = computed(() => {
   return (compositionModel.value.assets || []).filter(
-    (asset) => asset.metadata?.role === "device_shell",
-  );
-});
+    asset => asset.metadata?.role === 'device_shell',
+  )
+})
 const availableDeviceArtboards = computed(() => {
   return (compositionModel.value.frames || [])
-    .filter((frame) => frame.kind === "device_artboard")
-    .map((frame) => ({
+    .filter(frame => frame.kind === 'device_artboard')
+    .map(frame => ({
       id: frame.id,
       name: frame.name,
-      presetKey: frame.deviceFramePresetKey || "",
+      presetKey: frame.deviceFramePresetKey || '',
       pageId: frame.pageId,
-    }));
-});
+    }))
+})
 const resolvedDeviceFramePresets = computed<DeviceFramePreset[]>(() => {
-  const presetMap = new Map<string, DeviceFramePreset>();
+  const presetMap = new Map<string, DeviceFramePreset>()
   for (const preset of mockupCatalog.value?.resolvedPresets || []) {
-    if (!normalizeString(preset.key)) continue;
-    presetMap.set(preset.key, preset);
+    if (!normalizeString(preset.key))
+      continue
+    presetMap.set(preset.key, preset)
   }
   for (const preset of DEVICE_FRAME_PRESETS) {
-    if (!normalizeString(preset.key) || presetMap.has(preset.key)) continue;
-    presetMap.set(preset.key, preset);
+    if (!normalizeString(preset.key) || presetMap.has(preset.key))
+      continue
+    presetMap.set(preset.key, preset)
   }
-  return [...presetMap.values()];
-});
+  return [...presetMap.values()]
+})
 const mockupCatalogVariantMap = computed(() => {
-  const variantMap = new Map<string, MockupProjectCatalogVariant>();
+  const variantMap = new Map<string, MockupProjectCatalogVariant>()
   for (const category of mockupCatalog.value?.categories || []) {
     for (const model of category.models) {
       for (const variant of model.variants) {
-        if (!normalizeString(variant.presetKey)) continue;
-        variantMap.set(variant.presetKey, variant);
+        if (!normalizeString(variant.presetKey))
+          continue
+        variantMap.set(variant.presetKey, variant)
       }
     }
   }
-  return variantMap;
-});
+  return variantMap
+})
 watch(
   resolvedDeviceFramePresets,
   (presets) => {
     registerRuntimeDeviceFramePresets(
-      presets.filter((preset) =>
-        !DEVICE_FRAME_PRESETS.some((legacyPreset) => legacyPreset.key === preset.key),
+      presets.filter(preset =>
+        !DEVICE_FRAME_PRESETS.some(legacyPreset => legacyPreset.key === preset.key),
       ),
-    );
+    )
   },
   {
     immediate: true,
   },
-);
+)
 const filteredCanvasLibraryItems = computed(() => {
-  const keyword = canvasLibrarySearch.value.trim().toLowerCase();
+  const keyword = canvasLibrarySearch.value.trim().toLowerCase()
   return canvasLibraryItems.value.filter((item) => {
-    if (!keyword) return true;
+    if (!keyword)
+      return true
     return [item.title, item.summary, item.slug, ...(item.tags || [])]
-      .join(" ")
+      .join(' ')
       .toLowerCase()
-      .includes(keyword);
-  });
-});
+      .includes(keyword)
+  })
+})
 const canvasLibraryTemplateItems = computed(() => {
-  return filteredCanvasLibraryItems.value.filter((item) => item.kind === "template");
-});
+  return filteredCanvasLibraryItems.value.filter(item => item.kind === 'template')
+})
 const canvasLibraryAssetItems = computed(() => {
-  return filteredCanvasLibraryItems.value.filter((item) => item.kind === "asset");
-});
+  return filteredCanvasLibraryItems.value.filter(item => item.kind === 'asset')
+})
 watch(
   () => props.projectId,
   () => {
-    void Promise.all([loadCanvasLibraryItems(), loadMockupCatalog()]);
+    void Promise.all([loadCanvasLibraryItems(), loadMockupCatalog()])
   },
   {
     immediate: true,
   },
-);
+)
 function resolveFrameElements(
   frame: DesignFrameModel | null | undefined,
 ): DesignElementModel[] {
-  if (!frame) return [];
+  if (!frame)
+    return []
   const resolvedElements = resolveCompositionElementsForFrame(
     compositionModel.value,
     frame.id,
-  );
+  )
   return (
     resolvedElements.length > 0 ? resolvedElements : frame.elements || []
-  ).map(cloneDesignElement);
+  ).map(cloneDesignElement)
 }
 
 function resolveFrameEditingOwnerState(
   frame: DesignFrameModel | null | undefined,
 ): DesignFrameEditingOwnerState | null {
-  if (!frame) return null;
+  if (!frame)
+    return null
   const binding = resolveDesignFrameEditingBinding(
     compositionModel.value,
     frame,
-  );
-  if (!binding) return null;
+  )
+  if (!binding)
+    return null
   return {
     displayFrame: binding.displayFrame,
     ownerFrame: binding.ownerFrame,
     ownerPageId: normalizeString(binding.ownerFrame.pageId),
     projected: binding.projected,
-  };
+  }
 }
 
 function resolveFrameTreeElements(
   frame: DesignFrameModel | null | undefined,
 ): DesignElementModel[] {
-  const editingOwner = resolveFrameEditingOwnerState(frame);
-  if (!editingOwner || editingOwner.projected) return [];
+  const editingOwner = resolveFrameEditingOwnerState(frame)
+  if (!editingOwner || editingOwner.projected)
+    return []
   return resolveDesignFrameEditableElements(
     compositionModel.value,
     editingOwner.ownerFrame,
-  ).map(cloneDesignElement);
+  ).map(cloneDesignElement)
 }
 
 function resolveDisplayFrameElements(
   frame: DesignFrameModel | null | undefined,
 ): DesignElementModel[] {
-  if (!frame) return [];
+  if (!frame)
+    return []
   return resolveDesignFrameEditableElements(
     compositionModel.value,
     frame,
-  ).map(cloneDesignElement);
+  ).map(cloneDesignElement)
 }
 const currentPageElements = computed(() => {
-  if (!currentPage.value) return [];
+  if (!currentPage.value)
+    return []
   return dedupeDesignElements([
     ...resolveDisplayCompositionElementsForPage(
       compositionModel.value,
       currentPage.value.id,
     ).map(cloneDesignElement),
-    ...currentPageFrames.value.flatMap((frame) =>
+    ...currentPageFrames.value.flatMap(frame =>
       resolveDisplayFrameElements(frame),
     ),
-  ]);
-});
+  ])
+})
 const designSelection = useDesignCanvasSelection({
   frames: currentPageFrames,
   elements: currentPageElements,
-});
-const selectionState = designSelection.state;
-const selectedFrameIds = designSelection.selectedFrameIds;
-const selectedFrameId = designSelection.selectedFrameId;
-const selectedElementIds = designSelection.selectedElementIds;
-const selectedElementId = designSelection.selectedElementId;
+})
+const selectionState = designSelection.state
+const selectedFrameIds = designSelection.selectedFrameIds
+const selectedFrameId = designSelection.selectedFrameId
+const selectedElementIds = designSelection.selectedElementIds
+const selectedElementId = designSelection.selectedElementId
 const designHistory = useDesignHistory(
   serializeOutgoingDesignDocument(draftDocument.value),
-);
+)
 const resolvedDesignStageComponent = computed(() => {
-  return persistedDesignEditorEngine.value === "tldraw_legacy"
+  return persistedDesignEditorEngine.value === 'tldraw_legacy'
     ? WorkspaceDesignStage
-    : WorkspaceDesignCanvasKitBridge;
-});
+    : WorkspaceDesignCanvasKitBridge
+})
 const interactionContext = computed<DesignCanvasInteractionContext>(() => {
   return {
-    effectiveTool: temporaryHandToolActive.value ? "hand" : activeTool.value,
+    effectiveTool: temporaryHandToolActive.value ? 'hand' : activeTool.value,
     isTemporaryHandActive: temporaryHandToolActive.value,
     isDeepSelectModifierPressed: deepSelectModifierPressed.value,
-  };
-});
+  }
+})
 const diagramEditorFrame = computed(() => {
   return (
     currentPageFrames.value.find(
-      (frame) => frame.id === diagramEditorFrameId.value,
+      frame => frame.id === diagramEditorFrameId.value,
     ) || null
-  );
-});
+  )
+})
 const diagramEditorScene = computed<SceneDocument | null>(() => {
-  const embeddedScene = diagramEditorFrame.value?.embeddedScene;
+  const embeddedScene = diagramEditorFrame.value?.embeddedScene
   return embeddedScene
     ? sceneDocumentFromUnknown(embeddedScene, {
-        fallbackDrawMode: "diagram",
-        fallbackSourceType: "manual",
+        fallbackDrawMode: 'diagram',
+        fallbackSourceType: 'manual',
       })
-    : null;
-});
+    : null
+})
 const diagramEditorGraph = computed<GraphSourceModel | null>(() => {
-  return diagramEditorScene.value?.sourceModel.kind === "graph"
+  return diagramEditorScene.value?.sourceModel.kind === 'graph'
     ? diagramEditorScene.value.sourceModel
-    : null;
-});
+    : null
+})
 const diagramSelectedGroup = computed<GraphSourceGroup | null>(() => {
   return (
     diagramEditorGraph.value?.groups?.find(
-      (group) => group.id === diagramSelectedGroupId.value,
+      group => group.id === diagramSelectedGroupId.value,
     ) || null
-  );
-});
+  )
+})
 const diagramSelectedGroupSceneNode = computed(() => {
   return (
     diagramEditorScene.value?.sceneModel?.nodes?.find(
-      (node) =>
-        node.id === diagramSelectedGroupId.value && node.type === "group",
+      node =>
+        node.id === diagramSelectedGroupId.value && node.type === 'group',
     ) || null
-  );
-});
+  )
+})
 const diagramSelectedNode = computed<GraphSourceNode | null>(() => {
   return (
     diagramEditorGraph.value?.nodes.find(
-      (node) => node.id === diagramSelectedNodeId.value,
+      node => node.id === diagramSelectedNodeId.value,
     ) || null
-  );
-});
+  )
+})
 const diagramSelectedEdge = computed<GraphSourceEdge | null>(() => {
   return (
     diagramEditorGraph.value?.edges.find(
-      (edge) => edge.id === diagramSelectedEdgeId.value,
+      edge => edge.id === diagramSelectedEdgeId.value,
     ) || null
-  );
-});
+  )
+})
 const designToolController = useDesignToolController({
   activeTool,
-});
+})
 const designEditorState = useDesignEditorState({
   draftDocument,
   selection: {
@@ -1584,241 +1647,263 @@ const designEditorState = useDesignEditorState({
     y: stageViewportY,
     zoom: stageViewportZoom,
   },
-});
+})
 const designLayerTree = useDesignLayerTree({
   page: currentPage,
   frames: currentPageFrames,
   pageRootElements: designEditorState.pageRootElements,
   resolveFrameElements: resolveFrameTreeElements,
-});
-const selectedFrames = designEditorState.selectedFrames;
-const selectedFrame = designEditorState.selectedFrame;
+})
+const selectedFrames = designEditorState.selectedFrames
+const selectedFrame = designEditorState.selectedFrame
 function resolveDesignElementDisplayName(
   element?: DesignElementModel | null,
 ): string {
-  const explicitName = normalizeString(element?.metadata?.name);
-  if (explicitName) return explicitName;
+  const explicitName = normalizeString(element?.metadata?.name)
+  if (explicitName)
+    return explicitName
 
-  const text = normalizeString(element?.text);
-  if (text) return text;
+  const text = normalizeString(element?.text)
+  if (text)
+    return text
 
-  const shapeKind = normalizeString(element?.shapeKind);
-  if (shapeKind) return shapeKind;
+  const shapeKind = normalizeString(element?.shapeKind)
+  if (shapeKind)
+    return shapeKind
 
-  return normalizeString(element?.type);
+  return normalizeString(element?.type)
 }
 
 function flattenDesignLayerTreeRows(
   nodes: DesignLayerTreeNode[],
   depth = 0,
 ): SidebarLayerTreeRow[] {
-  const visibleNodes = normalizeLayerTreeNodes(nodes);
+  const visibleNodes = normalizeLayerTreeNodes(nodes)
   return visibleNodes.flatMap((node) => {
     const currentRow: SidebarLayerTreeRow = {
       node,
       depth,
-    };
+    }
     if (!node.children?.length || !isLayerTreeNodeExpanded(node.id))
-      return [currentRow];
+      return [currentRow]
     return [
       currentRow,
       ...flattenDesignLayerTreeRows(node.children, depth + 1),
-    ];
-  });
+    ]
+  })
 }
 
 const inspectorSelectionTag = computed(() => {
   const elementType = normalizeString(
     designEditorState.selectedElement.value?.type,
-  );
-  if (elementType) return elementType;
+  )
+  if (elementType)
+    return elementType
 
-  const frameKind = normalizeString(selectedFrame.value?.kind);
-  if (frameKind) return frameKind;
+  const frameKind = normalizeString(selectedFrame.value?.kind)
+  if (frameKind)
+    return frameKind
 
-  return designEditorState.currentPage.value ? "page" : "scene";
-});
+  return designEditorState.currentPage.value ? 'page' : 'scene'
+})
 const inspectorHeaderTitle = computed(() => {
   const elementName = resolveDesignElementDisplayName(
     designEditorState.selectedElement.value,
-  );
-  if (elementName) return elementName;
+  )
+  if (elementName)
+    return elementName
 
-  const frameName = normalizeString(selectedFrame.value?.name);
-  if (frameName) return frameName;
+  const frameName = normalizeString(selectedFrame.value?.name)
+  if (frameName)
+    return frameName
 
-  const pageName = normalizeString(designEditorState.currentPage.value?.name);
-  if (pageName) return pageName;
+  const pageName = normalizeString(designEditorState.currentPage.value?.name)
+  if (pageName)
+    return pageName
 
-  return "属性";
-});
+  return '属性'
+})
 const canRenameInspectorHeader = computed(() => {
   return Boolean(
-    designEditorState.selectedElement.value ||
-    selectedFrame.value ||
-    designEditorState.currentPage.value,
-  );
-});
+    designEditorState.selectedElement.value
+    || selectedFrame.value
+    || designEditorState.currentPage.value,
+  )
+})
 const canLockInspectorTarget = computed(() =>
   Boolean(selectedElementIds.value.length || selectedFrameIds.value.length),
-);
+)
 const canDuplicateInspectorTarget = computed(() =>
   Boolean(selectedElementIds.value.length || selectedFrameIds.value.length),
-);
+)
 const canDeleteInspectorTarget = computed(() =>
   Boolean(selectedElementIds.value.length || selectedFrameIds.value.length),
-);
+)
 const inspectorTargetLocked = computed(() => {
   if (selectedElementIds.value.length > 0)
-    return resolveRawSelectedElements().every((element) => element.locked);
+    return resolveRawSelectedElements().every(element => element.locked)
   if (selectedFrameIds.value.length > 0)
-    return selectedFrames.value.every((frame) => Boolean(frame.locked));
-  return false;
-});
+    return selectedFrames.value.every(frame => Boolean(frame.locked))
+  return false
+})
 const inspectorHasHeaderExtra = computed(() => {
-  return Boolean(inspectorSelectionTag.value);
-});
+  return Boolean(inspectorSelectionTag.value)
+})
 watch(
-  [selectedElementId, selectedFrameId, () => currentPage.value?.id || ""],
+  [selectedElementId, selectedFrameId, () => currentPage.value?.id || ''],
   () => {
-    inspectorHeaderEditing.value = false;
-    inspectorHeaderDraft.value = inspectorHeaderTitle.value;
+    inspectorHeaderEditing.value = false
+    inspectorHeaderDraft.value = inspectorHeaderTitle.value
   },
   { immediate: true },
-);
+)
 const selectedElementFrame = computed(() => {
   const frameId = normalizeString(
     designEditorState.selectedElement.value?.frameId,
-  );
-  if (!frameId) return null;
-  return allFramesMap.value.get(frameId) || null;
-});
+  )
+  if (!frameId)
+    return null
+  return allFramesMap.value.get(frameId) || null
+})
 const currentPageFrameMap = computed(() => {
   return new Map(
-    currentPageFrames.value.map((frame) => [normalizeString(frame.id), frame]),
-  );
-});
+    currentPageFrames.value.map(frame => [normalizeString(frame.id), frame]),
+  )
+})
 const currentPageElementMap = computed(() => {
   return new Map(
-    designEditorState.allPageElements.value.map((element) => [
+    designEditorState.allPageElements.value.map(element => [
       normalizeString(element.id),
       element,
     ]),
-  );
-});
+  )
+})
 const frameOwnerFramesByDisplayId = computed<Record<string, DesignFrameModel>>(() => {
   return Object.fromEntries(
     currentPageFrames.value.flatMap((frame) => {
-      const editingOwner = resolveFrameEditingOwnerState(frame);
-      if (!editingOwner) return [];
-      return [[frame.id, editingOwner.ownerFrame] as const];
+      const editingOwner = resolveFrameEditingOwnerState(frame)
+      if (!editingOwner)
+        return []
+      return [[frame.id, editingOwner.ownerFrame] as const]
     }),
-  );
-});
+  )
+})
 const frameElementsById = computed<Record<string, DesignElementModel[]>>(() => {
   return Object.fromEntries(
-    designEditorState.currentPageFrames.value.map((frame) => [
+    designEditorState.currentPageFrames.value.map(frame => [
       frame.id,
       resolveDisplayFrameElements(frame),
     ]),
-  );
-});
+  )
+})
 const frameSidebarTreeRows = computed<SidebarLayerTreeRow[]>(() => {
-  const [pageTree] = designLayerTree.tree.value;
-  return flattenDesignLayerTreeRows(pageTree?.children || []);
-});
+  const [pageTree] = designLayerTree.tree.value
+  return flattenDesignLayerTreeRows(pageTree?.children || [])
+})
 const selectedLayerTreeAncestorNodeIds = computed(() => {
-  const nextIds = new Set<string>();
+  const nextIds = new Set<string>()
 
   for (const selectedElementId of selectedElementIds.value) {
-    const normalizedElementId = normalizeString(selectedElementId);
-    const selectedElement = currentPageElementMap.value.get(normalizedElementId);
-    if (!selectedElement) continue;
+    const normalizedElementId = normalizeString(selectedElementId)
+    const selectedElement = currentPageElementMap.value.get(normalizedElementId)
+    if (!selectedElement)
+      continue
 
-    const frameId = normalizeString(selectedElement.frameId);
-    if (frameId) nextIds.add(`frame:${frameId}`);
+    const frameId = normalizeString(selectedElement.frameId)
+    if (frameId)
+      nextIds.add(`frame:${frameId}`)
 
-    const visitedAncestorIds = new Set<string>();
-    let cursorParentId = normalizeString(selectedElement.parentId);
+    const visitedAncestorIds = new Set<string>()
+    let cursorParentId = normalizeString(selectedElement.parentId)
     while (cursorParentId && !visitedAncestorIds.has(cursorParentId)) {
-      visitedAncestorIds.add(cursorParentId);
-      nextIds.add(`element:${cursorParentId}`);
-      const parentElement = currentPageElementMap.value.get(cursorParentId);
-      if (!parentElement) break;
-      const parentFrameId = normalizeString(parentElement.frameId);
-      if (parentFrameId) nextIds.add(`frame:${parentFrameId}`);
-      cursorParentId = normalizeString(parentElement.parentId);
+      visitedAncestorIds.add(cursorParentId)
+      nextIds.add(`element:${cursorParentId}`)
+      const parentElement = currentPageElementMap.value.get(cursorParentId)
+      if (!parentElement)
+        break
+      const parentFrameId = normalizeString(parentElement.frameId)
+      if (parentFrameId)
+        nextIds.add(`frame:${parentFrameId}`)
+      cursorParentId = normalizeString(parentElement.parentId)
     }
   }
 
-  return nextIds;
-});
+  return nextIds
+})
 const activeLayerTreePathNodeIds = computed<string[]>(() => {
   const activeElement = currentPageElementMap.value.get(
     normalizeString(selectedElementId.value),
-  );
+  )
   if (activeElement) {
-    const pathNodeIds: string[] = [];
-    const frameId = normalizeString(activeElement.frameId);
-    if (frameId) pathNodeIds.push(`frame:${frameId}`);
+    const pathNodeIds: string[] = []
+    const frameId = normalizeString(activeElement.frameId)
+    if (frameId)
+      pathNodeIds.push(`frame:${frameId}`)
 
-    const ancestorElementNodeIds: string[] = [];
-    const visitedAncestorIds = new Set<string>();
-    let cursorParentId = normalizeString(activeElement.parentId);
+    const ancestorElementNodeIds: string[] = []
+    const visitedAncestorIds = new Set<string>()
+    let cursorParentId = normalizeString(activeElement.parentId)
     while (cursorParentId && !visitedAncestorIds.has(cursorParentId)) {
-      visitedAncestorIds.add(cursorParentId);
-      ancestorElementNodeIds.push(`element:${cursorParentId}`);
-      const parentElement = currentPageElementMap.value.get(cursorParentId);
-      if (!parentElement) break;
-      cursorParentId = normalizeString(parentElement.parentId);
+      visitedAncestorIds.add(cursorParentId)
+      ancestorElementNodeIds.push(`element:${cursorParentId}`)
+      const parentElement = currentPageElementMap.value.get(cursorParentId)
+      if (!parentElement)
+        break
+      cursorParentId = normalizeString(parentElement.parentId)
     }
 
-    pathNodeIds.push(...ancestorElementNodeIds.reverse());
-    pathNodeIds.push(`element:${normalizeString(activeElement.id)}`);
-    return pathNodeIds;
+    pathNodeIds.push(...ancestorElementNodeIds.reverse())
+    pathNodeIds.push(`element:${normalizeString(activeElement.id)}`)
+    return pathNodeIds
   }
 
-  const frameId = normalizeString(selectedFrameId.value);
-  if (frameId) return [`frame:${frameId}`];
-  return [];
-});
+  const frameId = normalizeString(selectedFrameId.value)
+  if (frameId)
+    return [`frame:${frameId}`]
+  return []
+})
 
 function resolvePrimaryLayerTreeNodeId(): string {
-  const selectedElementNodeId = normalizeString(selectedElementId.value);
-  if (selectedElementNodeId) return `element:${selectedElementNodeId}`;
+  const selectedElementNodeId = normalizeString(selectedElementId.value)
+  if (selectedElementNodeId)
+    return `element:${selectedElementNodeId}`
 
-  const selectedFrameNodeId = normalizeString(selectedFrameId.value);
-  if (selectedFrameNodeId) return `frame:${selectedFrameNodeId}`;
+  const selectedFrameNodeId = normalizeString(selectedFrameId.value)
+  if (selectedFrameNodeId)
+    return `frame:${selectedFrameNodeId}`
 
   return normalizeString(
     activeLayerTreePathNodeIds.value[activeLayerTreePathNodeIds.value.length - 1],
-  );
+  )
 }
 
 function scrollActiveLayerTreeNodeIntoView(): void {
-  if (activeSidebarTab.value !== "frames") return;
-  const targetNodeId = resolvePrimaryLayerTreeNodeId();
-  if (!targetNodeId) return;
+  if (activeSidebarTab.value !== 'frames')
+    return
+  const targetNodeId = resolvePrimaryLayerTreeNodeId()
+  if (!targetNodeId)
+    return
 
   void nextTick(() => {
-    const root = layerTreeRootRef.value;
-    if (!root) return;
+    const root = layerTreeRootRef.value
+    if (!root)
+      return
     const targetNode = Array.from(
-      root.querySelectorAll<HTMLElement>("[data-layer-tree-node-id]"),
+      root.querySelectorAll<HTMLElement>('[data-layer-tree-node-id]'),
     ).find((element) => {
-      return element.dataset.layerTreeNodeId === targetNodeId;
-    });
+      return element.dataset.layerTreeNodeId === targetNodeId
+    })
     targetNode?.scrollIntoView({
-      block: "nearest",
-      inline: "nearest",
-    });
-  });
+      block: 'nearest',
+      inline: 'nearest',
+    })
+  })
 }
 
 function escapeAttributeSelectorValue(value: string): string {
-  return String(value || "")
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"');
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
 }
 
 function scrollOutlineTargetIntoView(selector: string): void {
@@ -1827,135 +1912,144 @@ function scrollOutlineTargetIntoView(selector: string): void {
       panelRootRef.value
         ?.querySelector<HTMLElement>(selector)
         ?.scrollIntoView({
-          block: "nearest",
-          inline: "nearest",
-        });
-    });
-  });
+          block: 'nearest',
+          inline: 'nearest',
+        })
+    })
+  })
 }
 
 function highlightAssetOutlineItem(assetId: string): void {
-  const normalizedAssetId = normalizeString(assetId);
-  if (!normalizedAssetId) return;
-  outlineHighlightedAssetId.value = normalizedAssetId;
-  clearOutlineHighlightTimer();
+  const normalizedAssetId = normalizeString(assetId)
+  if (!normalizedAssetId)
+    return
+  outlineHighlightedAssetId.value = normalizedAssetId
+  clearOutlineHighlightTimer()
   outlineHighlightTimer = setTimeout(() => {
-    outlineHighlightedAssetId.value = "";
-    outlineHighlightTimer = null;
-  }, 1800);
+    outlineHighlightedAssetId.value = ''
+    outlineHighlightTimer = null
+  }, 1800)
   scrollOutlineTargetIntoView(
     `[data-design-outline-asset-id="${escapeAttributeSelectorValue(normalizedAssetId)}"]`,
-  );
+  )
 }
 
 function locateOutlineItem(node: WorkspaceOutlineNode): boolean {
-  const locator = node.locator;
-  if (locator.surface !== "design") return false;
+  const locator = node.locator
+  if (locator.surface !== 'design')
+    return false
 
-  const pageId = normalizeString(locator.pageId);
-  if (pageId && currentPage.value?.id !== pageId) selectPage(pageId);
+  const pageId = normalizeString(locator.pageId)
+  if (pageId && currentPage.value?.id !== pageId)
+    selectPage(pageId)
 
-  if (locator.kind === "page") {
-    activeSidebarTab.value = "pages";
+  if (locator.kind === 'page') {
+    activeSidebarTab.value = 'pages'
     scrollOutlineTargetIntoView(
       `[data-design-outline-page-id="${escapeAttributeSelectorValue(pageId)}"]`,
-    );
-    return true;
+    )
+    return true
   }
 
-  if (locator.kind === "frame") {
-    const frameId = normalizeString(locator.frameId);
-    if (!frameId) return false;
-    activeSidebarTab.value = "frames";
+  if (locator.kind === 'frame') {
+    const frameId = normalizeString(locator.frameId)
+    if (!frameId)
+      return false
+    activeSidebarTab.value = 'frames'
     void nextTick(() => {
-      selectSingleFrame(frameId);
+      selectSingleFrame(frameId)
       scrollOutlineTargetIntoView(
         `[data-design-outline-frame-id="${escapeAttributeSelectorValue(frameId)}"]`,
-      );
-    });
-    return true;
+      )
+    })
+    return true
   }
 
-  if (locator.kind === "element") {
-    const frameId = normalizeString(locator.frameId);
-    const elementId = normalizeString(locator.elementId);
-    if (!frameId || !elementId) return false;
-    activeSidebarTab.value = "frames";
+  if (locator.kind === 'element') {
+    const frameId = normalizeString(locator.frameId)
+    const elementId = normalizeString(locator.elementId)
+    if (!frameId || !elementId)
+      return false
+    activeSidebarTab.value = 'frames'
     void nextTick(() => {
       setSelectedElements([elementId], {
         primaryElementId: elementId,
         editingFrameId: frameId,
         displayFrameId: frameId,
-      });
+      })
       scrollOutlineTargetIntoView(
         `[data-design-outline-element-id="${escapeAttributeSelectorValue(elementId)}"]`,
-      );
-    });
-    return true;
+      )
+    })
+    return true
   }
 
-  if (locator.kind === "asset_group") {
-    activeSidebarTab.value = "assets";
-    scrollOutlineTargetIntoView('[data-design-outline-assets-root="true"]');
-    return true;
+  if (locator.kind === 'asset_group') {
+    activeSidebarTab.value = 'assets'
+    scrollOutlineTargetIntoView('[data-design-outline-assets-root="true"]')
+    return true
   }
 
-  if (locator.kind === "asset") {
-    const assetId = normalizeString(locator.assetId);
-    if (!assetId) return false;
-    activeSidebarTab.value = "assets";
-    highlightAssetOutlineItem(assetId);
-    return true;
+  if (locator.kind === 'asset') {
+    const assetId = normalizeString(locator.assetId)
+    if (!assetId)
+      return false
+    activeSidebarTab.value = 'assets'
+    highlightAssetOutlineItem(assetId)
+    return true
   }
 
-  return false;
+  return false
 }
 
 const activeLayerTreeGuideState = computed(() => {
-  const rows = frameSidebarTreeRows.value;
+  const rows = frameSidebarTreeRows.value
   const rowIndexByNodeId = new Map(
     rows.map((row, index) => [normalizeString(row.node.id), index]),
-  );
-  const verticalDepthsByNodeId = new Map<string, number[]>();
-  const connectorDepthByNodeId = new Map<string, number>();
+  )
+  const verticalDepthsByNodeId = new Map<string, number[]>()
+  const connectorDepthByNodeId = new Map<string, number>()
 
   for (
     let index = 0;
     index < activeLayerTreePathNodeIds.value.length - 1;
     index += 1
   ) {
-    const parentNodeId = normalizeString(activeLayerTreePathNodeIds.value[index]);
+    const parentNodeId = normalizeString(activeLayerTreePathNodeIds.value[index])
     const childNodeId = normalizeString(
       activeLayerTreePathNodeIds.value[index + 1],
-    );
-    const parentRowIndex = rowIndexByNodeId.get(parentNodeId);
-    const childRowIndex = rowIndexByNodeId.get(childNodeId);
-    if (
-      typeof parentRowIndex !== "number"
-      || typeof childRowIndex !== "number"
-      || childRowIndex <= parentRowIndex
     )
-      continue;
+    const parentRowIndex = rowIndexByNodeId.get(parentNodeId)
+    const childRowIndex = rowIndexByNodeId.get(childNodeId)
+    if (
+      typeof parentRowIndex !== 'number'
+      || typeof childRowIndex !== 'number'
+      || childRowIndex <= parentRowIndex
+    ) {
+      continue
+    }
 
-    const parentRow = rows[parentRowIndex];
-    const childRow = rows[childRowIndex];
-    if (!parentRow || !childRow) continue;
+    const parentRow = rows[parentRowIndex]
+    const childRow = rows[childRowIndex]
+    if (!parentRow || !childRow)
+      continue
 
-    connectorDepthByNodeId.set(childNodeId, childRow.depth);
+    connectorDepthByNodeId.set(childNodeId, childRow.depth)
 
     for (
       let rowIndex = parentRowIndex + 1;
       rowIndex < childRowIndex;
       rowIndex += 1
     ) {
-      const row = rows[rowIndex];
-      if (!row) continue;
-      const currentDepths = verticalDepthsByNodeId.get(row.node.id) || [];
+      const row = rows[rowIndex]
+      if (!row)
+        continue
+      const currentDepths = verticalDepthsByNodeId.get(row.node.id) || []
       if (!currentDepths.includes(parentRow.depth)) {
         verticalDepthsByNodeId.set(row.node.id, [
           ...currentDepths,
           parentRow.depth,
-        ]);
+        ])
       }
     }
   }
@@ -1963,51 +2057,56 @@ const activeLayerTreeGuideState = computed(() => {
   return {
     verticalDepthsByNodeId,
     connectorDepthByNodeId,
-  };
-});
+  }
+})
 
 function resolveActiveLayerTreeGuideDepths(nodeId: string): number[] {
   return activeLayerTreeGuideState.value.verticalDepthsByNodeId.get(
     normalizeString(nodeId),
-  ) || [];
+  ) || []
 }
 
 function resolveActiveLayerTreeConnectorDepth(nodeId: string): number {
   return activeLayerTreeGuideState.value.connectorDepthByNodeId.get(
     normalizeString(nodeId),
-  ) ?? -1;
+  ) ?? -1
 }
 const editingFrameForExport = computed(() => {
-  const editingFrameId = normalizeString(selectionState.value.editingFrameId);
-  if (!editingFrameId) return null;
-  return currentPageFrames.value.find((frame) => frame.id === editingFrameId) || null;
-});
+  const editingFrameId = normalizeString(selectionState.value.editingFrameId)
+  if (!editingFrameId)
+    return null
+  return currentPageFrames.value.find(frame => frame.id === editingFrameId) || null
+})
 const defaultExportFrames = computed(() => {
-  if (selectedFrames.value.length > 0) return selectedFrames.value;
-  return editingFrameForExport.value ? [editingFrameForExport.value] : [];
-});
-const canExportDefaultFrames = computed(() => defaultExportFrames.value.length > 0);
+  if (selectedFrames.value.length > 0)
+    return selectedFrames.value
+  return editingFrameForExport.value ? [editingFrameForExport.value] : []
+})
+const canExportDefaultFrames = computed(() => defaultExportFrames.value.length > 0)
 const defaultExportSvgLabel = computed(() => {
-  if (defaultExportFrames.value.length > 1) return "批量导出 Frame SVG";
-  return "导出当前 Frame SVG";
-});
+  if (defaultExportFrames.value.length > 1)
+    return '批量导出 Frame SVG'
+  return '导出当前 Frame SVG'
+})
 const defaultExportPngLabel = computed(() => {
-  if (defaultExportFrames.value.length > 1) return "批量导出 Frame PNG";
-  return "导出当前 Frame PNG";
-});
+  if (defaultExportFrames.value.length > 1)
+    return '批量导出 Frame PNG'
+  return '导出当前 Frame PNG'
+})
 const canOpenDiagramEditor = computed(
   () =>
-    selectedFrames.value.length === 1 &&
-    selectedFrame.value?.kind === "diagram",
-);
+    selectedFrames.value.length === 1
+    && selectedFrame.value?.kind === 'diagram',
+)
 function renderFramePreviewMarkup(
   frameId: string,
-  shellMode?: "none" | "builtin" | "external",
+  shellMode?: 'none' | 'builtin' | 'external',
 ): string {
-  const frame = resolveFrameFromDocument(draftDocument.value, frameId);
-  if (!frame) return "";
-  const nextDocument =
-    shellMode === undefined
+  const frame = resolveFrameFromDocument(draftDocument.value, frameId)
+  if (!frame)
+    return ''
+  const nextDocument
+    = shellMode === undefined
       ? draftDocument.value
       : updateDesignFrameInSceneDocument(draftDocument.value, frameId, {
           metadata: {
@@ -2017,33 +2116,36 @@ function renderFramePreviewMarkup(
               shellMode,
             },
           },
-        });
+        })
   return renderCompositionAssetToSvg(nextDocument, {
     frameId,
-  });
+  })
 }
 const selectedFramePreviewSvg = computed(() => {
-  if (!selectedFrame.value) return "";
-  if (selectedFrame.value.kind === "device_artboard")
-    return renderFramePreviewMarkup(selectedFrame.value.id, "none");
-  return renderFramePreviewMarkup(selectedFrame.value.id);
-});
+  if (!selectedFrame.value)
+    return ''
+  if (selectedFrame.value.kind === 'device_artboard')
+    return renderFramePreviewMarkup(selectedFrame.value.id, 'none')
+  return renderFramePreviewMarkup(selectedFrame.value.id)
+})
 const selectedFrameShellPreviewSvg = computed(() => {
-  if (!selectedFrame.value) return "";
-  if (selectedFrame.value.kind === "device_artboard")
+  if (!selectedFrame.value)
+    return ''
+  if (selectedFrame.value.kind === 'device_artboard') {
     return renderFramePreviewMarkup(
       selectedFrame.value.id,
-      selectedFrame.value.metadata?.device?.shellMode === "external"
-        ? "external"
-        : "builtin",
-    );
-  return renderFramePreviewMarkup(selectedFrame.value.id);
-});
+      selectedFrame.value.metadata?.device?.shellMode === 'external'
+        ? 'external'
+        : 'builtin',
+    )
+  }
+  return renderFramePreviewMarkup(selectedFrame.value.id)
+})
 
 function replaceSelectionState(
   nextState: Partial<DesignCanvasSelectionState> | DesignCanvasSelectionState,
 ): void {
-  designSelection.replaceSelection(nextState);
+  designSelection.replaceSelection(nextState)
 }
 
 function cloneSelectionStateSnapshot(
@@ -2057,162 +2159,166 @@ function cloneSelectionStateSnapshot(
     primaryFrameId: state.primaryFrameId,
     elementIds: [...state.elementIds],
     primaryElementId: state.primaryElementId,
-  };
+  }
 }
 
 function setSelectedFrames(
   frameIds: string[],
   options: {
-    primaryFrameId?: string;
+    primaryFrameId?: string
   } = {},
 ): void {
   designSelection.setFrameSelection(frameIds, {
     primaryFrameId: options.primaryFrameId,
-  });
+  })
 }
 
 function setSelectedElements(
   elementIds: string[],
   options: {
-    primaryElementId?: string;
-    editingFrameId?: string;
-    displayFrameId?: string;
+    primaryElementId?: string
+    editingFrameId?: string
+    displayFrameId?: string
   } = {},
 ): void {
-  designSelection.setElementSelection(elementIds, options);
+  designSelection.setElementSelection(elementIds, options)
 }
 
 function resolveDisplayFrameIdForOwnerSelection(
   ownerFrameId: string,
   options: {
-    preferCurrentProjection?: boolean;
+    preferCurrentProjection?: boolean
   } = {},
 ): string {
-  const normalizedOwnerFrameId = normalizeString(ownerFrameId);
-  const preferCurrentProjection = options.preferCurrentProjection !== false;
-  const currentEditingFrameId = normalizeString(selectionState.value.editingFrameId);
-  const currentDisplayFrameId = normalizeString(selectionState.value.displayFrameId);
+  const normalizedOwnerFrameId = normalizeString(ownerFrameId)
+  const preferCurrentProjection = options.preferCurrentProjection !== false
+  const currentEditingFrameId = normalizeString(selectionState.value.editingFrameId)
+  const currentDisplayFrameId = normalizeString(selectionState.value.displayFrameId)
   if (
-    preferCurrentProjection &&
-    normalizedOwnerFrameId &&
-    normalizedOwnerFrameId === currentEditingFrameId &&
-    currentDisplayFrameId
+    preferCurrentProjection
+    && normalizedOwnerFrameId
+    && normalizedOwnerFrameId === currentEditingFrameId
+    && currentDisplayFrameId
   ) {
-    return currentDisplayFrameId;
+    return currentDisplayFrameId
   }
-  return normalizedOwnerFrameId;
+  return normalizedOwnerFrameId
 }
 
 function applyDeepSelectionState(payload: StageDeepSelectionRequest): void {
-  const ownerFrameId = normalizeString(payload.ownerFrameId);
-  const ownerPageId = normalizeString(payload.ownerPageId);
-  const displayFrameId =
-    ownerPageId && ownerPageId !== normalizeString(currentPage.value?.id)
+  const ownerFrameId = normalizeString(payload.ownerFrameId)
+  const ownerPageId = normalizeString(payload.ownerPageId)
+  const displayFrameId
+    = ownerPageId && ownerPageId !== normalizeString(currentPage.value?.id)
       ? ownerFrameId
-      : normalizeString(payload.displayFrameId) || ownerFrameId;
-  if (!ownerFrameId) return;
+      : normalizeString(payload.displayFrameId) || ownerFrameId
+  if (!ownerFrameId)
+    return
 
   if (payload.ownerElementId) {
     setSelectedElements([payload.ownerElementId], {
       primaryElementId: payload.ownerElementId,
       editingFrameId: ownerFrameId,
       displayFrameId,
-    });
-    return;
+    })
+    return
   }
 
   replaceSelectionState({
     ...createEmptyDesignCanvasSelectionState(),
     editingFrameId: ownerFrameId,
     displayFrameId,
-  });
+  })
 }
 
 function requestDeepSelection(payload: StageDeepSelectionRequest): void {
-  const ownerFrameId = normalizeString(payload.ownerFrameId);
-  const ownerPageId = normalizeString(payload.ownerPageId);
-  if (!ownerFrameId) return;
+  const ownerFrameId = normalizeString(payload.ownerFrameId)
+  const ownerPageId = normalizeString(payload.ownerPageId)
+  if (!ownerFrameId)
+    return
 
   if (ownerPageId && ownerPageId !== normalizeString(currentPage.value?.id)) {
     const nextDocument = setCurrentDesignPageInSceneDocument(
       draftDocument.value,
       ownerPageId,
-    );
-    commitDocument(nextDocument);
+    )
+    commitDocument(nextDocument)
     void nextTick(() => {
-      applyDeepSelectionState(payload);
-    });
-    return;
+      applyDeepSelectionState(payload)
+    })
+    return
   }
 
-  applyDeepSelectionState(payload);
+  applyDeepSelectionState(payload)
 }
 
 function enterFrameEditingFromSelection(frame: DesignFrameModel): void {
-  const editingOwner = resolveFrameEditingOwnerState(frame);
+  const editingOwner = resolveFrameEditingOwnerState(frame)
   if (!editingOwner || !canDesignFrameCreateElements(editingOwner.ownerFrame))
-    return;
+    return
 
   requestDeepSelection({
     ownerFrameId: editingOwner.ownerFrame.id,
     ownerPageId: editingOwner.ownerPageId,
     displayFrameId: editingOwner.displayFrame.id,
-  });
+  })
 }
 
 function selectSingleFrame(frameId: string): void {
   setSelectedFrames([frameId], {
     primaryFrameId: frameId,
-  });
+  })
 }
 
 function handleStageViewportChange(payload: {
-  x: number;
-  y: number;
-  zoom: number;
+  x: number
+  y: number
+  zoom: number
 }): void {
-  const nextViewport = normalizeStageViewportState(payload);
-  stageViewportX.value = nextViewport.x;
-  stageViewportY.value = nextViewport.y;
-  stageViewportZoom.value = nextViewport.zoom;
+  const nextViewport = normalizeStageViewportState(payload)
+  stageViewportX.value = nextViewport.x
+  stageViewportY.value = nextViewport.y
+  stageViewportZoom.value = nextViewport.zoom
   if (currentPage.value)
-    rememberStageViewportState(currentPage.value.id, nextViewport);
+    rememberStageViewportState(currentPage.value.id, nextViewport)
 }
 
 function createDesignElementFromStage(
   payload: Partial<DesignElementModel>,
 ): void {
   const previousElementIds = new Set(
-    draftDocument.value.sourceModel.kind === "composition"
-      ? (draftDocument.value.sourceModel.elements || []).map((item) => item.id)
+    draftDocument.value.sourceModel.kind === 'composition'
+      ? (draftDocument.value.sourceModel.elements || []).map(item => item.id)
       : [],
-  );
+  )
   const nextDocument = appendDesignElementToSceneDocument(
     draftDocument.value,
     payload,
-  );
-  const createdElement =
-    nextDocument.sourceModel.kind === "composition"
+  )
+  const createdElement
+    = nextDocument.sourceModel.kind === 'composition'
       ? (nextDocument.sourceModel.elements || []).find(
-          (item) => !previousElementIds.has(item.id),
+          item => !previousElementIds.has(item.id),
         ) || null
-      : null;
-  commitDocument(nextDocument);
-  if (!createdElement) return;
-  const editingFrameId =
-    selectionState.value.editingFrameId || normalizeString(createdElement.frameId);
+      : null
+  commitDocument(nextDocument)
+  if (!createdElement)
+    return
+  const editingFrameId
+    = selectionState.value.editingFrameId || normalizeString(createdElement.frameId)
   setSelectedElements([createdElement.id], {
     primaryElementId: createdElement.id,
     editingFrameId,
     displayFrameId: resolveDisplayFrameIdForOwnerSelection(editingFrameId),
-  });
-  if (designToolController.isDrawingTool.value) setActiveDesignTool("select");
+  })
+  if (designToolController.isDrawingTool.value)
+    setActiveDesignTool('select')
 }
 
 function updateDesignElementFromStage(payload: {
-  elementId: string;
-  patch: Partial<DesignElementModel>;
-  historyMergeKey?: string;
+  elementId: string
+  patch: Partial<DesignElementModel>
+  historyMergeKey?: string
 }): void {
   commitDocument(
     updateDesignElementInSceneDocument(
@@ -2223,234 +2329,245 @@ function updateDesignElementFromStage(payload: {
     {
       historyMergeKey: payload.historyMergeKey,
     },
-  );
+  )
 }
 
 function updateDesignElementsFromStage(payload: {
-  patches: Array<{ elementId: string; patch: Partial<DesignElementModel> }>;
-  historyMergeKey?: string;
+  patches: Array<{ elementId: string, patch: Partial<DesignElementModel> }>
+  historyMergeKey?: string
 }): void {
-  if (!payload.patches.length) return;
+  if (!payload.patches.length)
+    return
 
-  let nextDocument = draftDocument.value;
-  for (const patch of payload.patches)
+  let nextDocument = draftDocument.value
+  for (const patch of payload.patches) {
     nextDocument = updateDesignElementInSceneDocument(
       nextDocument,
       patch.elementId,
       patch.patch,
-    );
+    )
+  }
   commitDocument(nextDocument, {
     historyMergeKey: payload.historyMergeKey,
-  });
+  })
 }
 
 watch(
   [currentPageFrames, currentPage],
   () => {
-    replaceSelectionState(selectionState.value);
+    replaceSelectionState(selectionState.value)
     if (
       !currentPageFrames.value.some(
-        (frame) => frame.id === diagramEditorFrameId.value,
+        frame => frame.id === diagramEditorFrameId.value,
       )
-    )
-      diagramEditorFrameId.value = "";
+    ) {
+      diagramEditorFrameId.value = ''
+    }
   },
   { immediate: true },
-);
+)
 
 watch(
   () => selectedFrameId.value,
   (nextFrameId) => {
     if (
-      diagramEditorFrameId.value &&
-      diagramEditorFrameId.value !== nextFrameId
-    )
-      diagramEditorFrameId.value = "";
+      diagramEditorFrameId.value
+      && diagramEditorFrameId.value !== nextFrameId
+    ) {
+      diagramEditorFrameId.value = ''
+    }
   },
-);
+)
 
 watch(diagramEditorFrame, (frame) => {
-  if (frame && frame.kind !== "diagram") diagramEditorFrameId.value = "";
-});
+  if (frame && frame.kind !== 'diagram')
+    diagramEditorFrameId.value = ''
+})
 
 watch(
   selectedFrame,
   (frame) => {
-    if (!diagramEditorFrameId.value && frame?.kind === "diagram")
-      syncDiagramEditorFromFrame(frame);
+    if (!diagramEditorFrameId.value && frame?.kind === 'diagram')
+      syncDiagramEditorFromFrame(frame)
     if (
-      !frame ||
-      frame.kind !== "device_mockup" ||
-      normalizeString(mockupScreenEditingFrameId.value) !== normalizeString(frame.id)
+      !frame
+      || frame.kind !== 'device_mockup'
+      || normalizeString(mockupScreenEditingFrameId.value) !== normalizeString(frame.id)
     ) {
-      mockupScreenEditingFrameId.value = "";
+      mockupScreenEditingFrameId.value = ''
     }
   },
   { immediate: true },
-);
+)
 
 watch(activeTool, (tool) => {
-  if (tool !== "select") {
-    mockupScreenEditingFrameId.value = "";
+  if (tool !== 'select') {
+    mockupScreenEditingFrameId.value = ''
   }
-});
+})
 
 watch(diagramSourceFormat, (nextFormat) => {
   canvasAiTemplate.value = resolveCanvasTemplateFromSourceFormat(
     nextFormat as AiCanvasAssistSourceFormat,
-  );
-});
+  )
+})
 
 watch(
   diagramEditorGraph,
   (graph) => {
     if (
-      !graph?.groups?.some((group) => group.id === diagramSelectedGroupId.value)
+      !graph?.groups?.some(group => group.id === diagramSelectedGroupId.value)
     )
-      diagramSelectedGroupId.value = "";
-    if (!graph?.nodes.some((node) => node.id === diagramSelectedNodeId.value))
-      diagramSelectedNodeId.value = "";
-    if (!graph?.edges.some((edge) => edge.id === diagramSelectedEdgeId.value))
-      diagramSelectedEdgeId.value = "";
+      diagramSelectedGroupId.value = ''
+    if (!graph?.nodes.some(node => node.id === diagramSelectedNodeId.value))
+      diagramSelectedNodeId.value = ''
+    if (!graph?.edges.some(edge => edge.id === diagramSelectedEdgeId.value))
+      diagramSelectedEdgeId.value = ''
   },
   { immediate: true },
-);
+)
 
 onMounted(() => {
-  void loadCanvasAiRuntimeStatus();
-  if (!import.meta.client) return;
-  restoreCanvasAiMessagesFromStorage();
-  window.addEventListener("pointerdown", handleActionMenuPointerDown);
-  window.addEventListener("blur", clearTransientInteractionState);
-});
+  void loadCanvasAiRuntimeStatus()
+  if (!import.meta.client)
+    return
+  restoreCanvasAiMessagesFromStorage()
+  window.addEventListener('pointerdown', handleActionMenuPointerDown)
+  window.addEventListener('blur', clearTransientInteractionState)
+})
 
 watch(
   () => props.workspaceId,
   () => {
-    void loadCanvasAiRuntimeStatus();
+    void loadCanvasAiRuntimeStatus()
   },
-);
+)
 
 watch(canvasAiStorageScopeKey, () => {
-  restoreCanvasAiMessagesFromStorage();
+  restoreCanvasAiMessagesFromStorage()
 }, {
   immediate: true,
-});
+})
 
 watch(canvasAiMessages, () => {
-  persistCanvasAiMessagesToStorage();
+  persistCanvasAiMessagesToStorage()
 }, {
   deep: true,
-});
+})
 
 onBeforeUnmount(() => {
-  if (!import.meta.client) return;
-  window.removeEventListener("pointerdown", handleActionMenuPointerDown);
-  window.removeEventListener("blur", clearTransientInteractionState);
-  clearToolSwitchHintTimer();
-  clearOutlineHighlightTimer();
-});
+  if (!import.meta.client)
+    return
+  window.removeEventListener('pointerdown', handleActionMenuPointerDown)
+  window.removeEventListener('blur', clearTransientInteractionState)
+  clearToolSwitchHintTimer()
+  clearOutlineHighlightTimer()
+})
 
 defineExpose({
   locateOutlineItem,
-});
+})
 
 function setDraftDocument(document: SceneDocument): void {
-  draftDocument.value = document;
-  replaceSelectionState(selectionState.value);
+  draftDocument.value = document
+  replaceSelectionState(selectionState.value)
 }
 
 function resolveFrameFromDocument(
   document: SceneDocument,
   frameId: string,
 ): DesignFrameModel | null {
-  if (document.sourceModel.kind !== "composition") return null;
+  if (document.sourceModel.kind !== 'composition')
+    return null
   return (
-    document.sourceModel.frames?.find((frame) => frame.id === frameId) || null
-  );
+    document.sourceModel.frames?.find(frame => frame.id === frameId) || null
+  )
 }
 
 function normalizeHistoryDocument(
   document: SceneDocument | string,
 ): SceneDocument {
-  if (typeof document === "string") {
-    const parsedDesignDocument = parseDesignDocumentString(document);
+  if (typeof document === 'string') {
+    const parsedDesignDocument = parseDesignDocumentString(document)
     if (parsedDesignDocument)
-      return designDocumentToSceneDocument(parsedDesignDocument);
+      return designDocumentToSceneDocument(parsedDesignDocument)
 
     return sceneDocumentFromUnknown(
       parseSceneDocumentString(document, {
-        fallbackDrawMode: "composition",
-        fallbackSourceType: "image_mockup",
+        fallbackDrawMode: 'composition',
+        fallbackSourceType: 'image_mockup',
       }),
       {
-        fallbackDrawMode: "composition",
-        fallbackSourceType: "image_mockup",
+        fallbackDrawMode: 'composition',
+        fallbackSourceType: 'image_mockup',
       },
-    );
+    )
   }
 
   return sceneDocumentFromUnknown(document, {
-    fallbackDrawMode: "composition",
-    fallbackSourceType: "image_mockup",
-  });
+    fallbackDrawMode: 'composition',
+    fallbackSourceType: 'image_mockup',
+  })
 }
 
 function preservePageViewportState(
   nextDocument: SceneDocument,
   baseDocument = draftDocument.value,
 ): SceneDocument {
-  const normalizedNext = normalizeHistoryDocument(nextDocument);
-  const normalizedBase = normalizeHistoryDocument(baseDocument);
+  const normalizedNext = normalizeHistoryDocument(nextDocument)
+  const normalizedBase = normalizeHistoryDocument(baseDocument)
   if (
-    normalizedNext.sourceModel.kind !== "composition" ||
-    normalizedBase.sourceModel.kind !== "composition"
-  )
-    return normalizedNext;
+    normalizedNext.sourceModel.kind !== 'composition'
+    || normalizedBase.sourceModel.kind !== 'composition'
+  ) {
+    return normalizedNext
+  }
 
   const viewportByPageId = new Map(
-    (normalizedBase.sourceModel.pages || []).map((page) => [
+    (normalizedBase.sourceModel.pages || []).map(page => [
       page.id,
       normalizeStageViewportState(page.viewport),
     ]),
-  );
+  )
   return {
     ...normalizedNext,
     sourceModel: {
       ...normalizedNext.sourceModel,
       pages: (normalizedNext.sourceModel.pages || []).map((page) => {
-        const preservedViewport = viewportByPageId.get(page.id);
+        const preservedViewport = viewportByPageId.get(page.id)
         return preservedViewport
           ? { ...page, viewport: preservedViewport }
-          : page;
+          : page
       }),
     },
-  };
+  }
 }
 
 function syncModelValue(serialized: string): void {
   if (
-    syncingFromModel.value ||
-    !isBoundToDesignResource.value ||
-    serialized === lastAppliedSceneJson.value
-  )
-    return;
-  lastAppliedSceneJson.value = serialized;
-  emit("update:modelValue", serialized);
+    syncingFromModel.value
+    || !isBoundToDesignResource.value
+    || serialized === lastAppliedSceneJson.value
+  ) {
+    return
+  }
+  lastAppliedSceneJson.value = serialized
+  emit('update:modelValue', serialized)
 }
 
 function applyHistorySnapshot(serialized: string | null): void {
-  if (!serialized) return;
+  if (!serialized)
+    return
   const nextDocument = preservePageViewportState(
     normalizeHistoryDocument(serialized),
-  );
+  )
   const normalizedDocument = relayoutSceneDocument({
     ...nextDocument,
-    drawMode: "composition",
+    drawMode: 'composition',
     editorEngine: persistedDesignEditorEngine.value,
-  });
-  setDraftDocument(normalizedDocument);
-  syncModelValue(serializeOutgoingDesignDocument(normalizedDocument));
+  })
+  setDraftDocument(normalizedDocument)
+  syncModelValue(serializeOutgoingDesignDocument(normalizedDocument))
 }
 
 function commitDocument(
@@ -2459,74 +2576,75 @@ function commitDocument(
 ): void {
   const normalizedDocument = relayoutSceneDocument({
     ...document,
-    drawMode: "composition",
+    drawMode: 'composition',
     editorEngine: persistedDesignEditorEngine.value,
-  });
-  setDraftDocument(normalizedDocument);
+  })
+  setDraftDocument(normalizedDocument)
 
-  const serialized = serializeOutgoingDesignDocument(normalizedDocument);
+  const serialized = serializeOutgoingDesignDocument(normalizedDocument)
   designHistory.record(serialized, {
     mergeKey: options.historyMergeKey,
-  });
-  syncModelValue(serialized);
+  })
+  syncModelValue(serialized)
 }
 
 function mutateCompositionDocument(
   mutator: (composition: CompositionModel) => CompositionModel,
 ): void {
   const normalized = sceneDocumentFromUnknown(draftDocument.value, {
-    fallbackDrawMode: "composition",
-    fallbackSourceType: "image_mockup",
-  });
-  if (normalized.sourceModel.kind !== "composition") return;
+    fallbackDrawMode: 'composition',
+    fallbackSourceType: 'image_mockup',
+  })
+  if (normalized.sourceModel.kind !== 'composition')
+    return
   const nextComposition = mutator(
     cloneCompositionModel(normalized.sourceModel),
-  );
+  )
   commitDocument({
     ...normalized,
-    drawMode: "composition",
+    drawMode: 'composition',
     editorEngine: persistedDesignEditorEngine.value,
     sourceModel: nextComposition,
-  });
+  })
 }
 
 watch(
   [() => props.modelValue, isBoundToDesignResource, () => props.designEditorEngine],
   ([nextModelValue, nextIsBound]) => {
     const resolved = resolveIncomingDesignDocument(
-      nextIsBound ? nextModelValue : "",
-    );
-    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
-    syncingFromModel.value = true;
-    persistedDesignEditorEngine.value = resolved.persistedEditorEngine;
-    persistedDesignStorageFormat.value = resolved.persistedStorageFormat;
-    setDraftDocument(resolved.document);
-    replaceSelectionState(selectionSnapshot);
+      nextIsBound ? nextModelValue : '',
+    )
+    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
+    syncingFromModel.value = true
+    persistedDesignEditorEngine.value = resolved.persistedEditorEngine
+    persistedDesignStorageFormat.value = resolved.persistedStorageFormat
+    setDraftDocument(resolved.document)
+    replaceSelectionState(selectionSnapshot)
     lastAppliedSceneJson.value = serializeOutgoingDesignDocument(
       resolved.document,
-    );
-    designHistory.reset(lastAppliedSceneJson.value);
-    syncingFromModel.value = false;
+    )
+    designHistory.reset(lastAppliedSceneJson.value)
+    syncingFromModel.value = false
 
     if (nextIsBound && resolved.shouldPersistNormalized) {
       lastAppliedSceneJson.value = serializeOutgoingDesignDocument(
         resolved.document,
-      );
-      emit("update:modelValue", lastAppliedSceneJson.value);
+      )
+      emit('update:modelValue', lastAppliedSceneJson.value)
     }
   },
   { immediate: true },
-);
+)
 
 watch(
-  () => currentPage.value?.id || "",
+  () => currentPage.value?.id || '',
   () => {
-    syncStageViewportState(currentPage.value);
-    collapsedLayerNodeIds.value = [];
-    closeLayerTreeMenu();
+    syncStageViewportState(currentPage.value)
+    collapsedLayerNodeIds.value = []
+    closeLayerTreeMenu()
   },
   { immediate: true },
-);
+)
 
 watch(
   [selectedElementIds, selectedFrameIds, selectedLayerTreeAncestorNodeIds],
@@ -2535,122 +2653,125 @@ watch(
       ...selectedElementIds.value.map(id => `element:${normalizeString(id)}`),
       ...selectedFrameIds.value.map(id => `frame:${normalizeString(id)}`),
       ...selectedLayerTreeAncestorNodeIds.value,
-    ]);
+    ])
     collapsedLayerNodeIds.value = collapsedLayerNodeIds.value.filter(
       nodeId => !protectedNodeIds.has(nodeId),
-    );
+    )
   },
   { immediate: true },
-);
+)
 
 watch(frameSidebarTreeRows, (rows) => {
   if (!layerTreeMenuVisible.value)
-    return;
+    return
   if (!rows.some(row => row.node.id === layerTreeMenuNodeId.value))
-    closeLayerTreeMenu();
-});
+    closeLayerTreeMenu()
+})
 
 watch(
   [
     selectedElementId,
     selectedFrameId,
     activeLayerTreePathNodeIds,
-    () => currentPage.value?.id || "",
+    () => currentPage.value?.id || '',
     () => activeSidebarTab.value,
     () => frameSidebarTreeRows.value.length,
   ],
   () => {
-    scrollActiveLayerTreeNodeIntoView();
+    scrollActiveLayerTreeNodeIntoView()
   },
-  { flush: "post" },
-);
+  { flush: 'post' },
+)
 
 function selectPage(pageId: string): void {
   const nextDocument = setCurrentDesignPageInSceneDocument(
     draftDocument.value,
     pageId,
-  );
-  commitDocument(nextDocument);
-  designSelection.clearSelection();
+  )
+  commitDocument(nextDocument)
+  designSelection.clearSelection()
 }
 
 function createPage(): void {
   commitDocument(
     appendDesignPageToSceneDocument(draftDocument.value, {
       name: `Page ${pages.value.length + 1}`,
-      background: "#ffffff",
+      background: '#ffffff',
       makeCurrent: true,
     }),
-  );
+  )
 }
 
 function removePage(pageId: string): void {
   commitDocument(
     removeDesignPageFromSceneDocument(draftDocument.value, pageId),
-  );
+  )
 }
 
 function movePage(pageId: string, direction: -1 | 1): void {
   mutateCompositionDocument((composition) => {
-    const pageList = [...(composition.pages || [])];
-    const index = pageList.findIndex((page) => page.id === pageId);
-    const nextIndex = index + direction;
+    const pageList = [...(composition.pages || [])]
+    const index = pageList.findIndex(page => page.id === pageId)
+    const nextIndex = index + direction
     if (index < 0 || nextIndex < 0 || nextIndex >= pageList.length)
-      return composition;
-    const [page] = pageList.splice(index, 1);
-    pageList.splice(nextIndex, 0, page!);
+      return composition
+    const [page] = pageList.splice(index, 1)
+    pageList.splice(nextIndex, 0, page!)
     return {
       ...composition,
       pages: pageList,
-    };
-  });
+    }
+  })
 }
 
 function moveFrame(frameId: string, direction: -1 | 1): void {
   mutateCompositionDocument((composition) => {
-    const frames = [...(composition.frames || [])];
-    const current = frames.find((frame) => frame.id === frameId);
-    if (!current) return composition;
+    const frames = [...(composition.frames || [])]
+    const current = frames.find(frame => frame.id === frameId)
+    if (!current)
+      return composition
     const pageFrames = frames.filter(
-      (frame) => frame.pageId === current.pageId,
-    );
-    const currentIndex = pageFrames.findIndex((frame) => frame.id === frameId);
-    const nextIndex = currentIndex + direction;
+      frame => frame.pageId === current.pageId,
+    )
+    const currentIndex = pageFrames.findIndex(frame => frame.id === frameId)
+    const nextIndex = currentIndex + direction
     if (currentIndex < 0 || nextIndex < 0 || nextIndex >= pageFrames.length)
-      return composition;
-    const reorderedPageFrames = [...pageFrames];
-    const [movedFrame] = reorderedPageFrames.splice(currentIndex, 1);
-    reorderedPageFrames.splice(nextIndex, 0, movedFrame!);
-    let pointer = 0;
+      return composition
+    const reorderedPageFrames = [...pageFrames]
+    const [movedFrame] = reorderedPageFrames.splice(currentIndex, 1)
+    reorderedPageFrames.splice(nextIndex, 0, movedFrame!)
+    let pointer = 0
     return {
       ...composition,
       frames: frames.map((frame) => {
-        if (frame.pageId !== current.pageId) return frame;
-        const nextFrame = reorderedPageFrames[pointer];
-        pointer += 1;
-        return nextFrame || frame;
+        if (frame.pageId !== current.pageId)
+          return frame
+        const nextFrame = reorderedPageFrames[pointer]
+        pointer += 1
+        return nextFrame || frame
       }),
-    };
-  });
+    }
+  })
 }
 
 function createFrame(
   kind: DesignFrameKind,
   extra: Partial<DesignFrameModel> & {
-    templateKey?: string;
-    slots?: Record<string, unknown>;
-    themeTokens?: Record<string, string>;
+    templateKey?: string
+    slots?: Record<string, unknown>
+    themeTokens?: Record<string, string>
   } = {},
 ): void {
-  if (!currentPage.value) return;
-  const resolvedKind = kind;
-  const nextShellMode: "none" | "builtin" | "external" =
-    extra.metadata?.device?.shellMode === "none" ||
-    extra.metadata?.device?.shellMode === "external"
+  if (!currentPage.value)
+    return
+  const resolvedKind = kind
+  const nextShellMode: 'none' | 'builtin' | 'external'
+    = extra.metadata?.device?.shellMode === 'none'
+      || extra.metadata?.device?.shellMode === 'external'
       ? extra.metadata.device.shellMode
-      : "builtin";
-  const nextExtra =
-    resolvedKind === "device_artboard" || resolvedKind === "device_mockup"
+      : 'builtin'
+  const nextExtra
+    = resolvedKind === 'device_artboard' || resolvedKind === 'device_mockup'
       ? {
           ...extra,
           metadata: {
@@ -2661,37 +2782,38 @@ function createFrame(
             },
           },
         }
-      : extra;
+      : extra
   const nextDocument = appendDesignFrameToSceneDocument(draftDocument.value, {
     pageId: currentPage.value.id,
     kind: resolvedKind,
     ...nextExtra,
-  });
-  const nextComposition =
-    nextDocument.sourceModel.kind === "composition"
+  })
+  const nextComposition
+    = nextDocument.sourceModel.kind === 'composition'
       ? nextDocument.sourceModel
-      : null;
-  const nextFrame =
-    nextComposition?.frames?.[nextComposition.frames.length - 1] || null;
-  commitDocument(nextDocument);
+      : null
+  const nextFrame
+    = nextComposition?.frames?.[nextComposition.frames.length - 1] || null
+  commitDocument(nextDocument)
   setSelectedFrames(nextFrame ? [nextFrame.id] : [], {
-    primaryFrameId: nextFrame?.id || "",
-  });
-  if (resolvedKind === "diagram" && nextFrame) {
-    diagramEditorFrameId.value = nextFrame.id;
-    syncDiagramEditorFromFrame(nextFrame);
+    primaryFrameId: nextFrame?.id || '',
+  })
+  if (resolvedKind === 'diagram' && nextFrame) {
+    diagramEditorFrameId.value = nextFrame.id
+    syncDiagramEditorFromFrame(nextFrame)
   }
 }
 
 function duplicateSelectedFrame(): void {
-  if (!selectedFrames.value.length) return;
+  if (!selectedFrames.value.length)
+    return
 
-  let nextDocument = draftDocument.value;
-  const duplicatedFrameIds: string[] = [];
+  let nextDocument = draftDocument.value
+  const duplicatedFrameIds: string[] = []
   for (const frame of selectedFrames.value) {
     nextDocument = appendDesignFrameToSceneDocument(nextDocument, {
       ...frame,
-      id: "",
+      id: '',
       pageId: frame.pageId,
       name: `${frame.name} 副本`,
       x: frame.x + 48,
@@ -2699,66 +2821,69 @@ function duplicateSelectedFrame(): void {
       elements: resolveFrameElements(frame),
       embeddedScene: frame.embeddedScene
         ? sceneDocumentFromUnknown(frame.embeddedScene, {
-            fallbackDrawMode: "diagram",
-            fallbackSourceType: "manual",
+            fallbackDrawMode: 'diagram',
+            fallbackSourceType: 'manual',
           })
         : undefined,
-    });
+    })
 
-    const nextComposition =
-      nextDocument.sourceModel.kind === "composition"
+    const nextComposition
+      = nextDocument.sourceModel.kind === 'composition'
         ? nextDocument.sourceModel
-        : null;
-    const nextFrame =
-      nextComposition?.frames?.[nextComposition.frames.length - 1] || null;
-    if (nextFrame) duplicatedFrameIds.push(nextFrame.id);
+        : null
+    const nextFrame
+      = nextComposition?.frames?.[nextComposition.frames.length - 1] || null
+    if (nextFrame)
+      duplicatedFrameIds.push(nextFrame.id)
   }
 
-  const nextComposition =
-    nextDocument.sourceModel.kind === "composition"
+  const nextComposition
+    = nextDocument.sourceModel.kind === 'composition'
       ? nextDocument.sourceModel
-      : null;
+      : null
   const nextFrame = duplicatedFrameIds.length
     ? nextComposition?.frames?.find(
-        (frame) =>
+        frame =>
           frame.id === duplicatedFrameIds[duplicatedFrameIds.length - 1],
       )
-    : null;
-  commitDocument(nextDocument);
+    : null
+  commitDocument(nextDocument)
   setSelectedFrames(duplicatedFrameIds, {
-    primaryFrameId: duplicatedFrameIds[duplicatedFrameIds.length - 1] || "",
-  });
-  if (duplicatedFrameIds.length === 1 && nextFrame?.kind === "diagram") {
-    diagramEditorFrameId.value = nextFrame.id;
-    syncDiagramEditorFromFrame(nextFrame);
+    primaryFrameId: duplicatedFrameIds[duplicatedFrameIds.length - 1] || '',
+  })
+  if (duplicatedFrameIds.length === 1 && nextFrame?.kind === 'diagram') {
+    diagramEditorFrameId.value = nextFrame.id
+    syncDiagramEditorFromFrame(nextFrame)
   }
 }
 
 function removeSelectedFrame(): void {
-  if (!selectedFrames.value.length) return;
+  if (!selectedFrames.value.length)
+    return
 
-  let nextDocument = draftDocument.value;
+  let nextDocument = draftDocument.value
   for (const frame of selectedFrames.value)
-    nextDocument = removeDesignFrameFromSceneDocument(nextDocument, frame.id);
-  commitDocument(nextDocument);
-  designSelection.clearSelection();
+    nextDocument = removeDesignFrameFromSceneDocument(nextDocument, frame.id)
+  commitDocument(nextDocument)
+  designSelection.clearSelection()
 }
 
 function duplicateSelectedElement(): void {
-  const elements = resolveRawSelectedElements();
-  if (!elements.length) return;
+  const elements = resolveRawSelectedElements()
+  if (!elements.length)
+    return
 
-  let nextDocument = draftDocument.value;
-  const duplicatedElementIds: string[] = [];
+  let nextDocument = draftDocument.value
+  const duplicatedElementIds: string[] = []
   for (const element of elements) {
     const previousElementIds = new Set(
-      nextDocument.sourceModel.kind === "composition"
-        ? (nextDocument.sourceModel.elements || []).map((item) => item.id)
+      nextDocument.sourceModel.kind === 'composition'
+        ? (nextDocument.sourceModel.elements || []).map(item => item.id)
         : [],
-    );
+    )
     nextDocument = appendDesignElementToSceneDocument(nextDocument, {
       ...element,
-      id: "",
+      id: '',
       x: element.x + 24,
       y: element.y + 24,
       zIndex: element.zIndex + 1,
@@ -2767,91 +2892,99 @@ function duplicateSelectedElement(): void {
       },
       style: element.style ? { ...element.style } : undefined,
       points: element.points
-        ? element.points.map((point) => ({ ...point }))
+        ? element.points.map(point => ({ ...point }))
         : undefined,
-    });
+    })
 
-    const nextComposition =
-      nextDocument.sourceModel.kind === "composition"
+    const nextComposition
+      = nextDocument.sourceModel.kind === 'composition'
         ? nextDocument.sourceModel
-        : null;
-    const duplicatedElement =
-      nextComposition?.elements?.find(
-        (item) => !previousElementIds.has(item.id),
-      ) || null;
-    if (duplicatedElement) duplicatedElementIds.push(duplicatedElement.id);
+        : null
+    const duplicatedElement
+      = nextComposition?.elements?.find(
+        item => !previousElementIds.has(item.id),
+      ) || null
+    if (duplicatedElement)
+      duplicatedElementIds.push(duplicatedElement.id)
   }
 
-  commitDocument(nextDocument);
-  const editingFrameId = normalizeString(selectionState.value.editingFrameId);
+  commitDocument(nextDocument)
+  const editingFrameId = normalizeString(selectionState.value.editingFrameId)
   setSelectedElements(duplicatedElementIds, {
     primaryElementId:
-      duplicatedElementIds[duplicatedElementIds.length - 1] || "",
+      duplicatedElementIds[duplicatedElementIds.length - 1] || '',
     editingFrameId,
     displayFrameId: resolveDisplayFrameIdForOwnerSelection(editingFrameId),
-  });
+  })
 }
 
 function removeSelectedElement(): void {
-  const elements = resolveRawSelectedElements();
-  if (!elements.length) return;
+  const elements = resolveRawSelectedElements()
+  if (!elements.length)
+    return
 
-  let nextDocument = draftDocument.value;
-  for (const element of elements)
+  let nextDocument = draftDocument.value
+  for (const element of elements) {
     nextDocument = removeDesignElementFromSceneDocument(
       nextDocument,
       element.id,
-    );
-  commitDocument(nextDocument);
-  designSelection.clearSelection();
+    )
+  }
+  commitDocument(nextDocument)
+  designSelection.clearSelection()
 }
 
 function toggleSelectedElementsLocked(): void {
-  const elements = resolveRawSelectedElements();
-  if (!elements.length) return;
+  const elements = resolveRawSelectedElements()
+  if (!elements.length)
+    return
 
-  const shouldLock = elements.some((element) => !element.locked);
-  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
-  let nextDocument = draftDocument.value;
-  for (const element of elements)
+  const shouldLock = elements.some(element => !element.locked)
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
+  let nextDocument = draftDocument.value
+  for (const element of elements) {
     nextDocument = updateDesignElementInSceneDocument(
       nextDocument,
       element.id,
       { locked: shouldLock },
-    );
-  commitDocument(nextDocument);
-  replaceSelectionState(selectionSnapshot);
+    )
+  }
+  commitDocument(nextDocument)
+  replaceSelectionState(selectionSnapshot)
 }
 
 function runInspectorHeaderLockAction(): void {
   if (selectedElementIds.value.length > 0) {
-    toggleSelectedElementsLocked();
-    return;
+    toggleSelectedElementsLocked()
+    return
   }
-  if (selectedFrameIds.value.length > 0) toggleSelectedFramesLocked();
+  if (selectedFrameIds.value.length > 0)
+    toggleSelectedFramesLocked()
 }
 
 function runInspectorHeaderDuplicateAction(): void {
   if (selectedElementIds.value.length > 0) {
-    duplicateSelectedElement();
-    return;
+    duplicateSelectedElement()
+    return
   }
-  if (selectedFrameIds.value.length > 0) duplicateSelectedFrame();
+  if (selectedFrameIds.value.length > 0)
+    duplicateSelectedFrame()
 }
 
 function runInspectorHeaderDeleteAction(): void {
   if (selectedElementIds.value.length > 0) {
-    removeSelectedElement();
-    return;
+    removeSelectedElement()
+    return
   }
-  if (selectedFrameIds.value.length > 0) removeSelectedFrame();
+  if (selectedFrameIds.value.length > 0)
+    removeSelectedFrame()
 }
 
 function updateSelectedFramePosition(payload: {
-  frameId: string;
-  x: number;
-  y: number;
-  historyMergeKey?: string;
+  frameId: string
+  x: number
+  y: number
+  historyMergeKey?: string
 }): void {
   updateSelectedFramePositions({
     positions: [
@@ -2862,66 +2995,70 @@ function updateSelectedFramePosition(payload: {
       },
     ],
     historyMergeKey: payload.historyMergeKey,
-  });
+  })
 }
 
 function updateSelectedFramePositions(payload: {
-  positions: Array<{ frameId: string; x: number; y: number }>;
-  historyMergeKey?: string;
+  positions: Array<{ frameId: string, x: number, y: number }>
+  historyMergeKey?: string
 }): void {
-  if (!payload.positions.length) return;
+  if (!payload.positions.length)
+    return
 
   const normalized = sceneDocumentFromUnknown(draftDocument.value, {
-    fallbackDrawMode: "composition",
-    fallbackSourceType: "image_mockup",
-  });
-  if (normalized.sourceModel.kind !== "composition") return;
+    fallbackDrawMode: 'composition',
+    fallbackSourceType: 'image_mockup',
+  })
+  if (normalized.sourceModel.kind !== 'composition')
+    return
 
   const patchMap = new Map(
-    payload.positions.map((item) => [
+    payload.positions.map(item => [
       item.frameId,
       {
         x: Math.round(item.x),
         y: Math.round(item.y),
       },
     ]),
-  );
-  const nextComposition = cloneCompositionModel(normalized.sourceModel);
+  )
+  const nextComposition = cloneCompositionModel(normalized.sourceModel)
   commitDocument(
     {
       ...normalized,
-      drawMode: "composition",
+      drawMode: 'composition',
       editorEngine: persistedDesignEditorEngine.value,
       sourceModel: {
         ...nextComposition,
         frames: (nextComposition.frames || []).map((frame) => {
-          const patch = patchMap.get(frame.id);
-          if (!patch) return frame;
+          const patch = patchMap.get(frame.id)
+          if (!patch)
+            return frame
           return {
             ...frame,
             x: patch.x,
             y: patch.y,
-          };
+          }
         }),
       },
     },
     {
       historyMergeKey: payload.historyMergeKey,
     },
-  );
+  )
 }
 
 function updateFrameGeometry(payload: {
-  frameId: string;
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  historyMergeKey?: string;
+  frameId: string
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  historyMergeKey?: string
 }): void {
-  const frame =
-    currentPageFrames.value.find((item) => item.id === payload.frameId) || null;
-  if (!frame) return;
+  const frame
+    = currentPageFrames.value.find(item => item.id === payload.frameId) || null
+  if (!frame)
+    return
 
   commitDocument(
     updateDesignFrameInSceneDocument(draftDocument.value, payload.frameId, {
@@ -2945,40 +3082,42 @@ function updateFrameGeometry(payload: {
     {
       historyMergeKey: payload.historyMergeKey,
     },
-  );
+  )
 }
 
 function undoDesignChange(): void {
-  applyHistorySnapshot(designHistory.undo());
+  applyHistorySnapshot(designHistory.undo())
 }
 
 function redoDesignChange(): void {
-  applyHistorySnapshot(designHistory.redo());
+  applyHistorySnapshot(designHistory.redo())
 }
 
 function updateCurrentPage(patch: Partial<DesignPageModel>): void {
-  if (!currentPage.value) return;
+  if (!currentPage.value)
+    return
   commitDocument(
     updateDesignPageInSceneDocument(
       draftDocument.value,
       currentPage.value.id,
       patch,
     ),
-  );
+  )
 }
 
 function updateSelectedFrame(
   patch: Partial<DesignFrameModel> & {
-    slots?: Record<string, unknown>;
-    title?: string;
-    subtitle?: string;
-    badge?: string;
-    imageSrc?: string;
+    slots?: Record<string, unknown>
+    title?: string
+    subtitle?: string
+    badge?: string
+    imageSrc?: string
   },
   historyMergeKey?: string,
 ): void {
-  if (!selectedFrame.value) return;
-  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  if (!selectedFrame.value)
+    return
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
   commitDocument(
     updateDesignFrameInSceneDocument(
       draftDocument.value,
@@ -2988,23 +3127,25 @@ function updateSelectedFrame(
     {
       historyMergeKey,
     },
-  );
-  replaceSelectionState(selectionSnapshot);
+  )
+  replaceSelectionState(selectionSnapshot)
 }
 
 function updateMockupScreenTransform(
   frameId: string,
   patch: {
-    offsetX: number;
-    offsetY: number;
+    offsetX: number
+    offsetY: number
   },
   historyMergeKey?: string,
 ): void {
-  const normalizedFrameId = normalizeString(frameId);
-  if (!normalizedFrameId) return;
-  const targetFrame = resolveFrameFromDocument(draftDocument.value, normalizedFrameId);
-  if (!targetFrame) return;
-  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  const normalizedFrameId = normalizeString(frameId)
+  if (!normalizedFrameId)
+    return
+  const targetFrame = resolveFrameFromDocument(draftDocument.value, normalizedFrameId)
+  if (!targetFrame)
+    return
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
 
   commitDocument(
     updateDesignFrameInSceneDocument(draftDocument.value, normalizedFrameId, {
@@ -3024,45 +3165,49 @@ function updateMockupScreenTransform(
     {
       historyMergeKey,
     },
-  );
-  replaceSelectionState(selectionSnapshot);
+  )
+  replaceSelectionState(selectionSnapshot)
 }
 
 function updateSelectedElement(patch: Partial<DesignElementModel>): void {
-  if (!designEditorState.selectedElement.value) return;
-  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  if (!designEditorState.selectedElement.value)
+    return
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
   commitDocument(
     updateDesignElementInSceneDocument(
       draftDocument.value,
       designEditorState.selectedElement.value.id,
       patch,
     ),
-  );
-  replaceSelectionState(selectionSnapshot);
+  )
+  replaceSelectionState(selectionSnapshot)
 }
 
 function openInspectorRenamePrompt(): void {
-  if (!canRenameInspectorHeader.value) return;
+  if (!canRenameInspectorHeader.value)
+    return
 
-  inspectorHeaderDraft.value = inspectorHeaderTitle.value;
-  inspectorHeaderEditing.value = true;
+  inspectorHeaderDraft.value = inspectorHeaderTitle.value
+  inspectorHeaderEditing.value = true
   nextTick(() => {
-    inspectorHeaderInputRef.value?.focus();
-    inspectorHeaderInputRef.value?.select();
-  });
+    inspectorHeaderInputRef.value?.focus()
+    inspectorHeaderInputRef.value?.select()
+  })
 }
 
 function cancelInspectorHeaderRename(): void {
-  inspectorHeaderEditing.value = false;
-  inspectorHeaderDraft.value = inspectorHeaderTitle.value;
+  inspectorHeaderEditing.value = false
+  inspectorHeaderDraft.value = inspectorHeaderTitle.value
 }
 
 function submitInspectorHeaderRename(): void {
-  if (!inspectorHeaderEditing.value) return;
+  if (!inspectorHeaderEditing.value)
+    return
 
-  const nextValue = inspectorHeaderDraft.value.trim();
-  inspectorHeaderEditing.value = false;
-  if (!nextValue || nextValue === inspectorHeaderTitle.value) return;
+  const nextValue = inspectorHeaderDraft.value.trim()
+  inspectorHeaderEditing.value = false
+  if (!nextValue || nextValue === inspectorHeaderTitle.value)
+    return
 
   if (designEditorState.selectedElement.value) {
     updateSelectedElement({
@@ -3070,42 +3215,43 @@ function submitInspectorHeaderRename(): void {
         ...(designEditorState.selectedElement.value.metadata || {}),
         name: nextValue,
       },
-    });
-    return;
+    })
+    return
   }
 
   if (selectedFrame.value) {
-    updateSelectedFrame({ name: nextValue });
-    return;
+    updateSelectedFrame({ name: nextValue })
+    return
   }
 
   if (designEditorState.currentPage.value)
-    updateCurrentPage({ name: nextValue });
+    updateCurrentPage({ name: nextValue })
 }
 
 function resolveRawSelectedElements(): DesignElementModel[] {
-  if (!currentPage.value) return [];
+  if (!currentPage.value)
+    return []
   const selectedIdSet = new Set(
     selectedElementIds.value
-      .map((item) => normalizeString(item))
+      .map(item => normalizeString(item))
       .filter(Boolean),
-  );
+  )
   return [
     ...resolveCompositionElementsForPage(
       compositionModel.value,
       currentPage.value.id,
     ),
-    ...currentPageFrames.value.flatMap((frame) => resolveFrameElements(frame)),
-  ].filter((element) => selectedIdSet.has(element.id));
+    ...currentPageFrames.value.flatMap(frame => resolveFrameElements(frame)),
+  ].filter(element => selectedIdSet.has(element.id))
 }
 
 function resolveSelectionBounds(
-  items: Array<{ x: number; y: number; width: number; height: number }>,
+  items: Array<{ x: number, y: number, width: number, height: number }>,
 ) {
-  const minX = Math.min(...items.map((item) => item.x));
-  const minY = Math.min(...items.map((item) => item.y));
-  const maxX = Math.max(...items.map((item) => item.x + item.width));
-  const maxY = Math.max(...items.map((item) => item.y + item.height));
+  const minX = Math.min(...items.map(item => item.x))
+  const minY = Math.min(...items.map(item => item.y))
+  const maxX = Math.max(...items.map(item => item.x + item.width))
+  const maxY = Math.max(...items.map(item => item.y + item.height))
   return {
     minX,
     minY,
@@ -3115,177 +3261,186 @@ function resolveSelectionBounds(
     height: maxY - minY,
     centerX: minX + (maxX - minX) / 2,
     centerY: minY + (maxY - minY) / 2,
-  };
+  }
 }
 
 function buildSelectionGeometryPatches<
-  T extends { id: string; x: number; y: number; width: number; height: number },
+  T extends { id: string, x: number, y: number, width: number, height: number },
 >(items: T[], command: string): Map<string, Partial<T>> {
-  const patches = new Map<string, Partial<T>>();
+  const patches = new Map<string, Partial<T>>()
   const setPatch = (itemId: string, patch: Partial<T>): void => {
-    patches.set(itemId, patch);
-  };
-  if (!items.length) return patches;
-
-  const bounds = resolveSelectionBounds(items);
-  const primary =
-    items.find(
-      (item) =>
-        item.id === selectedElementId.value ||
-        item.id === selectedFrameId.value,
-    ) ||
-    items[0] ||
-    null;
-  const referenceWidth = primary?.width || items[0]?.width || 0;
-  const referenceHeight = primary?.height || items[0]?.height || 0;
-
-  if (command === "align-left") {
-    items.forEach((item) =>
-      setPatch(item.id, { x: Math.round(bounds.minX) } as Partial<T>),
-    );
-    return patches;
+    patches.set(itemId, patch)
   }
-  if (command === "align-center-x") {
-    items.forEach((item) =>
+  if (!items.length)
+    return patches
+
+  const bounds = resolveSelectionBounds(items)
+  const primary
+    = items.find(
+      item =>
+        item.id === selectedElementId.value
+        || item.id === selectedFrameId.value,
+    )
+    || items[0]
+    || null
+  const referenceWidth = primary?.width || items[0]?.width || 0
+  const referenceHeight = primary?.height || items[0]?.height || 0
+
+  if (command === 'align-left') {
+    items.forEach(item =>
+      setPatch(item.id, { x: Math.round(bounds.minX) } as Partial<T>),
+    )
+    return patches
+  }
+  if (command === 'align-center-x') {
+    items.forEach(item =>
       setPatch(
         item.id,
         { x: Math.round(bounds.centerX - item.width / 2) } as Partial<T>,
       ),
-    );
-    return patches;
+    )
+    return patches
   }
-  if (command === "align-right") {
-    items.forEach((item) =>
+  if (command === 'align-right') {
+    items.forEach(item =>
       setPatch(item.id, { x: Math.round(bounds.maxX - item.width) } as Partial<T>),
-    );
-    return patches;
+    )
+    return patches
   }
-  if (command === "align-top") {
-    items.forEach((item) =>
+  if (command === 'align-top') {
+    items.forEach(item =>
       setPatch(item.id, { y: Math.round(bounds.minY) } as Partial<T>),
-    );
-    return patches;
+    )
+    return patches
   }
-  if (command === "align-center-y") {
-    items.forEach((item) =>
+  if (command === 'align-center-y') {
+    items.forEach(item =>
       setPatch(
         item.id,
         { y: Math.round(bounds.centerY - item.height / 2) } as Partial<T>,
       ),
-    );
-    return patches;
+    )
+    return patches
   }
-  if (command === "align-bottom") {
-    items.forEach((item) =>
+  if (command === 'align-bottom') {
+    items.forEach(item =>
       setPatch(item.id, { y: Math.round(bounds.maxY - item.height) } as Partial<T>),
-    );
-    return patches;
+    )
+    return patches
   }
-  if (command === "match-width") {
-    if (items.length < 2 || referenceWidth <= 0) return patches;
-    items.forEach((item) =>
+  if (command === 'match-width') {
+    if (items.length < 2 || referenceWidth <= 0)
+      return patches
+    items.forEach(item =>
       setPatch(item.id, { width: Math.round(referenceWidth) } as Partial<T>),
-    );
-    return patches;
+    )
+    return patches
   }
-  if (command === "match-height") {
-    if (items.length < 2 || referenceHeight <= 0) return patches;
-    items.forEach((item) =>
+  if (command === 'match-height') {
+    if (items.length < 2 || referenceHeight <= 0)
+      return patches
+    items.forEach(item =>
       setPatch(item.id, { height: Math.round(referenceHeight) } as Partial<T>),
-    );
-    return patches;
+    )
+    return patches
   }
-  if (command === "mirror-x") {
+  if (command === 'mirror-x') {
     items.forEach((item) => {
       setPatch(item.id, {
         x: Math.round(bounds.minX + bounds.maxX - item.x - item.width),
-      } as Partial<T>);
-    });
-    return patches;
+      } as Partial<T>)
+    })
+    return patches
   }
-  if (command === "mirror-y") {
+  if (command === 'mirror-y') {
     items.forEach((item) => {
       setPatch(item.id, {
         y: Math.round(bounds.minY + bounds.maxY - item.y - item.height),
-      } as Partial<T>);
-    });
-    return patches;
+      } as Partial<T>)
+    })
+    return patches
   }
-  if (command === "snap-grid") {
+  if (command === 'snap-grid') {
     items.forEach((item) => {
       setPatch(item.id, {
         x: Math.round(item.x / 8) * 8,
         y: Math.round(item.y / 8) * 8,
         width: Math.max(8, Math.round(item.width / 8) * 8),
         height: Math.max(8, Math.round(item.height / 8) * 8),
-      } as Partial<T>);
-    });
-    return patches;
+      } as Partial<T>)
+    })
+    return patches
   }
-  if (command === "distribute-x") {
-    if (items.length < 3) return patches;
-    const ordered = [...items].sort((left, right) => left.x - right.x);
-    const totalWidth = ordered.reduce((sum, item) => sum + item.width, 0);
-    const gap = (bounds.width - totalWidth) / (ordered.length - 1);
-    let cursor = bounds.minX;
+  if (command === 'distribute-x') {
+    if (items.length < 3)
+      return patches
+    const ordered = [...items].sort((left, right) => left.x - right.x)
+    const totalWidth = ordered.reduce((sum, item) => sum + item.width, 0)
+    const gap = (bounds.width - totalWidth) / (ordered.length - 1)
+    let cursor = bounds.minX
     for (const item of ordered) {
-      setPatch(item.id, { x: Math.round(cursor) } as Partial<T>);
-      cursor += item.width + gap;
+      setPatch(item.id, { x: Math.round(cursor) } as Partial<T>)
+      cursor += item.width + gap
     }
-    return patches;
+    return patches
   }
-  if (command === "distribute-y") {
-    if (items.length < 3) return patches;
-    const ordered = [...items].sort((left, right) => left.y - right.y);
-    const totalHeight = ordered.reduce((sum, item) => sum + item.height, 0);
-    const gap = (bounds.height - totalHeight) / (ordered.length - 1);
-    let cursor = bounds.minY;
+  if (command === 'distribute-y') {
+    if (items.length < 3)
+      return patches
+    const ordered = [...items].sort((left, right) => left.y - right.y)
+    const totalHeight = ordered.reduce((sum, item) => sum + item.height, 0)
+    const gap = (bounds.height - totalHeight) / (ordered.length - 1)
+    let cursor = bounds.minY
     for (const item of ordered) {
-      setPatch(item.id, { y: Math.round(cursor) } as Partial<T>);
-      cursor += item.height + gap;
+      setPatch(item.id, { y: Math.round(cursor) } as Partial<T>)
+      cursor += item.height + gap
     }
-    return patches;
+    return patches
   }
-  return patches;
+  return patches
 }
 
 function resolveElementContainerElements(
   element: DesignElementModel,
 ): DesignElementModel[] {
-  const normalizedFrameId = normalizeString(element.frameId);
-  const normalizedParentId = normalizeString(element.parentId);
+  const normalizedFrameId = normalizeString(element.frameId)
+  const normalizedParentId = normalizeString(element.parentId)
   const siblings = normalizedFrameId
     ? resolveCompositionElementsForFrame(compositionModel.value, normalizedFrameId)
     : resolveCompositionElementsForPage(
         compositionModel.value,
         normalizeString(element.pageId),
-      );
+      )
   return siblings.filter((candidate) => {
-    return normalizeString(candidate.parentId) === normalizedParentId;
-  });
+    return normalizeString(candidate.parentId) === normalizedParentId
+  })
 }
 
 function canGroupSelectedElements(elements: DesignElementModel[]): boolean {
-  if (elements.length < 2) return false;
-  if (elements.some((element) => element.type === "group")) return false;
-  const reference = elements[0] || null;
-  if (!reference) return false;
+  if (elements.length < 2)
+    return false
+  if (elements.some(element => element.type === 'group'))
+    return false
+  const reference = elements[0] || null
+  if (!reference)
+    return false
   const sameContainer = elements.every((element) => {
     return (
-      normalizeString(element.pageId) === normalizeString(reference.pageId) &&
-      normalizeString(element.frameId) === normalizeString(reference.frameId) &&
-      normalizeString(element.parentId) === normalizeString(reference.parentId)
-    );
-  });
-  if (!sameContainer) return false;
-  const frameId = normalizeString(reference.frameId);
+      normalizeString(element.pageId) === normalizeString(reference.pageId)
+      && normalizeString(element.frameId) === normalizeString(reference.frameId)
+      && normalizeString(element.parentId) === normalizeString(reference.parentId)
+    )
+  })
+  if (!sameContainer)
+    return false
+  const frameId = normalizeString(reference.frameId)
   const frame = frameId
     ? currentPageFrameMap.value.get(frameId) || null
-    : null;
+    : null
   return !(
-    frame &&
-    normalizeString(frame.metadata?.layout?.mode) === "auto"
-  );
+    frame
+    && normalizeString(frame.metadata?.layout?.mode) === 'auto'
+  )
 }
 
 function reorderSelectionLayerElements(
@@ -3293,81 +3448,87 @@ function reorderSelectionLayerElements(
   selectedIdSet: Set<string>,
   command: string,
 ): DesignElementModel[] | null {
-  const ordered = [...containerElements];
-  if (!ordered.length || !selectedIdSet.size) return null;
+  const ordered = [...containerElements]
+  if (!ordered.length || !selectedIdSet.size)
+    return null
 
-  if (command === "bring-to-front") {
+  if (command === 'bring-to-front') {
     return [
-      ...ordered.filter((element) => !selectedIdSet.has(element.id)),
-      ...ordered.filter((element) => selectedIdSet.has(element.id)),
-    ];
+      ...ordered.filter(element => !selectedIdSet.has(element.id)),
+      ...ordered.filter(element => selectedIdSet.has(element.id)),
+    ]
   }
 
-  if (command === "send-to-back") {
+  if (command === 'send-to-back') {
     return [
-      ...ordered.filter((element) => selectedIdSet.has(element.id)),
-      ...ordered.filter((element) => !selectedIdSet.has(element.id)),
-    ];
+      ...ordered.filter(element => selectedIdSet.has(element.id)),
+      ...ordered.filter(element => !selectedIdSet.has(element.id)),
+    ]
   }
 
-  if (command === "bring-forward") {
+  if (command === 'bring-forward') {
     for (let index = ordered.length - 2; index >= 0; index -= 1) {
-      const current = ordered[index];
-      const next = ordered[index + 1];
-      if (!current || !next) continue;
+      const current = ordered[index]
+      const next = ordered[index + 1]
+      if (!current || !next)
+        continue
       if (selectedIdSet.has(current.id) && !selectedIdSet.has(next.id))
-        [ordered[index], ordered[index + 1]] = [next, current];
+        [ordered[index], ordered[index + 1]] = [next, current]
     }
-    return ordered;
+    return ordered
   }
 
-  if (command === "send-backward") {
+  if (command === 'send-backward') {
     for (let index = 1; index < ordered.length; index += 1) {
-      const previous = ordered[index - 1];
-      const current = ordered[index];
-      if (!previous || !current) continue;
+      const previous = ordered[index - 1]
+      const current = ordered[index]
+      if (!previous || !current)
+        continue
       if (selectedIdSet.has(current.id) && !selectedIdSet.has(previous.id))
-        [ordered[index - 1], ordered[index]] = [current, previous];
+        [ordered[index - 1], ordered[index]] = [current, previous]
     }
-    return ordered;
+    return ordered
   }
 
-  return null;
+  return null
 }
 
 function runElementStructuralCommand(command: string): boolean {
-  const elements = resolveRawSelectedElements();
-  if (!elements.length) return false;
+  const elements = resolveRawSelectedElements()
+  if (!elements.length)
+    return false
 
-  if (command === "group") {
-    if (!canGroupSelectedElements(elements)) return true;
-    const groupId = `group-${Date.now()}`;
-    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  if (command === 'group') {
+    if (!canGroupSelectedElements(elements))
+      return true
+    const groupId = `group-${Date.now()}`
+    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
     commitDocument(
-      groupDesignElementsInSceneDocument(draftDocument.value, elements.map((element) => element.id), {
+      groupDesignElementsInSceneDocument(draftDocument.value, elements.map(element => element.id), {
         groupId,
-        groupName: "Group",
+        groupName: 'Group',
       }),
       {
-        historyMergeKey: "selection-group",
+        historyMergeKey: 'selection-group',
       },
-    );
+    )
     setSelectedElements([groupId], {
       primaryElementId: groupId,
       editingFrameId:
-        selectionSnapshot.editingFrameId ||
-        normalizeString(elements[0]?.frameId),
+        selectionSnapshot.editingFrameId
+        || normalizeString(elements[0]?.frameId),
       displayFrameId: resolveDisplayFrameIdForOwnerSelection(
-        selectionSnapshot.editingFrameId ||
-          normalizeString(elements[0]?.frameId),
+        selectionSnapshot.editingFrameId
+        || normalizeString(elements[0]?.frameId),
       ),
-    });
-    return true;
+    })
+    return true
   }
 
-  if (command === "ungroup") {
-    if (elements.length !== 1 || elements[0]?.type !== "group") return true;
-    const group = elements[0];
+  if (command === 'ungroup') {
+    if (elements.length !== 1 || elements[0]?.type !== 'group')
+      return true
+    const group = elements[0]
     const groupChildIds = (
       normalizeString(group.frameId)
         ? resolveCompositionElementsForFrame(
@@ -3379,542 +3540,571 @@ function runElementStructuralCommand(command: string): boolean {
             normalizeString(group.pageId),
           )
     )
-      .filter((element) => normalizeString(element.parentId) === group.id)
-      .map((element) => element.id);
-    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+      .filter(element => normalizeString(element.parentId) === group.id)
+      .map(element => element.id)
+    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
     commitDocument(
       ungroupDesignElementInSceneDocument(draftDocument.value, group.id),
       {
-        historyMergeKey: "selection-ungroup",
+        historyMergeKey: 'selection-ungroup',
       },
-    );
+    )
     setSelectedElements(groupChildIds, {
-      primaryElementId: groupChildIds[groupChildIds.length - 1] || "",
+      primaryElementId: groupChildIds[groupChildIds.length - 1] || '',
       editingFrameId:
         selectionSnapshot.editingFrameId || normalizeString(group.frameId),
       displayFrameId: resolveDisplayFrameIdForOwnerSelection(
         selectionSnapshot.editingFrameId || normalizeString(group.frameId),
       ),
-    });
-    return true;
+    })
+    return true
   }
 
   if (
     ![
-      "bring-forward",
-      "send-backward",
-      "bring-to-front",
-      "send-to-back",
+      'bring-forward',
+      'send-backward',
+      'bring-to-front',
+      'send-to-back',
     ].includes(command)
   ) {
-    return false;
+    return false
   }
 
-  const reference = elements[0] || null;
-  if (!reference) return true;
+  const reference = elements[0] || null
+  if (!reference)
+    return true
   if (
     !elements.every((element) => {
       return (
-        normalizeString(element.pageId) === normalizeString(reference.pageId) &&
-        normalizeString(element.frameId) === normalizeString(reference.frameId) &&
-        normalizeString(element.parentId) === normalizeString(reference.parentId)
-      );
+        normalizeString(element.pageId) === normalizeString(reference.pageId)
+        && normalizeString(element.frameId) === normalizeString(reference.frameId)
+        && normalizeString(element.parentId) === normalizeString(reference.parentId)
+      )
     })
   ) {
-    return true;
+    return true
   }
 
-  const containerElements = resolveElementContainerElements(reference);
+  const containerElements = resolveElementContainerElements(reference)
   const reordered = reorderSelectionLayerElements(
     containerElements,
-    new Set(elements.map((element) => element.id)),
+    new Set(elements.map(element => element.id)),
     command,
-  );
-  if (!reordered) return true;
+  )
+  if (!reordered)
+    return true
 
-  const reorderedIds = reordered.map((element) => element.id);
-  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
-  let nextDocument = draftDocument.value;
+  const reorderedIds = reordered.map(element => element.id)
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
+  let nextDocument = draftDocument.value
   reorderedIds.forEach((elementId, index) => {
     nextDocument = updateDesignElementInSceneDocument(nextDocument, elementId, {
       zIndex: index,
-    });
-  });
+    })
+  })
   commitDocument(nextDocument, {
-    historyMergeKey: "selection-layer-order",
-  });
-  replaceSelectionState(selectionSnapshot);
-  return true;
+    historyMergeKey: 'selection-layer-order',
+  })
+  replaceSelectionState(selectionSnapshot)
+  return true
 }
 
 function runSelectionCommand(command: string): void {
   if (selectedElementIds.value.length > 0) {
-    if (runElementStructuralCommand(command)) return;
+    if (runElementStructuralCommand(command))
+      return
     const elements = resolveRawSelectedElements().filter(
-      (element) => element.type !== "path",
-    );
-    const patches = buildSelectionGeometryPatches(elements, command);
-    if (!patches.size) return;
-    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
-    let nextDocument = draftDocument.value;
+      element => element.type !== 'path',
+    )
+    const patches = buildSelectionGeometryPatches(elements, command)
+    if (!patches.size)
+      return
+    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
+    let nextDocument = draftDocument.value
     for (const element of elements) {
-      const patch = patches.get(element.id);
-      if (!patch) continue;
+      const patch = patches.get(element.id)
+      if (!patch)
+        continue
       nextDocument = updateDesignElementInSceneDocument(
         nextDocument,
         element.id,
         patch,
-      );
+      )
     }
     commitDocument(nextDocument, {
-      historyMergeKey: "selection-command",
-    });
-    replaceSelectionState(selectionSnapshot);
-    return;
+      historyMergeKey: 'selection-command',
+    })
+    replaceSelectionState(selectionSnapshot)
+    return
   }
 
-  if (!selectedFrameIds.value.length) return;
+  if (!selectedFrameIds.value.length)
+    return
 
-  const frameRects = selectedFrames.value.map((frame) => ({
+  const frameRects = selectedFrames.value.map(frame => ({
     id: frame.id,
     x: frame.x,
     y: frame.y,
     width: frame.width,
     height: frame.height,
-  }));
-  const patches = buildSelectionGeometryPatches(frameRects, command);
-  if (!patches.size) return;
-  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
-  let nextDocument = draftDocument.value;
+  }))
+  const patches = buildSelectionGeometryPatches(frameRects, command)
+  if (!patches.size)
+    return
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
+  let nextDocument = draftDocument.value
   for (const frame of selectedFrames.value) {
-    const patch = patches.get(frame.id);
-    if (!patch) continue;
+    const patch = patches.get(frame.id)
+    if (!patch)
+      continue
     nextDocument = updateDesignFrameInSceneDocument(
       nextDocument,
       frame.id,
       patch,
-    );
+    )
   }
   commitDocument(nextDocument, {
-    historyMergeKey: "selection-command",
-  });
-  replaceSelectionState(selectionSnapshot);
+    historyMergeKey: 'selection-command',
+  })
+  replaceSelectionState(selectionSnapshot)
 }
 
 function toggleSelectedFramesLocked(): void {
-  if (!selectedFrames.value.length) return;
+  if (!selectedFrames.value.length)
+    return
 
-  const selectedIdSet = new Set(selectedFrames.value.map((frame) => frame.id));
-  const shouldLock = selectedFrames.value.some((frame) => !frame.locked);
+  const selectedIdSet = new Set(selectedFrames.value.map(frame => frame.id))
+  const shouldLock = selectedFrames.value.some(frame => !frame.locked)
   mutateCompositionDocument((composition) => {
     return {
       ...composition,
       frames: (composition.frames || []).map((frame) => {
-        if (!selectedIdSet.has(frame.id)) return frame;
+        if (!selectedIdSet.has(frame.id))
+          return frame
         return {
           ...frame,
           locked: shouldLock,
-        };
+        }
       }),
-    };
-  });
+    }
+  })
 }
 
 function isFrameSelected(frameId: string): boolean {
-  return selectedFrameIds.value.includes(frameId);
+  return selectedFrameIds.value.includes(frameId)
 }
 
 function isPrimarySelectedFrame(frameId: string): boolean {
-  return selectedFrameId.value === frameId;
+  return selectedFrameId.value === frameId
 }
 
 function isElementSelected(elementId: string): boolean {
-  return selectedElementIds.value.includes(elementId);
+  return selectedElementIds.value.includes(elementId)
 }
 
 function isPrimarySelectedElement(elementId: string): boolean {
-  return selectedElementId.value === elementId;
+  return selectedElementId.value === elementId
 }
 
 function isLayerTreeNodeExpanded(nodeId: string): boolean {
-  return !collapsedLayerNodeIds.value.includes(nodeId);
+  return !collapsedLayerNodeIds.value.includes(nodeId)
 }
 
 function toggleLayerTreeNodeExpanded(nodeId: string): void {
-  const normalizedNodeId = normalizeString(nodeId);
-  if (!normalizedNodeId) return;
+  const normalizedNodeId = normalizeString(nodeId)
+  if (!normalizedNodeId)
+    return
   collapsedLayerNodeIds.value = collapsedLayerNodeIds.value.includes(normalizedNodeId)
     ? collapsedLayerNodeIds.value.filter(id => id !== normalizedNodeId)
-    : [...collapsedLayerNodeIds.value, normalizedNodeId];
+    : [...collapsedLayerNodeIds.value, normalizedNodeId]
 }
 
 function isLayerTreeNodeAncestor(nodeId: string): boolean {
-  return selectedLayerTreeAncestorNodeIds.value.has(normalizeString(nodeId));
+  return selectedLayerTreeAncestorNodeIds.value.has(normalizeString(nodeId))
 }
 
 function resolveLayerTreeNodeIcon(node: DesignLayerTreeNode): string {
-  if (node.type === "page_root_group") return "layers";
-  if (node.type === "frame") {
-    const frame = currentPageFrameMap.value.get(normalizeString(node.frameId));
-    if (frame?.kind === "diagram") return "schema";
-    if (frame?.kind === "device_mockup") return "phone_iphone";
-    if (frame?.kind === "device_artboard") return "smartphone";
-    return "crop_portrait";
+  if (node.type === 'page_root_group')
+    return 'layers'
+  if (node.type === 'frame') {
+    const frame = currentPageFrameMap.value.get(normalizeString(node.frameId))
+    if (frame?.kind === 'diagram')
+      return 'schema'
+    if (frame?.kind === 'device_mockup')
+      return 'phone_iphone'
+    if (frame?.kind === 'device_artboard')
+      return 'smartphone'
+    return 'crop_portrait'
   }
 
-  const element = currentPageElementMap.value.get(normalizeString(node.elementId));
-  if (element?.type === "text" || element?.type === "caption") return "text_fields";
-  if (element?.type === "badge") return "label";
-  if (element?.type === "image") return "imagesmode";
-  if (element?.type === "path") return "draw";
-  if (element?.type === "shape" && normalizeString(element.shapeKind) === "ellipse")
-    return "circle";
-  if (element?.type === "shape" && normalizeString(element.shapeKind) === "arrow")
-    return "trending_flat";
-  return "crop_square";
+  const element = currentPageElementMap.value.get(normalizeString(node.elementId))
+  if (element?.type === 'text' || element?.type === 'caption')
+    return 'text_fields'
+  if (element?.type === 'badge')
+    return 'label'
+  if (element?.type === 'image')
+    return 'imagesmode'
+  if (element?.type === 'path')
+    return 'draw'
+  if (element?.type === 'shape' && normalizeString(element.shapeKind) === 'ellipse')
+    return 'circle'
+  if (element?.type === 'shape' && normalizeString(element.shapeKind) === 'arrow')
+    return 'trending_flat'
+  return 'crop_square'
 }
 
 function resolveLayerTreeNodeClass(node: DesignLayerTreeNode): string {
-  if (node.type === "frame" && node.frameId) {
+  if (node.type === 'frame' && node.frameId) {
     if (isPrimarySelectedFrame(node.frameId))
-      return "workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--primary";
+      return 'workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--primary'
     if (isFrameSelected(node.frameId))
-      return "workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--selected";
+      return 'workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--selected'
     if (isLayerTreeNodeAncestor(node.id))
-      return "workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--ancestor";
-    return "workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--idle";
+      return 'workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--ancestor'
+    return 'workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--idle'
   }
 
-  if (node.type === "element" && node.elementId) {
+  if (node.type === 'element' && node.elementId) {
     if (isPrimarySelectedElement(node.elementId))
-      return "workspace-design-layer-tree__row--element workspace-design-layer-tree__row--primary";
+      return 'workspace-design-layer-tree__row--element workspace-design-layer-tree__row--primary'
     if (isElementSelected(node.elementId))
-      return "workspace-design-layer-tree__row--element workspace-design-layer-tree__row--selected";
+      return 'workspace-design-layer-tree__row--element workspace-design-layer-tree__row--selected'
     if (isLayerTreeNodeAncestor(node.id))
-      return "workspace-design-layer-tree__row--element workspace-design-layer-tree__row--ancestor";
-    return "workspace-design-layer-tree__row--element workspace-design-layer-tree__row--idle";
+      return 'workspace-design-layer-tree__row--element workspace-design-layer-tree__row--ancestor'
+    return 'workspace-design-layer-tree__row--element workspace-design-layer-tree__row--idle'
   }
 
-  return "workspace-design-layer-tree__row--idle";
+  return 'workspace-design-layer-tree__row--idle'
 }
 
 function resolveLayerTreeFrameMeta(frameId?: string): string {
-  const frame = currentPageFrameMap.value.get(normalizeString(frameId));
-  if (!frame) return "";
-  return `${frame.kind} · ${Math.round(frame.width)} × ${Math.round(frame.height)}`;
+  const frame = currentPageFrameMap.value.get(normalizeString(frameId))
+  if (!frame)
+    return ''
+  return `${frame.kind} · ${Math.round(frame.width)} × ${Math.round(frame.height)}`
 }
 
 function normalizeLayerTreeNodes(
   nodes: DesignLayerTreeNode[],
 ): DesignLayerTreeNode[] {
   return nodes.flatMap((node) => {
-    if (node.type === "page_root_group" || node.type === "frame_children_group")
-      return normalizeLayerTreeNodes(node.children || []);
-    return [node];
-  });
+    if (node.type === 'page_root_group' || node.type === 'frame_children_group')
+      return normalizeLayerTreeNodes(node.children || [])
+    return [node]
+  })
 }
 
 function handleLayerTreeNodeSelection(
   node: DesignLayerTreeNode,
   event?: MouseEvent,
 ): void {
-  if (node.type === "frame" && node.frameId) {
-    handleFrameListSelection(node.frameId, event);
-    return;
+  if (node.type === 'frame' && node.frameId) {
+    handleFrameListSelection(node.frameId, event)
+    return
   }
 
-  if (node.type !== "element" || !node.elementId) return;
+  if (node.type !== 'element' || !node.elementId)
+    return
 
-  const editingFrameId = normalizeString(node.frameId);
+  const editingFrameId = normalizeString(node.frameId)
   if (event?.shiftKey) {
     const nextSelection = isElementSelected(node.elementId)
-      ? selectedElementIds.value.filter((id) => id !== node.elementId)
-      : [...selectedElementIds.value, node.elementId];
+      ? selectedElementIds.value.filter(id => id !== node.elementId)
+      : [...selectedElementIds.value, node.elementId]
     setSelectedElements(nextSelection, {
       primaryElementId: node.elementId,
       editingFrameId,
       displayFrameId: editingFrameId,
-    });
-    return;
+    })
+    return
   }
 
   setSelectedElements([node.elementId], {
     primaryElementId: node.elementId,
     editingFrameId,
     displayFrameId: editingFrameId,
-  });
+  })
 }
 
 function canMoveFrame(frameId: string, direction: -1 | 1): boolean {
-  const normalizedFrameId = normalizeString(frameId);
-  const frame = currentPageFrameMap.value.get(normalizedFrameId);
-  if (!frame) return false;
+  const normalizedFrameId = normalizeString(frameId)
+  const frame = currentPageFrameMap.value.get(normalizedFrameId)
+  if (!frame)
+    return false
   const pageFrames = currentPageFrames.value.filter(
     item => normalizeString(item.pageId) === normalizeString(frame.pageId),
-  );
-  const currentIndex = pageFrames.findIndex(item => item.id === normalizedFrameId);
-  const nextIndex = currentIndex + direction;
-  return currentIndex >= 0 && nextIndex >= 0 && nextIndex < pageFrames.length;
+  )
+  const currentIndex = pageFrames.findIndex(item => item.id === normalizedFrameId)
+  const nextIndex = currentIndex + direction
+  return currentIndex >= 0 && nextIndex >= 0 && nextIndex < pageFrames.length
 }
 
 function toggleElementHiddenById(elementId: string): void {
-  const normalizedElementId = normalizeString(elementId);
-  const element = currentPageElementMap.value.get(normalizedElementId);
-  if (!element) return;
-  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  const normalizedElementId = normalizeString(elementId)
+  const element = currentPageElementMap.value.get(normalizedElementId)
+  if (!element)
+    return
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
   commitDocument(
     updateDesignElementInSceneDocument(draftDocument.value, normalizedElementId, {
       hidden: !element.hidden,
     }),
-  );
-  replaceSelectionState(selectionSnapshot);
+  )
+  replaceSelectionState(selectionSnapshot)
 }
 
 function toggleFrameLockedById(frameId: string): void {
-  const normalizedFrameId = normalizeString(frameId);
-  const frame = currentPageFrameMap.value.get(normalizedFrameId);
-  if (!frame) return;
+  const normalizedFrameId = normalizeString(frameId)
+  const frame = currentPageFrameMap.value.get(normalizedFrameId)
+  if (!frame)
+    return
 
-  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
   mutateCompositionDocument((composition) => {
     return {
       ...composition,
       frames: (composition.frames || []).map((item) => {
-        if (normalizeString(item.id) !== normalizedFrameId) return item;
+        if (normalizeString(item.id) !== normalizedFrameId)
+          return item
         return {
           ...item,
           locked: !frame.locked,
-        };
+        }
       }),
-    };
-  });
-  replaceSelectionState(selectionSnapshot);
+    }
+  })
+  replaceSelectionState(selectionSnapshot)
 }
 
 function toggleElementLockedById(elementId: string): void {
-  const normalizedElementId = normalizeString(elementId);
-  const element = currentPageElementMap.value.get(normalizedElementId);
-  if (!element) return;
+  const normalizedElementId = normalizeString(elementId)
+  const element = currentPageElementMap.value.get(normalizedElementId)
+  if (!element)
+    return
 
-  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
   commitDocument(
     updateDesignElementInSceneDocument(draftDocument.value, normalizedElementId, {
       locked: !element.locked,
     }),
-  );
-  replaceSelectionState(selectionSnapshot);
+  )
+  replaceSelectionState(selectionSnapshot)
 }
 
 function toggleLayerTreeNodeLocked(node: DesignLayerTreeNode): void {
-  if (node.type === "frame" && node.frameId) {
-    toggleFrameLockedById(node.frameId);
-    return;
+  if (node.type === 'frame' && node.frameId) {
+    toggleFrameLockedById(node.frameId)
+    return
   }
-  if (node.type === "element" && node.elementId)
-    toggleElementLockedById(node.elementId);
+  if (node.type === 'element' && node.elementId)
+    toggleElementLockedById(node.elementId)
 }
 
 function selectLayerTreeParent(node: DesignLayerTreeNode): void {
-  const element = currentPageElementMap.value.get(normalizeString(node.elementId));
-  if (!element) return;
-  const parentElementId = normalizeString(element.parentId);
+  const element = currentPageElementMap.value.get(normalizeString(node.elementId))
+  if (!element)
+    return
+  const parentElementId = normalizeString(element.parentId)
   if (parentElementId && currentPageElementMap.value.has(parentElementId)) {
     setSelectedElements([parentElementId], {
       primaryElementId: parentElementId,
       editingFrameId: normalizeString(element.frameId),
       displayFrameId: normalizeString(element.frameId),
-    });
-    return;
+    })
+    return
   }
-  const frameId = normalizeString(element.frameId);
+  const frameId = normalizeString(element.frameId)
   if (frameId) {
     setSelectedFrames([frameId], {
       primaryFrameId: frameId,
-    });
+    })
   }
 }
 
 function buildLayerTreeMenuItems(node: DesignLayerTreeNode): ContextMenuItem[] {
-  const items: ContextMenuItem[] = [];
+  const items: ContextMenuItem[] = []
 
   if (node.children?.length) {
     items.push({
-      key: "toggle-expand",
-      label: isLayerTreeNodeExpanded(node.id) ? "折叠" : "展开",
-      icon: isLayerTreeNodeExpanded(node.id) ? "unfold_less" : "unfold_more",
-    });
+      key: 'toggle-expand',
+      label: isLayerTreeNodeExpanded(node.id) ? '折叠' : '展开',
+      icon: isLayerTreeNodeExpanded(node.id) ? 'unfold_less' : 'unfold_more',
+    })
   }
 
-  if (node.type === "frame" && node.frameId) {
-    const frame = currentPageFrameMap.value.get(normalizeString(node.frameId)) || null;
+  if (node.type === 'frame' && node.frameId) {
+    const frame = currentPageFrameMap.value.get(normalizeString(node.frameId)) || null
     items.push(
       {
-        key: "move-up",
-        label: "上移",
-        icon: "keyboard_arrow_up",
+        key: 'move-up',
+        label: '上移',
+        icon: 'keyboard_arrow_up',
         disabled: !canMoveFrame(node.frameId, -1),
       },
       {
-        key: "move-down",
-        label: "下移",
-        icon: "keyboard_arrow_down",
+        key: 'move-down',
+        label: '下移',
+        icon: 'keyboard_arrow_down',
         disabled: !canMoveFrame(node.frameId, 1),
       },
       {
-        key: "duplicate",
-        label: "复制",
-        icon: "content_copy",
+        key: 'duplicate',
+        label: '复制',
+        icon: 'content_copy',
         separatorBefore: items.length > 0,
       },
-    );
-    if (frame?.kind === "diagram") {
+    )
+    if (frame?.kind === 'diagram') {
       items.push({
-        key: "open-diagram",
-        label: "打开 Diagram 编辑态",
-        icon: "schema",
-      });
+        key: 'open-diagram',
+        label: '打开 Diagram 编辑态',
+        icon: 'schema',
+      })
     }
     items.push({
-      key: "delete",
-      label: "删除",
-      icon: "delete",
-      tone: "danger",
+      key: 'delete',
+      label: '删除',
+      icon: 'delete',
+      tone: 'danger',
       separatorBefore: true,
-    });
-    return items;
+    })
+    return items
   }
 
-  if (node.type === "element" && node.elementId) {
-    const element = currentPageElementMap.value.get(normalizeString(node.elementId));
+  if (node.type === 'element' && node.elementId) {
+    const element = currentPageElementMap.value.get(normalizeString(node.elementId))
     if (normalizeString(element?.parentId) || normalizeString(element?.frameId)) {
       items.push({
-        key: "select-parent",
-        label: "选择父级",
-        icon: "arrow_upward",
+        key: 'select-parent',
+        label: '选择父级',
+        icon: 'arrow_upward',
         separatorBefore: items.length > 0,
-      });
+      })
     }
     items.push(
       {
-        key: "duplicate",
-        label: "复制",
-        icon: "content_copy",
+        key: 'duplicate',
+        label: '复制',
+        icon: 'content_copy',
         separatorBefore: items.length > 0,
       },
       {
-        key: "delete",
-        label: "删除",
-        icon: "delete",
-        tone: "danger",
+        key: 'delete',
+        label: '删除',
+        icon: 'delete',
+        tone: 'danger',
         separatorBefore: true,
       },
-    );
+    )
   }
 
-  return items;
+  return items
 }
 
 function openLayerTreeMenu(node: DesignLayerTreeNode, event: MouseEvent): void {
-  event.preventDefault();
-  event.stopPropagation();
-  layerTreeMenuNodeId.value = node.id;
-  layerTreeMenuItems.value = buildLayerTreeMenuItems(node);
-  layerTreeMenuAnchorEl.value = event.currentTarget as HTMLElement | null;
-  layerTreeMenuVisible.value = true;
+  event.preventDefault()
+  event.stopPropagation()
+  layerTreeMenuNodeId.value = node.id
+  layerTreeMenuItems.value = buildLayerTreeMenuItems(node)
+  layerTreeMenuAnchorEl.value = event.currentTarget as HTMLElement | null
+  layerTreeMenuVisible.value = true
 }
 
 function handleLayerTreeMenuSelect(key: string): void {
   const row = frameSidebarTreeRows.value.find(
     item => item.node.id === layerTreeMenuNodeId.value,
-  );
-  const node = row?.node || null;
-  closeLayerTreeMenu();
-  if (!node) return;
+  )
+  const node = row?.node || null
+  closeLayerTreeMenu()
+  if (!node)
+    return
 
-  if (key === "toggle-expand") {
-    toggleLayerTreeNodeExpanded(node.id);
-    return;
+  if (key === 'toggle-expand') {
+    toggleLayerTreeNodeExpanded(node.id)
+    return
   }
 
-  if (node.type === "frame" && node.frameId) {
-    if (key === "move-up") {
-      moveFrame(node.frameId, -1);
-      return;
+  if (node.type === 'frame' && node.frameId) {
+    if (key === 'move-up') {
+      moveFrame(node.frameId, -1)
+      return
     }
-    if (key === "move-down") {
-      moveFrame(node.frameId, 1);
-      return;
+    if (key === 'move-down') {
+      moveFrame(node.frameId, 1)
+      return
     }
-    if (key === "toggle-lock") {
-      toggleFrameLockedById(node.frameId);
-      return;
+    if (key === 'toggle-lock') {
+      toggleFrameLockedById(node.frameId)
+      return
     }
-    if (key === "duplicate") {
+    if (key === 'duplicate') {
       setSelectedFrames([node.frameId], {
         primaryFrameId: node.frameId,
-      });
-      duplicateSelectedFrame();
-      return;
+      })
+      duplicateSelectedFrame()
+      return
     }
-    if (key === "open-diagram") {
-      openFrameEditor(node.frameId);
-      return;
+    if (key === 'open-diagram') {
+      openFrameEditor(node.frameId)
+      return
     }
-    if (key === "delete") {
+    if (key === 'delete') {
       setSelectedFrames([node.frameId], {
         primaryFrameId: node.frameId,
-      });
-      removeSelectedFrame();
+      })
+      removeSelectedFrame()
     }
-    return;
+    return
   }
 
-  if (node.type !== "element" || !node.elementId) return;
+  if (node.type !== 'element' || !node.elementId)
+    return
 
-  if (key === "select-parent") {
-    selectLayerTreeParent(node);
-    return;
+  if (key === 'select-parent') {
+    selectLayerTreeParent(node)
+    return
   }
-  if (key === "toggle-lock") {
-    toggleElementLockedById(node.elementId);
-    return;
+  if (key === 'toggle-lock') {
+    toggleElementLockedById(node.elementId)
+    return
   }
-  if (key === "toggle-visibility") {
-    toggleElementHiddenById(node.elementId);
-    return;
+  if (key === 'toggle-visibility') {
+    toggleElementHiddenById(node.elementId)
+    return
   }
-  if (key === "duplicate") {
-    const editingFrameId = normalizeString(node.frameId);
+  if (key === 'duplicate') {
+    const editingFrameId = normalizeString(node.frameId)
     setSelectedElements([node.elementId], {
       primaryElementId: node.elementId,
       editingFrameId,
       displayFrameId: editingFrameId,
-    });
-    duplicateSelectedElement();
-    return;
+    })
+    duplicateSelectedElement()
+    return
   }
-  if (key === "delete") {
-    const editingFrameId = normalizeString(node.frameId);
+  if (key === 'delete') {
+    const editingFrameId = normalizeString(node.frameId)
     setSelectedElements([node.elementId], {
       primaryElementId: node.elementId,
       editingFrameId,
       displayFrameId: editingFrameId,
-    });
-    removeSelectedElement();
+    })
+    removeSelectedElement()
   }
 }
 
 function handleFrameListSelection(frameId: string, event?: MouseEvent): void {
   if (event?.shiftKey) {
     const nextSelection = isFrameSelected(frameId)
-      ? selectedFrameIds.value.filter((id) => id !== frameId)
-      : [...selectedFrameIds.value, frameId];
+      ? selectedFrameIds.value.filter(id => id !== frameId)
+      : [...selectedFrameIds.value, frameId]
     setSelectedFrames(nextSelection, {
       primaryFrameId: frameId,
-    });
-    return;
+    })
+    return
   }
-  selectSingleFrame(frameId);
+  selectSingleFrame(frameId)
 }
 
 function upsertFrameElement(
@@ -3922,11 +4112,11 @@ function upsertFrameElement(
   matcher: (element: DesignElementModel) => boolean,
   nextElement: DesignElementModel,
 ): DesignElementModel[] {
-  const elements = resolveFrameElements(frame);
-  const index = elements.findIndex(matcher);
+  const elements = resolveFrameElements(frame)
+  const index = elements.findIndex(matcher)
   if (index === -1) {
-    elements.push(nextElement);
-    return elements;
+    elements.push(nextElement)
+    return elements
   }
   elements[index] = {
     ...elements[index],
@@ -3939,22 +4129,23 @@ function upsertFrameElement(
       ...(elements[index]?.metadata || {}),
       ...(nextElement.metadata || {}),
     },
-  };
-  return elements;
+  }
+  return elements
 }
 
 function applyImageToSelectedFrame(src: string): void {
-  if (!selectedFrame.value) return;
-  const isDeviceMockup = selectedFrame.value.kind === "device_mockup";
-  const isMarketingFrame = selectedFrame.value.kind === "template";
-  const isDeviceArtboard = selectedFrame.value.kind === "device_artboard";
-  const existingElements = resolveFrameElements(selectedFrame.value);
+  if (!selectedFrame.value)
+    return
+  const isDeviceMockup = selectedFrame.value.kind === 'device_mockup'
+  const isMarketingFrame = selectedFrame.value.kind === 'template'
+  const isDeviceArtboard = selectedFrame.value.kind === 'device_artboard'
+  const existingElements = resolveFrameElements(selectedFrame.value)
   const nextElements = upsertFrameElement(
     selectedFrame.value,
-    (element) => element.id === "hero-image" || element.type === "image",
+    element => element.id === 'hero-image' || element.type === 'image',
     {
-      id: "hero-image",
-      type: "image",
+      id: 'hero-image',
+      type: 'image',
       x: isDeviceMockup || isDeviceArtboard ? 0 : isMarketingFrame ? 960 : 56,
       y: isDeviceMockup || isDeviceArtboard ? 0 : isMarketingFrame ? 128 : 220,
       width: isDeviceMockup || isDeviceArtboard ? selectedFrame.value.width : isMarketingFrame ? 520 : 320,
@@ -3966,79 +4157,81 @@ function applyImageToSelectedFrame(src: string): void {
       hidden: false,
       imageSrc: src,
     },
-  );
+  )
   updateSelectedFrame({
     elements: nextElements,
-  });
+  })
 }
 
 async function readImageAsDataUrl(file: File): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("FILE_READ_FAILED"));
-    reader.readAsDataURL(file);
-  }).catch(() => "");
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('FILE_READ_FAILED'))
+    reader.readAsDataURL(file)
+  }).catch(() => '')
 }
 
 async function readImageDimensions(
   src: string,
-): Promise<{ width: number; height: number }> {
-  if (!import.meta.client || !src) return { width: 0, height: 0 };
-  return await new Promise<{ width: number; height: number }>((resolve) => {
-    const image = new Image();
+): Promise<{ width: number, height: number }> {
+  if (!import.meta.client || !src)
+    return { width: 0, height: 0 }
+  return await new Promise<{ width: number, height: number }>((resolve) => {
+    const image = new Image()
     image.onload = () => {
       resolve({
         width: Number(image.naturalWidth || image.width || 0),
         height: Number(image.naturalHeight || image.height || 0),
-      });
-    };
-    image.onerror = () => resolve({ width: 0, height: 0 });
-    image.src = src;
-  });
+      })
+    }
+    image.onerror = () => resolve({ width: 0, height: 0 })
+    image.src = src
+  })
 }
 
 function createAssetId(): string {
-  return `asset-${Date.now()}`;
+  return `asset-${Date.now()}`
 }
 
 function clearPendingImagePlacement(): void {
-  pendingImagePlacement.value = null;
+  pendingImagePlacement.value = null
 }
 
 function queuePendingImagePlacement(payload: PendingImagePlacement | null): void {
   pendingImagePlacement.value = payload && payload.src
     ? {
         src: payload.src,
-        name: payload.name || "图片",
+        name: payload.name || '图片',
         intrinsicWidth: Math.max(1, Math.round(payload.intrinsicWidth || 1)),
         intrinsicHeight: Math.max(1, Math.round(payload.intrinsicHeight || 1)),
         assetId: payload.assetId || undefined,
         mimeType: payload.mimeType || undefined,
       }
-    : null;
+    : null
 }
 
 async function queueImagePlacementFromFile(file: File): Promise<void> {
-  const src = await readImageAsDataUrl(file);
-  if (!src) return;
-  const dimensions = await readImageDimensions(src);
+  const src = await readImageAsDataUrl(file)
+  if (!src)
+    return
+  const dimensions = await readImageDimensions(src)
   queuePendingImagePlacement({
     src,
     name: file.name,
     intrinsicWidth: dimensions.width || 1,
     intrinsicHeight: dimensions.height || 1,
     mimeType: file.type || undefined,
-  });
+  })
 }
 
 async function placeAssetOnCanvas(asset: DesignAssetModel): Promise<void> {
-  const intrinsicWidth = Number(asset.width || 0);
-  const intrinsicHeight = Number(asset.height || 0);
-  const dimensions =
-    intrinsicWidth > 0 && intrinsicHeight > 0
+  const intrinsicWidth = Number(asset.width || 0)
+  const intrinsicHeight = Number(asset.height || 0)
+  const dimensions
+    = intrinsicWidth > 0 && intrinsicHeight > 0
       ? { width: intrinsicWidth, height: intrinsicHeight }
-      : await readImageDimensions(asset.src);
+      : await readImageDimensions(asset.src)
   queuePendingImagePlacement({
     src: asset.src,
     name: asset.name,
@@ -4046,7 +4239,7 @@ async function placeAssetOnCanvas(asset: DesignAssetModel): Promise<void> {
     intrinsicHeight: dimensions.height || 1,
     assetId: asset.id,
     mimeType: asset.mimeType || undefined,
-  });
+  })
 }
 
 async function requestCanvasLibraryApi<T>(
@@ -4054,67 +4247,66 @@ async function requestCanvasLibraryApi<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const response = await fetch(endpoint(path), {
-    credentials: "include",
+    credentials: 'include',
     ...init,
-  });
-  const result = (await response.json().catch(() => null)) as ApiResponse<T> | null;
+  })
+  const result = (await response.json().catch(() => null)) as ApiResponse<T> | null
   if (!response.ok || !result || result.code !== 0) {
-    throw new Error(String(result?.message || "画布资源库请求失败。"));
+    throw new Error(String(result?.message || '画布资源库请求失败。'))
   }
-  return result.data;
+  return result.data
 }
 
 function notifyCanvasLibraryError(message: string): void {
-  canvasLibraryError.value = message;
-  if (import.meta.client) window.alert(message);
+  canvasLibraryError.value = message
 }
 
 async function loadCanvasLibraryItems(): Promise<void> {
-  const projectId = normalizeString(props.projectId);
+  const projectId = normalizeString(props.projectId)
   if (!projectId) {
-    canvasLibraryItems.value = [];
-    canvasLibraryError.value = "";
-    return;
+    canvasLibraryItems.value = []
+    canvasLibraryError.value = ''
+    return
   }
 
-  canvasLibraryLoading.value = true;
-  canvasLibraryError.value = "";
+  canvasLibraryLoading.value = true
+  canvasLibraryError.value = ''
   try {
     const items = await requestCanvasLibraryApi<CanvasLibraryItem[]>(
       `/projects/${encodeURIComponent(projectId)}/design-library/items`,
-    );
-    canvasLibraryItems.value = items;
+    )
+    canvasLibraryItems.value = items
   }
   catch (error: any) {
-    canvasLibraryItems.value = [];
-    canvasLibraryError.value = String(error?.message || "资源库加载失败。");
+    canvasLibraryItems.value = []
+    canvasLibraryError.value = String(error?.message || '资源库加载失败。')
   }
   finally {
-    canvasLibraryLoading.value = false;
+    canvasLibraryLoading.value = false
   }
 }
 
 async function loadMockupCatalog(): Promise<void> {
-  const projectId = normalizeString(props.projectId);
+  const projectId = normalizeString(props.projectId)
   if (!projectId) {
-    mockupCatalog.value = null;
-    mockupCatalogError.value = "";
-    return;
+    mockupCatalog.value = null
+    mockupCatalogError.value = ''
+    return
   }
 
-  mockupCatalogLoading.value = true;
-  mockupCatalogError.value = "";
+  mockupCatalogLoading.value = true
+  mockupCatalogError.value = ''
   try {
     mockupCatalog.value = await requestCanvasLibraryApi<MockupProjectCatalog>(
       `/projects/${encodeURIComponent(projectId)}/mockups/catalog`,
-    );
+    )
   }
   catch (error: any) {
-    mockupCatalog.value = null;
-    mockupCatalogError.value = String(error?.message || "Mockup 目录加载失败。");
+    mockupCatalog.value = null
+    mockupCatalogError.value = String(error?.message || 'Mockup 目录加载失败。')
   }
   finally {
-    mockupCatalogLoading.value = false;
+    mockupCatalogLoading.value = false
   }
 }
 
@@ -4125,85 +4317,87 @@ function buildCanvasLibraryImportOrigin(
     itemId: version.itemId,
     versionId: version.id,
     importedAt: new Date().toISOString(),
-    importedBy: normalizeString(props.currentUserId) || "anonymous",
-    source: "canvas_library",
-  };
+    importedBy: normalizeString(props.currentUserId) || 'anonymous',
+    source: 'canvas_library',
+  }
 }
 
 function buildLibraryOriginMetadata(input: {
-  itemId: string;
-  versionId: string;
+  itemId: string
+  versionId: string
 }): CanvasLibraryOriginMetadata {
   return {
     itemId: input.itemId,
     versionId: input.versionId,
     importedAt: new Date().toISOString(),
-    importedBy: normalizeString(props.currentUserId) || "anonymous",
-    source: "canvas_library",
-  };
+    importedBy: normalizeString(props.currentUserId) || 'anonymous',
+    source: 'canvas_library',
+  }
 }
 
 async function ensureMockupShellAssetFromCatalogVariant(
   variant: MockupProjectCatalogVariant,
 ): Promise<DesignAssetModel | null> {
-  const itemId = normalizeString(variant.shellAssetItemId);
-  const versionId = normalizeString(variant.shellAssetVersionId);
-  const shellAssetUrl = normalizeString(variant.shellAssetUrl);
+  const itemId = normalizeString(variant.shellAssetItemId)
+  const versionId = normalizeString(variant.shellAssetVersionId)
+  const shellAssetUrl = normalizeString(variant.shellAssetUrl)
   if (!itemId || !versionId || !variant.shellAssetPayload || !shellAssetUrl) {
-    return null;
+    return null
   }
 
-  const existingAsset =
-    (compositionModel.value.assets || []).find((asset) => {
-      const origin = asset.metadata?.libraryOrigin;
+  const existingAsset
+    = (compositionModel.value.assets || []).find((asset) => {
+      const origin = asset.metadata?.libraryOrigin
       return (
-        asset.metadata?.role === "device_shell" &&
-        normalizeString(origin?.itemId) === itemId &&
-        normalizeString(origin?.versionId) === versionId
-      );
-    }) || null;
-  if (existingAsset) return existingAsset;
+        asset.metadata?.role === 'device_shell'
+        && normalizeString(origin?.itemId) === itemId
+        && normalizeString(origin?.versionId) === versionId
+      )
+    }) || null
+  if (existingAsset)
+    return existingAsset
 
   const asset = buildDesignAssetFromCanvasLibraryPayload(
     variant.shellAssetPayload,
     {
       id: createAssetId(),
       src: shellAssetUrl,
-      assetKind: "device_shell",
+      assetKind: 'device_shell',
       name:
-        normalizeString(variant.shellAssetTitle) ||
-        normalizeString(variant.title) ||
-        variant.resolvedPreset.title,
+        normalizeString(variant.shellAssetTitle)
+        || normalizeString(variant.title)
+        || variant.resolvedPreset.title,
       origin: buildLibraryOriginMetadata({
         itemId,
         versionId,
       }),
     },
-  );
-  commitDocument(appendDesignAssetToSceneDocument(draftDocument.value, asset));
-  return asset;
+  )
+  commitDocument(appendDesignAssetToSceneDocument(draftDocument.value, asset))
+  return asset
 }
 
 async function selectMockupVariant(presetKey: string): Promise<void> {
-  const frame = selectedFrame.value;
-  if (!frame || (frame.kind !== "device_mockup" && frame.kind !== "device_artboard")) {
-    return;
+  const frame = selectedFrame.value
+  if (!frame || (frame.kind !== 'device_mockup' && frame.kind !== 'device_artboard')) {
+    return
   }
 
-  const normalizedPresetKey = normalizeString(presetKey);
-  if (!normalizedPresetKey) return;
+  const normalizedPresetKey = normalizeString(presetKey)
+  if (!normalizedPresetKey)
+    return
 
-  const preset =
-    resolvedDeviceFramePresets.value.find((item) => item.key === normalizedPresetKey) ||
-    resolveDeviceFramePreset(normalizedPresetKey);
-  const catalogVariant = mockupCatalogVariantMap.value.get(normalizedPresetKey) || null;
+  const preset
+    = resolvedDeviceFramePresets.value.find(item => item.key === normalizedPresetKey)
+      || resolveDeviceFramePreset(normalizedPresetKey)
+  const catalogVariant = mockupCatalogVariantMap.value.get(normalizedPresetKey) || null
   const importedShellAsset = catalogVariant
     ? await ensureMockupShellAssetFromCatalogVariant(catalogVariant)
-    : null;
+    : null
 
   updateSelectedFrame({
     deviceFramePresetKey: normalizedPresetKey,
-    ...(frame.kind === "device_artboard" && preset
+    ...(frame.kind === 'device_artboard' && preset
       ? {
           width: preset.screenWidth,
           height: preset.screenHeight,
@@ -4215,57 +4409,59 @@ async function selectMockupVariant(presetKey: string): Promise<void> {
         ...(frame.metadata?.device || {}),
         ...(importedShellAsset
           ? {
-              shellMode: "external",
+              shellMode: 'external',
               shellAssetId: importedShellAsset.id,
             }
           : {}),
       },
     },
-  });
+  })
 }
 
 async function importCanvasLibraryItem(item: CanvasLibraryItem): Promise<void> {
-  const projectId = normalizeString(props.projectId);
-  if (!projectId) return;
+  const projectId = normalizeString(props.projectId)
+  if (!projectId)
+    return
 
-  canvasLibraryActioningId.value = item.id;
+  canvasLibraryActioningId.value = item.id
   try {
     const detail = await requestCanvasLibraryApi<{
-      item: CanvasLibraryItem;
-      draftVersion: CanvasLibraryItemVersion | null;
-      publishedVersion: CanvasLibraryItemVersion | null;
-      assetUrl?: string;
+      item: CanvasLibraryItem
+      draftVersion: CanvasLibraryItemVersion | null
+      publishedVersion: CanvasLibraryItemVersion | null
+      assetUrl?: string
     }>(
       `/projects/${encodeURIComponent(projectId)}/design-library/items/${encodeURIComponent(item.id)}`,
-    );
-    const version = detail.publishedVersion;
-    if (!version) throw new Error("资源库版本不存在。");
-    const origin = buildCanvasLibraryImportOrigin(version);
+    )
+    const version = detail.publishedVersion
+    if (!version)
+      throw new Error('资源库版本不存在。')
+    const origin = buildCanvasLibraryImportOrigin(version)
 
-    if (detail.item.kind === "template") {
-      if (detail.item.templateTarget === "scene") {
+    if (detail.item.kind === 'template') {
+      if (detail.item.templateTarget === 'scene') {
         const created = await requestCanvasLibraryApi<Resource>(
           `/projects/${encodeURIComponent(projectId)}/design-library/templates/${encodeURIComponent(item.id)}/create-resource`,
           {
-            method: "POST",
+            method: 'POST',
           },
-        );
-        emit("activateResource", created.id);
-        return;
+        )
+        emit('activateResource', created.id)
+        return
       }
 
-      if (detail.item.templateTarget === "page") {
+      if (detail.item.templateTarget === 'page') {
         commitDocument(
           mergeCanvasLibraryPageTemplate(
             draftDocument.value,
             version.payload as CanvasLibraryPageTemplatePayload,
             origin,
           ),
-        );
-        return;
+        )
+        return
       }
 
-      if (detail.item.templateTarget === "frame") {
+      if (detail.item.templateTarget === 'frame') {
         commitDocument(
           mergeCanvasLibraryFrameTemplate(
             draftDocument.value,
@@ -4273,15 +4469,15 @@ async function importCanvasLibraryItem(item: CanvasLibraryItem): Promise<void> {
             origin,
             currentPage.value?.id,
           ),
-        );
-        return;
+        )
+        return
       }
 
-      throw new Error("暂不支持的模板目标。");
+      throw new Error('暂不支持的模板目标。')
     }
 
-    if (version.payloadType !== "binary_asset" || !detail.assetUrl) {
-      throw new Error("素材版本不可导入。");
+    if (version.payloadType !== 'binary_asset' || !detail.assetUrl) {
+      throw new Error('素材版本不可导入。')
     }
 
     const asset = buildDesignAssetFromCanvasLibraryPayload(
@@ -4290,66 +4486,67 @@ async function importCanvasLibraryItem(item: CanvasLibraryItem): Promise<void> {
         id: createAssetId(),
         src: detail.assetUrl,
         assetKind:
-          detail.item.assetKind === "device_shell"
-            ? "device_shell"
-            : detail.item.assetKind === "svg"
-              ? "svg"
-              : "image",
+          detail.item.assetKind === 'device_shell'
+            ? 'device_shell'
+            : detail.item.assetKind === 'svg'
+              ? 'svg'
+              : 'image',
         origin,
       },
-    );
-    commitDocument(appendDesignAssetToSceneDocument(draftDocument.value, asset));
+    )
+    commitDocument(appendDesignAssetToSceneDocument(draftDocument.value, asset))
   }
   catch (error: any) {
     notifyCanvasLibraryError(
-      String(error?.message || "导入资源库条目失败。"),
-    );
+      String(error?.message || '导入资源库条目失败。'),
+    )
   }
   finally {
-    canvasLibraryActioningId.value = "";
+    canvasLibraryActioningId.value = ''
   }
 }
 
 function resolveCanvasPublishDefaults(): {
-  title: string;
-  pageId?: string;
-  frameId?: string;
+  title: string
+  pageId?: string
+  frameId?: string
 } {
-  if (canvasLibraryPublishScope.value === "frame" && selectedFrame.value) {
+  if (canvasLibraryPublishScope.value === 'frame' && selectedFrame.value) {
     return {
-      title: selectedFrame.value.name || "Frame 模板",
+      title: selectedFrame.value.name || 'Frame 模板',
       pageId: selectedFrame.value.pageId,
       frameId: selectedFrame.value.id,
-    };
+    }
   }
-  if (canvasLibraryPublishScope.value === "page" && currentPage.value) {
+  if (canvasLibraryPublishScope.value === 'page' && currentPage.value) {
     return {
-      title: currentPage.value.name || "Page 模板",
+      title: currentPage.value.name || 'Page 模板',
       pageId: currentPage.value.id,
-    };
+    }
   }
   return {
-    title: props.designPanelTitle || "设计模板",
-  };
+    title: props.designPanelTitle || '设计模板',
+  }
 }
 
 async function publishCurrentDesignToCanvasLibrary(
   publish: boolean,
 ): Promise<void> {
-  const projectId = normalizeString(props.projectId);
-  const designResourceId = normalizeString(props.designResourceId);
-  if (!projectId || !designResourceId) return;
+  const projectId = normalizeString(props.projectId)
+  const designResourceId = normalizeString(props.designResourceId)
+  if (!projectId || !designResourceId)
+    return
 
-  const defaults = resolveCanvasPublishDefaults();
-  const title = canvasLibraryPublishTitle.value.trim() || defaults.title;
-  canvasLibraryActioningId.value = publish ? "publish" : "draft";
+  const defaults = resolveCanvasPublishDefaults()
+  const title = canvasLibraryPublishTitle.value.trim() || defaults.title
+  canvasLibraryActioningId.value = publish ? 'publish' : 'draft'
   try {
     await requestCanvasLibraryApi(
-      "/admin/canvas-library/from-design",
+      '/admin/canvas-library/from-design',
       {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           projectId,
@@ -4361,39 +4558,41 @@ async function publishCurrentDesignToCanvasLibrary(
           summary: canvasLibraryPublishSummary.value.trim(),
           tags: canvasLibraryPublishTags.value
             .split(/[，,\n]+/)
-            .map((item) => item.trim())
+            .map(item => item.trim())
             .filter(Boolean),
           publish,
         }),
       },
-    );
-    canvasLibraryPublishTitle.value = "";
-    canvasLibraryPublishSummary.value = "";
-    canvasLibraryPublishTags.value = "";
-    await loadCanvasLibraryItems();
+    )
+    canvasLibraryPublishTitle.value = ''
+    canvasLibraryPublishSummary.value = ''
+    canvasLibraryPublishTags.value = ''
+    await loadCanvasLibraryItems()
   }
   catch (error: any) {
     notifyCanvasLibraryError(
-      String(error?.message || "发布到资源库失败。"),
-    );
+      String(error?.message || '发布到资源库失败。'),
+    )
   }
   finally {
-    canvasLibraryActioningId.value = "";
+    canvasLibraryActioningId.value = ''
   }
 }
 
 async function handleAssetUpload(event: Event): Promise<void> {
-  const input = event.target as HTMLInputElement | null;
-  const file = input?.files?.[0];
-  if (!file) return;
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!file)
+    return
 
-  const src = await readImageAsDataUrl(file);
-  if (!src) return;
-  const dimensions = await readImageDimensions(src);
+  const src = await readImageAsDataUrl(file)
+  if (!src)
+    return
+  const dimensions = await readImageDimensions(src)
 
   const asset: DesignAssetModel = {
     id: createAssetId(),
-    type: "image",
+    type: 'image',
     name: file.name,
     src,
     mimeType: file.type || undefined,
@@ -4402,46 +4601,47 @@ async function handleAssetUpload(event: Event): Promise<void> {
     metadata: {
       size: file.size,
     },
-  };
+  }
 
   mutateCompositionDocument((composition) => {
     return {
       ...composition,
       assets: [...(composition.assets || []), asset],
-    };
-  });
-  if (input) input.value = "";
+    }
+  })
+  if (input)
+    input.value = ''
 }
 
 function useAsset(asset: DesignAssetModel): void {
-  applyImageToSelectedFrame(asset.src);
+  applyImageToSelectedFrame(asset.src)
 }
 
 async function handleToolbarInsertImage(file: File): Promise<void> {
-  await queueImagePlacementFromFile(file);
+  await queueImagePlacementFromFile(file)
 }
 
 function buildShellViewportDefaults() {
   const preset = resolveDeviceFramePreset(
     selectedFrame.value?.deviceFramePresetKey || DEFAULT_DEVICE_FRAME_KEY,
-  );
-  if (preset.deviceFamily === "browser") {
+  )
+  if (preset.deviceFamily === 'browser') {
     return {
       x: 0,
       y: 54,
       width: preset.screenWidth,
       height: preset.screenHeight,
       cornerRadius: preset.screenRadius,
-    };
+    }
   }
-  if (preset.deviceFamily === "desktop") {
+  if (preset.deviceFamily === 'desktop') {
     return {
       x: 35,
       y: 24,
       width: preset.screenWidth,
       height: preset.screenHeight,
       cornerRadius: preset.screenRadius,
-    };
+    }
   }
   return {
     x: preset.framePadding,
@@ -4449,29 +4649,31 @@ function buildShellViewportDefaults() {
     width: preset.screenWidth,
     height: preset.screenHeight,
     cornerRadius: preset.screenRadius,
-  };
+  }
 }
 
 async function handleShellAssetUpload(event: Event): Promise<void> {
-  const input = event.target as HTMLInputElement | null;
-  const file = input?.files?.[0];
-  if (!file) return;
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!file)
+    return
 
-  const src = await readImageAsDataUrl(file);
-  if (!src) return;
-  const dimensions = await readImageDimensions(src);
-  const viewportDefaults = buildShellViewportDefaults();
+  const src = await readImageAsDataUrl(file)
+  if (!src)
+    return
+  const dimensions = await readImageDimensions(src)
+  const viewportDefaults = buildShellViewportDefaults()
 
   const asset: DesignAssetModel = {
     id: createAssetId(),
-    type: "image",
+    type: 'image',
     name: file.name,
     src,
     mimeType: file.type || undefined,
     width: dimensions.width || undefined,
     height: dimensions.height || undefined,
     metadata: {
-      role: "device_shell",
+      role: 'device_shell',
       deviceShell: {
         presetKeys: [
           selectedFrame.value?.deviceFramePresetKey || DEFAULT_DEVICE_FRAME_KEY,
@@ -4483,35 +4685,36 @@ async function handleShellAssetUpload(event: Event): Promise<void> {
           height: viewportDefaults.height,
         },
         cornerRadius: viewportDefaults.cornerRadius,
-        source: "uploaded",
+        source: 'uploaded',
       },
     },
-  };
+  }
 
   mutateCompositionDocument((composition) => {
     return {
       ...composition,
       assets: [...(composition.assets || []), asset],
-    };
-  });
+    }
+  })
 
   if (
-    selectedFrame.value &&
-    (selectedFrame.value.kind === "device_mockup" ||
-      selectedFrame.value.kind === "device_artboard")
+    selectedFrame.value
+    && (selectedFrame.value.kind === 'device_mockup'
+      || selectedFrame.value.kind === 'device_artboard')
   ) {
     updateSelectedFrame({
       metadata: {
         ...(selectedFrame.value.metadata || {}),
         device: {
           ...(selectedFrame.value.metadata?.device || {}),
-          shellMode: "external",
+          shellMode: 'external',
           shellAssetId: asset.id,
         },
       },
-    });
+    })
   }
-  if (input) input.value = "";
+  if (input)
+    input.value = ''
 }
 
 function resolveShellViewportRect(asset: DesignAssetModel) {
@@ -4520,49 +4723,51 @@ function resolveShellViewportRect(asset: DesignAssetModel) {
     y: 0,
     width: 0,
     height: 0,
-  };
+  }
 }
 
 function isDeviceShellAssetValid(asset: DesignAssetModel): boolean {
-  const viewportRect = asset.metadata?.deviceShell?.viewportRect;
-  const cornerRadius = Number(asset.metadata?.deviceShell?.cornerRadius ?? -1);
+  const viewportRect = asset.metadata?.deviceShell?.viewportRect
+  const cornerRadius = Number(asset.metadata?.deviceShell?.cornerRadius ?? -1)
   return Boolean(
-    viewportRect &&
-      Number(viewportRect.width) > 0 &&
-      Number(viewportRect.height) > 0 &&
-      Number.isFinite(cornerRadius) &&
-      cornerRadius >= 0,
-  );
+    viewportRect
+    && Number(viewportRect.width) > 0
+    && Number(viewportRect.height) > 0
+    && Number.isFinite(cornerRadius)
+    && cornerRadius >= 0,
+  )
 }
 
 function resolveDeviceShellPresetSummary(asset: DesignAssetModel): string {
-  const presetKeys = asset.metadata?.deviceShell?.presetKeys || [];
-  if (!presetKeys.length) return "未绑定机型";
-  return presetKeys.join(" / ");
+  const presetKeys = asset.metadata?.deviceShell?.presetKeys || []
+  if (!presetKeys.length)
+    return '未绑定机型'
+  return presetKeys.join(' / ')
 }
 
 function updateShellAssetMetadata(
   assetId: string,
   patch: {
     viewportRect?: Partial<{
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-    }>;
-    cornerRadius?: number;
+      x: number
+      y: number
+      width: number
+      height: number
+    }>
+    cornerRadius?: number
   },
 ): void {
   mutateCompositionDocument((composition) => {
     return {
       ...composition,
       assets: (composition.assets || []).map((asset) => {
-        if (asset.id !== assetId) return asset;
+        if (asset.id !== assetId)
+          return asset
         return {
           ...asset,
           metadata: {
             ...(asset.metadata || {}),
-            role: "device_shell",
+            role: 'device_shell',
             deviceShell: {
               ...(asset.metadata?.deviceShell || {}),
               ...(patch.viewportRect
@@ -4580,47 +4785,48 @@ function updateShellAssetMetadata(
                 : {}),
             },
           },
-        };
+        }
       }),
-    };
-  });
+    }
+  })
 }
 
 function useShellAsset(asset: DesignAssetModel): void {
-  if (!selectedFrame.value) return;
+  if (!selectedFrame.value)
+    return
   updateSelectedFrame({
     metadata: {
       ...(selectedFrame.value.metadata || {}),
       device: {
         ...(selectedFrame.value.metadata?.device || {}),
-        shellMode: "external",
+        shellMode: 'external',
         shellAssetId: asset.id,
       },
     },
-  });
+  })
 }
 
 function applyTemplateFrame(templateKey: string): void {
   const template = templateOptions.find(
-    (item) => item.templateKey === templateKey,
-  );
-  createFrame("template", {
-    name: template?.title || "模板 Frame",
+    item => item.templateKey === templateKey,
+  )
+  createFrame('template', {
+    name: template?.title || '模板 Frame',
     templateKey,
     themeTokens: template?.themeTokens || {},
     slots: {
-      title: template?.title || "模板标题",
+      title: template?.title || '模板标题',
       subtitle:
-        template?.summary || "模板内容已落成普通设计对象，可继续自由编辑。",
-      badge: "Template",
+        template?.summary || '模板内容已落成普通设计对象，可继续自由编辑。',
+      badge: 'Template',
     },
-  });
+  })
 }
 
 function resolveActiveDiagramFrame(): DesignFrameModel | null {
-  if (diagramEditorFrame.value?.kind === "diagram")
-    return diagramEditorFrame.value;
-  return selectedFrame.value?.kind === "diagram" ? selectedFrame.value : null;
+  if (diagramEditorFrame.value?.kind === 'diagram')
+    return diagramEditorFrame.value
+  return selectedFrame.value?.kind === 'diagram' ? selectedFrame.value : null
 }
 
 function commitDiagramFrameUpdate(
@@ -4631,96 +4837,98 @@ function commitDiagramFrameUpdate(
     draftDocument.value,
     frameId,
     {
-      kind: "diagram",
+      kind: 'diagram',
       ...patch,
     },
-  );
-  const nextFrame = resolveFrameFromDocument(nextDocument, frameId);
-  commitDocument(nextDocument);
-  selectSingleFrame(frameId);
-  if (nextFrame) syncDiagramEditorFromFrame(nextFrame);
+  )
+  const nextFrame = resolveFrameFromDocument(nextDocument, frameId)
+  commitDocument(nextDocument)
+  selectSingleFrame(frameId)
+  if (nextFrame)
+    syncDiagramEditorFromFrame(nextFrame)
 }
 
 function selectDiagramNode(nodeId: string): void {
-  diagramSelectedGroupId.value = "";
-  diagramSelectedNodeId.value = nodeId;
-  diagramSelectedEdgeId.value = "";
+  diagramSelectedGroupId.value = ''
+  diagramSelectedNodeId.value = nodeId
+  diagramSelectedEdgeId.value = ''
 }
 
 function selectDiagramEdge(edgeId: string): void {
-  diagramSelectedGroupId.value = "";
-  diagramSelectedEdgeId.value = edgeId;
-  diagramSelectedNodeId.value = "";
+  diagramSelectedGroupId.value = ''
+  diagramSelectedEdgeId.value = edgeId
+  diagramSelectedNodeId.value = ''
 }
 
 function selectDiagramGroup(groupId: string): void {
-  diagramSelectedGroupId.value = groupId;
-  diagramSelectedNodeId.value = "";
-  diagramSelectedEdgeId.value = "";
+  diagramSelectedGroupId.value = groupId
+  diagramSelectedNodeId.value = ''
+  diagramSelectedEdgeId.value = ''
 }
 
 function clearDiagramSelection(): void {
-  diagramSelectedGroupId.value = "";
-  diagramSelectedNodeId.value = "";
-  diagramSelectedEdgeId.value = "";
+  diagramSelectedGroupId.value = ''
+  diagramSelectedNodeId.value = ''
+  diagramSelectedEdgeId.value = ''
 }
 
 function applyDiagramSource(): void {
-  const frame = resolveActiveDiagramFrame();
-  if (!frame || !diagramSourceText.value.trim()) return;
+  const frame = resolveActiveDiagramFrame()
+  if (!frame || !diagramSourceText.value.trim())
+    return
 
-  const embeddedScene =
-    diagramSourceFormat.value === "mermaid"
+  const embeddedScene
+    = diagramSourceFormat.value === 'mermaid'
       ? importFromMermaid(diagramSourceText.value)
-      : diagramSourceFormat.value === "markdown_outline"
+      : diagramSourceFormat.value === 'markdown_outline'
         ? importFromMarkdownOutline(diagramSourceText.value)
-        : diagramSourceFormat.value === "ddl"
+        : diagramSourceFormat.value === 'ddl'
           ? importFromDDL(diagramSourceText.value).sceneDocument
           : importArchitectureFromMetadata(diagramSourceText.value)
-              .sceneDocument;
+            .sceneDocument
 
-  clearDiagramSelection();
-  canvasAiPreviewPending.value = false;
-  commitDiagramFrameUpdate(frame.id, { embeddedScene });
+  clearDiagramSelection()
+  canvasAiPreviewPending.value = false
+  commitDiagramFrameUpdate(frame.id, { embeddedScene })
 }
 
 async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
-  const projectId = normalizeString(props.projectId);
-  const workspaceId = normalizeString(props.workspaceId);
+  const projectId = normalizeString(props.projectId)
+  const workspaceId = normalizeString(props.workspaceId)
   if (!projectId || !workspaceId) {
-    canvasAiError.value = "当前项目上下文未就绪，暂时无法调用画布 AI。";
-    return;
+    canvasAiError.value = '当前项目上下文未就绪，暂时无法调用画布 AI。'
+    return
   }
   if (!isCanvasAiActionEnabled(action)) {
-    canvasAiError.value = buildCanvasAiUnavailableMessage(action);
-    return;
+    canvasAiError.value = buildCanvasAiUnavailableMessage(action)
+    return
   }
 
-  const prompt = normalizeString(canvasAiPrompt.value);
-  if (action === "generate" && !prompt) {
-    canvasAiError.value = "请先描述你希望生成的流程或结构。";
-    return;
+  const prompt = normalizeString(canvasAiPrompt.value)
+  if (action === 'generate' && !prompt) {
+    canvasAiError.value = '请先描述你希望生成的流程或结构。'
+    return
   }
-  if ((action === "complete" || action === "refine") && !normalizeString(diagramSourceText.value)) {
-    canvasAiError.value = "当前结构源为空，无法执行补全或续改。";
-    return;
+  if ((action === 'complete' || action === 'refine') && !normalizeString(diagramSourceText.value)) {
+    canvasAiError.value = '当前结构源为空，无法执行补全或续改。'
+    return
   }
 
   const latestUserMessage = prompt
-    || (action === "complete"
-      ? "请基于当前结构源补全缺失节点与关系。"
-      : action === "refine"
-        ? "请基于当前结构源继续优化结构与命名。"
-        : "请生成一版可直接导入的结构源。");
+    || (action === 'complete'
+      ? '请基于当前结构源补全缺失节点与关系。'
+      : action === 'refine'
+        ? '请基于当前结构源继续优化结构与命名。'
+        : '请生成一版可直接导入的结构源。')
 
-  canvasAiRunning.value = true;
-  canvasAiError.value = "";
-  canvasAiAction.value = action;
+  canvasAiRunning.value = true
+  canvasAiError.value = ''
+  canvasAiAction.value = action
 
   const nextMessages = [
     ...canvasAiMessages.value.slice(-5),
     {
-      role: "user",
+      role: 'user',
       content: latestUserMessage,
     } satisfies ChatMessage,
   ]
@@ -4742,244 +4950,257 @@ async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
         sourceText: diagramSourceText.value,
         sourceFormat: diagramSourceFormat.value as AiCanvasAssistSourceFormat,
       },
-    };
+    }
 
-    const response = await fetch(endpoint("/ai/canvas/stream"), {
-      method: "POST",
-      credentials: "include",
+    const response = await fetch(endpoint('/ai/canvas/stream'), {
+      method: 'POST',
+      credentials: 'include',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify(requestBody),
-    });
+    })
 
     if (!response.ok) {
-      const fallbackMessage = `请求失败：HTTP ${response.status}`;
-      const data = (await response.json().catch(() => null)) as ApiResponse<null> | null;
-      throw new Error(String(data?.message || fallbackMessage));
+      const fallbackMessage = `请求失败：HTTP ${response.status}`
+      const data = (await response.json().catch(() => null)) as ApiResponse<null> | null
+      throw new Error(String(data?.message || fallbackMessage))
     }
 
     if (!response.body) {
-      throw new Error("未收到可读取的流式响应。");
+      throw new Error('未收到可读取的流式响应。')
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let draftSourceText = "";
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let draftSourceText = ''
 
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      const { done, value } = await reader.read()
+      if (done)
+        break
 
-      buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true })
       while (true) {
-        const separatorIndex = buffer.indexOf("\n\n");
-        if (separatorIndex < 0) break;
+        const separatorIndex = buffer.indexOf('\n\n')
+        if (separatorIndex < 0)
+          break
 
-        const block = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(separatorIndex + 2);
-        const parsed = parseSseBlock(block);
-        if (!parsed) continue;
+        const block = buffer.slice(0, separatorIndex)
+        buffer = buffer.slice(separatorIndex + 2)
+        const parsed = parseSseBlock(block)
+        if (!parsed)
+          continue
 
         const eventPayload = parsed.dataText
           ? (JSON.parse(parsed.dataText) as AiCanvasAssistStreamEvent)
-          : null;
-        const eventType = (eventPayload?.event || parsed.eventType) as AiCanvasAssistStreamEventType;
-        const data = (eventPayload?.data || {}) as Record<string, unknown>;
+          : null
+        const eventType = (eventPayload?.event || parsed.eventType) as AiCanvasAssistStreamEventType
+        const data = (eventPayload?.data || {}) as Record<string, unknown>
 
-        if (eventType === "progress") {
-          canvasAiError.value = "";
-          continue;
+        if (eventType === 'progress') {
+          canvasAiError.value = ''
+          continue
         }
 
-        if (eventType === "delta") {
-          draftSourceText += String(data.text || "");
-          continue;
+        if (eventType === 'delta') {
+          draftSourceText += String(data.text || '')
+          continue
         }
 
-        if (eventType === "done") {
-          const result = (data.result || {}) as Partial<AiCanvasAssistResult>;
-          const nextSourceFormat = (result.sourceFormat || resolveCanvasSourceFormatFromTemplate(canvasAiTemplate.value)) as AiCanvasAssistSourceFormat;
-          const nextSourceText = normalizeString(result.sourceText || draftSourceText);
+        if (eventType === 'done') {
+          const result = (data.result || {}) as Partial<AiCanvasAssistResult>
+          const nextSourceFormat = (result.sourceFormat || resolveCanvasSourceFormatFromTemplate(canvasAiTemplate.value)) as AiCanvasAssistSourceFormat
+          const nextSourceText = normalizeString(result.sourceText || draftSourceText)
 
           if (!nextSourceText) {
-            throw new Error("画布 AI 未返回可用结构源。");
+            throw new Error('画布 AI 未返回可用结构源。')
           }
 
-          previewCanvasAssistSource(nextSourceText, nextSourceFormat);
-          diagramSourceFormat.value = nextSourceFormat;
-          diagramSourceText.value = nextSourceText;
-          canvasAiPreviewPending.value = true;
+          previewCanvasAssistSource(nextSourceText, nextSourceFormat)
+          diagramSourceFormat.value = nextSourceFormat
+          diagramSourceText.value = nextSourceText
+          canvasAiPreviewPending.value = true
           canvasAiMessages.value = [
             ...nextMessages,
             {
-              role: "assistant",
-              content: normalizeString(result.assistantReply || "画布结构源预览已生成。"),
+              role: 'assistant',
+              content: normalizeString(result.assistantReply || '画布结构源预览已生成。'),
               metadata: result.knowledge
                 ? {
                     knowledge: result.knowledge,
                   }
                 : undefined,
             } satisfies ChatMessage,
-          ].slice(-6);
-          continue;
+          ].slice(-6)
+          continue
         }
 
-        if (eventType === "error") {
-          throw new Error(String(data.message || "画布 AI 调用失败。"));
+        if (eventType === 'error') {
+          throw new Error(String(data.message || '画布 AI 调用失败。'))
         }
       }
     }
   }
   catch (error: any) {
-    canvasAiError.value = String(error?.message || "画布 AI 调用失败。");
+    canvasAiError.value = String(error?.message || '画布 AI 调用失败。')
   }
   finally {
-    canvasAiRunning.value = false;
+    canvasAiRunning.value = false
   }
 }
 
 function resolveDiagramSourceFormat(
   frame: DesignFrameModel | null,
-): "mermaid" | "markdown_outline" | "ddl" | "architecture" {
-  const embeddedScene = frame?.embeddedScene;
-  if (!embeddedScene) return "mermaid";
-  if (embeddedScene.sourceType === "markdown_outline")
-    return "markdown_outline";
+): 'mermaid' | 'markdown_outline' | 'ddl' | 'architecture' {
+  const embeddedScene = frame?.embeddedScene
+  if (!embeddedScene)
+    return 'mermaid'
+  if (embeddedScene.sourceType === 'markdown_outline')
+    return 'markdown_outline'
   if (
-    embeddedScene.sourceType === "ddl" ||
-    embeddedScene.sourceModel.kind === "schema"
-  )
-    return "ddl";
+    embeddedScene.sourceType === 'ddl'
+    || embeddedScene.sourceModel.kind === 'schema'
+  ) {
+    return 'ddl'
+  }
   if (
-    embeddedScene.drawMode === "architecture" ||
-    embeddedScene.sourceModel.kind === "architecture"
-  )
-    return "architecture";
-  return "mermaid";
+    embeddedScene.drawMode === 'architecture'
+    || embeddedScene.sourceModel.kind === 'architecture'
+  ) {
+    return 'architecture'
+  }
+  return 'mermaid'
 }
 
 function resolveDiagramSourceText(frame: DesignFrameModel | null): string {
-  const embeddedScene = frame?.embeddedScene;
-  if (!embeddedScene) return "";
-  if (embeddedScene.sourceModel.kind === "graph")
+  const embeddedScene = frame?.embeddedScene
+  if (!embeddedScene)
+    return ''
+  if (embeddedScene.sourceModel.kind === 'graph') {
     return (
-      normalizeString(embeddedScene.sourceModel.sourceText) ||
-      exportGraphSourceToMermaid(embeddedScene.sourceModel)
-    );
-  if (embeddedScene.sourceModel.kind === "schema")
-    return exportSchemaModelToDDL(embeddedScene);
-  if (embeddedScene.sourceModel.kind === "architecture")
-    return exportArchitectureModelToMermaid(embeddedScene, "dependency_map");
-  return serializeSceneDocument(embeddedScene);
+      normalizeString(embeddedScene.sourceModel.sourceText)
+      || exportGraphSourceToMermaid(embeddedScene.sourceModel)
+    )
+  }
+  if (embeddedScene.sourceModel.kind === 'schema')
+    return exportSchemaModelToDDL(embeddedScene)
+  if (embeddedScene.sourceModel.kind === 'architecture')
+    return exportArchitectureModelToMermaid(embeddedScene, 'dependency_map')
+  return serializeSceneDocument(embeddedScene)
 }
 
 function syncDiagramEditorFromFrame(frame: DesignFrameModel | null): void {
-  diagramSourceFormat.value = resolveDiagramSourceFormat(frame);
-  diagramSourceText.value = resolveDiagramSourceText(frame);
+  diagramSourceFormat.value = resolveDiagramSourceFormat(frame)
+  diagramSourceText.value = resolveDiagramSourceText(frame)
   canvasAiTemplate.value = resolveCanvasTemplateFromSourceFormat(
     diagramSourceFormat.value as AiCanvasAssistSourceFormat,
-  );
-  canvasAiPreviewPending.value = false;
-  canvasAiError.value = "";
-  canvasAiPrompt.value = "";
-  canvasAiMessages.value = [];
+  )
+  canvasAiPreviewPending.value = false
+  canvasAiError.value = ''
+  canvasAiPrompt.value = ''
+  canvasAiMessages.value = []
 }
 
 function openFrameEditor(frameId: string): void {
-  const frame =
-    currentPageFrames.value.find((item) => item.id === frameId) || null;
-  if (!frame) return;
-  selectSingleFrame(frame.id);
-  if (frame.kind !== "diagram") {
-    diagramEditorFrameId.value = "";
-    return;
+  const frame
+    = currentPageFrames.value.find(item => item.id === frameId) || null
+  if (!frame)
+    return
+  selectSingleFrame(frame.id)
+  if (frame.kind !== 'diagram') {
+    diagramEditorFrameId.value = ''
+    return
   }
-  diagramEditorFrameId.value = frame.id;
-  syncDiagramEditorFromFrame(frame);
+  diagramEditorFrameId.value = frame.id
+  syncDiagramEditorFromFrame(frame)
 }
 
 function closeDiagramEditor(): void {
-  diagramEditorFrameId.value = "";
+  diagramEditorFrameId.value = ''
 }
 
 function updateDiagramEmbeddedScene(
   mutator: (scene: SceneDocument) => SceneDocument | null,
 ): void {
-  const frame = resolveActiveDiagramFrame();
-  if (!frame?.embeddedScene) return;
+  const frame = resolveActiveDiagramFrame()
+  if (!frame?.embeddedScene)
+    return
 
   const currentScene = sceneDocumentFromUnknown(frame.embeddedScene, {
-    fallbackDrawMode: "diagram",
-    fallbackSourceType: "manual",
-  });
-  const nextScene = mutator(currentScene);
-  if (!nextScene) return;
+    fallbackDrawMode: 'diagram',
+    fallbackSourceType: 'manual',
+  })
+  const nextScene = mutator(currentScene)
+  if (!nextScene)
+    return
 
-  commitDiagramFrameUpdate(frame.id, { embeddedScene: nextScene });
+  commitDiagramFrameUpdate(frame.id, { embeddedScene: nextScene })
 }
 
 function updateDiagramGraph(
   mutator: (graph: GraphSourceModel) => GraphSourceModel | null,
 ): void {
   updateDiagramEmbeddedScene((scene) => {
-    if (scene.sourceModel.kind !== "graph") return null;
+    if (scene.sourceModel.kind !== 'graph')
+      return null
 
-    const nextGraph = mutator(cloneGraphSourceModel(scene.sourceModel));
-    if (!nextGraph) return null;
+    const nextGraph = mutator(cloneGraphSourceModel(scene.sourceModel))
+    if (!nextGraph)
+      return null
 
-    const nextSourceText = exportGraphSourceToMermaid(nextGraph);
-    diagramSourceFormat.value = "mermaid";
-    diagramSourceText.value = nextSourceText;
+    const nextSourceText = exportGraphSourceToMermaid(nextGraph)
+    diagramSourceFormat.value = 'mermaid'
+    diagramSourceText.value = nextSourceText
 
     return relayoutSceneDocument({
       ...scene,
-      drawMode: "diagram",
-      sourceType: "manual",
+      drawMode: 'diagram',
+      sourceType: 'manual',
       sourceModel: {
         ...nextGraph,
         sourceText: nextSourceText,
       },
-    });
-  });
+    })
+  })
 }
 
 function addDiagramGraphNode(): void {
-  const currentGraph = diagramEditorGraph.value;
-  const nextIndex = (currentGraph?.nodes.length || 0) + 1;
+  const currentGraph = diagramEditorGraph.value
+  const nextIndex = (currentGraph?.nodes.length || 0) + 1
   const nextId = currentGraph
     ? ensureUniqueGraphNodeId(
         currentGraph,
         `node-${nextIndex}`,
         `node-${nextIndex}`,
       )
-    : `node-${nextIndex}`;
+    : `node-${nextIndex}`
   updateDiagramGraph((graph) => {
     graph.nodes.push({
       id: nextId,
       label: `Node ${nextIndex}`,
       type:
-        graph.diagramType === "mindmap" && graph.nodes.length === 0
-          ? "root"
-          : "node",
+        graph.diagramType === 'mindmap' && graph.nodes.length === 0
+          ? 'root'
+          : 'node',
       metadata: {},
-    });
-    return graph;
-  });
-  selectDiagramNode(nextId);
+    })
+    return graph
+  })
+  selectDiagramNode(nextId)
 }
 
 function addDiagramGraphGroup(
-  layoutKind: "container" | "swimlane" = "container",
+  layoutKind: 'container' | 'swimlane' = 'container',
 ): void {
-  const currentGraph = diagramEditorGraph.value;
-  const groupIndex = (currentGraph?.groups?.length || 0) + 1;
-  const baseId =
-    layoutKind === "swimlane" ? `lane-${groupIndex}` : `group-${groupIndex}`;
+  const currentGraph = diagramEditorGraph.value
+  const groupIndex = (currentGraph?.groups?.length || 0) + 1
+  const baseId
+    = layoutKind === 'swimlane' ? `lane-${groupIndex}` : `group-${groupIndex}`
   const nextId = currentGraph
     ? ensureUniqueGraphGroupId(currentGraph, baseId, baseId)
-    : sanitizeGraphId(baseId, baseId);
+    : sanitizeGraphId(baseId, baseId)
 
   updateDiagramGraph((graph) => {
     graph.groups = [
@@ -4987,7 +5208,7 @@ function addDiagramGraphGroup(
       {
         id: nextId,
         label:
-          layoutKind === "swimlane"
+          layoutKind === 'swimlane'
             ? `Swimlane ${groupIndex}`
             : `Group ${groupIndex}`,
         childNodeIds: [],
@@ -4995,100 +5216,104 @@ function addDiagramGraphGroup(
           layoutKind,
         },
       },
-    ];
-    return graph;
-  });
-  selectDiagramGroup(nextId);
+    ]
+    return graph
+  })
+  selectDiagramGroup(nextId)
 }
 
 function addDiagramChildNode(parentNodeId: string): void {
-  const currentGraph = diagramEditorGraph.value;
-  const parentNode =
-    currentGraph?.nodes.find((node) => node.id === parentNodeId) || null;
-  if (!currentGraph || !parentNode) return;
+  const currentGraph = diagramEditorGraph.value
+  const parentNode
+    = currentGraph?.nodes.find(node => node.id === parentNodeId) || null
+  if (!currentGraph || !parentNode)
+    return
 
-  const nextIndex = currentGraph.nodes.length + 1;
+  const nextIndex = currentGraph.nodes.length + 1
   const nextId = ensureUniqueGraphNodeId(
     currentGraph,
     `${parentNode.id}-child`,
     `node-${nextIndex}`,
-  );
+  )
   const edgeId = ensureUniqueGraphEdgeId(
     currentGraph,
     `${parentNode.id}-${nextId}`,
     `edge-${currentGraph.edges.length + 1}`,
-  );
+  )
   const inheritedGroupId = resolveNodeGroupId(
     currentGraph,
     parentNodeId,
     parentNode.parentId,
-  );
+  )
 
   updateDiagramGraph((graph) => {
     graph.nodes.push({
       id: nextId,
       label: `${parentNode.label || parentNode.id} Child`,
       type:
-        graph.diagramType === "mindmap" ? "topic" : parentNode.type || "node",
+        graph.diagramType === 'mindmap' ? 'topic' : parentNode.type || 'node',
       parentId: inheritedGroupId || undefined,
       metadata: {},
-    });
+    })
     graph.edges.push({
       id: edgeId,
       source: parentNodeId,
       target: nextId,
       label: undefined,
       metadata: {},
-    });
+    })
     if (inheritedGroupId) {
       graph.groups = (graph.groups || []).map((group) => {
-        if (group.id !== inheritedGroupId) return cloneGraphSourceGroup(group);
+        if (group.id !== inheritedGroupId)
+          return cloneGraphSourceGroup(group)
         return {
           ...cloneGraphSourceGroup(group),
           childNodeIds: [...new Set([...(group.childNodeIds || []), nextId])],
-        };
-      });
+        }
+      })
     }
-    return graph;
-  });
-  selectDiagramNode(nextId);
+    return graph
+  })
+  selectDiagramNode(nextId)
 }
 
 function updateDiagramGraphGroup(
   groupId: string,
   patch: Partial<GraphSourceGroup>,
 ): void {
-  const currentGraph = diagramEditorGraph.value;
-  const currentGroup =
-    currentGraph?.groups?.find((group) => group.id === groupId) || null;
-  const nextSelectionId =
-    currentGraph && currentGroup
+  const currentGraph = diagramEditorGraph.value
+  const currentGroup
+    = currentGraph?.groups?.find(group => group.id === groupId) || null
+  const nextSelectionId
+    = currentGraph && currentGroup
       ? ensureUniqueGraphGroupId(
           currentGraph,
           patch.id || currentGroup.id,
           currentGroup.id,
           currentGroup.id,
         )
-      : groupId;
+      : groupId
 
   updateDiagramGraph((graph) => {
     const groupIndex = (graph.groups || []).findIndex(
-      (group) => group.id === groupId,
-    );
-    if (groupIndex < 0) return null;
+      group => group.id === groupId,
+    )
+    if (groupIndex < 0)
+      return null
 
-    const currentGroup = graph.groups?.[groupIndex];
-    if (!currentGroup) return null;
+    const currentGroup = graph.groups?.[groupIndex]
+    if (!currentGroup)
+      return null
 
-    const uniqueId =
-      patch.id !== undefined
+    const uniqueId
+      = patch.id !== undefined
         ? ensureUniqueGraphGroupId(
             graph,
             patch.id || currentGroup.id,
             currentGroup.id,
             currentGroup.id,
           )
-        : currentGroup.id;
+        : currentGroup.id
 
     const nextGroup: GraphSourceGroup = {
       ...cloneGraphSourceGroup(currentGroup),
@@ -5110,25 +5335,25 @@ function updateDiagramGraphGroup(
         : currentGroup.metadata
           ? { ...currentGroup.metadata }
           : undefined,
-    };
+    }
 
     graph.groups = (graph.groups || []).map((group, index) =>
       index === groupIndex ? nextGroup : cloneGraphSourceGroup(group),
-    );
+    )
     if (uniqueId !== currentGroup.id) {
       graph.nodes = graph.nodes.map((node) => {
         if (node.parentId !== currentGroup.id)
-          return cloneGraphSourceNode(node);
+          return cloneGraphSourceNode(node)
         return {
           ...cloneGraphSourceNode(node),
           parentId: uniqueId,
-        };
-      });
+        }
+      })
     }
-    return graph;
-  });
+    return graph
+  })
   if (diagramSelectedGroupId.value === groupId)
-    selectDiagramGroup(nextSelectionId);
+    selectDiagramGroup(nextSelectionId)
 }
 
 function toggleDiagramGraphGroupMembership(
@@ -5136,71 +5361,76 @@ function toggleDiagramGraphGroupMembership(
   nodeId: string,
 ): void {
   updateDiagramGraph((graph) => {
-    const group = (graph.groups || []).find((item) => item.id === groupId);
-    const nodeIndex = graph.nodes.findIndex((node) => node.id === nodeId);
-    if (!group || nodeIndex < 0) return null;
+    const group = (graph.groups || []).find(item => item.id === groupId)
+    const nodeIndex = graph.nodes.findIndex(node => node.id === nodeId)
+    if (!group || nodeIndex < 0)
+      return null
 
-    const node = graph.nodes[nodeIndex];
-    if (!node) return null;
+    const node = graph.nodes[nodeIndex]
+    if (!node)
+      return null
 
-    const hasMembership =
-      (group.childNodeIds || []).includes(nodeId) || node.parentId === groupId;
+    const hasMembership
+      = (group.childNodeIds || []).includes(nodeId) || node.parentId === groupId
     graph.groups = (graph.groups || []).map((item) => {
       const baseChildNodeIds = (item.childNodeIds || []).filter(
-        (childId) => childId !== nodeId,
-      );
+        childId => childId !== nodeId,
+      )
       if (item.id !== groupId) {
         return {
           ...cloneGraphSourceGroup(item),
           childNodeIds: baseChildNodeIds,
-        };
+        }
       }
       return {
         ...cloneGraphSourceGroup(item),
         childNodeIds: hasMembership
           ? baseChildNodeIds
           : [...new Set([...baseChildNodeIds, nodeId])],
-      };
-    });
-    const nextNode = cloneGraphSourceNode(node);
-    if (hasMembership) delete nextNode.parentId;
-    else nextNode.parentId = groupId;
-    graph.nodes[nodeIndex] = nextNode;
-    return graph;
-  });
+      }
+    })
+    const nextNode = cloneGraphSourceNode(node)
+    if (hasMembership)
+      delete nextNode.parentId
+    else nextNode.parentId = groupId
+    graph.nodes[nodeIndex] = nextNode
+    return graph
+  })
 }
 
 function removeDiagramGraphGroup(groupId: string): void {
   updateDiagramGraph((graph) => {
-    graph.groups = (graph.groups || []).filter((group) => group.id !== groupId);
+    graph.groups = (graph.groups || []).filter(group => group.id !== groupId)
     graph.nodes = graph.nodes.map((node) => {
-      if (node.parentId !== groupId) return cloneGraphSourceNode(node);
-      const nextNode = cloneGraphSourceNode(node);
-      delete nextNode.parentId;
-      return nextNode;
-    });
-    return graph;
-  });
+      if (node.parentId !== groupId)
+        return cloneGraphSourceNode(node)
+      const nextNode = cloneGraphSourceNode(node)
+      delete nextNode.parentId
+      return nextNode
+    })
+    return graph
+  })
   if (diagramSelectedGroupId.value === groupId)
-    diagramSelectedGroupId.value = "";
+    diagramSelectedGroupId.value = ''
 }
 
 function duplicateDiagramGraphNode(nodeId: string): void {
-  const currentGraph = diagramEditorGraph.value;
-  const sourceNode =
-    currentGraph?.nodes.find((node) => node.id === nodeId) || null;
-  if (!currentGraph || !sourceNode) return;
+  const currentGraph = diagramEditorGraph.value
+  const sourceNode
+    = currentGraph?.nodes.find(node => node.id === nodeId) || null
+  if (!currentGraph || !sourceNode)
+    return
 
   const nextId = ensureUniqueGraphNodeId(
     currentGraph,
     `${sourceNode.id}-copy`,
     `${sourceNode.id}-copy`,
-  );
+  )
   const inheritedGroupId = resolveNodeGroupId(
     currentGraph,
     nodeId,
     sourceNode.parentId,
-  );
+  )
   updateDiagramGraph((graph) => {
     graph.nodes.push({
       ...cloneGraphSourceNode(sourceNode),
@@ -5208,42 +5438,45 @@ function duplicateDiagramGraphNode(nodeId: string): void {
       label: `${sourceNode.label} Copy`,
       parentId: inheritedGroupId || undefined,
       metadata: sourceNode.metadata ? { ...sourceNode.metadata } : undefined,
-    });
+    })
     if (inheritedGroupId) {
       graph.groups = (graph.groups || []).map((group) => {
-        if (group.id !== inheritedGroupId) return cloneGraphSourceGroup(group);
+        if (group.id !== inheritedGroupId)
+          return cloneGraphSourceGroup(group)
         return {
           ...cloneGraphSourceGroup(group),
           childNodeIds: [...new Set([...(group.childNodeIds || []), nextId])],
-        };
-      });
+        }
+      })
     }
-    return graph;
-  });
-  selectDiagramNode(nextId);
+    return graph
+  })
+  selectDiagramNode(nextId)
 }
 
 function updateDiagramGraphNodePosition(
-  nodeIdOrPayload: string | { nodeId: string; x: number; y: number },
-  position: { x: number; y: number } = { x: 0, y: 0 },
+  nodeIdOrPayload: string | { nodeId: string, x: number, y: number },
+  position: { x: number, y: number } = { x: 0, y: 0 },
 ): void {
-  const nodeId =
-    typeof nodeIdOrPayload === "string"
+  const nodeId
+    = typeof nodeIdOrPayload === 'string'
       ? nodeIdOrPayload
-      : normalizeString(nodeIdOrPayload.nodeId);
-  const nextPosition =
-    typeof nodeIdOrPayload === "string"
+      : normalizeString(nodeIdOrPayload.nodeId)
+  const nextPosition
+    = typeof nodeIdOrPayload === 'string'
       ? position
       : {
           x: nodeIdOrPayload.x,
           y: nodeIdOrPayload.y,
-        };
+        }
   updateDiagramGraph((graph) => {
-    const nodeIndex = graph.nodes.findIndex((node) => node.id === nodeId);
-    if (nodeIndex < 0) return null;
+    const nodeIndex = graph.nodes.findIndex(node => node.id === nodeId)
+    if (nodeIndex < 0)
+      return null
 
-    const currentNode = graph.nodes[nodeIndex];
-    if (!currentNode) return null;
+    const currentNode = graph.nodes[nodeIndex]
+    if (!currentNode)
+      return null
 
     graph.nodes[nodeIndex] = {
       ...currentNode,
@@ -5254,85 +5487,87 @@ function updateDiagramGraphNodePosition(
           y: Math.round(Number(nextPosition.y || 0)),
         },
       },
-    };
-    return graph;
-  });
-  selectDiagramNode(nodeId);
+    }
+    return graph
+  })
+  selectDiagramNode(nodeId)
 }
 
 function updateDiagramGraphGroupFrame(
   groupIdOrPayload:
     | string
     | {
-        groupId: string;
-        x?: number;
-        y?: number;
-        width?: number;
-        height?: number;
-      },
-  patch: Partial<{ x: number; y: number; width: number; height: number }> = {},
+      groupId: string
+      x?: number
+      y?: number
+      width?: number
+      height?: number
+    },
+  patch: Partial<{ x: number, y: number, width: number, height: number }> = {},
 ): void {
-  const groupId =
-    typeof groupIdOrPayload === "string"
+  const groupId
+    = typeof groupIdOrPayload === 'string'
       ? groupIdOrPayload
-      : normalizeString(groupIdOrPayload.groupId);
-  const nextPatch =
-    typeof groupIdOrPayload === "string"
+      : normalizeString(groupIdOrPayload.groupId)
+  const nextPatch
+    = typeof groupIdOrPayload === 'string'
       ? patch
       : {
           x: groupIdOrPayload.x,
           y: groupIdOrPayload.y,
           width: groupIdOrPayload.width,
           height: groupIdOrPayload.height,
-        };
-  const currentScene = diagramEditorScene.value;
-  const currentGraph = diagramEditorGraph.value;
-  if (!currentScene || !currentGraph || !groupId) return;
+        }
+  const currentScene = diagramEditorScene.value
+  const currentGraph = diagramEditorGraph.value
+  if (!currentScene || !currentGraph || !groupId)
+    return
 
   const sceneNodeMap = new Map(
-    (currentScene.sceneModel.nodes || []).map((node) => [node.id, node]),
-  );
-  const currentGroupSceneNode = sceneNodeMap.get(groupId);
-  const currentGroup =
-    currentGraph.groups?.find((group) => group.id === groupId) || null;
-  if (!currentGroupSceneNode || !currentGroup) return;
+    (currentScene.sceneModel.nodes || []).map(node => [node.id, node]),
+  )
+  const currentGroupSceneNode = sceneNodeMap.get(groupId)
+  const currentGroup
+    = currentGraph.groups?.find(group => group.id === groupId) || null
+  if (!currentGroupSceneNode || !currentGroup)
+    return
 
-  const nextX = parseFrameMetric(nextPatch.x, currentGroupSceneNode.x, 0);
-  const nextY = parseFrameMetric(nextPatch.y, currentGroupSceneNode.y, 0);
+  const nextX = parseFrameMetric(nextPatch.x, currentGroupSceneNode.x, 0)
+  const nextY = parseFrameMetric(nextPatch.y, currentGroupSceneNode.y, 0)
   const nextWidth = parseFrameMetric(
     nextPatch.width,
     currentGroupSceneNode.width,
     260,
-  );
+  )
   const nextHeight = parseFrameMetric(
     nextPatch.height,
     currentGroupSceneNode.height,
     180,
-  );
-  const deltaX = nextX - Math.round(currentGroupSceneNode.x);
-  const deltaY = nextY - Math.round(currentGroupSceneNode.y);
+  )
+  const deltaX = nextX - Math.round(currentGroupSceneNode.x)
+  const deltaY = nextY - Math.round(currentGroupSceneNode.y)
   const memberIds = new Set<string>([
     ...(currentGroup.childNodeIds || []),
     ...currentGraph.nodes
-      .filter((node) => node.parentId === groupId)
-      .map((node) => node.id),
-  ]);
+      .filter(node => node.parentId === groupId)
+      .map(node => node.id),
+  ])
 
   updateDiagramGraph((graph) => {
     graph.nodes = graph.nodes.map((node) => {
       if (!memberIds.has(node.id) || (!deltaX && !deltaY))
-        return cloneGraphSourceNode(node);
+        return cloneGraphSourceNode(node)
 
-      const sceneNode = sceneNodeMap.get(node.id);
+      const sceneNode = sceneNodeMap.get(node.id)
       const currentManualPosition = node.metadata?.manualPosition as
-        | { x?: number; y?: number }
-        | undefined;
+        | { x?: number, y?: number }
+        | undefined
       const baseX = Math.round(
         Number(sceneNode?.x ?? currentManualPosition?.x ?? 96),
-      );
+      )
       const baseY = Math.round(
         Number(sceneNode?.y ?? currentManualPosition?.y ?? 96),
-      );
+      )
       return {
         ...cloneGraphSourceNode(node),
         metadata: {
@@ -5342,11 +5577,12 @@ function updateDiagramGraphGroupFrame(
             y: baseY + deltaY,
           },
         },
-      };
-    });
+      }
+    })
 
     graph.groups = (graph.groups || []).map((group) => {
-      if (group.id !== groupId) return cloneGraphSourceGroup(group);
+      if (group.id !== groupId)
+        return cloneGraphSourceGroup(group)
       return {
         ...cloneGraphSourceGroup(group),
         metadata: {
@@ -5360,147 +5596,153 @@ function updateDiagramGraphGroupFrame(
             height: nextHeight,
           },
         },
-      };
-    });
+      }
+    })
 
-    return graph;
-  });
-  selectDiagramGroup(groupId);
+    return graph
+  })
+  selectDiagramGroup(groupId)
 }
 
 function relayoutDiagramGraphGroup(groupId: string): void {
-  const currentScene = diagramEditorScene.value;
-  const currentGraph = diagramEditorGraph.value;
-  if (!currentScene || !currentGraph) return;
+  const currentScene = diagramEditorScene.value
+  const currentGraph = diagramEditorGraph.value
+  if (!currentScene || !currentGraph)
+    return
 
   const sceneNodeMap = new Map(
-    (currentScene.sceneModel.nodes || []).map((node) => [node.id, node]),
-  );
-  const currentGroupSceneNode = sceneNodeMap.get(groupId);
-  const currentGroup =
-    currentGraph.groups?.find((group) => group.id === groupId) || null;
-  if (!currentGroupSceneNode || !currentGroup) return;
+    (currentScene.sceneModel.nodes || []).map(node => [node.id, node]),
+  )
+  const currentGroupSceneNode = sceneNodeMap.get(groupId)
+  const currentGroup
+    = currentGraph.groups?.find(group => group.id === groupId) || null
+  if (!currentGroupSceneNode || !currentGroup)
+    return
 
   const orderedMemberIds = [
     ...(currentGroup.childNodeIds || []),
     ...currentGraph.nodes
-      .filter((node) => node.parentId === groupId)
-      .map((node) => node.id)
-      .filter((nodeId) => !(currentGroup.childNodeIds || []).includes(nodeId)),
-  ];
+      .filter(node => node.parentId === groupId)
+      .map(node => node.id)
+      .filter(nodeId => !(currentGroup.childNodeIds || []).includes(nodeId)),
+  ]
   const memberNodes = orderedMemberIds
     .map(
-      (nodeId) => currentGraph.nodes.find((node) => node.id === nodeId) || null,
+      nodeId => currentGraph.nodes.find(node => node.id === nodeId) || null,
     )
-    .filter((node): node is GraphSourceNode => Boolean(node));
+    .filter((node): node is GraphSourceNode => Boolean(node))
 
-  if (!memberNodes.length) return;
+  if (!memberNodes.length)
+    return
 
-  const layoutKind =
-    currentGroup.metadata?.layoutKind === "swimlane" ? "swimlane" : "container";
-  const laneDirection =
-    currentGroup.metadata?.laneDirection === "vertical"
-      ? "vertical"
-      : "horizontal";
-  const paddingX = 28;
-  const headerHeight = layoutKind === "swimlane" ? 52 : 44;
-  const contentTop = 16;
-  const paddingBottom = 28;
-  const gapX = 24;
-  const gapY = 20;
-  const groupX = Math.round(currentGroupSceneNode.x);
-  const groupY = Math.round(currentGroupSceneNode.y);
-  const baseWidth = Math.max(260, Math.round(currentGroupSceneNode.width));
-  const baseHeight = Math.max(180, Math.round(currentGroupSceneNode.height));
+  const layoutKind
+    = currentGroup.metadata?.layoutKind === 'swimlane' ? 'swimlane' : 'container'
+  const laneDirection
+    = currentGroup.metadata?.laneDirection === 'vertical'
+      ? 'vertical'
+      : 'horizontal'
+  const paddingX = 28
+  const headerHeight = layoutKind === 'swimlane' ? 52 : 44
+  const contentTop = 16
+  const paddingBottom = 28
+  const gapX = 24
+  const gapY = 20
+  const groupX = Math.round(currentGroupSceneNode.x)
+  const groupY = Math.round(currentGroupSceneNode.y)
+  const baseWidth = Math.max(260, Math.round(currentGroupSceneNode.width))
+  const baseHeight = Math.max(180, Math.round(currentGroupSceneNode.height))
   const maxNodeWidth = Math.max(
-    ...memberNodes.map((node) =>
+    ...memberNodes.map(node =>
       Math.round(sceneNodeMap.get(node.id)?.width || 180),
     ),
     180,
-  );
+  )
   const maxNodeHeight = Math.max(
-    ...memberNodes.map((node) =>
+    ...memberNodes.map(node =>
       Math.round(sceneNodeMap.get(node.id)?.height || 64),
     ),
     64,
-  );
-  const startX = groupX + paddingX;
-  const startY = groupY + headerHeight + contentTop;
+  )
+  const startX = groupX + paddingX
+  const startY = groupY + headerHeight + contentTop
 
-  const manualPositions = new Map<string, { x: number; y: number }>();
-  let nextWidth = baseWidth;
-  let nextHeight = baseHeight;
+  const manualPositions = new Map<string, { x: number, y: number }>()
+  let nextWidth = baseWidth
+  let nextHeight = baseHeight
 
-  if (layoutKind === "swimlane") {
-    if (laneDirection === "vertical") {
-      let cursorY = startY;
+  if (layoutKind === 'swimlane') {
+    if (laneDirection === 'vertical') {
+      let cursorY = startY
       for (const node of memberNodes) {
-        const sceneNode = sceneNodeMap.get(node.id);
-        const nodeHeight = Math.round(sceneNode?.height || 64);
+        const sceneNode = sceneNodeMap.get(node.id)
+        const nodeHeight = Math.round(sceneNode?.height || 64)
         manualPositions.set(node.id, {
           x: startX,
           y: cursorY,
-        });
-        cursorY += nodeHeight + gapY;
+        })
+        cursorY += nodeHeight + gapY
       }
-      const totalHeight = cursorY - startY - gapY;
-      nextWidth = Math.max(baseWidth, paddingX * 2 + maxNodeWidth);
+      const totalHeight = cursorY - startY - gapY
+      nextWidth = Math.max(baseWidth, paddingX * 2 + maxNodeWidth)
       nextHeight = Math.max(
         baseHeight,
         headerHeight + contentTop + totalHeight + paddingBottom,
-      );
-    } else {
-      let cursorX = startX;
+      )
+    }
+    else {
+      let cursorX = startX
       for (const node of memberNodes) {
-        const sceneNode = sceneNodeMap.get(node.id);
-        const nodeWidth = Math.round(sceneNode?.width || 180);
+        const sceneNode = sceneNodeMap.get(node.id)
+        const nodeWidth = Math.round(sceneNode?.width || 180)
         manualPositions.set(node.id, {
           x: cursorX,
           y: startY,
-        });
-        cursorX += nodeWidth + gapX;
+        })
+        cursorX += nodeWidth + gapX
       }
-      const totalWidth = cursorX - startX - gapX;
-      nextWidth = Math.max(baseWidth, paddingX * 2 + totalWidth);
+      const totalWidth = cursorX - startX - gapX
+      nextWidth = Math.max(baseWidth, paddingX * 2 + totalWidth)
       nextHeight = Math.max(
         baseHeight,
         headerHeight + contentTop + maxNodeHeight + paddingBottom,
-      );
+      )
     }
-  } else {
+  }
+  else {
     const columnCount = Math.min(
       memberNodes.length,
       baseWidth >= 760 ? 3 : baseWidth >= 520 ? 2 : 1,
-    );
-    const rowCount = Math.max(1, Math.ceil(memberNodes.length / columnCount));
+    )
+    const rowCount = Math.max(1, Math.ceil(memberNodes.length / columnCount))
     for (const [index, node] of memberNodes.entries()) {
-      const row = Math.floor(index / columnCount);
-      const column = index % columnCount;
+      const row = Math.floor(index / columnCount)
+      const column = index % columnCount
       manualPositions.set(node.id, {
         x: startX + column * (maxNodeWidth + gapX),
         y: startY + row * (maxNodeHeight + gapY),
-      });
+      })
     }
     nextWidth = Math.max(
       baseWidth,
-      paddingX * 2 +
-        columnCount * maxNodeWidth +
-        Math.max(0, columnCount - 1) * gapX,
-    );
+      paddingX * 2
+      + columnCount * maxNodeWidth
+      + Math.max(0, columnCount - 1) * gapX,
+    )
     nextHeight = Math.max(
       baseHeight,
-      headerHeight +
-        contentTop +
-        rowCount * maxNodeHeight +
-        Math.max(0, rowCount - 1) * gapY +
-        paddingBottom,
-    );
+      headerHeight
+      + contentTop
+      + rowCount * maxNodeHeight
+      + Math.max(0, rowCount - 1) * gapY
+      + paddingBottom,
+    )
   }
 
   updateDiagramGraph((graph) => {
     graph.nodes = graph.nodes.map((node) => {
-      const manualPosition = manualPositions.get(node.id);
-      if (!manualPosition) return cloneGraphSourceNode(node);
+      const manualPosition = manualPositions.get(node.id)
+      if (!manualPosition)
+        return cloneGraphSourceNode(node)
       return {
         ...cloneGraphSourceNode(node),
         parentId: groupId,
@@ -5508,11 +5750,12 @@ function relayoutDiagramGraphGroup(groupId: string): void {
           ...(node.metadata || {}),
           manualPosition,
         },
-      };
-    });
+      }
+    })
 
     graph.groups = (graph.groups || []).map((group) => {
-      if (group.id !== groupId) return cloneGraphSourceGroup(group);
+      if (group.id !== groupId)
+        return cloneGraphSourceGroup(group)
       return {
         ...cloneGraphSourceGroup(group),
         childNodeIds: orderedMemberIds,
@@ -5529,63 +5772,67 @@ function relayoutDiagramGraphGroup(groupId: string): void {
             height: nextHeight,
           },
         },
-      };
-    });
+      }
+    })
 
-    return graph;
-  });
-  selectDiagramGroup(groupId);
+    return graph
+  })
+  selectDiagramGroup(groupId)
 }
 
 function fitDiagramGraphGroupToMembers(groupId: string): void {
-  const currentScene = diagramEditorScene.value;
-  const currentGraph = diagramEditorGraph.value;
-  if (!currentScene || !currentGraph) return;
+  const currentScene = diagramEditorScene.value
+  const currentGraph = diagramEditorGraph.value
+  if (!currentScene || !currentGraph)
+    return
 
   const sceneNodeMap = new Map(
-    (currentScene.sceneModel.nodes || []).map((node) => [node.id, node]),
-  );
-  const currentGroupSceneNode = sceneNodeMap.get(groupId);
-  const currentGroup =
-    currentGraph.groups?.find((group) => group.id === groupId) || null;
-  if (!currentGroupSceneNode || !currentGroup) return;
+    (currentScene.sceneModel.nodes || []).map(node => [node.id, node]),
+  )
+  const currentGroupSceneNode = sceneNodeMap.get(groupId)
+  const currentGroup
+    = currentGraph.groups?.find(group => group.id === groupId) || null
+  if (!currentGroupSceneNode || !currentGroup)
+    return
 
   const memberIds = new Set<string>([
     ...(currentGroup.childNodeIds || []),
     ...currentGraph.nodes
-      .filter((node) => node.parentId === groupId)
-      .map((node) => node.id),
-  ]);
+      .filter(node => node.parentId === groupId)
+      .map(node => node.id),
+  ])
   const memberSceneNodes = [...memberIds]
-    .map((nodeId) => sceneNodeMap.get(nodeId))
+    .map(nodeId => sceneNodeMap.get(nodeId))
     .filter((node): node is NonNullable<typeof currentGroupSceneNode> =>
       Boolean(node),
-    );
+    )
 
-  if (!memberSceneNodes.length) return;
+  if (!memberSceneNodes.length)
+    return
 
-  const layoutKind =
-    currentGroup.metadata?.layoutKind === "swimlane" ? "swimlane" : "container";
-  const paddingX = 28;
-  const paddingBottom = 28;
+  const layoutKind
+    = currentGroup.metadata?.layoutKind === 'swimlane' ? 'swimlane' : 'container'
+  const paddingX = 28
+  const paddingBottom = 28
   const maxRight = Math.max(
-    ...memberSceneNodes.map((node) => Math.round(node.x + node.width)),
-  );
+    ...memberSceneNodes.map(node => Math.round(node.x + node.width)),
+  )
   const maxBottom = Math.max(
-    ...memberSceneNodes.map((node) => Math.round(node.y + node.height)),
-  );
+    ...memberSceneNodes.map(node => Math.round(node.y + node.height)),
+  )
   const nextWidth = Math.max(
     260,
     maxRight - Math.round(currentGroupSceneNode.x) + paddingX,
-  );
+  )
   const nextHeight = Math.max(
     180,
     maxBottom - Math.round(currentGroupSceneNode.y) + paddingBottom,
-  );
+  )
 
   updateDiagramGraph((graph) => {
     graph.groups = (graph.groups || []).map((group) => {
-      if (group.id !== groupId) return cloneGraphSourceGroup(group);
+      if (group.id !== groupId)
+        return cloneGraphSourceGroup(group)
       return {
         ...cloneGraphSourceGroup(group),
         metadata: {
@@ -5600,93 +5847,98 @@ function fitDiagramGraphGroupToMembers(groupId: string): void {
             height: nextHeight,
           },
         },
-      };
-    });
-    return graph;
-  });
-  selectDiagramGroup(groupId);
+      }
+    })
+    return graph
+  })
+  selectDiagramGroup(groupId)
 }
 
 function resetDiagramGraphGroupManualLayout(groupId: string): void {
-  const currentGraph = diagramEditorGraph.value;
-  const currentGroup =
-    currentGraph?.groups?.find((group) => group.id === groupId) || null;
-  if (!currentGraph || !currentGroup) return;
+  const currentGraph = diagramEditorGraph.value
+  const currentGroup
+    = currentGraph?.groups?.find(group => group.id === groupId) || null
+  if (!currentGraph || !currentGroup)
+    return
 
   const memberIds = new Set<string>([
     ...(currentGroup.childNodeIds || []),
     ...currentGraph.nodes
-      .filter((node) => node.parentId === groupId)
-      .map((node) => node.id),
-  ]);
+      .filter(node => node.parentId === groupId)
+      .map(node => node.id),
+  ])
 
   updateDiagramGraph((graph) => {
     graph.nodes = graph.nodes.map((node) => {
-      if (!memberIds.has(node.id)) return cloneGraphSourceNode(node);
+      if (!memberIds.has(node.id))
+        return cloneGraphSourceNode(node)
 
-      const nextMetadata = { ...(node.metadata || {}) };
-      delete nextMetadata.manualPosition;
+      const nextMetadata = { ...(node.metadata || {}) }
+      delete nextMetadata.manualPosition
       return {
         ...cloneGraphSourceNode(node),
         metadata: nextMetadata,
-      };
-    });
+      }
+    })
 
     graph.groups = (graph.groups || []).map((group) => {
-      if (group.id !== groupId) return cloneGraphSourceGroup(group);
+      if (group.id !== groupId)
+        return cloneGraphSourceGroup(group)
 
-      const nextMetadata = { ...(group.metadata || {}) };
-      delete nextMetadata.manualPosition;
-      delete nextMetadata.size;
+      const nextMetadata = { ...(group.metadata || {}) }
+      delete nextMetadata.manualPosition
+      delete nextMetadata.size
       return {
         ...cloneGraphSourceGroup(group),
         metadata: nextMetadata,
-      };
-    });
-    return graph;
-  });
-  selectDiagramGroup(groupId);
+      }
+    })
+    return graph
+  })
+  selectDiagramGroup(groupId)
 }
 
 function updateDiagramGraphNode(
   nodeId: string,
   patch: Partial<GraphSourceNode>,
 ): void {
-  const currentGraph = diagramEditorGraph.value;
-  const currentNode =
-    currentGraph?.nodes.find((node) => node.id === nodeId) || null;
-  const nextSelectionId =
-    currentNode && patch.id !== undefined
+  const currentGraph = diagramEditorGraph.value
+  const currentNode
+    = currentGraph?.nodes.find(node => node.id === nodeId) || null
+  const nextSelectionId
+    = currentNode && patch.id !== undefined
       ? ensureUniqueGraphNodeId(
-          currentGraph ||
-            cloneGraphSourceModel({
-              kind: "graph",
-              diagramType: "flowchart",
-              nodes: [],
-              edges: [],
-              groups: [],
-            }),
+          currentGraph
+          || cloneGraphSourceModel({
+            kind: 'graph',
+            diagramType: 'flowchart',
+            nodes: [],
+            edges: [],
+            groups: [],
+          }),
           patch.id || currentNode.id,
-          currentNode.id || "node",
+          currentNode.id || 'node',
           currentNode.id,
         )
-      : nodeId;
+      : nodeId
   updateDiagramGraph((graph) => {
-    const nodeIndex = graph.nodes.findIndex((node) => node.id === nodeId);
-    if (nodeIndex < 0) return null;
+    const nodeIndex = graph.nodes.findIndex(node => node.id === nodeId)
+    if (nodeIndex < 0)
+      return null
 
-    const currentNode = graph.nodes[nodeIndex];
-    if (!currentNode) return null;
+    const currentNode = graph.nodes[nodeIndex]
+    if (!currentNode)
+      return null
 
-    const nextId =
-      patch.id !== undefined
+    const nextId
+      = patch.id !== undefined
         ? ensureUniqueGraphNodeId(
             graph,
             patch.id || currentNode.id,
             currentNode.id || `node-${nodeIndex + 1}`,
             currentNode.id,
           )
-        : currentNode.id;
+        : currentNode.id
     const nextNode: GraphSourceNode = {
       ...currentNode,
       ...patch,
@@ -5707,90 +5959,91 @@ function updateDiagramGraphNode(
         : currentNode.metadata
           ? { ...currentNode.metadata }
           : undefined,
-    };
-    graph.nodes[nodeIndex] = nextNode;
+    }
+    graph.nodes[nodeIndex] = nextNode
 
     if (nextId !== currentNode.id) {
-      graph.edges = graph.edges.map((edge) => ({
+      graph.edges = graph.edges.map(edge => ({
         ...cloneGraphSourceEdge(edge),
         source: edge.source === currentNode.id ? nextId : edge.source,
         target: edge.target === currentNode.id ? nextId : edge.target,
-      }));
-      graph.groups = (graph.groups || []).map((group) => ({
+      }))
+      graph.groups = (graph.groups || []).map(group => ({
         ...group,
-        childNodeIds: (group.childNodeIds || []).map((childId) =>
+        childNodeIds: (group.childNodeIds || []).map(childId =>
           childId === currentNode.id ? nextId : childId,
         ),
         metadata: group.metadata ? { ...group.metadata } : undefined,
-      }));
+      }))
     }
 
-    return graph;
-  });
+    return graph
+  })
   if (diagramSelectedNodeId.value === nodeId)
-    selectDiagramNode(nextSelectionId);
+    selectDiagramNode(nextSelectionId)
 }
 
 function removeDiagramGraphNode(nodeId: string): void {
   updateDiagramGraph((graph) => {
-    graph.nodes = graph.nodes.filter((node) => node.id !== nodeId);
+    graph.nodes = graph.nodes.filter(node => node.id !== nodeId)
     graph.edges = graph.edges.filter(
-      (edge) => edge.source !== nodeId && edge.target !== nodeId,
-    );
-    graph.groups = (graph.groups || []).map((group) => ({
+      edge => edge.source !== nodeId && edge.target !== nodeId,
+    )
+    graph.groups = (graph.groups || []).map(group => ({
       ...cloneGraphSourceGroup(group),
       childNodeIds: (group.childNodeIds || []).filter(
-        (childId) => childId !== nodeId,
+        childId => childId !== nodeId,
       ),
-    }));
-    return graph;
-  });
-  if (diagramSelectedNodeId.value === nodeId) diagramSelectedNodeId.value = "";
+    }))
+    return graph
+  })
+  if (diagramSelectedNodeId.value === nodeId)
+    diagramSelectedNodeId.value = ''
 }
 
 function addDiagramGraphEdge(): void {
-  const currentGraph = diagramEditorGraph.value;
+  const currentGraph = diagramEditorGraph.value
   const edgeId = ensureUniqueGraphEdgeId(
     currentGraph || {
-      kind: "graph",
-      diagramType: "flowchart",
+      kind: 'graph',
+      diagramType: 'flowchart',
       nodes: [],
       edges: [],
       groups: [],
     },
     `edge-${(currentGraph?.edges.length || 0) + 1}`,
     `edge-${(currentGraph?.edges.length || 0) + 1}`,
-  );
+  )
 
   updateDiagramGraph((graph) => {
     if (graph.nodes.length === 0) {
       graph.nodes.push({
-        id: "node-1",
-        label: "Node 1",
-        type: graph.diagramType === "mindmap" ? "root" : "node",
+        id: 'node-1',
+        label: 'Node 1',
+        type: graph.diagramType === 'mindmap' ? 'root' : 'node',
         metadata: {},
-      });
+      })
     }
 
     if (graph.nodes.length === 1) {
       graph.nodes.push({
-        id: ensureUniqueGraphNodeId(graph, "node-2", "node-2"),
-        label: "Node 2",
-        type: graph.diagramType === "mindmap" ? "topic" : "node",
+        id: ensureUniqueGraphNodeId(graph, 'node-2', 'node-2'),
+        label: 'Node 2',
+        type: graph.diagramType === 'mindmap' ? 'topic' : 'node',
         metadata: {},
-      });
+      })
     }
 
     graph.edges.push({
       id: edgeId,
-      source: graph.nodes[0]?.id || "",
-      target: graph.nodes[1]?.id || graph.nodes[0]?.id || "",
+      source: graph.nodes[0]?.id || '',
+      target: graph.nodes[1]?.id || graph.nodes[0]?.id || '',
       label: undefined,
       metadata: {},
-    });
-    return graph;
-  });
-  selectDiagramEdge(edgeId);
+    })
+    return graph
+  })
+  selectDiagramEdge(edgeId)
 }
 
 function updateDiagramGraphEdge(
@@ -5798,19 +6051,21 @@ function updateDiagramGraphEdge(
   patch: Partial<GraphSourceEdge>,
 ): void {
   updateDiagramGraph((graph) => {
-    const edgeIndex = graph.edges.findIndex((edge) => edge.id === edgeId);
-    if (edgeIndex < 0) return null;
+    const edgeIndex = graph.edges.findIndex(edge => edge.id === edgeId)
+    if (edgeIndex < 0)
+      return null
 
-    const currentEdge = graph.edges[edgeIndex];
-    if (!currentEdge) return null;
+    const currentEdge = graph.edges[edgeIndex]
+    if (!currentEdge)
+      return null
 
-    const availableNodeIds = new Set(graph.nodes.map((node) => node.id));
+    const availableNodeIds = new Set(graph.nodes.map(node => node.id))
     const fallbackSource = availableNodeIds.has(currentEdge.source)
       ? currentEdge.source
-      : graph.nodes[0]?.id || "";
+      : graph.nodes[0]?.id || ''
     const fallbackTarget = availableNodeIds.has(currentEdge.target)
       ? currentEdge.target
-      : graph.nodes[0]?.id || "";
+      : graph.nodes[0]?.id || ''
     graph.edges[edgeIndex] = {
       ...currentEdge,
       ...patch,
@@ -5835,78 +6090,83 @@ function updateDiagramGraphEdge(
         : currentEdge.metadata
           ? { ...currentEdge.metadata }
           : undefined,
-    };
-    return graph;
-  });
+    }
+    return graph
+  })
 }
 
 function removeDiagramGraphEdge(edgeId: string): void {
   updateDiagramGraph((graph) => {
-    graph.edges = graph.edges.filter((edge) => edge.id !== edgeId);
-    return graph;
-  });
-  if (diagramSelectedEdgeId.value === edgeId) diagramSelectedEdgeId.value = "";
+    graph.edges = graph.edges.filter(edge => edge.id !== edgeId)
+    return graph
+  })
+  if (diagramSelectedEdgeId.value === edgeId)
+    diagramSelectedEdgeId.value = ''
 }
 
 function reverseDiagramGraphEdge(edgeId: string): void {
   updateDiagramGraph((graph) => {
-    const edgeIndex = graph.edges.findIndex((edge) => edge.id === edgeId);
-    if (edgeIndex < 0) return null;
-    const currentEdge = graph.edges[edgeIndex];
-    if (!currentEdge) return null;
+    const edgeIndex = graph.edges.findIndex(edge => edge.id === edgeId)
+    if (edgeIndex < 0)
+      return null
+    const currentEdge = graph.edges[edgeIndex]
+    if (!currentEdge)
+      return null
     graph.edges[edgeIndex] = {
       ...cloneGraphSourceEdge(currentEdge),
       source: currentEdge.target,
       target: currentEdge.source,
-    };
-    return graph;
-  });
-  selectDiagramEdge(edgeId);
+    }
+    return graph
+  })
+  selectDiagramEdge(edgeId)
 }
 
 function updateDiagramGraphType(
-  diagramType: GraphSourceModel["diagramType"],
+  diagramType: GraphSourceModel['diagramType'],
 ): void {
   updateDiagramGraph((graph) => {
-    graph.diagramType = diagramType;
-    return graph;
-  });
+    graph.diagramType = diagramType
+    return graph
+  })
 }
 
 function connectDiagramGraphEdge(payload: {
-  source?: string;
-  target?: string;
+  source?: string
+  target?: string
 }): void {
-  const source = normalizeString(payload.source);
-  const target = normalizeString(payload.target);
-  if (!source || !target) return;
+  const source = normalizeString(payload.source)
+  const target = normalizeString(payload.target)
+  if (!source || !target)
+    return
 
   const existingEdge = diagramEditorGraph.value?.edges.find(
-    (edge) => edge.source === source && edge.target === target,
-  );
+    edge => edge.source === source && edge.target === target,
+  )
   if (existingEdge) {
-    selectDiagramEdge(existingEdge.id);
-    return;
+    selectDiagramEdge(existingEdge.id)
+    return
   }
 
   const edgeId = ensureUniqueGraphEdgeId(
     diagramEditorGraph.value || {
-      kind: "graph",
-      diagramType: "flowchart",
+      kind: 'graph',
+      diagramType: 'flowchart',
       nodes: [],
       edges: [],
       groups: [],
     },
     `${source}-${target}`,
     `edge-${(diagramEditorGraph.value?.edges.length || 0) + 1}`,
-  );
+  )
 
   updateDiagramGraph((graph) => {
     if (
-      !graph.nodes.some((node) => node.id === source) ||
-      !graph.nodes.some((node) => node.id === target)
-    )
-      return null;
+      !graph.nodes.some(node => node.id === source)
+      || !graph.nodes.some(node => node.id === target)
+    ) {
+      return null
+    }
 
     graph.edges.push({
       id: edgeId,
@@ -5914,132 +6174,139 @@ function connectDiagramGraphEdge(payload: {
       target,
       label: undefined,
       metadata: {},
-    });
-    return graph;
-  });
-  selectDiagramEdge(edgeId);
+    })
+    return graph
+  })
+  selectDiagramEdge(edgeId)
 }
 
 function relayoutSelectedDiagramFrame(): void {
   updateDiagramEmbeddedScene((scene) => {
-    if (scene.sourceModel.kind !== "graph") return relayoutSceneDocument(scene);
+    if (scene.sourceModel.kind !== 'graph')
+      return relayoutSceneDocument(scene)
 
     return relayoutSceneDocument({
       ...scene,
       sourceModel: {
         ...cloneGraphSourceModel(scene.sourceModel),
         nodes: scene.sourceModel.nodes.map((node) => {
-          const nextMetadata = { ...(node.metadata || {}) };
-          delete nextMetadata.manualPosition;
+          const nextMetadata = { ...(node.metadata || {}) }
+          delete nextMetadata.manualPosition
           return {
             ...cloneGraphSourceNode(node),
             metadata: nextMetadata,
-          };
+          }
         }),
       },
-    });
-  });
+    })
+  })
 }
 
 function fileSlug(value: string): string {
   return (
     normalizeString(value)
       .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-+|-+$/g, "") || "design"
-  );
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'design'
+  )
 }
 
 function resolveFrameName(frameId: string): string {
   return (
-    currentPageFrames.value.find((frame) => frame.id === frameId)?.name ||
-    "frame"
-  );
+    currentPageFrames.value.find(frame => frame.id === frameId)?.name
+    || 'frame'
+  )
 }
 
 function resolveFrameExportScale(frameId: string): number {
-  const frame =
-    currentPageFrames.value.find((item) => item.id === frameId) || null;
-  if (!frame) return 1;
+  const frame
+    = currentPageFrames.value.find(item => item.id === frameId) || null
+  if (!frame)
+    return 1
   return resolveDesignFrameExportMetadata(
     frame.metadata?.export,
     frame.metadata?.exportWithVisiblePageOverlays !== false,
-  ).scale;
+  ).scale
 }
 
 function downloadBlob(blob: Blob, fileName: string): void {
-  if (!import.meta.client) return;
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(url);
+  if (!import.meta.client)
+    return
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
-function downloadSvg(frameId = ""): void {
-  if (!currentPage.value) return;
+function downloadSvg(frameId = ''): void {
+  if (!currentPage.value)
+    return
   const svgMarkup = renderCompositionAssetToSvg(draftDocument.value, {
     pageId: currentPage.value.id,
     frameId: frameId || undefined,
-    backgroundMode: frameId ? "solid" : "transparent",
-  });
+    backgroundMode: frameId ? 'solid' : 'transparent',
+  })
   const fileName = frameId
     ? `${fileSlug(resolveFrameName(frameId))}.svg`
-    : `${fileSlug(currentPage.value.name)}.svg`;
+    : `${fileSlug(currentPage.value.name)}.svg`
   downloadBlob(
-    new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" }),
+    new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' }),
     fileName,
-  );
+  )
 }
 
-async function downloadPng(frameId = ""): Promise<void> {
-  if (!import.meta.client || !currentPage.value) return;
+async function downloadPng(frameId = ''): Promise<void> {
+  if (!import.meta.client || !currentPage.value)
+    return
   const svgMarkup = renderCompositionAssetToSvg(draftDocument.value, {
     pageId: currentPage.value.id,
     frameId: frameId || undefined,
-    backgroundMode: frameId ? "solid" : "transparent",
-  });
+    backgroundMode: frameId ? 'solid' : 'transparent',
+  })
   const svgBlob = new Blob([svgMarkup], {
-    type: "image/svg+xml;charset=utf-8",
-  });
-  const svgUrl = URL.createObjectURL(svgBlob);
-  const image = new Image();
+    type: 'image/svg+xml;charset=utf-8',
+  })
+  const svgUrl = URL.createObjectURL(svgBlob)
+  const image = new Image()
   const fileName = frameId
     ? `${fileSlug(resolveFrameName(frameId))}.png`
-    : `${fileSlug(currentPage.value.name)}.png`;
+    : `${fileSlug(currentPage.value.name)}.png`
 
   await new Promise<void>((resolve, reject) => {
-    image.onload = () => resolve();
-    image.onerror = () => reject(new Error("SVG_TO_IMAGE_FAILED"));
-    image.src = svgUrl;
-  }).catch(() => {});
+    image.onload = () => resolve()
+    image.onerror = () => reject(new Error('SVG_TO_IMAGE_FAILED'))
+    image.src = svgUrl
+  }).catch(() => {})
 
-  const canvas = document.createElement("canvas");
-  const exportScale = frameId ? resolveFrameExportScale(frameId) : 1;
-  canvas.width = Math.max(1, Math.round((image.width || 1600) * exportScale));
-  canvas.height = Math.max(1, Math.round((image.height || 900) * exportScale));
-  const context = canvas.getContext("2d");
-  if (context) context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  URL.revokeObjectURL(svgUrl);
+  const canvas = document.createElement('canvas')
+  const exportScale = frameId ? resolveFrameExportScale(frameId) : 1
+  canvas.width = Math.max(1, Math.round((image.width || 1600) * exportScale))
+  canvas.height = Math.max(1, Math.round((image.height || 900) * exportScale))
+  const context = canvas.getContext('2d')
+  if (context)
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+  URL.revokeObjectURL(svgUrl)
 
   canvas.toBlob((blob) => {
-    if (!blob) return;
-    downloadBlob(blob, fileName);
-  }, "image/png");
+    if (!blob)
+      return
+    downloadBlob(blob, fileName)
+  }, 'image/png')
 }
 
 function downloadDefaultSvg(): void {
   for (const frame of defaultExportFrames.value) {
-    downloadSvg(frame.id);
+    downloadSvg(frame.id)
   }
 }
 
 async function downloadDefaultPng(): Promise<void> {
   for (const frame of defaultExportFrames.value) {
-    await downloadPng(frame.id);
+    await downloadPng(frame.id)
   }
 }
 </script>
@@ -6047,7 +6314,7 @@ async function downloadDefaultPng(): Promise<void> {
 <template>
   <div
     ref="panelRootRef"
-    class="workspace-design-panel relative h-full min-h-0 w-full overflow-hidden bg-[#f7f8fb]"
+    class="workspace-design-panel bg-[#f7f8fb] h-full min-h-0 w-full relative overflow-hidden"
     @keydown.capture="handlePanelKeydown"
     @keyup.capture="handlePanelKeyup"
   >
@@ -6061,15 +6328,15 @@ async function downloadDefaultPng(): Promise<void> {
     >
       <template #left>
         <WLDesignContainer
-          class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-sidebar-panel self-start max-h-[min(72vh,820px)] w-full"
+          class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-sidebar-panel max-h-[min(72vh,820px)] w-full self-start"
           :data-collapsed="sidebarCollapsed ? 'true' : 'false'"
           :scrollable="!sidebarCollapsed"
           :padding="activeSidebarTab === 'frames' ? 'sm' : 'md'"
-          :title="''"
+          title=""
         >
           <template v-if="!sidebarCollapsed" #header-title>
             <button
-              class="workspace-design-sidebar-toggle flex h-8 w-8 items-center justify-center rounded-[10px] border border-slate-200 bg-slate-50 text-slate-500 transition-colors hover:border-slate-300 hover:bg-white hover:text-slate-900"
+              class="workspace-design-sidebar-toggle text-slate-500 border border-slate-200 rounded-[10px] bg-slate-50 flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-900 hover:border-slate-300 hover:bg-white"
               type="button"
               title="收起设计面板"
               data-testid="workspace-design-sidebar-toggle"
@@ -6082,7 +6349,7 @@ async function downloadDefaultPng(): Promise<void> {
           </template>
 
           <template v-if="!sidebarCollapsed" #header-title-extra>
-            <div class="workspace-design-sidebar-tabs-inline flex min-w-0 flex-1 justify-center">
+            <div class="workspace-design-sidebar-tabs-inline flex flex-1 min-w-0 justify-center">
               <WorkspaceDesignSidebarTabs
                 :active-tab="activeSidebarTab"
                 @update:active-tab="activeSidebarTab = $event"
@@ -6092,7 +6359,7 @@ async function downloadDefaultPng(): Promise<void> {
 
           <template #actions>
             <div
-              class="flex items-center gap-2"
+              class="flex gap-2 items-center"
               :class="sidebarCollapsed ? 'w-full justify-start' : ''"
             >
               <div
@@ -6101,38 +6368,34 @@ async function downloadDefaultPng(): Promise<void> {
                 class="relative"
               >
                 <button
-                  class="inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-900 transition-colors hover:bg-slate-50"
+                  class="text-[11px] text-slate-900 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 min-w-8 transition-colors items-center justify-center hover:bg-slate-50"
                   type="button"
                   title="新建"
                   aria-label="新建"
                   @click="toggleActionMenu"
                 >
                   <span class="material-symbols-outlined text-sm">add</span>
-                  <span class="material-symbols-outlined text-sm"
-                    >arrow_drop_down</span
-                  >
+                  <span class="material-symbols-outlined text-sm">arrow_drop_down</span>
                 </button>
 
                 <div
                   v-if="actionMenuOpen"
-                  class="absolute right-0 top-10 z-30 w-[208px] rounded-[12px] border border-slate-200/95 bg-white/80 p-1.5 shadow-none backdrop-blur-xl"
+                  class="p-1.5 border border-slate-200/95 rounded-[12px] bg-white/80 w-[208px] shadow-none right-0 top-10 absolute z-30 backdrop-blur-xl"
                 >
                   <div class="space-y-1">
                     <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
                       type="button"
                       @click="
                         createPage();
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >note_stack_add</span
-                      >
+                      <span class="material-symbols-outlined text-base">note_stack_add</span>
                       <span>新建 Page</span>
                     </button>
                     <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
                       type="button"
                       :disabled="!currentPage"
                       @click="
@@ -6140,13 +6403,11 @@ async function downloadDefaultPng(): Promise<void> {
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >dashboard</span
-                      >
+                      <span class="material-symbols-outlined text-base">dashboard</span>
                       <span>新建自由 Frame</span>
                     </button>
                     <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
                       type="button"
                       :disabled="!currentPage"
                       @click="
@@ -6154,13 +6415,11 @@ async function downloadDefaultPng(): Promise<void> {
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >phone_iphone</span
-                      >
+                      <span class="material-symbols-outlined text-base">phone_iphone</span>
                       <span>新建设备 Frame</span>
                     </button>
                     <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
                       type="button"
                       :disabled="!currentPage"
                       @click="
@@ -6168,13 +6427,11 @@ async function downloadDefaultPng(): Promise<void> {
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >account_tree</span
-                      >
+                      <span class="material-symbols-outlined text-base">account_tree</span>
                       <span>新建 Diagram</span>
                     </button>
                     <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
                       type="button"
                       :disabled="!currentPage"
                       @click="
@@ -6182,9 +6439,7 @@ async function downloadDefaultPng(): Promise<void> {
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >auto_awesome_mosaic</span
-                      >
+                      <span class="material-symbols-outlined text-base">auto_awesome_mosaic</span>
                       <span>插入模板稿</span>
                     </button>
                   </div>
@@ -6193,7 +6448,7 @@ async function downloadDefaultPng(): Promise<void> {
 
                   <div class="space-y-1">
                     <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100 disabled:opacity-50"
                       type="button"
                       :disabled="!canExportDefaultFrames"
                       @click="
@@ -6201,13 +6456,11 @@ async function downloadDefaultPng(): Promise<void> {
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >download</span
-                      >
+                      <span class="material-symbols-outlined text-base">download</span>
                       <span>{{ defaultExportSvgLabel }}</span>
                     </button>
                     <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100 disabled:opacity-50"
                       type="button"
                       :disabled="!canExportDefaultFrames"
                       @click="
@@ -6215,13 +6468,11 @@ async function downloadDefaultPng(): Promise<void> {
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >image</span
-                      >
+                      <span class="material-symbols-outlined text-base">image</span>
                       <span>{{ defaultExportPngLabel }}</span>
                     </button>
                     <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100 disabled:opacity-50"
                       type="button"
                       :disabled="!currentPage"
                       @click="
@@ -6229,13 +6480,11 @@ async function downloadDefaultPng(): Promise<void> {
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >article</span
-                      >
+                      <span class="material-symbols-outlined text-base">article</span>
                       <span>辅助导出 Page SVG</span>
                     </button>
                     <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100 disabled:opacity-50"
                       type="button"
                       :disabled="!currentPage"
                       @click="
@@ -6243,23 +6492,19 @@ async function downloadDefaultPng(): Promise<void> {
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >crop_portrait</span
-                      >
+                      <span class="material-symbols-outlined text-base">crop_portrait</span>
                       <span>辅助导出 Page PNG</span>
                     </button>
                     <button
                       v-if="canOpenDiagramEditor"
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-50"
+                      class="text-xs text-sky-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-sky-50"
                       type="button"
                       @click="
                         openFrameEditor(selectedFrame?.id || '');
                         closeActionMenu();
                       "
                     >
-                      <span class="material-symbols-outlined text-base"
-                        >schema</span
-                      >
+                      <span class="material-symbols-outlined text-base">schema</span>
                       <span>打开 Diagram 编辑态</span>
                     </button>
                   </div>
@@ -6267,7 +6512,7 @@ async function downloadDefaultPng(): Promise<void> {
               </div>
               <button
                 v-if="sidebarCollapsed"
-                class="workspace-design-sidebar-toggle flex h-8 w-8 items-center justify-center rounded-[10px] border border-slate-200 bg-slate-50 text-slate-500 transition-colors hover:border-slate-300 hover:bg-white hover:text-slate-900"
+                class="workspace-design-sidebar-toggle text-slate-500 border border-slate-200 rounded-[10px] bg-slate-50 flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-900 hover:border-slate-300 hover:bg-white"
                 type="button"
                 title="展开设计面板"
                 data-testid="workspace-design-sidebar-toggle"
@@ -6287,7 +6532,7 @@ async function downloadDefaultPng(): Promise<void> {
             >
               <template v-if="activeSidebarTab === 'pages'">
                 <span
-                  class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
+                  class="text-[11px] text-slate-600 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white/72"
                 >
                   {{ pages.length }} pages
                 </span>
@@ -6295,17 +6540,17 @@ async function downloadDefaultPng(): Promise<void> {
 
               <template v-else>
                 <span
-                  class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
+                  class="text-[11px] text-slate-600 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white/72"
                 >
                   {{ templateOptions.length }} templates
                 </span>
                 <span
-                  class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
+                  class="text-[11px] text-slate-600 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white/72"
                 >
                   {{ imageAssets.length }} 图片
                 </span>
                 <span
-                  class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
+                  class="text-[11px] text-slate-600 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white/72"
                 >
                   {{ deviceShellAssets.length }} 设备壳
                 </span>
@@ -6320,7 +6565,7 @@ async function downloadDefaultPng(): Promise<void> {
               <button
                 v-for="page in pages"
                 :key="page.id"
-                class="w-full rounded-2xl border px-3 py-3 text-left transition-colors"
+                class="px-3 py-3 text-left border rounded-2xl w-full transition-colors"
                 :data-design-outline-page-id="page.id"
                 :class="
                   page.id === currentPage?.id
@@ -6330,12 +6575,12 @@ async function downloadDefaultPng(): Promise<void> {
                 type="button"
                 @click="selectPage(page.id)"
               >
-                <div class="flex items-start justify-between gap-3">
+                <div class="flex gap-3 items-start justify-between">
                   <div class="min-w-0">
-                    <p class="truncate text-sm font-semibold">
+                    <p class="text-sm font-semibold truncate">
                       {{ page.name }}
                     </p>
-                    <p class="mt-1 text-[11px] text-slate-500">
+                    <p class="text-[11px] text-slate-500 mt-1">
                       {{
                         (compositionModel.frames || []).filter(
                           (frame) => frame.pageId === page.id,
@@ -6346,21 +6591,21 @@ async function downloadDefaultPng(): Promise<void> {
                   </div>
                   <div class="flex shrink-0 gap-1">
                     <button
-                      class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-900"
+                      class="text-[10px] text-slate-500 font-semibold px-2 py-1 border border-slate-200 rounded-full bg-white transition-colors hover:text-slate-900 hover:border-slate-300"
                       type="button"
                       @click.stop="movePage(page.id, -1)"
                     >
                       ↑
                     </button>
                     <button
-                      class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-900"
+                      class="text-[10px] text-slate-500 font-semibold px-2 py-1 border border-slate-200 rounded-full bg-white transition-colors hover:text-slate-900 hover:border-slate-300"
                       type="button"
                       @click.stop="movePage(page.id, 1)"
                     >
                       ↓
                     </button>
                     <button
-                      class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:opacity-50"
+                      class="text-[10px] text-slate-500 font-semibold px-2 py-1 border border-slate-200 rounded-full bg-white transition-colors hover:text-slate-900 hover:border-slate-300 disabled:opacity-50"
                       type="button"
                       :disabled="pages.length <= 1"
                       @click.stop="removePage(page.id)"
@@ -6381,14 +6626,14 @@ async function downloadDefaultPng(): Promise<void> {
             >
               <div
                 v-if="!frameSidebarTreeRows.length"
-                class="rounded-2xl border border-dashed border-slate-200 bg-white/52 px-3 py-4 text-[12px] font-medium text-slate-500"
+                class="text-[12px] text-slate-500 font-medium px-3 py-4 border border-slate-200 rounded-2xl border-dashed bg-white/52"
               >
                 当前 Page 还没有可展示的 Frame 或元素
               </div>
 
               <template v-for="row in frameSidebarTreeRows" :key="row.node.id">
                 <div
-                  class="workspace-design-layer-tree__row group flex items-center transition-colors"
+                  class="workspace-design-layer-tree__row group flex transition-colors items-center"
                   :class="resolveLayerTreeNodeClass(row.node)"
                   :style="{ paddingLeft: resolveLayerTreeRowPaddingLeft(row.depth) }"
                   :data-layer-tree-node-id="row.node.id"
@@ -6417,7 +6662,7 @@ async function downloadDefaultPng(): Promise<void> {
                   />
                   <button
                     v-if="row.node.children?.length"
-                    class="workspace-design-layer-tree__toggle flex shrink-0 items-center justify-center text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                    class="workspace-design-layer-tree__toggle text-slate-400 flex shrink-0 transition-colors items-center justify-center hover:text-slate-700 hover:bg-slate-100"
                     type="button"
                     :title="isLayerTreeNodeExpanded(row.node.id) ? '折叠' : '展开'"
                     @click.stop="toggleLayerTreeNodeExpanded(row.node.id)"
@@ -6436,23 +6681,23 @@ async function downloadDefaultPng(): Promise<void> {
                     aria-hidden="true"
                   />
                   <button
-                    class="workspace-design-layer-tree__body flex min-w-0 flex-1 items-center text-left"
+                    class="workspace-design-layer-tree__body text-left flex flex-1 min-w-0 items-center"
                     type="button"
                     @click="handleLayerTreeNodeSelection(row.node, $event)"
                   >
                     <span
-                      class="material-symbols-outlined workspace-design-layer-tree__node-icon shrink-0 leading-none"
+                      class="material-symbols-outlined workspace-design-layer-tree__node-icon leading-none shrink-0"
                       :class="isLayerTreeNodeAncestor(row.node.id) ? 'text-slate-700' : ''"
                     >
                       {{ resolveLayerTreeNodeIcon(row.node) }}
                     </span>
-                    <div class="min-w-0 flex-1">
-                      <p class="workspace-design-layer-tree__label truncate font-semibold">
+                    <div class="flex-1 min-w-0">
+                      <p class="workspace-design-layer-tree__label font-semibold truncate">
                         {{ row.node.label }}
                       </p>
                       <p
                         v-if="row.node.type === 'frame' && row.node.frameId"
-                        class="workspace-design-layer-tree__meta truncate text-slate-500"
+                        class="workspace-design-layer-tree__meta text-slate-500 truncate"
                       >
                         {{ resolveLayerTreeFrameMeta(row.node.frameId) }}
                       </p>
@@ -6462,7 +6707,7 @@ async function downloadDefaultPng(): Promise<void> {
                   <div class="workspace-design-layer-tree__actions flex shrink-0 items-center">
                     <button
                       v-if="row.node.type === 'element' && row.node.elementId"
-                      class="workspace-design-layer-tree__action flex shrink-0 items-center justify-center text-slate-400"
+                      class="workspace-design-layer-tree__action text-slate-400 flex shrink-0 items-center justify-center"
                       :class="row.node.hidden ? 'workspace-design-layer-tree__action--active' : ''"
                       type="button"
                       :title="row.node.hidden ? '显示元素' : '隐藏元素'"
@@ -6477,9 +6722,9 @@ async function downloadDefaultPng(): Promise<void> {
                     <button
                       v-if="
                         (row.node.type === 'frame' && row.node.frameId)
-                        || (row.node.type === 'element' && row.node.elementId)
+                          || (row.node.type === 'element' && row.node.elementId)
                       "
-                      class="workspace-design-layer-tree__action flex shrink-0 items-center justify-center text-slate-400"
+                      class="workspace-design-layer-tree__action text-slate-400 flex shrink-0 items-center justify-center"
                       :class="row.node.locked ? 'workspace-design-layer-tree__action--active' : ''"
                       type="button"
                       :title="row.node.locked ? '解锁图层' : '锁定图层'"
@@ -6492,7 +6737,7 @@ async function downloadDefaultPng(): Promise<void> {
                       </span>
                     </button>
                     <button
-                      class="workspace-design-layer-tree__menu-trigger flex shrink-0 items-center justify-center text-slate-400"
+                      class="workspace-design-layer-tree__menu-trigger text-slate-400 flex shrink-0 items-center justify-center"
                       :class="
                         layerTreeMenuNodeId === row.node.id
                           ? 'workspace-design-layer-tree__menu-trigger--active'
@@ -6518,13 +6763,13 @@ async function downloadDefaultPng(): Promise<void> {
               data-design-outline-assets-root="true"
             >
               <div class="space-y-4">
-                <section class="space-y-3 rounded-3xl border border-slate-200/80 bg-slate-50/70 p-3">
+                <section class="p-3 border border-slate-200/80 rounded-3xl bg-slate-50/70 space-y-3">
                   <div
-                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                    class="text-[11px] text-slate-500 tracking-[0.08em] font-semibold px-1 flex gap-3 uppercase items-center justify-between"
                   >
                     <span>资源库</span>
                     <button
-                      class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+                      class="text-[10px] text-slate-600 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white transition-colors hover:text-slate-900 hover:border-slate-300"
                       type="button"
                       @click="loadCanvasLibraryItems"
                     >
@@ -6534,28 +6779,28 @@ async function downloadDefaultPng(): Promise<void> {
 
                   <input
                     v-model="canvasLibrarySearch"
-                    class="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition-colors focus:border-slate-300"
+                    class="text-xs text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-2xl bg-white w-full transition-colors focus:border-slate-300"
                     type="search"
                     placeholder="搜索模板 / 素材 / 标签"
-                  />
+                  >
 
                   <p
                     v-if="canvasLibraryError"
-                    class="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-5 text-rose-600"
+                    class="text-[11px] text-rose-600 leading-5 px-3 py-2 border border-rose-200 rounded-2xl bg-rose-50"
                   >
                     {{ canvasLibraryError }}
                   </p>
 
                   <div
                     v-if="canvasLibraryLoading"
-                    class="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[11px] text-slate-500"
+                    class="text-[11px] text-slate-500 px-3 py-3 border border-slate-200 rounded-2xl bg-white"
                   >
                     正在加载资源库……
                   </div>
 
                   <div v-else class="space-y-3">
                     <div class="space-y-2">
-                      <div class="flex items-center justify-between px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                      <div class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold px-1 flex uppercase items-center justify-between">
                         <span>Templates</span>
                         <span>{{ canvasLibraryTemplateItems.length }}</span>
                       </div>
@@ -6563,39 +6808,39 @@ async function downloadDefaultPng(): Promise<void> {
                         <button
                           v-for="item in canvasLibraryTemplateItems"
                           :key="item.id"
-                          class="flex w-full items-start gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition-colors hover:border-slate-300"
+                          class="px-3 py-3 text-left border border-slate-200 rounded-2xl bg-white flex gap-3 w-full transition-colors items-start hover:border-slate-300"
                           type="button"
                           :disabled="canvasLibraryActioningId === item.id"
                           @click="importCanvasLibraryItem(item)"
                         >
-                          <div class="min-w-0 flex-1">
-                            <div class="flex items-center gap-2">
-                              <p class="truncate text-sm font-semibold text-slate-800">
+                          <div class="flex-1 min-w-0">
+                            <div class="flex gap-2 items-center">
+                              <p class="text-sm text-slate-800 font-semibold truncate">
                                 {{ item.title }}
                               </p>
-                              <span class="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                              <span class="text-[10px] text-slate-500 font-semibold px-2 py-0.5 border border-slate-200 rounded-full bg-slate-50">
                                 {{ item.templateTarget || "scene" }}
                               </span>
                             </div>
-                            <p class="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">
+                            <p class="text-[11px] text-slate-500 leading-5 mt-1 line-clamp-2">
                               {{ item.summary || "已发布的设计模板，可直接导入当前画布。" }}
                             </p>
                           </div>
-                          <span class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">
+                          <span class="text-[10px] text-slate-600 font-semibold px-2 py-1 border border-slate-200 rounded-full bg-white">
                             {{ canvasLibraryActioningId === item.id ? "处理中" : "导入" }}
                           </span>
                         </button>
                       </div>
                       <div
                         v-else
-                        class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-3 py-3 text-[11px] leading-5 text-slate-500"
+                        class="text-[11px] text-slate-500 leading-5 px-3 py-3 border border-slate-200 rounded-2xl border-dashed bg-white/80"
                       >
                         当前没有匹配的模板条目。
                       </div>
                     </div>
 
                     <div class="space-y-2">
-                      <div class="flex items-center justify-between px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                      <div class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold px-1 flex uppercase items-center justify-between">
                         <span>Assets</span>
                         <span>{{ canvasLibraryAssetItems.length }}</span>
                       </div>
@@ -6603,32 +6848,32 @@ async function downloadDefaultPng(): Promise<void> {
                         <button
                           v-for="item in canvasLibraryAssetItems"
                           :key="item.id"
-                          class="flex w-full items-start gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition-colors hover:border-slate-300"
+                          class="px-3 py-3 text-left border border-slate-200 rounded-2xl bg-white flex gap-3 w-full transition-colors items-start hover:border-slate-300"
                           type="button"
                           :disabled="canvasLibraryActioningId === item.id"
                           @click="importCanvasLibraryItem(item)"
                         >
-                          <div class="min-w-0 flex-1">
-                            <div class="flex items-center gap-2">
-                              <p class="truncate text-sm font-semibold text-slate-800">
+                          <div class="flex-1 min-w-0">
+                            <div class="flex gap-2 items-center">
+                              <p class="text-sm text-slate-800 font-semibold truncate">
                                 {{ item.title }}
                               </p>
-                              <span class="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                              <span class="text-[10px] text-slate-500 font-semibold px-2 py-0.5 border border-slate-200 rounded-full bg-slate-50">
                                 {{ item.assetKind || "image" }}
                               </span>
                             </div>
-                            <p class="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">
+                            <p class="text-[11px] text-slate-500 leading-5 mt-1 line-clamp-2">
                               {{ item.summary || "已发布素材，可加入当前设计文档 assets。" }}
                             </p>
                           </div>
-                          <span class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">
+                          <span class="text-[10px] text-slate-600 font-semibold px-2 py-1 border border-slate-200 rounded-full bg-white">
                             {{ canvasLibraryActioningId === item.id ? "处理中" : "导入" }}
                           </span>
                         </button>
                       </div>
                       <div
                         v-else
-                        class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-3 py-3 text-[11px] leading-5 text-slate-500"
+                        class="text-[11px] text-slate-500 leading-5 px-3 py-3 border border-slate-200 rounded-2xl border-dashed bg-white/80"
                       >
                         当前没有匹配的素材条目。
                       </div>
@@ -6638,20 +6883,20 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <section
                   v-if="props.isPlatformAdminUser && isBoundToDesignResource"
-                  class="space-y-3 rounded-3xl border border-slate-200 bg-white/80 p-3"
+                  class="p-3 border border-slate-200 rounded-3xl bg-white/80 space-y-3"
                 >
                   <div
-                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                    class="text-[11px] text-slate-500 tracking-[0.08em] font-semibold px-1 flex gap-3 uppercase items-center justify-between"
                   >
                     <span>发布到资源库</span>
                     <span class="text-[10px] text-slate-400">Admin</span>
                   </div>
 
                   <label class="flex flex-col gap-1">
-                    <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">scope</span>
+                    <span class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold uppercase">scope</span>
                     <select
                       v-model="canvasLibraryPublishScope"
-                      class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 outline-none border border-slate-200 rounded-2xl bg-white transition-colors focus:border-slate-300"
                     >
                       <option value="scene">Scene</option>
                       <option value="page">Page</option>
@@ -6660,37 +6905,37 @@ async function downloadDefaultPng(): Promise<void> {
                   </label>
 
                   <label class="flex flex-col gap-1">
-                    <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">title</span>
+                    <span class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold uppercase">title</span>
                     <input
                       v-model="canvasLibraryPublishTitle"
-                      class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition-colors focus:border-slate-300"
+                      class="text-xs text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-2xl bg-white transition-colors focus:border-slate-300"
                       type="text"
                       placeholder="为空时自动使用当前 Scene / Page / Frame 名称"
-                    />
+                    >
                   </label>
 
                   <label class="flex flex-col gap-1">
-                    <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">summary</span>
+                    <span class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold uppercase">summary</span>
                     <textarea
                       v-model="canvasLibraryPublishSummary"
-                      class="min-h-[76px] rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition-colors focus:border-slate-300"
+                      class="text-xs text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-2xl bg-white min-h-[76px] transition-colors focus:border-slate-300"
                       placeholder="这套模板适合什么场景、包含哪些结构。"
                     />
                   </label>
 
                   <label class="flex flex-col gap-1">
-                    <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">tags</span>
+                    <span class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold uppercase">tags</span>
                     <input
                       v-model="canvasLibraryPublishTags"
-                      class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition-colors focus:border-slate-300"
+                      class="text-xs text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-2xl bg-white transition-colors focus:border-slate-300"
                       type="text"
                       placeholder="template, mobile, marketing"
-                    />
+                    >
                   </label>
 
-                  <div class="flex items-center gap-2">
+                  <div class="flex gap-2 items-center">
                     <button
-                      class="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:bg-white"
+                      class="text-xs text-slate-700 font-semibold px-3 py-2 border border-slate-200 rounded-2xl bg-slate-50 flex-1 transition-colors hover:border-slate-300 hover:bg-white"
                       type="button"
                       :disabled="canvasLibraryActioningId === 'draft'"
                       @click="publishCurrentDesignToCanvasLibrary(false)"
@@ -6698,7 +6943,7 @@ async function downloadDefaultPng(): Promise<void> {
                       {{ canvasLibraryActioningId === "draft" ? "保存中..." : "保存草稿" }}
                     </button>
                     <button
-                      class="flex-1 rounded-2xl border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-700"
+                      class="text-xs text-white font-semibold px-3 py-2 border border-slate-900 rounded-2xl bg-slate-900 flex-1 transition-colors hover:bg-slate-700"
                       type="button"
                       :disabled="canvasLibraryActioningId === 'publish'"
                       @click="publishCurrentDesignToCanvasLibrary(true)"
@@ -6710,7 +6955,7 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <section class="space-y-2">
                   <div
-                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                    class="text-[11px] text-slate-500 tracking-[0.08em] font-semibold px-1 flex gap-3 uppercase items-center justify-between"
                   >
                     <span>模板</span>
                     <span>{{ templateOptions.length }}</span>
@@ -6719,14 +6964,14 @@ async function downloadDefaultPng(): Promise<void> {
                     <button
                       v-for="template in templateOptions"
                       :key="template.templateKey"
-                      class="w-full rounded-2xl border border-slate-200 bg-white/56 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-white/78"
+                      class="px-3 py-3 text-left border border-slate-200 rounded-2xl bg-white/56 w-full transition-colors hover:border-slate-300 hover:bg-white/78"
                       type="button"
                       @click="applyTemplateFrame(template.templateKey)"
                     >
-                      <p class="text-sm font-semibold text-slate-800">
+                      <p class="text-sm text-slate-800 font-semibold">
                         {{ template.title }}
                       </p>
-                      <p class="mt-1 text-[11px] leading-5 text-slate-500">
+                      <p class="text-[11px] text-slate-500 leading-5 mt-1">
                         {{ template.summary }}
                       </p>
                     </button>
@@ -6735,59 +6980,57 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <section class="space-y-2">
                   <div
-                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                    class="text-[11px] text-slate-500 tracking-[0.08em] font-semibold px-1 flex gap-3 uppercase items-center justify-between"
                   >
                     <span>普通图片资源</span>
                     <span>{{ imageAssets.length }}</span>
                   </div>
 
                   <label
-                    class="block rounded-2xl border border-dashed border-slate-300 bg-white/56 px-3 py-4 text-center"
+                    class="px-3 py-4 text-center border border-slate-300 rounded-2xl border-dashed bg-white/56 block"
                   >
-                    <span class="text-xs font-semibold text-slate-700"
-                      >上传图片资源</span
-                    >
+                    <span class="text-xs text-slate-700 font-semibold">上传图片资源</span>
                     <input
                       class="hidden"
                       accept="image/*"
                       type="file"
                       @change="handleAssetUpload"
-                    />
+                    >
                   </label>
 
                   <div v-if="imageAssets.length" class="space-y-2">
                     <div
                       v-for="asset in imageAssets"
                       :key="asset.id"
-                      class="rounded-2xl border border-slate-200 bg-white/72 px-3 py-2 transition-colors hover:border-slate-300 hover:bg-white/88"
+                      class="px-3 py-2 border border-slate-200 rounded-2xl bg-white/72 transition-colors hover:border-slate-300 hover:bg-white/88"
                       :class="outlineHighlightedAssetId === asset.id ? 'workspace-design-outline-highlight' : ''"
                       :data-design-outline-asset-id="asset.id"
                     >
-                      <div class="flex items-center gap-3">
+                      <div class="flex gap-3 items-center">
                         <img
                           :src="asset.src"
                           alt=""
-                          class="h-12 w-12 rounded-xl object-cover"
-                        />
-                        <div class="min-w-0 flex-1">
-                          <p class="truncate text-sm font-semibold text-slate-800">
+                          class="rounded-xl h-12 w-12 object-cover"
+                        >
+                        <div class="flex-1 min-w-0">
+                          <p class="text-sm text-slate-800 font-semibold truncate">
                             {{ asset.name }}
                           </p>
-                          <p class="truncate text-[11px] text-slate-500">
+                          <p class="text-[11px] text-slate-500 truncate">
                             {{ asset.mimeType || "image/*" }}
                           </p>
                         </div>
                       </div>
-                      <div class="mt-2 flex items-center justify-end gap-2">
+                      <div class="mt-2 flex gap-2 items-center justify-end">
                         <button
-                          class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+                          class="text-[10px] text-slate-600 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white transition-colors hover:text-slate-900 hover:border-slate-300"
                           type="button"
                           @click="useAsset(asset)"
                         >
                           应用到当前 Frame
                         </button>
                         <button
-                          class="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700 transition-colors hover:border-sky-300 hover:bg-sky-100"
+                          class="text-[10px] text-sky-700 font-semibold px-2.5 py-1 border border-sky-200 rounded-full bg-sky-50 transition-colors hover:border-sky-300 hover:bg-sky-100"
                           type="button"
                           @click="void placeAssetOnCanvas(asset)"
                         >
@@ -6800,19 +7043,17 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <section class="space-y-2">
                   <div
-                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                    class="text-[11px] text-slate-500 tracking-[0.08em] font-semibold px-1 flex gap-3 uppercase items-center justify-between"
                   >
                     <span>设备壳资源</span>
                     <span>{{ deviceShellAssets.length }}</span>
                   </div>
 
                   <label
-                    class="block rounded-2xl border border-dashed border-slate-300 bg-white/56 px-3 py-4 text-center"
+                    class="px-3 py-4 text-center border border-slate-300 rounded-2xl border-dashed bg-white/56 block"
                   >
-                    <span class="text-xs font-semibold text-slate-700"
-                      >上传 SVG / PNG 设备壳</span
-                    >
-                    <p class="mt-1 text-[11px] leading-5 text-slate-500">
+                    <span class="text-xs text-slate-700 font-semibold">上传 SVG / PNG 设备壳</span>
+                    <p class="text-[11px] text-slate-500 leading-5 mt-1">
                       上传后可直接填写 viewportRect 和 cornerRadius。
                     </p>
                     <input
@@ -6820,7 +7061,7 @@ async function downloadDefaultPng(): Promise<void> {
                       accept="image/svg+xml,image/png"
                       type="file"
                       @change="handleShellAssetUpload"
-                    />
+                    >
                   </label>
 
                   <div
@@ -6830,23 +7071,23 @@ async function downloadDefaultPng(): Promise<void> {
                     <div
                       v-for="asset in deviceShellAssets"
                       :key="asset.id"
-                      class="rounded-2xl border border-slate-200 bg-white/72 p-3"
+                      class="p-3 border border-slate-200 rounded-2xl bg-white/72"
                       :class="outlineHighlightedAssetId === asset.id ? 'workspace-design-outline-highlight' : ''"
                       :data-design-outline-asset-id="asset.id"
                     >
-                      <div class="flex items-start gap-3">
+                      <div class="flex gap-3 items-start">
                         <img
                           :src="asset.src"
                           alt=""
-                          class="h-14 w-14 rounded-xl border border-slate-200 bg-slate-50 object-contain"
-                        />
-                        <div class="min-w-0 flex-1">
-                          <div class="flex items-center gap-2">
-                            <p class="truncate text-sm font-semibold text-slate-800">
+                          class="border border-slate-200 rounded-xl bg-slate-50 h-14 w-14 object-contain"
+                        >
+                        <div class="flex-1 min-w-0">
+                          <div class="flex gap-2 items-center">
+                            <p class="text-sm text-slate-800 font-semibold truncate">
                               {{ asset.name }}
                             </p>
                             <span
-                              class="rounded-full px-2 py-1 text-[10px] font-semibold"
+                              class="text-[10px] font-semibold px-2 py-1 rounded-full"
                               :class="
                                 isDeviceShellAssetValid(asset)
                                   ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -6860,18 +7101,18 @@ async function downloadDefaultPng(): Promise<void> {
                               }}
                             </span>
                           </div>
-                          <p class="mt-1 truncate text-[11px] text-slate-500">
+                          <p class="text-[11px] text-slate-500 mt-1 truncate">
                             {{ resolveDeviceShellPresetSummary(asset) }}
                           </p>
                         </div>
                         <button
-                          class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:opacity-50"
+                          class="text-[10px] text-slate-600 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white transition-colors hover:text-slate-900 hover:border-slate-300 disabled:opacity-50"
                           type="button"
                           :disabled="
-                            !selectedFrame ||
-                            (selectedFrame.kind !== 'device_mockup' &&
-                              selectedFrame.kind !== 'device_artboard') ||
-                            !isDeviceShellAssetValid(asset)
+                            !selectedFrame
+                              || (selectedFrame.kind !== 'device_mockup'
+                                && selectedFrame.kind !== 'device_artboard')
+                              || !isDeviceShellAssetValid(asset)
                           "
                           @click="useShellAsset(asset)"
                         >
@@ -6879,12 +7120,12 @@ async function downloadDefaultPng(): Promise<void> {
                         </button>
                       </div>
 
-                      <div class="mt-3 grid grid-cols-2 gap-2">
+                      <div class="mt-3 gap-2 grid grid-cols-2">
                         <label class="flex flex-col gap-1">
-                          <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">x</span>
+                          <span class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold uppercase">x</span>
                           <input
                             :value="resolveShellViewportRect(asset).x"
-                            class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                            class="text-xs text-slate-700 font-semibold px-3 py-2 outline-none border border-slate-200 rounded-xl bg-white transition-colors focus:border-slate-300"
                             type="number"
                             @change="
                               updateShellAssetMetadata(asset.id, {
@@ -6895,13 +7136,13 @@ async function downloadDefaultPng(): Promise<void> {
                                 },
                               })
                             "
-                          />
+                          >
                         </label>
                         <label class="flex flex-col gap-1">
-                          <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">y</span>
+                          <span class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold uppercase">y</span>
                           <input
                             :value="resolveShellViewportRect(asset).y"
-                            class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                            class="text-xs text-slate-700 font-semibold px-3 py-2 outline-none border border-slate-200 rounded-xl bg-white transition-colors focus:border-slate-300"
                             type="number"
                             @change="
                               updateShellAssetMetadata(asset.id, {
@@ -6912,13 +7153,13 @@ async function downloadDefaultPng(): Promise<void> {
                                 },
                               })
                             "
-                          />
+                          >
                         </label>
                         <label class="flex flex-col gap-1">
-                          <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">width</span>
+                          <span class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold uppercase">width</span>
                           <input
                             :value="resolveShellViewportRect(asset).width"
-                            class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                            class="text-xs text-slate-700 font-semibold px-3 py-2 outline-none border border-slate-200 rounded-xl bg-white transition-colors focus:border-slate-300"
                             type="number"
                             min="0"
                             @change="
@@ -6930,13 +7171,13 @@ async function downloadDefaultPng(): Promise<void> {
                                 },
                               })
                             "
-                          />
+                          >
                         </label>
                         <label class="flex flex-col gap-1">
-                          <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">height</span>
+                          <span class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold uppercase">height</span>
                           <input
                             :value="resolveShellViewportRect(asset).height"
-                            class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                            class="text-xs text-slate-700 font-semibold px-3 py-2 outline-none border border-slate-200 rounded-xl bg-white transition-colors focus:border-slate-300"
                             type="number"
                             min="0"
                             @change="
@@ -6948,17 +7189,17 @@ async function downloadDefaultPng(): Promise<void> {
                                 },
                               })
                             "
-                          />
+                          >
                         </label>
                       </div>
 
                       <label class="mt-2 flex flex-col gap-1">
-                        <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">cornerRadius</span>
+                        <span class="text-[10px] text-slate-500 tracking-[0.08em] font-semibold uppercase">cornerRadius</span>
                         <input
                           :value="
                             Number(asset.metadata?.deviceShell?.cornerRadius || 0)
                           "
-                          class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                          class="text-xs text-slate-700 font-semibold px-3 py-2 outline-none border border-slate-200 rounded-xl bg-white transition-colors focus:border-slate-300"
                           type="number"
                           min="0"
                           @change="
@@ -6968,7 +7209,7 @@ async function downloadDefaultPng(): Promise<void> {
                               ),
                             })
                           "
-                        />
+                        >
                       </label>
                     </div>
                   </div>
@@ -7056,11 +7297,11 @@ async function downloadDefaultPng(): Promise<void> {
           class="workspace-design-inspector-host flex h-full min-h-0 w-full items-stretch justify-end overflow-hidden"
         >
           <WLDesignContainer
-            class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-inspector-panel h-full min-h-0 max-h-full w-full"
+            class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-inspector-panel h-full max-h-full min-h-0 w-full"
             :data-collapsed="inspectorCollapsed ? 'true' : 'false'"
             :scrollable="!inspectorCollapsed"
-            :title="''"
-            :subtitle="''"
+            title=""
+            subtitle=""
           >
             <template #header-title>
               <div v-if="!inspectorCollapsed" class="min-w-0">
@@ -7068,15 +7309,15 @@ async function downloadDefaultPng(): Promise<void> {
                   v-if="inspectorHeaderEditing"
                   ref="inspectorHeaderInputRef"
                   v-model="inspectorHeaderDraft"
-                  class="h-7 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-[12px] font-semibold leading-4 text-slate-900 outline-none transition-colors focus:border-slate-400"
+                  class="text-[12px] text-slate-900 leading-4 font-semibold px-2 outline-none border border-slate-200 rounded-md bg-white h-7 min-w-0 w-full transition-colors focus:border-slate-400"
                   type="text"
                   @blur="submitInspectorHeaderRename"
                   @keydown.enter.prevent="submitInspectorHeaderRename"
                   @keydown.esc.prevent="cancelInspectorHeaderRename"
-                />
+                >
                 <button
                   v-else
-                  class="min-w-0 truncate text-left text-[12px] font-semibold leading-4 text-slate-900 transition-colors hover:text-slate-700"
+                  class="text-[12px] text-slate-900 leading-4 font-semibold text-left min-w-0 truncate transition-colors hover:text-slate-700"
                   :title="
                     canRenameInspectorHeader
                       ? `点击修改名称：${inspectorHeaderTitle}`
@@ -7091,7 +7332,7 @@ async function downloadDefaultPng(): Promise<void> {
             </template>
             <template #actions>
               <button
-                class="workspace-design-inspector-toggle flex h-8 w-8 items-center justify-center rounded-[10px] border border-slate-200 bg-slate-50 text-slate-500 transition-colors hover:border-slate-300 hover:bg-white hover:text-slate-900"
+                class="workspace-design-inspector-toggle text-slate-500 border border-slate-200 rounded-[10px] bg-slate-50 flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-900 hover:border-slate-300 hover:bg-white"
                 :class="
                   inspectorCollapsed
                     ? 'workspace-design-inspector-toggle--collapsed'
@@ -7112,9 +7353,9 @@ async function downloadDefaultPng(): Promise<void> {
             <template #header-extra>
               <div
                 v-if="!inspectorCollapsed && inspectorHasHeaderExtra"
-                class="-mt-1 flex items-center gap-1.5"
+                class="flex gap-1.5 items-center -mt-1"
               >
-                <div class="flex items-center gap-1.5">
+                <div class="flex gap-1.5 items-center">
                   <button
                     class="workspace-design-inspector-header-icon"
                     :class="
@@ -7148,8 +7389,7 @@ async function downloadDefaultPng(): Promise<void> {
                   >
                     <span
                       class="material-symbols-outlined text-[16px] leading-none"
-                      >content_copy</span
-                    >
+                    >content_copy</span>
                   </button>
                   <button
                     class="workspace-design-inspector-header-icon workspace-design-inspector-header-icon--danger"
@@ -7161,12 +7401,11 @@ async function downloadDefaultPng(): Promise<void> {
                   >
                     <span
                       class="material-symbols-outlined text-[16px] leading-none"
-                      >delete</span
-                    >
+                    >delete</span>
                   </button>
                 </div>
                 <span
-                  class="inline-flex h-4 items-center rounded-full border border-slate-200 bg-slate-50 px-1.5 text-[7px] font-semibold uppercase tracking-[0.12em] text-slate-600"
+                  class="text-[7px] text-slate-600 tracking-[0.12em] font-semibold px-1.5 border border-slate-200 rounded-full bg-slate-50 inline-flex h-4 uppercase items-center"
                   :title="`当前对象类型：${inspectorSelectionTag}`"
                 >
                   {{ inspectorSelectionTag }}
@@ -7233,21 +7472,23 @@ async function downloadDefaultPng(): Promise<void> {
       <template #overlay>
         <div
           v-if="diagramEditorFrame"
-          class="workspace-design-diagram-overlay pointer-events-auto fixed inset-5 z-[60] grid min-h-0 grid-cols-1 gap-4 overflow-hidden rounded-[12px] border border-slate-200/90 bg-white/96 p-4 shadow-[0_32px_96px_rgba(15,23,42,0.16)] xl:grid-cols-[minmax(0,1fr),360px]"
+          class="workspace-design-diagram-overlay p-4 border border-slate-200/90 rounded-[12px] bg-white/96 gap-4 grid grid-cols-1 min-h-0 pointer-events-auto shadow-[0_32px_96px_rgba(15,23,42,0.16)] inset-5 fixed z-[60] overflow-hidden xl:grid-cols-[minmax(0,1fr),360px]"
         >
           <section
-            class="min-h-0 rounded-[24px] border border-slate-800 bg-slate-900/80 p-4"
+            class="p-4 border border-slate-800 rounded-[24px] bg-slate-900/80 min-h-0"
           >
-            <div class="flex items-start justify-between gap-3">
+            <div class="flex gap-3 items-start justify-between">
               <div>
-                <h3 class="text-sm font-bold text-white">Diagram 编辑态</h3>
-                <p class="mt-1 text-xs leading-6 text-slate-400">
+                <h3 class="text-sm text-white font-bold">
+                  Diagram 编辑态
+                </h3>
+                <p class="text-xs text-slate-400 leading-6 mt-1">
                   当前正在编辑 {{ diagramEditorFrame.name }}。导入会覆盖该 frame
                   的 `embeddedScene`，但仍保留结构化语义。
                 </p>
               </div>
               <button
-                class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-slate-800"
+                class="text-[11px] text-slate-200 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
                 type="button"
                 @click="closeDiagramEditor"
               >
@@ -7256,15 +7497,13 @@ async function downloadDefaultPng(): Promise<void> {
             </div>
 
             <div
-              class="mt-4 grid gap-3 xl:grid-cols-[220px,minmax(0,1fr),160px,160px]"
+              class="mt-4 gap-3 grid xl:grid-cols-[220px,minmax(0,1fr),160px,160px]"
             >
               <label class="block space-y-1">
-                <span class="text-xs font-semibold text-slate-300"
-                  >结构源类型</span
-                >
+                <span class="text-xs text-slate-300 font-semibold">结构源类型</span>
                 <select
                   v-model="diagramSourceFormat"
-                  class="h-10 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                  class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-950 h-10 w-full focus:border-sky-400"
                 >
                   <option value="mermaid">Mermaid</option>
                   <option value="markdown_outline">Markdown Outline</option>
@@ -7272,16 +7511,16 @@ async function downloadDefaultPng(): Promise<void> {
                   <option value="architecture">Architecture Metadata</option>
                 </select>
               </label>
-              <div class="hidden xl:block"></div>
+              <div class="hidden xl:block" />
               <button
-                class="rounded-2xl bg-sky-500 px-3 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-sky-400"
+                class="text-xs text-slate-950 font-semibold px-3 py-2 rounded-2xl bg-sky-500 transition-colors hover:bg-sky-400"
                 type="button"
                 @click="applyDiagramSource"
               >
                 覆盖导入
               </button>
               <button
-                class="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-100 transition-colors hover:bg-slate-800"
+                class="text-xs text-slate-100 font-semibold px-3 py-2 border border-slate-700 rounded-2xl bg-slate-900 transition-colors hover:bg-slate-800"
                 type="button"
                 @click="relayoutSelectedDiagramFrame"
               >
@@ -7289,30 +7528,30 @@ async function downloadDefaultPng(): Promise<void> {
               </button>
             </div>
 
-            <div class="mt-4 rounded-[24px] border border-slate-800 bg-slate-950/70 p-4">
-              <div class="flex items-start justify-between gap-3">
+            <div class="mt-4 p-4 border border-slate-800 rounded-[24px] bg-slate-950/70">
+              <div class="flex gap-3 items-start justify-between">
                 <div>
-                  <h4 class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">
+                  <h4 class="text-xs text-slate-300 tracking-[0.18em] font-semibold uppercase">
                     画布 AI
                   </h4>
-                  <p class="mt-1 text-xs leading-5 text-slate-400">
+                  <p class="text-xs text-slate-400 leading-5 mt-1">
                     生成、补全或续改结构源。AI 只回填到源文本区，仍需你手动点击“覆盖导入”。
                   </p>
                 </div>
                 <span
-                  class="rounded-full border px-2 py-1 text-[10px] font-semibold"
+                  class="text-[10px] font-semibold px-2 py-1 border rounded-full"
                   :class="canvasAiStatusClass"
                 >
                   {{ canvasAiStatusLabel }}
                 </span>
               </div>
 
-              <div class="mt-4 grid gap-3 xl:grid-cols-[220px,1fr]">
+              <div class="mt-4 gap-3 grid xl:grid-cols-[220px,1fr]">
                 <label class="block space-y-1">
-                  <span class="text-xs font-semibold text-slate-300">图类型</span>
+                  <span class="text-xs text-slate-300 font-semibold">图类型</span>
                   <select
                     v-model="canvasAiTemplate"
-                    class="h-10 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-xs text-slate-100 outline-none focus:border-sky-400 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
+                    class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-950 h-10 w-full disabled:text-slate-500 disabled:border-slate-800 focus:border-sky-400 disabled:cursor-not-allowed"
                     :disabled="canvasAiInputDisabled"
                   >
                     <option value="flowchart">流程图</option>
@@ -7322,19 +7561,19 @@ async function downloadDefaultPng(): Promise<void> {
                   </select>
                 </label>
                 <label class="block space-y-1">
-                  <span class="text-xs font-semibold text-slate-300">AI 指令</span>
+                  <span class="text-xs text-slate-300 font-semibold">AI 指令</span>
                   <textarea
                     v-model="canvasAiPrompt"
-                    class="min-h-[84px] w-full rounded-[18px] border border-slate-800 bg-slate-950 px-3 py-2 text-xs leading-6 text-slate-100 outline-none focus:border-sky-400 disabled:cursor-not-allowed disabled:border-slate-900 disabled:text-slate-500"
+                    class="text-xs text-slate-100 leading-6 px-3 py-2 outline-none border border-slate-800 rounded-[18px] bg-slate-950 min-h-[84px] w-full disabled:text-slate-500 disabled:border-slate-900 focus:border-sky-400 disabled:cursor-not-allowed"
                     :disabled="canvasAiInputDisabled"
                     placeholder="例如：生成一个从资料收集、评分映射、作品打磨到答辩准备的项目流程图。"
-                  ></textarea>
+                  />
                 </label>
               </div>
 
               <div class="mt-3 flex flex-wrap gap-2">
                 <button
-                  class="rounded-2xl bg-sky-500 px-3 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
+                  class="text-xs text-slate-950 font-semibold px-3 py-2 rounded-2xl bg-sky-500 transition-colors disabled:text-slate-300 disabled:bg-slate-700 hover:bg-sky-400 disabled:cursor-not-allowed"
                   type="button"
                   :title="buildCanvasAiUnavailableMessage('generate')"
                   :disabled="canvasAiRunning || !isCanvasAiActionEnabled('generate')"
@@ -7343,7 +7582,7 @@ async function downloadDefaultPng(): Promise<void> {
                   AI 生成
                 </button>
                 <button
-                  class="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:text-slate-500"
+                  class="text-xs text-slate-100 font-semibold px-3 py-2 border border-slate-700 rounded-2xl bg-slate-900 transition-colors disabled:text-slate-500 hover:bg-slate-800 disabled:cursor-not-allowed"
                   type="button"
                   :title="buildCanvasAiUnavailableMessage('complete')"
                   :disabled="canvasAiRunning || !isCanvasAiActionEnabled('complete')"
@@ -7352,7 +7591,7 @@ async function downloadDefaultPng(): Promise<void> {
                   AI 补全
                 </button>
                 <button
-                  class="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:text-slate-500"
+                  class="text-xs text-slate-100 font-semibold px-3 py-2 border border-slate-700 rounded-2xl bg-slate-900 transition-colors disabled:text-slate-500 hover:bg-slate-800 disabled:cursor-not-allowed"
                   type="button"
                   :title="buildCanvasAiUnavailableMessage('refine')"
                   :disabled="canvasAiRunning || !isCanvasAiActionEnabled('refine')"
@@ -7362,7 +7601,7 @@ async function downloadDefaultPng(): Promise<void> {
                 </button>
                 <span
                   v-if="canvasAiPreviewPending"
-                  class="inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
+                  class="text-[10px] text-emerald-200 font-semibold px-2 py-1 border border-emerald-400/40 rounded-full bg-emerald-400/10 inline-flex items-center"
                 >
                   已生成预览，待手动导入
                 </span>
@@ -7370,24 +7609,24 @@ async function downloadDefaultPng(): Promise<void> {
 
               <p
                 v-if="canvasAiError"
-                class="mt-3 rounded-2xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-xs leading-5 text-rose-200"
+                class="text-xs text-rose-200 leading-5 mt-3 px-3 py-2 border border-rose-400/30 rounded-2xl bg-rose-400/10"
               >
                 {{ canvasAiError }}
               </p>
               <p
                 v-else-if="canvasAiRuntimeError"
-                class="mt-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs leading-5 text-amber-200"
+                class="text-xs text-amber-200 leading-5 mt-3 px-3 py-2 border border-amber-400/30 rounded-2xl bg-amber-400/10"
               >
                 {{ canvasAiRuntimeError }}
               </p>
 
               <div
                 v-if="canvasAiMessages.length > 0"
-                class="mt-4 rounded-[20px] border border-slate-800 bg-slate-950/80 px-3 py-3"
+                class="mt-4 px-3 py-3 border border-slate-800 rounded-[20px] bg-slate-950/80"
                 data-testid="workspace-canvas-ai-messages"
               >
-                <div class="flex items-center justify-between gap-3">
-                  <h5 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                <div class="flex gap-3 items-center justify-between">
+                  <h5 class="text-[11px] text-slate-400 tracking-[0.16em] font-semibold uppercase">
                     最近消息
                   </h5>
                   <span class="text-[10px] text-slate-500">
@@ -7399,12 +7638,12 @@ async function downloadDefaultPng(): Promise<void> {
                   <article
                     v-for="(message, index) in canvasAiMessages"
                     :key="`canvas-ai-message-${index}`"
-                    class="rounded-2xl border px-3 py-3"
+                    class="px-3 py-3 border rounded-2xl"
                     :class="message.role === 'assistant'
                       ? 'border-slate-200 bg-white/95 text-slate-800'
                       : 'border-sky-500/30 bg-sky-500/10 text-sky-100'"
                   >
-                    <div class="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] opacity-70">
+                    <div class="text-[10px] tracking-[0.16em] font-semibold mb-2 opacity-70 uppercase">
                       {{ message.role === 'assistant' ? 'AI' : '你' }}
                     </div>
                     <WorkspaceAssistantMessageContent
@@ -7414,7 +7653,7 @@ async function downloadDefaultPng(): Promise<void> {
                     />
                     <p
                       v-else
-                      class="whitespace-pre-wrap break-words text-xs leading-6"
+                      class="text-xs leading-6 whitespace-pre-wrap break-words"
                     >
                       {{ message.content }}
                     </p>
@@ -7424,51 +7663,51 @@ async function downloadDefaultPng(): Promise<void> {
             </div>
 
             <label class="mt-4 block space-y-1">
-              <span class="text-xs font-semibold text-slate-300">源文本</span>
+              <span class="text-xs text-slate-300 font-semibold">源文本</span>
               <textarea
                 v-model="diagramSourceText"
-                class="min-h-[360px] w-full rounded-[24px] border border-slate-800 bg-slate-950 px-4 py-3 font-mono text-xs leading-6 text-slate-100 outline-none focus:border-sky-400"
-              ></textarea>
+                class="text-xs text-slate-100 leading-6 font-mono px-4 py-3 outline-none border border-slate-800 rounded-[24px] bg-slate-950 min-h-[360px] w-full focus:border-sky-400"
+              />
             </label>
           </section>
 
-          <section class="flex min-h-0 flex-col gap-4">
+          <section class="flex flex-col gap-4 min-h-0">
             <div
-              class="rounded-[24px] border border-slate-800 bg-slate-900/80 p-4"
+              class="p-4 border border-slate-800 rounded-[24px] bg-slate-900/80"
             >
               <h4
-                class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400"
+                class="text-xs text-slate-400 tracking-[0.18em] font-semibold uppercase"
               >
                 Frame Preview
               </h4>
               <div
-                class="mt-3 overflow-hidden rounded-[20px] border border-slate-800 bg-slate-950"
+                class="mt-3 border border-slate-800 rounded-[20px] bg-slate-950 overflow-hidden"
                 v-html="
                   renderCompositionAssetToSvg(draftDocument, {
                     frameId: diagramEditorFrame.id,
                   })
                 "
-              ></div>
+              />
             </div>
             <div
               v-if="diagramEditorGraph && diagramEditorScene"
-              class="rounded-[24px] border border-slate-800 bg-slate-900/80 p-4"
+              class="p-4 border border-slate-800 rounded-[24px] bg-slate-900/80"
             >
-              <div class="flex items-start justify-between gap-3">
+              <div class="flex gap-3 items-start justify-between">
                 <div>
                   <h4
-                    class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400"
+                    class="text-xs text-slate-400 tracking-[0.18em] font-semibold uppercase"
                   >
                     Diagram Canvas
                   </h4>
-                  <p class="mt-1 text-xs leading-5 text-slate-500">
+                  <p class="text-xs text-slate-500 leading-5 mt-1">
                     点击容器、节点或边会聚焦
                     inspector；拖拽节点时会显示栅格吸附与对齐反馈，连线会直接创建
                     graph edge。
                   </p>
                 </div>
                 <button
-                  class="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-900"
+                  class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-950 transition-colors hover:bg-slate-900"
                   type="button"
                   @click="addDiagramGraphNode"
                 >
@@ -7476,7 +7715,7 @@ async function downloadDefaultPng(): Promise<void> {
                 </button>
               </div>
               <div
-                class="mt-3 h-[320px] overflow-hidden rounded-[20px] border border-slate-800 bg-slate-950"
+                class="mt-3 border border-slate-800 rounded-[20px] bg-slate-950 h-[320px] overflow-hidden"
               >
                 <ClientOnly>
                   <WorkspaceDesignDiagramEditor
@@ -7505,51 +7744,51 @@ async function downloadDefaultPng(): Promise<void> {
               </div>
             </div>
             <div
-              class="rounded-[24px] border border-slate-800 bg-slate-900/80 p-4"
+              class="p-4 border border-slate-800 rounded-[24px] bg-slate-900/80"
             >
               <h4
-                class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400"
+                class="text-xs text-slate-400 tracking-[0.18em] font-semibold uppercase"
               >
                 Embedded Scene
               </h4>
-              <div class="mt-3 grid grid-cols-2 gap-3">
+              <div class="mt-3 gap-3 grid grid-cols-2">
                 <div
-                  class="rounded-2xl border border-slate-800 bg-slate-950 px-3 py-3"
+                  class="px-3 py-3 border border-slate-800 rounded-2xl bg-slate-950"
                 >
                   <p
-                    class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500"
+                    class="text-[10px] text-slate-500 tracking-[0.16em] font-semibold uppercase"
                   >
                     Draw Mode
                   </p>
-                  <p class="mt-2 text-sm font-semibold text-slate-100">
+                  <p class="text-sm text-slate-100 font-semibold mt-2">
                     {{
                       diagramEditorFrame.embeddedScene?.drawMode || "diagram"
                     }}
                   </p>
                 </div>
                 <div
-                  class="rounded-2xl border border-slate-800 bg-slate-950 px-3 py-3"
+                  class="px-3 py-3 border border-slate-800 rounded-2xl bg-slate-950"
                 >
                   <p
-                    class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500"
+                    class="text-[10px] text-slate-500 tracking-[0.16em] font-semibold uppercase"
                   >
                     Source Type
                   </p>
-                  <p class="mt-2 text-sm font-semibold text-slate-100">
+                  <p class="text-sm text-slate-100 font-semibold mt-2">
                     {{
                       diagramEditorFrame.embeddedScene?.sourceType || "manual"
                     }}
                   </p>
                 </div>
                 <div
-                  class="rounded-2xl border border-slate-800 bg-slate-950 px-3 py-3"
+                  class="px-3 py-3 border border-slate-800 rounded-2xl bg-slate-950"
                 >
                   <p
-                    class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500"
+                    class="text-[10px] text-slate-500 tracking-[0.16em] font-semibold uppercase"
                   >
                     Nodes
                   </p>
-                  <p class="mt-2 text-sm font-semibold text-slate-100">
+                  <p class="text-sm text-slate-100 font-semibold mt-2">
                     {{
                       diagramEditorFrame.embeddedScene?.sceneModel?.nodes
                         ?.length || 0
@@ -7557,14 +7796,14 @@ async function downloadDefaultPng(): Promise<void> {
                   </p>
                 </div>
                 <div
-                  class="rounded-2xl border border-slate-800 bg-slate-950 px-3 py-3"
+                  class="px-3 py-3 border border-slate-800 rounded-2xl bg-slate-950"
                 >
                   <p
-                    class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500"
+                    class="text-[10px] text-slate-500 tracking-[0.16em] font-semibold uppercase"
                   >
                     Edges
                   </p>
-                  <p class="mt-2 text-sm font-semibold text-slate-100">
+                  <p class="text-sm text-slate-100 font-semibold mt-2">
                     {{
                       diagramEditorFrame.embeddedScene?.sceneModel?.edges
                         ?.length || 0
@@ -7576,22 +7815,22 @@ async function downloadDefaultPng(): Promise<void> {
 
             <div
               v-if="diagramEditorGraph"
-              class="rounded-[24px] border border-slate-800 bg-slate-900/80 p-4"
+              class="p-4 border border-slate-800 rounded-[24px] bg-slate-900/80"
             >
-              <div class="flex items-start justify-between gap-3">
+              <div class="flex gap-3 items-start justify-between">
                 <div>
                   <h4
-                    class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400"
+                    class="text-xs text-slate-400 tracking-[0.18em] font-semibold uppercase"
                   >
                     Graph Controls
                   </h4>
-                  <p class="mt-1 text-xs leading-5 text-slate-500">
+                  <p class="text-xs text-slate-500 leading-5 mt-1">
                     仅对 `graph` 型 diagram 开放节点与边级编辑，修改后会写回
                     `embeddedScene.sourceModel` 并重新布局。
                   </p>
                 </div>
                 <button
-                  class="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-900"
+                  class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-950 transition-colors hover:bg-slate-900"
                   type="button"
                   @click="addDiagramGraphNode"
                 >
@@ -7600,12 +7839,10 @@ async function downloadDefaultPng(): Promise<void> {
               </div>
 
               <label class="mt-4 block space-y-1">
-                <span class="text-xs font-semibold text-slate-300"
-                  >Diagram Type</span
-                >
+                <span class="text-xs text-slate-300 font-semibold">Diagram Type</span>
                 <select
                   :value="diagramEditorGraph.diagramType"
-                  class="h-10 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                  class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-950 h-10 w-full focus:border-sky-400"
                   @change="
                     updateDiagramGraphType(
                       ($event.target as HTMLSelectElement)
@@ -7621,21 +7858,21 @@ async function downloadDefaultPng(): Promise<void> {
               </label>
 
               <div
-                class="mt-4 rounded-[20px] border border-slate-800 bg-slate-950 px-4 py-4"
+                class="mt-4 px-4 py-4 border border-slate-800 rounded-[20px] bg-slate-950"
               >
-                <div class="flex items-start justify-between gap-3">
+                <div class="flex gap-3 items-start justify-between">
                   <div>
                     <h5
-                      class="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400"
+                      class="text-xs text-slate-400 tracking-[0.16em] font-semibold uppercase"
                     >
                       Selection Inspector
                     </h5>
-                    <p class="mt-1 text-xs leading-5 text-slate-500">
+                    <p class="text-xs text-slate-500 leading-5 mt-1">
                       当前聚焦的容器、节点或边会在这里提供快捷操作，配合右上角子画布使用。
                     </p>
                   </div>
                   <button
-                    class="rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:bg-slate-800"
+                    class="text-[11px] text-slate-300 font-semibold px-3 py-1.5 border border-slate-800 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
                     type="button"
                     @click="clearDiagramSelection"
                   >
@@ -7645,19 +7882,19 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <div v-if="diagramSelectedGroup" class="mt-4 space-y-3">
                   <div
-                    class="rounded-2xl border border-sky-500/30 bg-sky-500/5 px-3 py-3"
+                    class="px-3 py-3 border border-sky-500/30 rounded-2xl bg-sky-500/5"
                   >
                     <p
-                      class="text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-300"
+                      class="text-[10px] text-sky-300 tracking-[0.16em] font-semibold uppercase"
                     >
                       Selected Group
                     </p>
-                    <p class="mt-2 text-sm font-semibold text-slate-100">
+                    <p class="text-sm text-slate-100 font-semibold mt-2">
                       {{
                         diagramSelectedGroup.label || diagramSelectedGroup.id
                       }}
                     </p>
-                    <p class="mt-1 text-[11px] text-slate-500">
+                    <p class="text-[11px] text-slate-500 mt-1">
                       {{ diagramSelectedGroup.id }} ·
                       {{
                         diagramSelectedGroup.metadata?.layoutKind === "swimlane"
@@ -7667,49 +7904,43 @@ async function downloadDefaultPng(): Promise<void> {
                     </p>
                   </div>
 
-                  <div class="grid gap-3">
+                  <div class="gap-3 grid">
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >id</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">id</span>
                       <input
                         :value="diagramSelectedGroup.id"
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="text"
                         @change="
                           updateDiagramGraphGroup(diagramSelectedGroup.id, {
                             id: ($event.target as HTMLInputElement).value,
                           })
                         "
-                      />
+                      >
                     </label>
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >label</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">label</span>
                       <input
                         :value="diagramSelectedGroup.label"
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="text"
                         @input="
                           updateDiagramGraphGroup(diagramSelectedGroup.id, {
                             label: ($event.target as HTMLInputElement).value,
                           })
                         "
-                      />
+                      >
                     </label>
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >layout kind</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">layout kind</span>
                       <select
                         :value="
-                          diagramSelectedGroup.metadata?.layoutKind ===
-                          'swimlane'
+                          diagramSelectedGroup.metadata?.layoutKind
+                            === 'swimlane'
                             ? 'swimlane'
                             : 'container'
                         "
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         @change="
                           updateDiagramGraphGroup(diagramSelectedGroup.id, {
                             metadata: {
@@ -7729,17 +7960,15 @@ async function downloadDefaultPng(): Promise<void> {
                       "
                       class="block space-y-1"
                     >
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >lane direction</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">lane direction</span>
                       <select
                         :value="
-                          diagramSelectedGroup.metadata?.laneDirection ===
-                          'vertical'
+                          diagramSelectedGroup.metadata?.laneDirection
+                            === 'vertical'
                             ? 'vertical'
                             : 'horizontal'
                         "
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         @change="
                           updateDiagramGraphGroup(diagramSelectedGroup.id, {
                             metadata: {
@@ -7756,16 +7985,14 @@ async function downloadDefaultPng(): Promise<void> {
                     </label>
                   </div>
 
-                  <div class="grid grid-cols-2 gap-3">
+                  <div class="gap-3 grid grid-cols-2">
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >x</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">x</span>
                       <input
                         :value="
                           Math.round(diagramSelectedGroupSceneNode?.x || 0)
                         "
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="number"
                         @change="
                           updateDiagramGraphGroupFrame(
@@ -7777,17 +8004,15 @@ async function downloadDefaultPng(): Promise<void> {
                             },
                           )
                         "
-                      />
+                      >
                     </label>
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >y</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">y</span>
                       <input
                         :value="
                           Math.round(diagramSelectedGroupSceneNode?.y || 0)
                         "
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="number"
                         @change="
                           updateDiagramGraphGroupFrame(
@@ -7799,19 +8024,17 @@ async function downloadDefaultPng(): Promise<void> {
                             },
                           )
                         "
-                      />
+                      >
                     </label>
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >width</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">width</span>
                       <input
                         :value="
                           Math.round(
                             diagramSelectedGroupSceneNode?.width || 320,
                           )
                         "
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="number"
                         min="260"
                         @change="
@@ -7824,19 +8047,17 @@ async function downloadDefaultPng(): Promise<void> {
                             },
                           )
                         "
-                      />
+                      >
                     </label>
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >height</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">height</span>
                       <input
                         :value="
                           Math.round(
                             diagramSelectedGroupSceneNode?.height || 220,
                           )
                         "
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="number"
                         min="180"
                         @change="
@@ -7849,21 +8070,21 @@ async function downloadDefaultPng(): Promise<void> {
                             },
                           )
                         "
-                      />
+                      >
                     </label>
                   </div>
 
                   <div
-                    class="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-3"
+                    class="px-3 py-3 border border-slate-800 rounded-2xl bg-slate-900"
                   >
-                    <div class="flex items-center justify-between gap-3">
+                    <div class="flex gap-3 items-center justify-between">
                       <p
-                        class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400"
+                        class="text-[11px] text-slate-400 tracking-[0.16em] font-semibold uppercase"
                       >
                         Members
                       </p>
                       <div
-                        class="rounded-full border border-slate-700 bg-slate-950 px-2.5 py-1 text-[10px] font-semibold text-slate-400"
+                        class="text-[10px] text-slate-400 font-semibold px-2.5 py-1 border border-slate-700 rounded-full bg-slate-950"
                       >
                         {{ (diagramSelectedGroup.childNodeIds || []).length }}
                       </div>
@@ -7873,13 +8094,13 @@ async function downloadDefaultPng(): Promise<void> {
                       <label
                         v-for="node in diagramEditorGraph.nodes"
                         :key="`group-member-${diagramSelectedGroup.id}-${node.id}`"
-                        class="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2"
+                        class="px-3 py-2 border border-slate-800 rounded-xl bg-slate-950 flex gap-3 items-center justify-between"
                       >
-                        <span class="min-w-0 truncate text-xs text-slate-200">{{
+                        <span class="text-xs text-slate-200 min-w-0 truncate">{{
                           node.label || node.id
                         }}</span>
                         <input
-                          class="h-4 w-4 rounded border-slate-700 bg-slate-900 text-sky-400"
+                          class="text-sky-400 border-slate-700 rounded bg-slate-900 h-4 w-4"
                           type="checkbox"
                           :checked="
                             (diagramSelectedGroup.childNodeIds || []).includes(
@@ -7892,14 +8113,14 @@ async function downloadDefaultPng(): Promise<void> {
                               node.id,
                             )
                           "
-                        />
+                        >
                       </label>
                     </div>
                   </div>
 
                   <div class="flex flex-wrap gap-2">
                     <button
-                      class="rounded-full border border-emerald-800 bg-emerald-950/40 px-3 py-1.5 text-[11px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-900/40"
+                      class="text-[11px] text-emerald-300 font-semibold px-3 py-1.5 border border-emerald-800 rounded-full bg-emerald-950/40 transition-colors hover:bg-emerald-900/40"
                       type="button"
                       @click="
                         relayoutDiagramGraphGroup(diagramSelectedGroup.id)
@@ -7908,7 +8129,7 @@ async function downloadDefaultPng(): Promise<void> {
                       整理成员
                     </button>
                     <button
-                      class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-800"
+                      class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
                       type="button"
                       @click="
                         fitDiagramGraphGroupToMembers(diagramSelectedGroup.id)
@@ -7917,7 +8138,7 @@ async function downloadDefaultPng(): Promise<void> {
                       按内容收紧
                     </button>
                     <button
-                      class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-800"
+                      class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
                       type="button"
                       @click="
                         resetDiagramGraphGroupManualLayout(
@@ -7928,21 +8149,21 @@ async function downloadDefaultPng(): Promise<void> {
                       恢复自动布局
                     </button>
                     <button
-                      class="rounded-full border border-sky-800 bg-sky-950/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition-colors hover:bg-sky-900/40"
+                      class="text-[11px] text-sky-200 font-semibold px-3 py-1.5 border border-sky-800 rounded-full bg-sky-950/40 transition-colors hover:bg-sky-900/40"
                       type="button"
                       @click="addDiagramGraphGroup('container')"
                     >
                       添加容器
                     </button>
                     <button
-                      class="rounded-full border border-sky-800 bg-sky-950/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition-colors hover:bg-sky-900/40"
+                      class="text-[11px] text-sky-200 font-semibold px-3 py-1.5 border border-sky-800 rounded-full bg-sky-950/40 transition-colors hover:bg-sky-900/40"
                       type="button"
                       @click="addDiagramGraphGroup('swimlane')"
                     >
                       添加泳道
                     </button>
                     <button
-                      class="rounded-full border border-rose-900/80 bg-rose-950/60 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-900/60"
+                      class="text-[11px] text-rose-300 font-semibold px-3 py-1.5 border border-rose-900/80 rounded-full bg-rose-950/60 transition-colors hover:bg-rose-900/60"
                       type="button"
                       @click="removeDiagramGraphGroup(diagramSelectedGroup.id)"
                     >
@@ -7953,87 +8174,81 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <div v-else-if="diagramSelectedNode" class="mt-4 space-y-3">
                   <div
-                    class="rounded-2xl border border-sky-500/30 bg-sky-500/5 px-3 py-3"
+                    class="px-3 py-3 border border-sky-500/30 rounded-2xl bg-sky-500/5"
                   >
                     <p
-                      class="text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-300"
+                      class="text-[10px] text-sky-300 tracking-[0.16em] font-semibold uppercase"
                     >
                       Selected Node
                     </p>
-                    <p class="mt-2 text-sm font-semibold text-slate-100">
+                    <p class="text-sm text-slate-100 font-semibold mt-2">
                       {{ diagramSelectedNode.label || diagramSelectedNode.id }}
                     </p>
-                    <p class="mt-1 text-[11px] text-slate-500">
+                    <p class="text-[11px] text-slate-500 mt-1">
                       {{ diagramSelectedNode.id }} ·
                       {{ diagramSelectedNode.type || "node" }}
                     </p>
                   </div>
 
-                  <div class="grid gap-3">
+                  <div class="gap-3 grid">
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >id</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">id</span>
                       <input
                         :value="diagramSelectedNode.id"
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="text"
                         @change="
                           updateDiagramGraphNode(diagramSelectedNode.id, {
                             id: ($event.target as HTMLInputElement).value,
                           })
                         "
-                      />
+                      >
                     </label>
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >label</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">label</span>
                       <input
                         :value="diagramSelectedNode.label"
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="text"
                         @input="
                           updateDiagramGraphNode(diagramSelectedNode.id, {
                             label: ($event.target as HTMLInputElement).value,
                           })
                         "
-                      />
+                      >
                     </label>
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >type</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">type</span>
                       <input
                         :value="diagramSelectedNode.type || ''"
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="text"
                         @input="
                           updateDiagramGraphNode(diagramSelectedNode.id, {
                             type: ($event.target as HTMLInputElement).value,
                           })
                         "
-                      />
+                      >
                     </label>
                   </div>
 
                   <div class="flex flex-wrap gap-2">
                     <button
-                      class="rounded-full border border-emerald-800 bg-emerald-950/40 px-3 py-1.5 text-[11px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-900/40"
+                      class="text-[11px] text-emerald-300 font-semibold px-3 py-1.5 border border-emerald-800 rounded-full bg-emerald-950/40 transition-colors hover:bg-emerald-900/40"
                       type="button"
                       @click="addDiagramChildNode(diagramSelectedNode.id)"
                     >
                       添加下游节点
                     </button>
                     <button
-                      class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-800"
+                      class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
                       type="button"
                       @click="duplicateDiagramGraphNode(diagramSelectedNode.id)"
                     >
                       复制节点
                     </button>
                     <button
-                      class="rounded-full border border-rose-900/80 bg-rose-950/60 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-900/60"
+                      class="text-[11px] text-rose-300 font-semibold px-3 py-1.5 border border-rose-900/80 rounded-full bg-rose-950/60 transition-colors hover:bg-rose-900/60"
                       type="button"
                       @click="removeDiagramGraphNode(diagramSelectedNode.id)"
                     >
@@ -8044,30 +8259,28 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <div v-else-if="diagramSelectedEdge" class="mt-4 space-y-3">
                   <div
-                    class="rounded-2xl border border-sky-500/30 bg-sky-500/5 px-3 py-3"
+                    class="px-3 py-3 border border-sky-500/30 rounded-2xl bg-sky-500/5"
                   >
                     <p
-                      class="text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-300"
+                      class="text-[10px] text-sky-300 tracking-[0.16em] font-semibold uppercase"
                     >
                       Selected Edge
                     </p>
-                    <p class="mt-2 text-sm font-semibold text-slate-100">
+                    <p class="text-sm text-slate-100 font-semibold mt-2">
                       {{ diagramSelectedEdge.source }} →
                       {{ diagramSelectedEdge.target }}
                     </p>
-                    <p class="mt-1 text-[11px] text-slate-500">
+                    <p class="text-[11px] text-slate-500 mt-1">
                       {{ diagramSelectedEdge.id }}
                     </p>
                   </div>
 
-                  <div class="grid gap-3">
+                  <div class="gap-3 grid">
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >source</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">source</span>
                       <select
                         :value="diagramSelectedEdge.source"
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         @change="
                           updateDiagramGraphEdge(diagramSelectedEdge.id, {
                             source: ($event.target as HTMLSelectElement).value,
@@ -8084,12 +8297,10 @@ async function downloadDefaultPng(): Promise<void> {
                       </select>
                     </label>
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >target</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">target</span>
                       <select
                         :value="diagramSelectedEdge.target"
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         @change="
                           updateDiagramGraphEdge(diagramSelectedEdge.id, {
                             target: ($event.target as HTMLSelectElement).value,
@@ -8106,32 +8317,30 @@ async function downloadDefaultPng(): Promise<void> {
                       </select>
                     </label>
                     <label class="block space-y-1">
-                      <span class="text-[11px] font-semibold text-slate-400"
-                        >label</span
-                      >
+                      <span class="text-[11px] text-slate-400 font-semibold">label</span>
                       <input
                         :value="diagramSelectedEdge.label || ''"
-                        class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                        class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                         type="text"
                         @input="
                           updateDiagramGraphEdge(diagramSelectedEdge.id, {
                             label: ($event.target as HTMLInputElement).value,
                           })
                         "
-                      />
+                      >
                     </label>
                   </div>
 
                   <div class="flex flex-wrap gap-2">
                     <button
-                      class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-800"
+                      class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
                       type="button"
                       @click="reverseDiagramGraphEdge(diagramSelectedEdge.id)"
                     >
                       反转方向
                     </button>
                     <button
-                      class="rounded-full border border-rose-900/80 bg-rose-950/60 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-900/60"
+                      class="text-[11px] text-rose-300 font-semibold px-3 py-1.5 border border-rose-900/80 rounded-full bg-rose-950/60 transition-colors hover:bg-rose-900/60"
                       type="button"
                       @click="removeDiagramGraphEdge(diagramSelectedEdge.id)"
                     >
@@ -8142,17 +8351,19 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <div
                   v-else
-                  class="mt-4 rounded-2xl border border-dashed border-slate-800 bg-slate-950 px-3 py-4 text-center text-xs text-slate-500"
+                  class="text-xs text-slate-500 mt-4 px-3 py-4 text-center border border-slate-800 rounded-2xl border-dashed bg-slate-950"
                 >
                   先在 Diagram Canvas 中选中容器、节点或边，再进行聚焦编辑。
                 </div>
               </div>
 
               <div class="mt-4">
-                <div class="flex items-center justify-between gap-3">
-                  <h5 class="text-xs font-semibold text-slate-200">Nodes</h5>
+                <div class="flex gap-3 items-center justify-between">
+                  <h5 class="text-xs text-slate-200 font-semibold">
+                    Nodes
+                  </h5>
                   <div
-                    class="rounded-full border border-slate-800 bg-slate-950 px-2.5 py-1 text-[10px] font-semibold text-slate-400"
+                    class="text-[10px] text-slate-400 font-semibold px-2.5 py-1 border border-slate-800 rounded-full bg-slate-950"
                   >
                     {{ diagramEditorGraph.nodes.length }}
                   </div>
@@ -8165,7 +8376,7 @@ async function downloadDefaultPng(): Promise<void> {
                   <div
                     v-for="node in diagramEditorGraph.nodes"
                     :key="node.id"
-                    class="rounded-2xl border bg-slate-950 px-3 py-3 transition-colors"
+                    class="px-3 py-3 border rounded-2xl bg-slate-950 transition-colors"
                     :class="
                       node.id === diagramSelectedNodeId
                         ? 'border-sky-500/70 ring-1 ring-sky-400/40'
@@ -8173,57 +8384,51 @@ async function downloadDefaultPng(): Promise<void> {
                     "
                     @click="selectDiagramNode(node.id)"
                   >
-                    <div class="grid gap-3">
+                    <div class="gap-3 grid">
                       <label class="block space-y-1">
-                        <span class="text-[11px] font-semibold text-slate-400"
-                          >id</span
-                        >
+                        <span class="text-[11px] text-slate-400 font-semibold">id</span>
                         <input
                           :value="node.id"
-                          class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                          class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                           type="text"
                           @change="
                             updateDiagramGraphNode(node.id, {
                               id: ($event.target as HTMLInputElement).value,
                             })
                           "
-                        />
+                        >
                       </label>
                       <label class="block space-y-1">
-                        <span class="text-[11px] font-semibold text-slate-400"
-                          >label</span
-                        >
+                        <span class="text-[11px] text-slate-400 font-semibold">label</span>
                         <input
                           :value="node.label"
-                          class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                          class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                           type="text"
                           @input="
                             updateDiagramGraphNode(node.id, {
                               label: ($event.target as HTMLInputElement).value,
                             })
                           "
-                        />
+                        >
                       </label>
                       <label class="block space-y-1">
-                        <span class="text-[11px] font-semibold text-slate-400"
-                          >type</span
-                        >
+                        <span class="text-[11px] text-slate-400 font-semibold">type</span>
                         <input
                           :value="node.type || ''"
-                          class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                          class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                           type="text"
                           @input="
                             updateDiagramGraphNode(node.id, {
                               type: ($event.target as HTMLInputElement).value,
                             })
                           "
-                        />
+                        >
                       </label>
                     </div>
 
                     <div class="mt-3 flex justify-end">
                       <button
-                        class="rounded-full border border-rose-900/80 bg-rose-950/60 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-900/60"
+                        class="text-[11px] text-rose-300 font-semibold px-3 py-1.5 border border-rose-900/80 rounded-full bg-rose-950/60 transition-colors hover:bg-rose-900/60"
                         type="button"
                         @click="removeDiagramGraphNode(node.id)"
                       >
@@ -8235,17 +8440,19 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <div
                   v-else
-                  class="mt-3 rounded-2xl border border-dashed border-slate-800 bg-slate-950 px-3 py-4 text-center text-xs text-slate-500"
+                  class="text-xs text-slate-500 mt-3 px-3 py-4 text-center border border-slate-800 rounded-2xl border-dashed bg-slate-950"
                 >
                   当前 graph 还没有节点。
                 </div>
               </div>
 
               <div class="mt-4">
-                <div class="flex items-center justify-between gap-3">
-                  <h5 class="text-xs font-semibold text-slate-200">Edges</h5>
+                <div class="flex gap-3 items-center justify-between">
+                  <h5 class="text-xs text-slate-200 font-semibold">
+                    Edges
+                  </h5>
                   <button
-                    class="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-900"
+                    class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-950 transition-colors hover:bg-slate-900"
                     type="button"
                     @click="addDiagramGraphEdge"
                   >
@@ -8260,7 +8467,7 @@ async function downloadDefaultPng(): Promise<void> {
                   <div
                     v-for="edge in diagramEditorGraph.edges"
                     :key="edge.id"
-                    class="rounded-2xl border bg-slate-950 px-3 py-3 transition-colors"
+                    class="px-3 py-3 border rounded-2xl bg-slate-950 transition-colors"
                     :class="
                       edge.id === diagramSelectedEdgeId
                         ? 'border-sky-500/70 ring-1 ring-sky-400/40'
@@ -8268,14 +8475,12 @@ async function downloadDefaultPng(): Promise<void> {
                     "
                     @click="selectDiagramEdge(edge.id)"
                   >
-                    <div class="grid gap-3">
+                    <div class="gap-3 grid">
                       <label class="block space-y-1">
-                        <span class="text-[11px] font-semibold text-slate-400"
-                          >source</span
-                        >
+                        <span class="text-[11px] text-slate-400 font-semibold">source</span>
                         <select
                           :value="edge.source"
-                          class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                          class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                           @change="
                             updateDiagramGraphEdge(edge.id, {
                               source: ($event.target as HTMLSelectElement)
@@ -8293,12 +8498,10 @@ async function downloadDefaultPng(): Promise<void> {
                         </select>
                       </label>
                       <label class="block space-y-1">
-                        <span class="text-[11px] font-semibold text-slate-400"
-                          >target</span
-                        >
+                        <span class="text-[11px] text-slate-400 font-semibold">target</span>
                         <select
                           :value="edge.target"
-                          class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                          class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                           @change="
                             updateDiagramGraphEdge(edge.id, {
                               target: ($event.target as HTMLSelectElement)
@@ -8316,25 +8519,23 @@ async function downloadDefaultPng(): Promise<void> {
                         </select>
                       </label>
                       <label class="block space-y-1">
-                        <span class="text-[11px] font-semibold text-slate-400"
-                          >label</span
-                        >
+                        <span class="text-[11px] text-slate-400 font-semibold">label</span>
                         <input
                           :value="edge.label || ''"
-                          class="h-10 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs text-slate-100 outline-none focus:border-sky-400"
+                          class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-900 h-10 w-full focus:border-sky-400"
                           type="text"
                           @input="
                             updateDiagramGraphEdge(edge.id, {
                               label: ($event.target as HTMLInputElement).value,
                             })
                           "
-                        />
+                        >
                       </label>
                     </div>
 
                     <div class="mt-3 flex justify-end">
                       <button
-                        class="rounded-full border border-rose-900/80 bg-rose-950/60 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-900/60"
+                        class="text-[11px] text-rose-300 font-semibold px-3 py-1.5 border border-rose-900/80 rounded-full bg-rose-950/60 transition-colors hover:bg-rose-900/60"
                         type="button"
                         @click="removeDiagramGraphEdge(edge.id)"
                       >
@@ -8346,7 +8547,7 @@ async function downloadDefaultPng(): Promise<void> {
 
                 <div
                   v-else
-                  class="mt-3 rounded-2xl border border-dashed border-slate-800 bg-slate-950 px-3 py-4 text-center text-xs text-slate-500"
+                  class="text-xs text-slate-500 mt-3 px-3 py-4 text-center border border-slate-800 rounded-2xl border-dashed bg-slate-950"
                 >
                   当前 graph 还没有边。
                 </div>
@@ -8421,7 +8622,7 @@ async function downloadDefaultPng(): Promise<void> {
 
 .workspace-design-layer-tree__connector::before,
 .workspace-design-layer-tree__connector::after {
-  content: "";
+  content: '';
   position: absolute;
   background: var(--wl-design-layer-guide-color);
 }
@@ -8564,24 +8765,12 @@ async function downloadDefaultPng(): Promise<void> {
 
 .workspace-design-panel .workspace-design-floating-panel :deep(.rounded-2xl),
 .workspace-design-panel .workspace-design-floating-panel :deep(.rounded-xl),
-.workspace-design-panel
-  .workspace-design-floating-panel
-  :deep(.rounded-\[14px\]),
-.workspace-design-panel
-  .workspace-design-floating-panel
-  :deep(.rounded-\[18px\]),
-.workspace-design-panel
-  .workspace-design-floating-panel
-  :deep(.rounded-\[20px\]),
-.workspace-design-panel
-  .workspace-design-floating-panel
-  :deep(.rounded-\[22px\]),
-.workspace-design-panel
-  .workspace-design-floating-panel
-  :deep(.rounded-\[24px\]),
-.workspace-design-panel
-  .workspace-design-floating-panel
-  :deep(.rounded-\[28px\]) {
+.workspace-design-panel .workspace-design-floating-panel :deep(.rounded-\[14px\]),
+.workspace-design-panel .workspace-design-floating-panel :deep(.rounded-\[18px\]),
+.workspace-design-panel .workspace-design-floating-panel :deep(.rounded-\[20px\]),
+.workspace-design-panel .workspace-design-floating-panel :deep(.rounded-\[22px\]),
+.workspace-design-panel .workspace-design-floating-panel :deep(.rounded-\[24px\]),
+.workspace-design-panel .workspace-design-floating-panel :deep(.rounded-\[28px\]) {
   border-radius: 10px !important;
 }
 
@@ -8617,23 +8806,12 @@ async function downloadDefaultPng(): Promise<void> {
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-sidebar-panel:not([data-collapsed="true"])
-      > div
-      > div:first-child
-      > div
-  ) {
+  :deep(.workspace-design-sidebar-panel:not([data-collapsed='true']) > div > div:first-child > div) {
   align-items: center;
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-sidebar-panel:not([data-collapsed="true"])
-      > div
-      > div:first-child
-      > div
-      > div:first-child
-  ) {
+  :deep(.workspace-design-sidebar-panel:not([data-collapsed='true']) > div > div:first-child > div > div:first-child) {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -8642,15 +8820,13 @@ async function downloadDefaultPng(): Promise<void> {
   transform-origin: top right;
 }
 
-.workspace-design-panel
-  :deep(.workspace-design-sidebar-panel[data-collapsed="true"]) {
+.workspace-design-panel :deep(.workspace-design-sidebar-panel[data-collapsed='true']) {
   clip-path: inset(0 calc(100% - 36px) calc(100% - 36px) 0 round 10px);
   min-height: 36px;
   max-height: 36px !important;
 }
 
-.workspace-design-panel
-  :deep(.workspace-design-inspector-panel[data-collapsed="true"]) {
+.workspace-design-panel :deep(.workspace-design-inspector-panel[data-collapsed='true']) {
   clip-path: inset(0 0 calc(100% - 36px) calc(100% - 36px) round 10px);
   min-height: 36px;
   max-height: 36px !important;
@@ -8661,10 +8837,8 @@ async function downloadDefaultPng(): Promise<void> {
   border-color: rgba(226, 232, 240, 0.96) !important;
 }
 
-.workspace-design-panel
-  :deep(.workspace-design-sidebar-panel .workspace-design-sidebar-toggle),
-.workspace-design-panel
-  :deep(.workspace-design-inspector-panel .workspace-design-inspector-toggle) {
+.workspace-design-panel :deep(.workspace-design-sidebar-panel .workspace-design-sidebar-toggle),
+.workspace-design-panel :deep(.workspace-design-inspector-panel .workspace-design-inspector-toggle) {
   outline: none;
 }
 
@@ -8716,50 +8890,26 @@ async function downloadDefaultPng(): Promise<void> {
   color: #be123c;
 }
 
-.workspace-design-panel
-  :deep(.workspace-design-sidebar-panel[data-collapsed="true"] > div),
-.workspace-design-panel
-  :deep(.workspace-design-inspector-panel[data-collapsed="true"] > div) {
+.workspace-design-panel :deep(.workspace-design-sidebar-panel[data-collapsed='true'] > div),
+.workspace-design-panel :deep(.workspace-design-inspector-panel[data-collapsed='true'] > div) {
   min-height: 36px;
   height: 36px;
 }
 
-.workspace-design-panel
-  :deep(
-    .workspace-design-sidebar-panel[data-collapsed="true"]
-      > div
-      > div:first-child
-  ),
-.workspace-design-panel
-  :deep(
-    .workspace-design-inspector-panel[data-collapsed="true"]
-      > div
-      > div:first-child
-  ) {
+.workspace-design-panel :deep(.workspace-design-sidebar-panel[data-collapsed='true'] > div > div:first-child),
+.workspace-design-panel :deep(.workspace-design-inspector-panel[data-collapsed='true'] > div > div:first-child) {
   padding: 0;
   border-bottom-color: transparent !important;
 }
 
-.workspace-design-panel
-  :deep(
-    .workspace-design-sidebar-panel[data-collapsed="true"]
-      > div
-      > div:first-child
-      > div
-  ) {
+.workspace-design-panel :deep(.workspace-design-sidebar-panel[data-collapsed='true'] > div > div:first-child > div) {
   justify-content: flex-start;
   width: 100%;
   height: 100%;
   gap: 0;
 }
 
-.workspace-design-panel
-  :deep(
-    .workspace-design-inspector-panel[data-collapsed="true"]
-      > div
-      > div:first-child
-      > div
-  ) {
+.workspace-design-panel :deep(.workspace-design-inspector-panel[data-collapsed='true'] > div > div:first-child > div) {
   justify-content: center;
   width: 100%;
   height: 100%;
@@ -8767,32 +8917,16 @@ async function downloadDefaultPng(): Promise<void> {
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-sidebar-panel[data-collapsed="true"]
-      > div
-      > div:first-child
-      > div
-      > div:first-child
-  ),
+  :deep(.workspace-design-sidebar-panel[data-collapsed='true'] > div > div:first-child > div > div:first-child),
 .workspace-design-panel
-  :deep(
-    .workspace-design-inspector-panel[data-collapsed="true"]
-      > div
-      > div:first-child
-      > div
-      > div:first-child
-  ) {
+  :deep(.workspace-design-inspector-panel[data-collapsed='true'] > div > div:first-child > div > div:first-child) {
   width: 0;
   min-width: 0;
   opacity: 0;
   pointer-events: none;
 }
 
-.workspace-design-panel
-  :deep(
-    .workspace-design-sidebar-panel[data-collapsed="true"]
-      .workspace-design-sidebar-toggle
-  ) {
+.workspace-design-panel :deep(.workspace-design-sidebar-panel[data-collapsed='true'] .workspace-design-sidebar-toggle) {
   width: 36px;
   height: 36px;
   min-width: 36px;
@@ -8804,10 +8938,7 @@ async function downloadDefaultPng(): Promise<void> {
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-inspector-panel[data-collapsed="true"]
-      .workspace-design-inspector-toggle
-  ) {
+  :deep(.workspace-design-inspector-panel[data-collapsed='true'] .workspace-design-inspector-toggle) {
   width: 36px;
   height: 36px;
   min-width: 36px;
@@ -8819,65 +8950,42 @@ async function downloadDefaultPng(): Promise<void> {
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-sidebar-panel[data-collapsed="true"]
-      .workspace-design-sidebar-toggle:hover
-  ) {
+  :deep(.workspace-design-sidebar-panel[data-collapsed='true'] .workspace-design-sidebar-toggle:hover) {
   background: rgba(241, 245, 249, 0.72) !important;
   color: #0f172a !important;
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-inspector-panel[data-collapsed="true"]
-      .workspace-design-inspector-toggle:hover
-  ) {
+  :deep(.workspace-design-inspector-panel[data-collapsed='true'] .workspace-design-inspector-toggle:hover) {
   background: rgba(241, 245, 249, 0.72) !important;
   color: #0f172a !important;
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-sidebar-panel[data-collapsed="true"]
-      .workspace-design-sidebar-toggle:focus-visible
-  ) {
+  :deep(.workspace-design-sidebar-panel[data-collapsed='true'] .workspace-design-sidebar-toggle:focus-visible) {
   box-shadow: none;
   outline: none;
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-inspector-panel[data-collapsed="true"]
-      .workspace-design-inspector-toggle:focus-visible
-  ) {
+  :deep(.workspace-design-inspector-panel[data-collapsed='true'] .workspace-design-inspector-toggle:focus-visible) {
   box-shadow: none;
   outline: none;
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-sidebar-panel[data-collapsed="true"]:has(
-        .workspace-design-sidebar-toggle:focus-visible
-      )
-  ) {
+  :deep(.workspace-design-sidebar-panel[data-collapsed='true']:has(.workspace-design-sidebar-toggle:focus-visible)) {
   border-color: rgba(59, 130, 246, 0.9) !important;
 }
 
 .workspace-design-panel
   :deep(
-    .workspace-design-inspector-panel[data-collapsed="true"]:has(
-        .workspace-design-inspector-toggle:focus-visible
-      )
+    .workspace-design-inspector-panel[data-collapsed='true']:has(.workspace-design-inspector-toggle:focus-visible)
   ) {
   border-color: rgba(59, 130, 246, 0.9) !important;
 }
 
-.workspace-design-panel
-  :deep(
-    .workspace-design-inspector-panel[data-collapsed="true"]
-      > div
-      > div:nth-child(2)
-  ) {
+.workspace-design-panel :deep(.workspace-design-inspector-panel[data-collapsed='true'] > div > div:nth-child(2)) {
   height: 0 !important;
   min-height: 0 !important;
   padding: 0 !important;
@@ -8885,19 +8993,14 @@ async function downloadDefaultPng(): Promise<void> {
   pointer-events: none;
 }
 
-.workspace-design-panel
-  :deep(.workspace-design-inspector-panel[data-collapsed="true"] h3),
-.workspace-design-panel
-  :deep(.workspace-design-inspector-panel[data-collapsed="true"] p) {
+.workspace-design-panel :deep(.workspace-design-inspector-panel[data-collapsed='true'] h3),
+.workspace-design-panel :deep(.workspace-design-inspector-panel[data-collapsed='true'] p) {
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
 .workspace-design-panel
-  :deep(
-    .workspace-design-inspector-panel[data-collapsed="true"]
-      [data-testid="workspace-design-inspector"]
-  ) {
+  :deep(.workspace-design-inspector-panel[data-collapsed='true'] [data-testid='workspace-design-inspector']) {
   opacity: 0;
   pointer-events: none;
   transition: opacity 120ms ease;
@@ -8970,54 +9073,30 @@ async function downloadDefaultPng(): Promise<void> {
 
 .workspace-design-panel .workspace-design-diagram-overlay :deep(.rounded-2xl),
 .workspace-design-panel .workspace-design-diagram-overlay :deep(.rounded-xl),
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep(.rounded-\[20px\]),
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep(.rounded-\[24px\]),
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep(.rounded-\[28px\]) {
+.workspace-design-panel .workspace-design-diagram-overlay :deep(.rounded-\[20px\]),
+.workspace-design-panel .workspace-design-diagram-overlay :deep(.rounded-\[24px\]),
+.workspace-design-panel .workspace-design-diagram-overlay :deep(.rounded-\[28px\]) {
   border-radius: 10px !important;
 }
 
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep([class*="border-slate-8"]),
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep([class*="border-slate-7"]) {
+.workspace-design-panel .workspace-design-diagram-overlay :deep([class*='border-slate-8']),
+.workspace-design-panel .workspace-design-diagram-overlay :deep([class*='border-slate-7']) {
   border-color: rgba(226, 232, 240, 0.92) !important;
 }
 
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep([class*="bg-slate-95"]),
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep([class*="bg-slate-90"]) {
+.workspace-design-panel .workspace-design-diagram-overlay :deep([class*='bg-slate-95']),
+.workspace-design-panel .workspace-design-diagram-overlay :deep([class*='bg-slate-90']) {
   background: rgba(248, 250, 252, 0.92) !important;
 }
 
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep([class*="text-white"]),
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep([class*="text-slate-1"]),
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep([class*="text-slate-2"]) {
+.workspace-design-panel .workspace-design-diagram-overlay :deep([class*='text-white']),
+.workspace-design-panel .workspace-design-diagram-overlay :deep([class*='text-slate-1']),
+.workspace-design-panel .workspace-design-diagram-overlay :deep([class*='text-slate-2']) {
   color: #0f172a !important;
 }
 
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep([class*="text-slate-3"]),
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep([class*="text-slate-4"]) {
+.workspace-design-panel .workspace-design-diagram-overlay :deep([class*='text-slate-3']),
+.workspace-design-panel .workspace-design-diagram-overlay :deep([class*='text-slate-4']) {
   color: #64748b !important;
 }
 
@@ -9037,9 +9116,7 @@ async function downloadDefaultPng(): Promise<void> {
   box-shadow: none;
 }
 
-.workspace-design-panel
-  .workspace-design-diagram-overlay
-  :deep(button[class*="bg-slate"]:hover) {
+.workspace-design-panel .workspace-design-diagram-overlay :deep(button[class*='bg-slate']:hover) {
   border-color: rgba(203, 213, 225, 0.92) !important;
   background: rgba(255, 255, 255, 0.98) !important;
   color: #0f172a !important;

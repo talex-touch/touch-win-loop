@@ -9,12 +9,6 @@ import { formatPreciseDateTime, formatRelativeUpdatedAt } from '~/composables/te
 
 type WorkspaceDocumentCommentFilterKey = 'all' | 'resolved' | 'mine'
 
-const COMMENT_FILTER_OPTIONS: Array<{ key: WorkspaceDocumentCommentFilterKey, label: string }> = [
-  { key: 'all', label: '所有' },
-  { key: 'resolved', label: '已解决' },
-  { key: 'mine', label: '我发出的' },
-]
-
 const props = withDefaults(defineProps<{
   commentThreads?: ProjectResourceCommentThread[]
   activeCommentThreadId?: string
@@ -44,6 +38,12 @@ const emit = defineEmits<{
   cancelCommentDraft: []
   toggleCollapsed: []
 }>()
+
+const COMMENT_FILTER_OPTIONS: Array<{ key: WorkspaceDocumentCommentFilterKey, label: string }> = [
+  { key: 'all', label: '所有' },
+  { key: 'resolved', label: '已解决' },
+  { key: 'mine', label: '我发出的' },
+]
 
 const commentDraftText = ref('')
 const commentReplyDraftMap = reactive<Record<string, string>>({})
@@ -248,18 +248,18 @@ defineExpose({
 
 <template>
   <aside
-    class="workspace-document-comments-panel border-l border-slate-200 bg-white flex h-full min-h-0 w-[336px] shrink-0 flex-col overflow-hidden"
+    class="workspace-document-comments-panel border-l border-slate-200 bg-white flex shrink-0 flex-col h-full min-h-0 w-[336px] overflow-hidden"
     data-testid="workspace-document-comments-panel"
   >
-    <div class="border-b border-slate-200 bg-slate-50/72 px-3.5 py-2.5 shrink-0">
-      <div class="flex items-center justify-between gap-2">
-        <div class="flex items-center gap-2 text-[11px] text-slate-700 font-semibold">
+    <div class="px-3.5 py-2.5 border-b border-slate-200 bg-slate-50/72 shrink-0">
+      <div class="flex gap-2 items-center justify-between">
+        <div class="text-[11px] text-slate-700 font-semibold flex gap-2 items-center">
           <span class="material-symbols-outlined text-[15px]" aria-hidden="true">comment</span>
           <span>评论</span>
           <span class="text-slate-400 font-medium">({{ filteredCommentThreads.length + (props.commentDraftAnchor ? 1 : 0) }})</span>
         </div>
 
-        <div class="flex items-center gap-1.5">
+        <div class="flex gap-1.5 items-center">
           <a-trigger
             trigger="click"
             position="bl"
@@ -268,7 +268,7 @@ defineExpose({
           >
             <button
               data-testid="workspace-document-comments-filter-trigger"
-              class="rounded-full border flex h-7 w-7 items-center justify-center transition-colors"
+              class="border rounded-full flex h-7 w-7 transition-colors items-center justify-center"
               :class="hasActiveCommentFilters ? 'border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-700'"
               type="button"
               title="筛选评论"
@@ -281,15 +281,15 @@ defineExpose({
             <template #content>
               <div
                 data-testid="workspace-document-comments-filter-menu"
-                class="w-40 rounded-2xl border border-slate-200 bg-white p-2"
+                class="p-2 border border-slate-200 rounded-2xl bg-white w-40"
               >
                 <label
                   v-for="option in COMMENT_FILTER_OPTIONS"
                   :key="option.key"
-                  class="rounded-xl flex cursor-pointer items-center gap-2 px-2.5 py-2 text-[11px] text-slate-700 transition-colors hover:bg-slate-50"
+                  class="text-[11px] text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 cursor-pointer transition-colors items-center hover:bg-slate-50"
                 >
                   <input
-                    class="rounded border-slate-300"
+                    class="border-slate-300 rounded"
                     type="checkbox"
                     :checked="isCommentFilterSelected(option.key)"
                     @change="toggleCommentFilter(option.key)"
@@ -301,7 +301,7 @@ defineExpose({
           </a-trigger>
 
           <button
-            class="rounded-full border border-slate-200 bg-white text-slate-500 flex h-7 w-7 items-center justify-center transition-colors hover:bg-slate-100 hover:text-slate-700"
+            class="text-slate-500 border border-slate-200 rounded-full bg-white flex h-7 w-7 transition-colors items-center justify-center hover:text-slate-700 hover:bg-slate-100"
             type="button"
             title="收起评论"
             aria-label="收起评论"
@@ -313,7 +313,7 @@ defineExpose({
       </div>
     </div>
 
-    <div class="no-scrollbar flex-1 min-h-0 overflow-y-auto px-3.5 py-3">
+    <div class="no-scrollbar px-3.5 py-3 flex-1 min-h-0 overflow-y-auto">
       <div class="space-y-3">
         <div v-if="props.commentLoading && props.commentThreads.length === 0" class="space-y-2" aria-hidden="true">
           <div class="rounded bg-slate-100 h-16 animate-pulse" />
@@ -323,52 +323,52 @@ defineExpose({
         <article
           v-if="props.commentDraftAnchor"
           data-testid="workspace-document-comment-draft-card"
-          class="rounded-2xl border border-blue-200 bg-blue-50/40 p-3"
+          class="p-3 border border-blue-200 rounded-2xl bg-blue-50/40"
         >
-          <div class="flex items-start gap-3">
+          <div class="flex gap-3 items-start">
             <UnifiedAvatar
               :name="currentUserDisplayName"
               :src="currentUserDisplayAvatarUrl"
               :size="28"
             />
 
-            <div class="min-w-0 flex-1 space-y-3">
-              <div class="flex items-start justify-between gap-2">
+            <div class="flex-1 min-w-0 space-y-3">
+              <div class="flex gap-2 items-start justify-between">
                 <div class="min-w-0">
                   <div class="text-[11px] text-slate-800 font-semibold truncate">
                     新评论
                   </div>
-                  <div class="mt-1 flex items-center gap-1.5 text-[10px] text-slate-500">
+                  <div class="text-[10px] text-slate-500 mt-1 flex gap-1.5 items-center">
                     <span class="truncate">{{ currentUserDisplayName }}</span>
                     <span class="text-slate-300">·</span>
                     <span>待发送</span>
                   </div>
                 </div>
-                <span class="rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[10px] text-blue-600 font-medium">
+                <span class="text-[10px] text-blue-600 font-medium px-2 py-0.5 border border-blue-200 rounded-full bg-white">
                   草稿
                 </span>
               </div>
 
-              <div class="rounded-xl border border-blue-100 bg-white px-2.5 py-2 text-[11px] leading-5 text-slate-600">
+              <div class="text-[11px] text-slate-600 leading-5 px-2.5 py-2 border border-blue-100 rounded-xl bg-white">
                 将锚定到：{{ summarizeCommentAnchor(props.commentDraftAnchor) }}
               </div>
 
               <textarea
                 v-model="commentDraftText"
-                class="h-24 w-full resize-none rounded-xl border border-slate-200 bg-white p-2.5 text-xs leading-5 placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                class="text-xs leading-5 p-2.5 border border-slate-200 rounded-xl bg-white h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
                 placeholder="输入评论内容"
               />
 
-              <div class="flex items-center justify-between gap-2">
+              <div class="flex gap-2 items-center justify-between">
                 <button
-                  class="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                  class="text-[11px] text-slate-600 font-semibold px-3 py-1.5 border border-slate-300 rounded-full bg-white hover:bg-slate-100"
                   type="button"
                   @click="emit('cancelCommentDraft')"
                 >
                   取消
                 </button>
                 <button
-                  class="rounded-full border border-blue-600 bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-60"
+                  class="text-[11px] text-white font-semibold px-3 py-1.5 border border-blue-600 rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
                   :disabled="props.commentMutating || !commentDraftText.trim()"
                   type="button"
                   @click="submitCommentDraft"
@@ -391,7 +391,7 @@ defineExpose({
           v-for="thread in filteredCommentThreads"
           :key="thread.id"
           :ref="bindCommentThreadCardRef(thread.id)"
-          class="rounded-2xl border bg-white p-3 transition-colors cursor-pointer"
+          class="p-3 border rounded-2xl bg-white cursor-pointer transition-colors"
           :class="thread.id === props.activeCommentThreadId ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/40'"
           data-testid="workspace-document-comment-card"
           role="button"
@@ -399,20 +399,20 @@ defineExpose({
           @click="selectCommentThread(thread.id)"
           @keydown="handleThreadKeydown($event, thread.id)"
         >
-          <div class="flex items-start gap-3">
+          <div class="flex gap-3 items-start">
             <UnifiedAvatar
               :name="resolveThreadActorName(thread)"
               :src="resolveThreadActorAvatarUrl(thread)"
               :size="28"
             />
 
-            <div class="min-w-0 flex-1">
-              <div class="flex items-start justify-between gap-2">
+            <div class="flex-1 min-w-0">
+              <div class="flex gap-2 items-start justify-between">
                 <div class="min-w-0">
                   <div class="text-[11px] text-slate-800 font-semibold truncate">
                     {{ thread.summaryText || summarizeCommentAnchor(thread.anchor) }}
                   </div>
-                  <div class="mt-1 flex items-center gap-1.5 text-[10px] text-slate-500">
+                  <div class="text-[10px] text-slate-500 mt-1 flex gap-1.5 items-center">
                     <span class="truncate">{{ resolveThreadActorName(thread) }}</span>
                     <span class="text-slate-300">·</span>
                     <a-trigger trigger="hover" position="bottom">
@@ -438,17 +438,17 @@ defineExpose({
                   </div>
                 </div>
 
-                <div class="flex items-center gap-1.5 shrink-0">
+                <div class="flex shrink-0 gap-1.5 items-center">
                   <span
                     v-if="thread.status === 'resolved'"
-                    class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700"
+                    class="text-[10px] text-emerald-700 font-medium px-2 py-0.5 border border-emerald-200 rounded-full bg-emerald-50"
                   >
                     已解决
                   </span>
 
                   <button
                     v-if="thread.status !== 'resolved'"
-                    class="rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 flex h-7 w-7 items-center justify-center transition-colors hover:bg-emerald-100 disabled:opacity-60"
+                    class="text-emerald-700 border border-emerald-200 rounded-full bg-emerald-50 flex h-7 w-7 transition-colors items-center justify-center hover:bg-emerald-100 disabled:opacity-60"
                     :disabled="props.commentMutating"
                     type="button"
                     title="解决评论"
@@ -459,7 +459,7 @@ defineExpose({
                   </button>
                   <button
                     v-else
-                    class="rounded-full border border-slate-300 bg-white text-slate-600 flex h-7 w-7 items-center justify-center transition-colors hover:bg-slate-100 disabled:opacity-60"
+                    class="text-slate-600 border border-slate-300 rounded-full bg-white flex h-7 w-7 transition-colors items-center justify-center hover:bg-slate-100 disabled:opacity-60"
                     :disabled="props.commentMutating"
                     type="button"
                     title="重新打开评论"
@@ -475,17 +475,17 @@ defineExpose({
                 <div
                   v-for="message in thread.messages"
                   :key="message.id"
-                  class="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2"
+                  class="px-2.5 py-2 border border-slate-200 rounded-xl bg-slate-50"
                 >
-                  <div class="flex items-start gap-2">
+                  <div class="flex gap-2 items-start">
                     <UnifiedAvatar
                       :name="resolveAuthorName(message)"
                       :src="resolveAuthorAvatarUrl(message)"
                       :size="22"
                     />
-                    <div class="min-w-0 flex-1">
-                      <div class="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
-                        <span class="font-medium text-slate-700">{{ resolveAuthorName(message) }}</span>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-[10px] text-slate-500 flex flex-wrap gap-1.5 items-center">
+                        <span class="text-slate-700 font-medium">{{ resolveAuthorName(message) }}</span>
                         <span class="text-slate-300">·</span>
                         <a-trigger trigger="hover" position="bottom">
                           <button
@@ -508,33 +508,33 @@ defineExpose({
                           </template>
                         </a-trigger>
                       </div>
-                      <div class="mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-700">
+                      <div class="text-[11px] text-slate-700 leading-5 mt-1 whitespace-pre-wrap break-words">
                         {{ message.body }}
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div class="rounded-xl border border-slate-200 bg-white px-2.5 py-2.5">
-                  <div class="flex items-start gap-2">
+                <div class="px-2.5 py-2.5 border border-slate-200 rounded-xl bg-white">
+                  <div class="flex gap-2 items-start">
                     <UnifiedAvatar
                       :name="currentUserDisplayName"
                       :src="currentUserDisplayAvatarUrl"
                       :size="22"
                     />
-                    <div class="min-w-0 flex-1 space-y-2">
+                    <div class="flex-1 min-w-0 space-y-2">
                       <div class="text-[10px] text-slate-500">
                         {{ thread.status === 'resolved' ? '回复后会重新打开线程' : '回复此线程' }}
                       </div>
                       <textarea
                         v-model="commentReplyDraftMap[thread.id]"
-                        class="h-20 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs leading-5 placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                        class="text-xs leading-5 p-2.5 border border-slate-200 rounded-lg bg-slate-50 h-20 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
                         placeholder="输入回复内容"
                         @click.stop
                       />
-                      <div class="flex items-center justify-end gap-2">
+                      <div class="flex gap-2 items-center justify-end">
                         <button
-                          class="rounded-full border border-blue-600 bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-60"
+                          class="text-[11px] text-white font-semibold px-3 py-1.5 border border-blue-600 rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
                           :disabled="props.commentMutating || !String(commentReplyDraftMap[thread.id] || '').trim()"
                           type="button"
                           @click.stop="submitCommentReply(thread.id)"
@@ -547,7 +547,7 @@ defineExpose({
                 </div>
               </div>
 
-              <div v-else class="mt-3 line-clamp-2 text-[11px] leading-5 text-slate-600">
+              <div v-else class="text-[11px] text-slate-600 leading-5 mt-3 line-clamp-2">
                 {{ resolveThreadPreviewBody(thread) }}
               </div>
             </div>

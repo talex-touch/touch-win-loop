@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import type { RequestOption, UploadRequest } from "@arco-design/web-vue";
-import type { PropType } from "vue";
+import type { RequestOption, UploadRequest } from '@arco-design/web-vue'
+import type { PropType } from 'vue'
 
-const props = defineProps({
+defineProps({
   previewUrl: {
     type: String,
-    default: "",
+    default: '',
   },
   assetLabel: {
     type: String,
@@ -25,29 +25,29 @@ const props = defineProps({
   },
   accept: {
     type: String,
-    default: "",
+    default: '',
   },
   alt: {
     type: String,
-    default: "预览图",
+    default: '预览图',
   },
   emptyText: {
     type: String,
-    default: "待上传",
+    default: '待上传',
   },
   compact: {
     type: Boolean,
     default: false,
   },
   buttonSize: {
-    type: String as PropType<"mini" | "small" | "medium" | "large" | undefined>,
+    type: String as PropType<'mini' | 'small' | 'medium' | 'large' | undefined>,
     default: undefined,
   },
   customRequest: {
     type: Function as PropType<(option: RequestOption) => UploadRequest>,
     required: true,
   },
-});
+})
 </script>
 
 <template>
@@ -67,7 +67,7 @@ const props = defineProps({
           {{ emptyText }}
         </div>
       </div>
-      <div class="min-w-0 flex-1">
+      <div class="flex-1 min-w-0">
         <p :class="compact ? 'm-0 text-[11px] text-slate-600' : 'm-0 text-sm font-medium text-slate-900'">
           {{ assetLabel }}
         </p>

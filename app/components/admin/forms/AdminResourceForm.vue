@@ -116,13 +116,13 @@ function handleModeSelect(key: string) {
       <div v-if="documentInfo" class="wl-inline-notice">
         <div class="flex flex-wrap gap-3 items-start justify-between">
           <div class="space-y-2">
-            <p class="m-0 font-semibold">
+            <p class="font-semibold m-0">
               文档状态：{{ documentInfo.parseStatus }}
             </p>
             <p class="m-0">
               页数：{{ documentInfo.pageCount || '-' }}；解析模型：{{ documentInfo.parserProvider || '-' }} / {{ documentInfo.parserModel || '-' }}
             </p>
-            <p v-if="documentInfo.parseError" class="m-0 text-rose-600">
+            <p v-if="documentInfo.parseError" class="text-rose-600 m-0">
               错误：{{ documentInfo.parseError }}
             </p>
           </div>
@@ -144,7 +144,7 @@ function handleModeSelect(key: string) {
       </div>
 
       <div v-if="showCreateMode && createMode === 'pdf'" class="space-y-2">
-        <label class="wl-text-meta block font-semibold">文档文件</label>
+        <label class="wl-text-meta font-semibold block">文档文件</label>
         <input
           type="file"
           accept="application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"

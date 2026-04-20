@@ -1,15 +1,12 @@
 <script setup lang="ts">
 import type { GraphSourceGroup, GraphSourceModel, SceneDocument } from '~~/shared/types/domain'
-import { computed, ref } from 'vue'
-import { VueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
+import { VueFlow } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
+import { computed, ref } from 'vue'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
-
-const DRAG_GRID_SIZE = 24
-const DRAG_ALIGN_THRESHOLD = 14
 
 const props = withDefaults(defineProps<{
   graph?: GraphSourceModel | null
@@ -26,7 +23,6 @@ const props = withDefaults(defineProps<{
   selectedEdgeId: '',
   disabled: false,
 })
-
 const emit = defineEmits<{
   'select-group': [groupId: string]
   'select-node': [nodeId: string]
@@ -44,13 +40,15 @@ const emit = defineEmits<{
   'delete-edge': [edgeId: string]
   'clear-selection': []
 }>()
+const DRAG_GRID_SIZE = 24
+const DRAG_ALIGN_THRESHOLD = 14
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
 type DiagramDragAnchor = 'start' | 'center' | 'end'
-type DiagramDragFeedback = {
+interface DiagramDragFeedback {
   nodeId: string
   x: number
   y: number
@@ -496,40 +494,40 @@ function handleKeydown(event: KeyboardEvent): void {
 <template>
   <div
     ref="rootRef"
-    class="relative h-full w-full outline-none"
+    class="outline-none h-full w-full relative"
     tabindex="0"
     @keydown="handleKeydown"
     @mousedown="focusCanvas"
   >
-    <div class="absolute left-3 top-3 z-10 flex max-w-[calc(100%-5rem)] flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/92 px-3 py-2 shadow-[0_20px_48px_rgba(2,6,23,0.32)]">
-      <span class="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">
+    <div class="px-3 py-2 border border-slate-800 rounded-2xl bg-slate-950/92 flex flex-wrap gap-2 max-w-[calc(100%-5rem)] shadow-[0_20px_48px_rgba(2,6,23,0.32)] items-center left-3 top-3 absolute z-10">
+      <span class="text-[10px] text-slate-300 tracking-[0.16em] font-semibold px-2.5 py-1 border border-slate-700 rounded-full bg-slate-900 uppercase">
         {{ selectionLabel }}
       </span>
-      <span class="rounded-full border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold text-slate-400">
+      <span class="text-[10px] text-slate-400 font-semibold px-2.5 py-1 border border-slate-800 rounded-full bg-slate-900">
         {{ graphNodeCount }} nodes
       </span>
-      <span class="rounded-full border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold text-slate-400">
+      <span class="text-[10px] text-slate-400 font-semibold px-2.5 py-1 border border-slate-800 rounded-full bg-slate-900">
         {{ groupCount }} groups
       </span>
-      <span class="rounded-full border border-slate-800 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold text-slate-400">
+      <span class="text-[10px] text-slate-400 font-semibold px-2.5 py-1 border border-slate-800 rounded-full bg-slate-900">
         {{ edges.length }} edges
       </span>
       <button
-        class="rounded-full border border-sky-800 bg-sky-950/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition-colors hover:bg-sky-900/40"
+        class="text-[11px] text-sky-200 font-semibold px-3 py-1.5 border border-sky-800 rounded-full bg-sky-950/40 transition-colors hover:bg-sky-900/40"
         type="button"
         @click.stop="emit('create-group', 'container')"
       >
         New Group
       </button>
       <button
-        class="rounded-full border border-sky-800 bg-sky-950/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition-colors hover:bg-sky-900/40"
+        class="text-[11px] text-sky-200 font-semibold px-3 py-1.5 border border-sky-800 rounded-full bg-sky-950/40 transition-colors hover:bg-sky-900/40"
         type="button"
         @click.stop="emit('create-group', 'swimlane')"
       >
         New Lane
       </button>
       <button
-        class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-800"
+        class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
         type="button"
         @click.stop="emit('create-node')"
       >
@@ -537,7 +535,7 @@ function handleKeydown(event: KeyboardEvent): void {
       </button>
       <template v-if="selectedGroup">
         <button
-          class="rounded-full border border-rose-900/80 bg-rose-950/60 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-900/60"
+          class="text-[11px] text-rose-300 font-semibold px-3 py-1.5 border border-rose-900/80 rounded-full bg-rose-950/60 transition-colors hover:bg-rose-900/60"
           type="button"
           @click.stop="emit('delete-group', selectedGroup.id)"
         >
@@ -546,21 +544,21 @@ function handleKeydown(event: KeyboardEvent): void {
       </template>
       <template v-else-if="selectedNode">
         <button
-          class="rounded-full border border-emerald-800 bg-emerald-950/40 px-3 py-1.5 text-[11px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-900/40"
+          class="text-[11px] text-emerald-300 font-semibold px-3 py-1.5 border border-emerald-800 rounded-full bg-emerald-950/40 transition-colors hover:bg-emerald-900/40"
           type="button"
           @click.stop="emit('add-child', selectedNode.id)"
         >
           Add Child
         </button>
         <button
-          class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-800"
+          class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
           type="button"
           @click.stop="emit('duplicate-node', selectedNode.id)"
         >
           Duplicate
         </button>
         <button
-          class="rounded-full border border-rose-900/80 bg-rose-950/60 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-900/60"
+          class="text-[11px] text-rose-300 font-semibold px-3 py-1.5 border border-rose-900/80 rounded-full bg-rose-950/60 transition-colors hover:bg-rose-900/60"
           type="button"
           @click.stop="emit('delete-node', selectedNode.id)"
         >
@@ -569,14 +567,14 @@ function handleKeydown(event: KeyboardEvent): void {
       </template>
       <template v-else-if="selectedEdge">
         <button
-          class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-800"
+          class="text-[11px] text-slate-100 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
           type="button"
           @click.stop="emit('reverse-edge', selectedEdge.id)"
         >
           Reverse
         </button>
         <button
-          class="rounded-full border border-rose-900/80 bg-rose-950/60 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-900/60"
+          class="text-[11px] text-rose-300 font-semibold px-3 py-1.5 border border-rose-900/80 rounded-full bg-rose-950/60 transition-colors hover:bg-rose-900/60"
           type="button"
           @click.stop="emit('delete-edge', selectedEdge.id)"
         >
@@ -585,7 +583,7 @@ function handleKeydown(event: KeyboardEvent): void {
       </template>
       <button
         v-if="selectedGroup || selectedNode || selectedEdge"
-        class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:bg-slate-800"
+        class="text-[11px] text-slate-300 font-semibold px-3 py-1.5 border border-slate-700 rounded-full bg-slate-900 transition-colors hover:bg-slate-800"
         type="button"
         @click.stop="clearDragFeedback(); emit('clear-selection')"
       >
@@ -631,17 +629,17 @@ function handleKeydown(event: KeyboardEvent): void {
 
     <div
       v-if="dragFeedback"
-      class="absolute bottom-3 right-3 z-10 min-w-[220px] rounded-2xl border border-slate-800 bg-slate-950/92 px-3 py-2 text-[11px] text-slate-300 shadow-[0_18px_48px_rgba(2,6,23,0.3)]"
+      class="text-[11px] text-slate-300 px-3 py-2 border border-slate-800 rounded-2xl bg-slate-950/92 min-w-[220px] shadow-[0_18px_48px_rgba(2,6,23,0.3)] bottom-3 right-3 absolute z-10"
     >
-      <div class="flex items-center justify-between gap-3">
-        <span class="font-semibold text-slate-100">Drag · {{ dragFeedback.nodeId }}</span>
-        <span class="rounded-full border border-sky-800 bg-sky-950/40 px-2 py-0.5 font-semibold text-sky-200">X {{ dragFeedback.x }} / Y {{ dragFeedback.y }}</span>
+      <div class="flex gap-3 items-center justify-between">
+        <span class="text-slate-100 font-semibold">Drag · {{ dragFeedback.nodeId }}</span>
+        <span class="text-sky-200 font-semibold px-2 py-0.5 border border-sky-800 rounded-full bg-sky-950/40">X {{ dragFeedback.x }} / Y {{ dragFeedback.y }}</span>
       </div>
       <div class="mt-2 flex flex-wrap gap-1.5">
         <span
           v-for="hint in dragFeedback.hints"
           :key="`${dragFeedback.nodeId}-${hint}`"
-          class="rounded-full border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-slate-300"
+          class="text-[10px] text-slate-300 font-semibold px-2 py-1 border border-slate-800 rounded-full bg-slate-900"
         >
           {{ hint }}
         </span>
@@ -650,19 +648,19 @@ function handleKeydown(event: KeyboardEvent): void {
 
     <div
       v-if="nodes.length"
-      class="absolute bottom-3 left-3 z-10 rounded-full border border-slate-800 bg-slate-950/88 px-3 py-1.5 text-[11px] font-semibold text-slate-400 shadow-[0_12px_32px_rgba(2,6,23,0.28)]"
+      class="text-[11px] text-slate-400 font-semibold px-3 py-1.5 border border-slate-800 rounded-full bg-slate-950/88 shadow-[0_12px_32px_rgba(2,6,23,0.28)] bottom-3 left-3 absolute z-10"
     >
       快捷键: `N` 新建, `Enter/Tab` 添加子节点, `Delete` 删除, `Cmd/Ctrl + D` 复制, `R` 反转边, `Arrow` 微调, `Shift + Arrow` 栅格步进
     </div>
 
     <div
       v-if="!nodes.length"
-      class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/60 text-center"
+      class="text-center bg-slate-950/60 flex flex-col gap-2 items-center inset-0 justify-center absolute"
     >
-      <p class="text-sm font-semibold text-slate-100">
+      <p class="text-sm text-slate-100 font-semibold">
         当前 graph 还没有节点
       </p>
-      <p class="max-w-xs text-xs leading-6 text-slate-400">
+      <p class="text-xs text-slate-400 leading-6 max-w-xs">
         先新增节点，或从源码区导入 Mermaid / DDL / Outline，再在这里继续连线和选中编辑。
       </p>
     </div>

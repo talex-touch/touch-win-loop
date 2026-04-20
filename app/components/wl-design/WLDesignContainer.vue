@@ -26,23 +26,23 @@ function resolvePaddingClass(): string {
 
 <template>
   <WLDesignLayer variant="surface" :scrollable="false" :padded="false" :fill="true">
-    <div class="flex h-full min-h-0 flex-col" data-testid="wl-design-container">
+    <div class="flex flex-col h-full min-h-0" data-testid="wl-design-container">
       <div
         v-if="props.title || props.subtitle || $slots.actions || $slots['header-extra'] || $slots['header-title'] || $slots['header-title-extra']"
-        class="border-b border-slate-200/80 px-3.5 py-3"
+        class="px-3.5 py-3 border-b border-slate-200/80"
         :class="props.headerSticky ? 'sticky top-0 z-10 bg-white/90 backdrop-blur-xl' : ''"
       >
-        <div class="flex items-start justify-between gap-3">
+        <div class="flex gap-3 items-start justify-between">
           <div class="min-w-0">
-            <div v-if="props.title || $slots['header-title'] || $slots['header-title-extra']" class="flex min-w-0 items-center gap-2">
+            <div v-if="props.title || $slots['header-title'] || $slots['header-title-extra']" class="flex gap-2 min-w-0 items-center">
               <slot name="header-title">
-                <h3 v-if="props.title" class="truncate text-sm font-bold text-slate-900">
+                <h3 v-if="props.title" class="text-sm text-slate-900 font-bold truncate">
                   {{ props.title }}
                 </h3>
               </slot>
               <slot name="header-title-extra" />
             </div>
-            <p v-if="props.subtitle" class="mt-1 text-xs leading-5 text-slate-500">
+            <p v-if="props.subtitle" class="text-xs text-slate-500 leading-5 mt-1">
               {{ props.subtitle }}
             </p>
           </div>
@@ -55,20 +55,20 @@ function resolvePaddingClass(): string {
         </div>
       </div>
 
-      <div v-if="$slots.badges" class="border-b border-slate-200/80 px-3.5 py-2.5">
+      <div v-if="$slots.badges" class="px-3.5 py-2.5 border-b border-slate-200/80">
         <div class="flex flex-wrap gap-2">
           <slot name="badges" />
         </div>
       </div>
 
       <div
-        class="min-h-0 flex-1 min-w-0"
+        class="flex-1 min-h-0 min-w-0"
         :class="[props.scrollable ? 'overflow-y-auto overflow-x-hidden overscroll-contain' : 'overflow-hidden', resolvePaddingClass()]"
       >
         <slot />
       </div>
 
-      <div v-if="$slots.footer" class="border-t border-slate-200/80 px-3.5 py-3">
+      <div v-if="$slots.footer" class="px-3.5 py-3 border-t border-slate-200/80">
         <slot name="footer" />
       </div>
     </div>

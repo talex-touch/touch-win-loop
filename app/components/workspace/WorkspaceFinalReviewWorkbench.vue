@@ -172,7 +172,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
               :class="checklistStatusMeta[item.status].dotClass"
             />
             <div class="workspace-final-review-workbench__list-content">
-              <div class="flex gap-2 items-center flex-wrap">
+              <div class="flex flex-wrap gap-2 items-center">
                 <strong class="workspace-final-review-workbench__list-title">{{ item.title }}</strong>
                 <span
                   class="workspace-final-review-workbench__status-badge"
@@ -182,7 +182,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
                 </span>
                 <span
                   v-if="item.blocker"
-                  class="workspace-final-review-workbench__status-badge border-slate-200 bg-slate-50 text-slate-600"
+                  class="workspace-final-review-workbench__status-badge text-slate-600 border-slate-200 bg-slate-50"
                 >
                   Blocker
                 </span>
@@ -225,7 +225,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
                 :key="issue.id"
                 class="workspace-final-review-workbench__issue-item"
               >
-                <div class="flex gap-2 items-center flex-wrap">
+                <div class="flex flex-wrap gap-2 items-center">
                   <span class="workspace-final-review-workbench__issue-severity">
                     {{ issue.severity.toUpperCase() }}
                   </span>

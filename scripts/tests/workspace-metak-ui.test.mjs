@@ -10,7 +10,7 @@ const WORKSPACE_RESOURCE_MANAGER_PANEL_FILE = resolve(process.cwd(), 'app/compon
 const WORKSPACE_METAK_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMetaK.vue')
 const WORKSPACE_METAK_UTIL_FILE = resolve(process.cwd(), 'app/utils/workspace-metak.ts')
 
-it('MetaK 面板具备快捷键、键盘导航和结果分组锚点', async () => {
+it('metaK 面板具备快捷键、键盘导航和结果分组锚点', async () => {
   const [workspaceSource, metaKSource] = await Promise.all([
     readFile(PROJECT_WORKSPACE_FILE, 'utf8'),
     readFile(WORKSPACE_METAK_FILE, 'utf8'),
@@ -31,7 +31,7 @@ it('MetaK 面板具备快捷键、键盘导航和结果分组锚点', async () =
   assert.match(metaKSource, /data-testid="workspace-metak-empty"/, 'WorkspaceMetaK 缺少空态锚点')
 })
 
-it('MetaK 可通过信号驱动左栏模块和大纲定位', async () => {
+it('metaK 可通过信号驱动左栏模块和大纲定位', async () => {
   const [workspaceSource, sidebarSource, resourceManagerSource] = await Promise.all([
     readFile(PROJECT_WORKSPACE_FILE, 'utf8'),
     readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8'),
@@ -51,7 +51,7 @@ it('MetaK 可通过信号驱动左栏模块和大纲定位', async () => {
   assert.match(workspaceSource, /:command-outline-id="leftSidebarMetaKOutlineId"/, '项目工作区未向左栏透传 MetaK 大纲目标')
 })
 
-it('MetaK 排序规则保持前缀优先、命令优先、本地优先，且空查询只返回默认项', async () => {
+it('metaK 排序规则保持前缀优先、命令优先、本地优先，且空查询只返回默认项', async () => {
   const metak = await import(pathToFileURL(WORKSPACE_METAK_UTIL_FILE).href)
 
   const queryItems = [

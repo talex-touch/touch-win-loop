@@ -28,7 +28,7 @@ const variantClass = computed(() => {
 
 <template>
   <section
-    class="relative min-h-0 min-w-0 transition-[background-color,border-color,box-shadow] duration-200"
+    class="min-h-0 min-w-0 transition-[background-color,border-color,box-shadow] duration-200 relative"
     :class="[
       props.fill ? 'h-full w-full' : '',
       props.scrollable ? 'overflow-auto' : 'overflow-hidden',

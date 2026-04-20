@@ -13,7 +13,6 @@ it('page template 提取与合并会保留 libraryOrigin，并清理失效的 mo
   const {
     appendDesignAssetToSceneDocument,
     appendDesignFrameToSceneDocument,
-    buildDesignAssetFromCanvasLibraryPayload,
     buildDeviceMockupSceneDocument,
     extractCanvasLibraryPageTemplate,
     mergeCanvasLibraryPageTemplate,

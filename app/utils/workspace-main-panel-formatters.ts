@@ -1,4 +1,3 @@
-import { buildOnlyOfficeUserFacingErrorMessage } from '~~/shared/constants/onlyoffice'
 import type {
   ProjectInvitationSummary,
   ProjectMemberRole,
@@ -6,6 +5,7 @@ import type {
   ResourcePreviewStatus,
   WorkspaceType,
 } from '~~/shared/types/domain'
+import { buildOnlyOfficeUserFacingErrorMessage } from '~~/shared/constants/onlyoffice'
 
 export function previewStatusLabel(status: ResourcePreviewStatus | ''): string {
   if (status === 'queued')

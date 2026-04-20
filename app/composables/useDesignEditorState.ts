@@ -1,3 +1,4 @@
+import type { Ref } from 'vue'
 import type {
   CompositionModel,
   DesignElementModel,
@@ -5,7 +6,6 @@ import type {
   DesignPageModel,
   SceneDocument,
 } from '~~/shared/types/domain'
-import type { ComputedRef, Ref } from 'vue'
 import { computed } from 'vue'
 import {
   canDesignFrameContainElements,

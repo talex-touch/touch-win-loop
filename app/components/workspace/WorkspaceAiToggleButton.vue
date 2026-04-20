@@ -72,7 +72,13 @@ const buttonLabel = computed(() => {
     radial-gradient(circle at 28% 30%, rgba(255, 213, 120, 0.88) 0%, rgba(255, 213, 120, 0) 48%),
     radial-gradient(circle at 72% 26%, rgba(116, 191, 255, 0.8) 0%, rgba(116, 191, 255, 0) 52%),
     radial-gradient(circle at 60% 76%, rgba(151, 132, 255, 0.66) 0%, rgba(151, 132, 255, 0) 48%),
-    conic-gradient(from 0deg, rgba(255, 191, 73, 0.1), rgba(82, 164, 255, 0.42), rgba(124, 103, 255, 0.18), rgba(255, 191, 73, 0.1));
+    conic-gradient(
+      from 0deg,
+      rgba(255, 191, 73, 0.1),
+      rgba(82, 164, 255, 0.42),
+      rgba(124, 103, 255, 0.18),
+      rgba(255, 191, 73, 0.1)
+    );
   filter: blur(6px) saturate(118%);
   opacity: 0.72;
   animation: workspace-ai-toggle-spark 5.8s linear infinite;

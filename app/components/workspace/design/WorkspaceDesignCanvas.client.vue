@@ -1,73 +1,39 @@
 <script setup lang="ts">
-import type { DesignAssetModel, DesignFrameModel, DesignPageModel } from "~~/shared/types/domain";
-import type { WorkspaceCollabCursorUser } from "~/components/workspace/collab/presence";
-import { resolveWorkspaceCollabPresenceInitial } from "~/components/workspace/collab/presence";
+import type { NodeMouseEvent, VueFlowStore } from '@vue-flow/core'
 import type {
   DesignCanvasInteractionContext,
   DesignCanvasSelectionState,
-} from "~~/app/composables/useDesignCanvasSelection";
-import type { NodeMouseEvent, VueFlowStore } from "@vue-flow/core";
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { PanOnScrollMode, SelectionMode, VueFlow } from "@vue-flow/core";
-import { createEmptyDesignCanvasSelectionState } from "~~/app/composables/useDesignCanvasSelection";
-import { DESIGN_TOOL_PRESETS } from "~~/app/composables/useDesignToolController";
+} from '~~/app/composables/useDesignCanvasSelection'
+import type { DesignAssetModel, DesignFrameModel, DesignPageModel } from '~~/shared/types/domain'
+import type { WorkspaceCollabCursorUser } from '~/components/workspace/collab/presence'
+import { Background } from '@vue-flow/background'
+import { PanOnScrollMode, SelectionMode, VueFlow } from '@vue-flow/core'
+import { MiniMap } from '@vue-flow/minimap'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { createEmptyDesignCanvasSelectionState } from '~~/app/composables/useDesignCanvasSelection'
+import { DESIGN_TOOL_PRESETS } from '~~/app/composables/useDesignToolController'
 import {
   canDesignFrameCreateElements,
   resolveDesignPageWorkspaceBackground,
-} from "~~/shared/utils/scene-document";
-import { Background } from "@vue-flow/background";
-import { MiniMap } from "@vue-flow/minimap";
-import "@vue-flow/core/dist/style.css";
-import "@vue-flow/core/dist/theme-default.css";
-import "@vue-flow/minimap/dist/style.css";
-
-const FRAME_DRAG_GRID_SIZE = 24;
-const FRAME_DRAG_ALIGN_THRESHOLD = 16;
-const POINTER_GESTURE_THRESHOLD = 4;
-const MIN_CANVAS_ZOOM = 0.1;
-const MAX_CANVAS_ZOOM = 2.5;
-const MIN_ZOOM_PERCENT = MIN_CANVAS_ZOOM * 100;
-const MAX_ZOOM_PERCENT = MAX_CANVAS_ZOOM * 100;
-const CANVAS_ZOOM_STEP = 0.1;
-const CANVAS_CONTROL_WIDTH = 200;
-const CANVAS_MINIMAP_HEIGHT = 136;
-const CANVAS_RESTING_CONTROL_WIDTH = 128;
-const CANVAS_COLLAPSED_CONTROL_WIDTH = 92;
-const CANVAS_EXPANDED_CONTROL_HEIGHT = 36;
-const CANVAS_RESTING_CONTROL_HEIGHT = 12;
-const CANVAS_COLLAPSED_CONTROL_HEIGHT = 8;
-const CANVAS_RESTING_CONTROL_HIT_HEIGHT = 28;
-const CANVAS_COLLAPSED_CONTROL_HIT_HEIGHT = 24;
-const CANVAS_EXPANDED_CONTROL_GAP = 12;
-const CANVAS_RESTING_CONTROL_GAP = 10;
-const CANVAS_COLLAPSED_CONTROL_GAP = 8;
-const CANVAS_RESTING_MINIMAP_HEIGHT = Math.round(
-  CANVAS_MINIMAP_HEIGHT * (CANVAS_RESTING_CONTROL_WIDTH / CANVAS_CONTROL_WIDTH),
-);
-const CANVAS_COLLAPSED_MINIMAP_HEIGHT = Math.round(
-  CANVAS_MINIMAP_HEIGHT *
-    (CANVAS_COLLAPSED_CONTROL_WIDTH / CANVAS_CONTROL_WIDTH),
-);
-const ZOOM_CONTROL_COLLAPSE_DELAY = 1400;
-const ZOOM_CONTROL_DEEP_COLLAPSE_DELAY = 12 * 60 * 1000;
-const PRESENCE_CURSOR_FLUSH_DELAY = 48;
-const CURSOR_LABEL_COLLAPSE_DISTANCE = 72;
-const QUICK_ZOOM_PRESETS = [50, 75, 100, 125, 150, 200];
-const ZOOM_RANGE_SNAP_STEP = 5;
+} from '~~/shared/utils/scene-document'
+import { resolveWorkspaceCollabPresenceInitial } from '~/components/workspace/collab/presence'
+import '@vue-flow/core/dist/style.css'
+import '@vue-flow/core/dist/theme-default.css'
+import '@vue-flow/minimap/dist/style.css'
 
 const props = withDefaults(
   defineProps<{
-    page?: DesignPageModel | null;
-    frames?: DesignFrameModel[];
-    assets?: DesignAssetModel[];
-    selectionState?: DesignCanvasSelectionState;
-    interactionContext?: DesignCanvasInteractionContext;
-    remoteCursors?: WorkspaceCollabCursorUser[];
-    viewportX?: number;
-    viewportY?: number;
-    viewportZoom?: number;
-    mockupScreenEditingFrameId?: string;
-    disabled?: boolean;
+    page?: DesignPageModel | null
+    frames?: DesignFrameModel[]
+    assets?: DesignAssetModel[]
+    selectionState?: DesignCanvasSelectionState
+    interactionContext?: DesignCanvasInteractionContext
+    remoteCursors?: WorkspaceCollabCursorUser[]
+    viewportX?: number
+    viewportY?: number
+    viewportZoom?: number
+    mockupScreenEditingFrameId?: string
+    disabled?: boolean
   }>(),
   {
     page: null,
@@ -75,7 +41,7 @@ const props = withDefaults(
     assets: () => [],
     selectionState: () => createEmptyDesignCanvasSelectionState(),
     interactionContext: () => ({
-      effectiveTool: "select",
+      effectiveTool: 'select',
       isTemporaryHandActive: false,
       isDeepSelectModifierPressed: false,
     }),
@@ -83,203 +49,236 @@ const props = withDefaults(
     viewportX: 0,
     viewportY: 0,
     viewportZoom: 1,
-    mockupScreenEditingFrameId: "",
+    mockupScreenEditingFrameId: '',
     disabled: false,
   },
-);
-
+)
 const emit = defineEmits<{
-  "update-selection": [payload: DesignCanvasSelectionState];
-  "open-frame": [frameId: string];
-  "duplicate-frame": [];
-  "delete-frame": [];
-  "update-frame-position": [
+  'update-selection': [payload: DesignCanvasSelectionState]
+  'open-frame': [frameId: string]
+  'duplicate-frame': []
+  'delete-frame': []
+  'update-frame-position': [
     payload: {
-      frameId: string;
-      x: number;
-      y: number;
-      historyMergeKey?: string;
+      frameId: string
+      x: number
+      y: number
+      historyMergeKey?: string
     },
-  ];
-  "update-frame-positions": [
+  ]
+  'update-frame-positions': [
     payload: {
-      positions: Array<{ frameId: string; x: number; y: number }>;
-      historyMergeKey?: string;
+      positions: Array<{ frameId: string, x: number, y: number }>
+      historyMergeKey?: string
     },
-  ];
-  "update-frame-size": [
+  ]
+  'update-frame-size': [
     payload: {
-      frameId: string;
-      x?: number;
-      y?: number;
-      width?: number;
-      height?: number;
-      historyMergeKey?: string;
+      frameId: string
+      x?: number
+      y?: number
+      width?: number
+      height?: number
+      historyMergeKey?: string
     },
-  ];
-  "viewport-change": [payload: { x: number; y: number; zoom: number }];
-  updateCollabCursor: [value: { cursorX?: number; cursorY?: number }];
-  "node-double-click": [
-    payload: { frameId: string; clientX: number; clientY: number },
-  ];
-}>();
+  ]
+  'viewport-change': [payload: { x: number, y: number, zoom: number }]
+  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
+  'node-double-click': [
+    payload: { frameId: string, clientX: number, clientY: number },
+  ]
+}>()
+const FRAME_DRAG_GRID_SIZE = 24
+const FRAME_DRAG_ALIGN_THRESHOLD = 16
+const POINTER_GESTURE_THRESHOLD = 4
+const MIN_CANVAS_ZOOM = 0.1
+const MAX_CANVAS_ZOOM = 2.5
+const MIN_ZOOM_PERCENT = MIN_CANVAS_ZOOM * 100
+const MAX_ZOOM_PERCENT = MAX_CANVAS_ZOOM * 100
+const CANVAS_ZOOM_STEP = 0.1
+const CANVAS_CONTROL_WIDTH = 200
+const CANVAS_MINIMAP_HEIGHT = 136
+const CANVAS_RESTING_CONTROL_WIDTH = 128
+const CANVAS_COLLAPSED_CONTROL_WIDTH = 92
+const CANVAS_EXPANDED_CONTROL_HEIGHT = 36
+const CANVAS_RESTING_CONTROL_HEIGHT = 12
+const CANVAS_COLLAPSED_CONTROL_HEIGHT = 8
+const CANVAS_RESTING_CONTROL_HIT_HEIGHT = 28
+const CANVAS_COLLAPSED_CONTROL_HIT_HEIGHT = 24
+const CANVAS_EXPANDED_CONTROL_GAP = 12
+const CANVAS_RESTING_CONTROL_GAP = 10
+const CANVAS_COLLAPSED_CONTROL_GAP = 8
+const CANVAS_RESTING_MINIMAP_HEIGHT = Math.round(
+  CANVAS_MINIMAP_HEIGHT * (CANVAS_RESTING_CONTROL_WIDTH / CANVAS_CONTROL_WIDTH),
+)
+const CANVAS_COLLAPSED_MINIMAP_HEIGHT = Math.round(
+  CANVAS_MINIMAP_HEIGHT
+  * (CANVAS_COLLAPSED_CONTROL_WIDTH / CANVAS_CONTROL_WIDTH),
+)
+const ZOOM_CONTROL_COLLAPSE_DELAY = 1400
+const ZOOM_CONTROL_DEEP_COLLAPSE_DELAY = 12 * 60 * 1000
+const PRESENCE_CURSOR_FLUSH_DELAY = 48
+const CURSOR_LABEL_COLLAPSE_DISTANCE = 72
+const QUICK_ZOOM_PRESETS = [50, 75, 100, 125, 150, 200]
+const ZOOM_RANGE_SNAP_STEP = 5
 
-type FrameDragAnchor = "start" | "center" | "end";
-type FrameDragFeedback = {
-  frameId: string;
-  x: number;
-  y: number;
-  hints: string[];
-};
-type ZoomControlState = "expanded" | "resting" | "dormant";
-type ScreenCursor = {
-  userId: string;
-  username: string;
-  colorToken: string;
-  screenX: number;
-  screenY: number;
-  label: string;
-};
+type FrameDragAnchor = 'start' | 'center' | 'end'
+interface FrameDragFeedback {
+  frameId: string
+  x: number
+  y: number
+  hints: string[]
+}
+type ZoomControlState = 'expanded' | 'resting' | 'dormant'
+interface ScreenCursor {
+  userId: string
+  username: string
+  colorToken: string
+  screenX: number
+  screenY: number
+  label: string
+}
 
-const nodes = ref<any[]>([]);
-const dragFeedback = ref<FrameDragFeedback | null>(null);
-const rootRef = ref<HTMLElement | null>(null);
-const flowInstance = ref<VueFlowStore | null>(null);
+const nodes = ref<any[]>([])
+const dragFeedback = ref<FrameDragFeedback | null>(null)
+const rootRef = ref<HTMLElement | null>(null)
+const flowInstance = ref<VueFlowStore | null>(null)
 const flowViewport = ref({
   x: 0,
   y: 0,
   zoom: 1,
-});
-const shortcutDialogOpen = ref(false);
-const zoomControlState = ref<ZoomControlState>("expanded");
-const zoomControlHovering = ref(false);
-const localPointerScreen = ref<{ x: number; y: number } | null>(null);
-const shortcutButtonRef = ref<HTMLButtonElement | null>(null);
-const shortcutDialogRef = ref<HTMLElement | null>(null);
-const floatingChromeTarget = ref<HTMLElement | null>(null);
-const activeFrameDragIds = ref<string[]>([]);
-let zoomControlRestingTimer: ReturnType<typeof setTimeout> | null = null;
-let zoomControlDormantTimer: ReturnType<typeof setTimeout> | null = null;
-let rootResizeObserver: ResizeObserver | null = null;
-let presenceCursorTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingPresencePoint: { clientX: number; clientY: number } | null = null;
-let activeZoomRangePointerId: number | null = null;
-let activeZoomRangePercent: number | null = null;
-let frameDragCleanupTimer: ReturnType<typeof setTimeout> | null = null;
-const shortcutItems: Array<{ description: string; keys: string[] }> = [
-  ...DESIGN_TOOL_PRESETS.map((tool) => ({
+})
+const shortcutDialogOpen = ref(false)
+const zoomControlState = ref<ZoomControlState>('expanded')
+const zoomControlHovering = ref(false)
+const localPointerScreen = ref<{ x: number, y: number } | null>(null)
+const shortcutButtonRef = ref<HTMLButtonElement | null>(null)
+const shortcutDialogRef = ref<HTMLElement | null>(null)
+const floatingChromeTarget = ref<HTMLElement | null>(null)
+const activeFrameDragIds = ref<string[]>([])
+let zoomControlRestingTimer: ReturnType<typeof setTimeout> | null = null
+let zoomControlDormantTimer: ReturnType<typeof setTimeout> | null = null
+let rootResizeObserver: ResizeObserver | null = null
+let presenceCursorTimer: ReturnType<typeof setTimeout> | null = null
+let pendingPresencePoint: { clientX: number, clientY: number } | null = null
+let activeZoomRangePointerId: number | null = null
+let activeZoomRangePercent: number | null = null
+let frameDragCleanupTimer: ReturnType<typeof setTimeout> | null = null
+const shortcutItems: Array<{ description: string, keys: string[] }> = [
+  ...DESIGN_TOOL_PRESETS.map(tool => ({
     description: `${tool.label}工具`,
     keys: [tool.shortcutLabel],
   })),
-  { description: "临时平移画布", keys: ["Hold", "Space"] },
-  { description: "多选 Frame", keys: ["Shift", "Click / 框选"] },
-  { description: "微调位置", keys: ["Arrow"] },
-  { description: "按栅格步进", keys: ["Shift", "Arrow"] },
-  { description: "复制选中 Frame", keys: ["Cmd / Ctrl", "D"] },
-  { description: "撤销 / 重做", keys: ["Cmd / Ctrl", "Z / Shift+Z"] },
-  { description: "删除选中 Frame", keys: ["Delete"] },
-  { description: "打开 Diagram 编辑态", keys: ["Enter"] },
-];
+  { description: '临时平移画布', keys: ['Hold', 'Space'] },
+  { description: '多选 Frame', keys: ['Shift', 'Click / 框选'] },
+  { description: '微调位置', keys: ['Arrow'] },
+  { description: '按栅格步进', keys: ['Shift', 'Arrow'] },
+  { description: '复制选中 Frame', keys: ['Cmd / Ctrl', 'D'] },
+  { description: '撤销 / 重做', keys: ['Cmd / Ctrl', 'Z / Shift+Z'] },
+  { description: '删除选中 Frame', keys: ['Delete'] },
+  { description: '打开 Diagram 编辑态', keys: ['Enter'] },
+]
 
 const defaultViewport = computed(() => {
   return {
     x: Math.round(Number(props.viewportX || 0)),
     y: Math.round(Number(props.viewportY || 0)),
     zoom: clampCanvasZoom(props.viewportZoom),
-  };
-});
+  }
+})
 const zoomPercent = computed(() => {
-  const rawValue = Math.round(clampCanvasZoom(flowViewport.value.zoom) * 100);
-  return Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, rawValue));
-});
+  const rawValue = Math.round(clampCanvasZoom(flowViewport.value.zoom) * 100)
+  return Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, rawValue))
+})
 const zoomRatio = computed(() => {
   return Math.min(
     1,
     Math.max(
       0,
-      (zoomPercent.value - MIN_ZOOM_PERCENT) /
-        (MAX_ZOOM_PERCENT - MIN_ZOOM_PERCENT),
+      (zoomPercent.value - MIN_ZOOM_PERCENT)
+      / (MAX_ZOOM_PERCENT - MIN_ZOOM_PERCENT),
     ),
-  );
-});
-const zoomDisplayText = computed(() => `${zoomPercent.value}%`);
+  )
+})
+const zoomDisplayText = computed(() => `${zoomPercent.value}%`)
 const nextQuickZoomPreset = computed<number>(() => {
   const matchedPresetIndex = QUICK_ZOOM_PRESETS.findIndex(
-    (preset) => preset === zoomPercent.value,
-  );
-  if (matchedPresetIndex >= 0)
+    preset => preset === zoomPercent.value,
+  )
+  if (matchedPresetIndex >= 0) {
     return QUICK_ZOOM_PRESETS[
       (matchedPresetIndex + 1) % QUICK_ZOOM_PRESETS.length
-    ] ?? 100;
+    ] ?? 100
+  }
   const nextHigherPreset = QUICK_ZOOM_PRESETS.find(
-    (preset) => preset > zoomPercent.value,
-  );
-  return nextHigherPreset ?? QUICK_ZOOM_PRESETS[0] ?? 100;
-});
+    preset => preset > zoomPercent.value,
+  )
+  return nextHigherPreset ?? QUICK_ZOOM_PRESETS[0] ?? 100
+})
 const zoomRangeStyle = computed(() => {
-  const progress = Math.round(zoomRatio.value * 100);
+  const progress = Math.round(zoomRatio.value * 100)
   return {
     background: `linear-gradient(90deg, rgba(226,232,240,0.92) 0%, rgba(226,232,240,0.92) ${progress}%, rgba(248,250,252,1) ${progress}%, rgba(248,250,252,1) 100%)`,
-  };
-});
+  }
+})
 const zoomCollapsedIndicatorStyle = computed(() => {
-  const trackWidth = Math.max(0, zoomChromeMetrics.value.controlWidth - 2);
-  const minimumWidth = zoomChromeMetrics.value.collapsedIndicatorWidth;
-  const rawWidth = Math.round(zoomRatio.value * trackWidth);
-  const width = Math.min(trackWidth, Math.max(minimumWidth, rawWidth));
+  const trackWidth = Math.max(0, zoomChromeMetrics.value.controlWidth - 2)
+  const minimumWidth = zoomChromeMetrics.value.collapsedIndicatorWidth
+  const rawWidth = Math.round(zoomRatio.value * trackWidth)
+  const width = Math.min(trackWidth, Math.max(minimumWidth, rawWidth))
   return {
     width: `${width}px`,
-  };
-});
+  }
+})
 const zoomChromeMetrics = computed(() => {
-  const controlWidth =
-    zoomControlState.value === "dormant"
+  const controlWidth
+    = zoomControlState.value === 'dormant'
       ? CANVAS_COLLAPSED_CONTROL_WIDTH
-      : zoomControlState.value === "resting"
+      : zoomControlState.value === 'resting'
         ? CANVAS_RESTING_CONTROL_WIDTH
-        : CANVAS_CONTROL_WIDTH;
-  const controlHeight =
-    zoomControlState.value === "dormant"
+        : CANVAS_CONTROL_WIDTH
+  const controlHeight
+    = zoomControlState.value === 'dormant'
       ? CANVAS_COLLAPSED_CONTROL_HEIGHT
-      : zoomControlState.value === "resting"
+      : zoomControlState.value === 'resting'
         ? CANVAS_RESTING_CONTROL_HEIGHT
-        : CANVAS_EXPANDED_CONTROL_HEIGHT;
-  const controlHitHeight =
-    zoomControlState.value === "dormant"
+        : CANVAS_EXPANDED_CONTROL_HEIGHT
+  const controlHitHeight
+    = zoomControlState.value === 'dormant'
       ? CANVAS_COLLAPSED_CONTROL_HIT_HEIGHT
-      : zoomControlState.value === "resting"
+      : zoomControlState.value === 'resting'
         ? CANVAS_RESTING_CONTROL_HIT_HEIGHT
-        : CANVAS_EXPANDED_CONTROL_HEIGHT;
-  const controlGap =
-    zoomControlState.value === "dormant"
+        : CANVAS_EXPANDED_CONTROL_HEIGHT
+  const controlGap
+    = zoomControlState.value === 'dormant'
       ? CANVAS_COLLAPSED_CONTROL_GAP
-      : zoomControlState.value === "resting"
+      : zoomControlState.value === 'resting'
         ? CANVAS_RESTING_CONTROL_GAP
-        : CANVAS_EXPANDED_CONTROL_GAP;
-  const minimapHeight =
-    zoomControlState.value === "dormant"
+        : CANVAS_EXPANDED_CONTROL_GAP
+  const minimapHeight
+    = zoomControlState.value === 'dormant'
       ? CANVAS_COLLAPSED_MINIMAP_HEIGHT
-      : zoomControlState.value === "resting"
+      : zoomControlState.value === 'resting'
         ? CANVAS_RESTING_MINIMAP_HEIGHT
-        : CANVAS_MINIMAP_HEIGHT;
-  const collapsedTrackHeight =
-    zoomControlState.value === "dormant"
+        : CANVAS_MINIMAP_HEIGHT
+  const collapsedTrackHeight
+    = zoomControlState.value === 'dormant'
       ? 3
-      : zoomControlState.value === "resting"
+      : zoomControlState.value === 'resting'
         ? 4
-        : 8;
-  const collapsedIndicatorWidth =
-    zoomControlState.value === "dormant"
+        : 8
+  const collapsedIndicatorWidth
+    = zoomControlState.value === 'dormant'
       ? 8
-      : zoomControlState.value === "resting"
+      : zoomControlState.value === 'resting'
         ? 12
-        : 14;
-  const collapsedIndicatorHeight =
-    zoomControlState.value === "dormant"
+        : 14
+  const collapsedIndicatorHeight
+    = zoomControlState.value === 'dormant'
       ? 6
-      : zoomControlState.value === "resting"
+      : zoomControlState.value === 'resting'
         ? 8
-        : 12;
+        : 12
   return {
     controlWidth,
     controlHeight,
@@ -289,72 +288,73 @@ const zoomChromeMetrics = computed(() => {
     collapsedTrackHeight,
     collapsedIndicatorWidth,
     collapsedIndicatorHeight,
-  };
-});
+  }
+})
 const canvasChromeStyle = computed<Record<string, string>>(() => {
   return {
-    "--workspace-design-control-width": `${zoomChromeMetrics.value.controlWidth}px`,
-    "--workspace-design-control-height": `${zoomChromeMetrics.value.controlHeight}px`,
-    "--workspace-design-control-hit-height": `${zoomChromeMetrics.value.controlHitHeight}px`,
-    "--workspace-design-control-gap": `${zoomChromeMetrics.value.controlGap}px`,
-    "--workspace-design-minimap-height": `${zoomChromeMetrics.value.minimapHeight}px`,
-    "--workspace-design-control-radius":
-      zoomControlState.value === "dormant"
-        ? "3px"
-        : zoomControlState.value === "resting"
-          ? "4px"
-          : "10px",
-    "--workspace-design-collapsed-track-height": `${zoomChromeMetrics.value.collapsedTrackHeight}px`,
-    "--workspace-design-collapsed-track-radius":
-      zoomControlState.value === "dormant"
-        ? "1px"
-        : zoomControlState.value === "resting"
-          ? "1px"
-          : "2px",
-    "--workspace-design-collapsed-indicator-width": `${zoomChromeMetrics.value.collapsedIndicatorWidth}px`,
-    "--workspace-design-collapsed-indicator-height": `${zoomChromeMetrics.value.collapsedIndicatorHeight}px`,
-    "--workspace-design-collapsed-indicator-radius":
-      zoomControlState.value === "dormant"
-        ? "1px"
-        : zoomControlState.value === "resting"
-          ? "1px"
-          : "2px",
-    "--workspace-design-minimap-radius":
-      zoomControlState.value === "dormant"
-        ? "7px"
-        : zoomControlState.value === "resting"
-          ? "8px"
-          : "10px",
-  };
-});
+    '--workspace-design-control-width': `${zoomChromeMetrics.value.controlWidth}px`,
+    '--workspace-design-control-height': `${zoomChromeMetrics.value.controlHeight}px`,
+    '--workspace-design-control-hit-height': `${zoomChromeMetrics.value.controlHitHeight}px`,
+    '--workspace-design-control-gap': `${zoomChromeMetrics.value.controlGap}px`,
+    '--workspace-design-minimap-height': `${zoomChromeMetrics.value.minimapHeight}px`,
+    '--workspace-design-control-radius':
+      zoomControlState.value === 'dormant'
+        ? '3px'
+        : zoomControlState.value === 'resting'
+          ? '4px'
+          : '10px',
+    '--workspace-design-collapsed-track-height': `${zoomChromeMetrics.value.collapsedTrackHeight}px`,
+    '--workspace-design-collapsed-track-radius':
+      zoomControlState.value === 'dormant'
+        ? '1px'
+        : zoomControlState.value === 'resting'
+          ? '1px'
+          : '2px',
+    '--workspace-design-collapsed-indicator-width': `${zoomChromeMetrics.value.collapsedIndicatorWidth}px`,
+    '--workspace-design-collapsed-indicator-height': `${zoomChromeMetrics.value.collapsedIndicatorHeight}px`,
+    '--workspace-design-collapsed-indicator-radius':
+      zoomControlState.value === 'dormant'
+        ? '1px'
+        : zoomControlState.value === 'resting'
+          ? '1px'
+          : '2px',
+    '--workspace-design-minimap-radius':
+      zoomControlState.value === 'dormant'
+        ? '7px'
+        : zoomControlState.value === 'resting'
+          ? '8px'
+          : '10px',
+  }
+})
 const workspaceBackground = computed(() =>
   resolveDesignPageWorkspaceBackground(props.page),
-);
+)
 const selectedFrames = computed(() => {
-  const selectedIdSet = new Set(props.selectionState.frameIds || []);
-  return (props.frames || []).filter((frame) => selectedIdSet.has(frame.id));
-});
+  const selectedIdSet = new Set(props.selectionState.frameIds || [])
+  return (props.frames || []).filter(frame => selectedIdSet.has(frame.id))
+})
 const selectedFrameId = computed(() =>
   normalizeString(props.selectionState.primaryFrameId),
-);
+)
 const isHandToolActive = computed(
-  () => props.interactionContext.effectiveTool === "hand",
-);
+  () => props.interactionContext.effectiveTool === 'hand',
+)
 const frameInteractionEnabled = computed(() => {
   return (
-    !props.disabled &&
-    props.interactionContext.effectiveTool === "select" &&
-    props.selectionState.scope !== "element" &&
-    !normalizeString(props.selectionState.editingFrameId) &&
-    !normalizeString(props.mockupScreenEditingFrameId)
-  );
-});
+    !props.disabled
+    && props.interactionContext.effectiveTool === 'select'
+    && props.selectionState.scope !== 'element'
+    && !normalizeString(props.selectionState.editingFrameId)
+    && !normalizeString(props.mockupScreenEditingFrameId)
+  )
+})
 const remoteScreenCursors = computed<ScreenCursor[]>(() => {
-  const viewport = flowViewport.value;
+  const viewport = flowViewport.value
   const cursors = props.remoteCursors.flatMap((cursor) => {
-    const screenX = Number(cursor.cursorX) * viewport.zoom + viewport.x;
-    const screenY = Number(cursor.cursorY) * viewport.zoom + viewport.y;
-    if (!Number.isFinite(screenX) || !Number.isFinite(screenY)) return [];
+    const screenX = Number(cursor.cursorX) * viewport.zoom + viewport.x
+    const screenY = Number(cursor.cursorY) * viewport.zoom + viewport.y
+    if (!Number.isFinite(screenX) || !Number.isFinite(screenY))
+      return []
 
     return [
       {
@@ -365,22 +365,23 @@ const remoteScreenCursors = computed<ScreenCursor[]>(() => {
         screenY,
         label: cursor.username,
       },
-    ];
-  });
+    ]
+  })
 
   return cursors.map((cursor, index) => {
-    const cursorPoint = { x: cursor.screenX, y: cursor.screenY };
+    const cursorPoint = { x: cursor.screenX, y: cursor.screenY }
     const isNearLocalPointer = Boolean(
-      localPointerScreen.value &&
-      isScreenPointNear(cursorPoint, localPointerScreen.value),
-    );
+      localPointerScreen.value
+      && isScreenPointNear(cursorPoint, localPointerScreen.value),
+    )
     const isNearAnotherCursor = cursors.some((candidate, candidateIndex) => {
-      if (candidateIndex === index) return false;
+      if (candidateIndex === index)
+        return false
       return isScreenPointNear(cursorPoint, {
         x: candidate.screenX,
         y: candidate.screenY,
-      });
-    });
+      })
+    })
 
     return {
       ...cursor,
@@ -388,96 +389,88 @@ const remoteScreenCursors = computed<ScreenCursor[]>(() => {
         isNearLocalPointer || isNearAnotherCursor
           ? resolveWorkspaceCollabPresenceInitial(cursor.username)
           : cursor.username,
-    };
-  });
-});
+    }
+  })
+})
 
 function normalizeString(value: unknown): string {
-  return String(value || "").trim();
+  return String(value || '').trim()
 }
 
 function normalizeFrameSelection(frameIds: string[]): string[] {
   const availableFrameIds = new Set(
-    (props.frames || []).map((frame) => frame.id),
-  );
-  const uniqueFrameIds = new Set<string>();
+    (props.frames || []).map(frame => frame.id),
+  )
+  const uniqueFrameIds = new Set<string>()
   for (const frameId of frameIds) {
-    const normalizedFrameId = normalizeString(frameId);
+    const normalizedFrameId = normalizeString(frameId)
     if (
-      !normalizedFrameId ||
-      !availableFrameIds.has(normalizedFrameId) ||
-      uniqueFrameIds.has(normalizedFrameId)
-    )
-      continue;
-    uniqueFrameIds.add(normalizedFrameId);
+      !normalizedFrameId
+      || !availableFrameIds.has(normalizedFrameId)
+      || uniqueFrameIds.has(normalizedFrameId)
+    ) {
+      continue
+    }
+    uniqueFrameIds.add(normalizedFrameId)
   }
-  return [...uniqueFrameIds];
+  return [...uniqueFrameIds]
 }
 
-function emitFrameSelection(frameIds: string[], primaryFrameId = ""): void {
-  const nextFrameIds = normalizeFrameSelection(frameIds);
-  emit("update-selection", {
-    scope: nextFrameIds.length > 0 ? "frame" : "none",
-    editingFrameId: "",
-    displayFrameId: "",
+function emitFrameSelection(frameIds: string[], primaryFrameId = ''): void {
+  const nextFrameIds = normalizeFrameSelection(frameIds)
+  emit('update-selection', {
+    scope: nextFrameIds.length > 0 ? 'frame' : 'none',
+    editingFrameId: '',
+    displayFrameId: '',
     frameIds: nextFrameIds,
-    primaryFrameId: normalizeString(primaryFrameId) || nextFrameIds[0] || "",
+    primaryFrameId: normalizeString(primaryFrameId) || nextFrameIds[0] || '',
     elementIds: [],
-    primaryElementId: "",
-  });
-}
-
-function emitFrameEditing(frameId: string): void {
-  emit("update-selection", {
-    scope: "none",
-    editingFrameId: normalizeString(frameId),
-    displayFrameId: normalizeString(frameId),
-    frameIds: [],
-    primaryFrameId: "",
-    elementIds: [],
-    primaryElementId: "",
-  });
+    primaryElementId: '',
+  })
 }
 
 function resolveFrameAnchorOffset(
   anchor: FrameDragAnchor,
   size: number,
 ): number {
-  if (anchor === "center") return size / 2;
-  if (anchor === "end") return size;
-  return 0;
+  if (anchor === 'center')
+    return size / 2
+  if (anchor === 'end')
+    return size
+  return 0
 }
 
-function describeFrameAnchor(axis: "x" | "y", anchor: FrameDragAnchor): string {
-  if (axis === "x")
-    return anchor === "start"
-      ? "left"
-      : anchor === "center"
-        ? "center"
-        : "right";
-  return anchor === "start" ? "top" : anchor === "center" ? "middle" : "bottom";
+function describeFrameAnchor(axis: 'x' | 'y', anchor: FrameDragAnchor): string {
+  if (axis === 'x') {
+    return anchor === 'start'
+      ? 'left'
+      : anchor === 'center'
+        ? 'center'
+        : 'right'
+  }
+  return anchor === 'start' ? 'top' : anchor === 'center' ? 'middle' : 'bottom'
 }
 
 function snapFrameToGrid(value: number): number {
-  return Math.round(value / FRAME_DRAG_GRID_SIZE) * FRAME_DRAG_GRID_SIZE;
+  return Math.round(value / FRAME_DRAG_GRID_SIZE) * FRAME_DRAG_GRID_SIZE
 }
 
 function resolveFrameBox(
   frameId: string,
-  position?: { x?: number; y?: number },
+  position?: { x?: number, y?: number },
 ): {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+  x: number
+  y: number
+  width: number
+  height: number
 } {
   const currentFrame = (props.frames || []).find(
-    (frame) => frame.id === frameId,
-  );
-  const resolvedX = Number(position?.x ?? currentFrame?.x ?? 0);
-  const resolvedY = Number(position?.y ?? currentFrame?.y ?? 0);
-  const resolvedWidth = Number(currentFrame?.width || 320);
-  const resolvedHeight = Number(currentFrame?.height || 220);
+    frame => frame.id === frameId,
+  )
+  const resolvedX = Number(position?.x ?? currentFrame?.x ?? 0)
+  const resolvedY = Number(position?.y ?? currentFrame?.y ?? 0)
+  const resolvedWidth = Number(currentFrame?.width || 320)
+  const resolvedHeight = Number(currentFrame?.height || 220)
   return {
     x: Number.isFinite(resolvedX) ? resolvedX : 0,
     y: Number.isFinite(resolvedY) ? resolvedY : 0,
@@ -487,82 +480,86 @@ function resolveFrameBox(
       Number.isFinite(resolvedHeight) && resolvedHeight > 0
         ? resolvedHeight
         : 220,
-  };
+  }
 }
 
 function resolveFrameDragAssist(
   frameId: string,
-  position?: { x?: number; y?: number },
+  position?: { x?: number, y?: number },
 ): FrameDragFeedback | null {
-  const normalizedFrameId = normalizeString(frameId);
-  if (!normalizedFrameId) return null;
+  const normalizedFrameId = normalizeString(frameId)
+  if (!normalizedFrameId)
+    return null
 
-  const currentBox = resolveFrameBox(normalizedFrameId, position);
-  let nextX = snapFrameToGrid(currentBox.x);
-  let nextY = snapFrameToGrid(currentBox.y);
-  const hints: string[] = [`栅格吸附 ${FRAME_DRAG_GRID_SIZE}px`];
-  const xAnchors: FrameDragAnchor[] = ["start", "center", "end"];
-  const yAnchors: FrameDragAnchor[] = ["start", "center", "end"];
+  const currentBox = resolveFrameBox(normalizedFrameId, position)
+  let nextX = snapFrameToGrid(currentBox.x)
+  let nextY = snapFrameToGrid(currentBox.y)
+  const hints: string[] = [`栅格吸附 ${FRAME_DRAG_GRID_SIZE}px`]
+  const xAnchors: FrameDragAnchor[] = ['start', 'center', 'end']
+  const yAnchors: FrameDragAnchor[] = ['start', 'center', 'end']
   let bestXMatch: {
-    delta: number;
-    value: number;
-    label: string;
-    anchor: FrameDragAnchor;
-  } | null = null;
+    delta: number
+    value: number
+    label: string
+    anchor: FrameDragAnchor
+  } | null = null
   let bestYMatch: {
-    delta: number;
-    value: number;
-    label: string;
-    anchor: FrameDragAnchor;
-  } | null = null;
+    delta: number
+    value: number
+    label: string
+    anchor: FrameDragAnchor
+  } | null = null
 
   for (const candidate of props.frames || []) {
-    if (candidate.id === normalizedFrameId) continue;
+    if (candidate.id === normalizedFrameId)
+      continue
 
-    const candidateLabel = normalizeString(candidate.name) || candidate.id;
+    const candidateLabel = normalizeString(candidate.name) || candidate.id
     const candidateXAnchors = {
       start: candidate.x,
       center: candidate.x + candidate.width / 2,
       end: candidate.x + candidate.width,
-    };
+    }
     const candidateYAnchors = {
       start: candidate.y,
       center: candidate.y + candidate.height / 2,
       end: candidate.y + candidate.height,
-    };
+    }
 
     for (const anchor of xAnchors) {
-      const draggedValue =
-        nextX + resolveFrameAnchorOffset(anchor, currentBox.width);
+      const draggedValue
+        = nextX + resolveFrameAnchorOffset(anchor, currentBox.width)
       for (const targetAnchor of xAnchors) {
-        const candidateValue = candidateXAnchors[targetAnchor];
-        const delta = Math.abs(draggedValue - candidateValue);
-        if (delta > FRAME_DRAG_ALIGN_THRESHOLD) continue;
+        const candidateValue = candidateXAnchors[targetAnchor]
+        const delta = Math.abs(draggedValue - candidateValue)
+        if (delta > FRAME_DRAG_ALIGN_THRESHOLD)
+          continue
         if (!bestXMatch || delta < bestXMatch.delta) {
           bestXMatch = {
             delta,
             value: candidateValue,
             label: candidateLabel,
             anchor: targetAnchor,
-          };
+          }
         }
       }
     }
 
     for (const anchor of yAnchors) {
-      const draggedValue =
-        nextY + resolveFrameAnchorOffset(anchor, currentBox.height);
+      const draggedValue
+        = nextY + resolveFrameAnchorOffset(anchor, currentBox.height)
       for (const targetAnchor of yAnchors) {
-        const candidateValue = candidateYAnchors[targetAnchor];
-        const delta = Math.abs(draggedValue - candidateValue);
-        if (delta > FRAME_DRAG_ALIGN_THRESHOLD) continue;
+        const candidateValue = candidateYAnchors[targetAnchor]
+        const delta = Math.abs(draggedValue - candidateValue)
+        if (delta > FRAME_DRAG_ALIGN_THRESHOLD)
+          continue
         if (!bestYMatch || delta < bestYMatch.delta) {
           bestYMatch = {
             delta,
             value: candidateValue,
             label: candidateLabel,
             anchor: targetAnchor,
-          };
+          }
         }
       }
     }
@@ -570,40 +567,40 @@ function resolveFrameDragAssist(
 
   if (bestXMatch) {
     const xAnchor = xAnchors.reduce((matchedAnchor, anchor) => {
-      const draggedValue =
-        nextX + resolveFrameAnchorOffset(anchor, currentBox.width);
-      const currentDelta = Math.abs(draggedValue - bestXMatch!.value);
-      const matchedValue =
-        nextX + resolveFrameAnchorOffset(matchedAnchor, currentBox.width);
+      const draggedValue
+        = nextX + resolveFrameAnchorOffset(anchor, currentBox.width)
+      const currentDelta = Math.abs(draggedValue - bestXMatch!.value)
+      const matchedValue
+        = nextX + resolveFrameAnchorOffset(matchedAnchor, currentBox.width)
       return currentDelta < Math.abs(matchedValue - bestXMatch!.value)
         ? anchor
-        : matchedAnchor;
-    }, "start" as FrameDragAnchor);
+        : matchedAnchor
+    }, 'start' as FrameDragAnchor)
     nextX = Math.round(
       bestXMatch.value - resolveFrameAnchorOffset(xAnchor, currentBox.width),
-    );
+    )
     hints.push(
-      `X 对齐 · ${bestXMatch.label} ${describeFrameAnchor("x", bestXMatch.anchor)}`,
-    );
+      `X 对齐 · ${bestXMatch.label} ${describeFrameAnchor('x', bestXMatch.anchor)}`,
+    )
   }
 
   if (bestYMatch) {
     const yAnchor = yAnchors.reduce((matchedAnchor, anchor) => {
-      const draggedValue =
-        nextY + resolveFrameAnchorOffset(anchor, currentBox.height);
-      const currentDelta = Math.abs(draggedValue - bestYMatch!.value);
-      const matchedValue =
-        nextY + resolveFrameAnchorOffset(matchedAnchor, currentBox.height);
+      const draggedValue
+        = nextY + resolveFrameAnchorOffset(anchor, currentBox.height)
+      const currentDelta = Math.abs(draggedValue - bestYMatch!.value)
+      const matchedValue
+        = nextY + resolveFrameAnchorOffset(matchedAnchor, currentBox.height)
       return currentDelta < Math.abs(matchedValue - bestYMatch!.value)
         ? anchor
-        : matchedAnchor;
-    }, "start" as FrameDragAnchor);
+        : matchedAnchor
+    }, 'start' as FrameDragAnchor)
     nextY = Math.round(
       bestYMatch.value - resolveFrameAnchorOffset(yAnchor, currentBox.height),
-    );
+    )
     hints.push(
-      `Y 对齐 · ${bestYMatch.label} ${describeFrameAnchor("y", bestYMatch.anchor)}`,
-    );
+      `Y 对齐 · ${bestYMatch.label} ${describeFrameAnchor('y', bestYMatch.anchor)}`,
+    )
   }
 
   return {
@@ -611,400 +608,430 @@ function resolveFrameDragAssist(
     x: Math.round(nextX),
     y: Math.round(nextY),
     hints,
-  };
+  }
 }
 
 function setDragFeedback(
   frameId: string,
-  position?: { x?: number; y?: number },
+  position?: { x?: number, y?: number },
 ): FrameDragFeedback | null {
-  const nextFeedback = resolveFrameDragAssist(frameId, position);
-  dragFeedback.value = nextFeedback;
-  return nextFeedback;
+  const nextFeedback = resolveFrameDragAssist(frameId, position)
+  dragFeedback.value = nextFeedback
+  return nextFeedback
 }
 
 function clearDragFeedback(): void {
-  dragFeedback.value = null;
+  dragFeedback.value = null
 }
 
 function focusCanvas(): void {
-  rootRef.value?.focus();
+  rootRef.value?.focus()
 }
 
 function clampCanvasZoom(value: unknown): number {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) return 1;
-  return Math.min(MAX_CANVAS_ZOOM, Math.max(MIN_CANVAS_ZOOM, numericValue));
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue))
+    return 1
+  return Math.min(MAX_CANVAS_ZOOM, Math.max(MIN_CANVAS_ZOOM, numericValue))
 }
 
 function syncFlowViewportState(
-  payload?: Partial<{ x: number; y: number; zoom: number }>,
+  payload?: Partial<{ x: number, y: number, zoom: number }>,
 ): void {
-  const fallbackViewport = flowInstance.value?.viewport;
+  const fallbackViewport = flowInstance.value?.viewport
   const resolvedX = Number(
     payload?.x ?? fallbackViewport?.x ?? defaultViewport.value.x,
-  );
+  )
   const resolvedY = Number(
     payload?.y ?? fallbackViewport?.y ?? defaultViewport.value.y,
-  );
+  )
   const resolvedZoom = Number(
     payload?.zoom ?? fallbackViewport?.zoom ?? defaultViewport.value.zoom,
-  );
+  )
   flowViewport.value = {
     x: Math.round(Number.isFinite(resolvedX) ? resolvedX : 0),
     y: Math.round(Number.isFinite(resolvedY) ? resolvedY : 0),
     zoom: clampCanvasZoom(resolvedZoom),
-  };
+  }
 }
 
 function resolveViewportSnapshot(
   viewport:
-    | Partial<{ x: number; y: number; zoom: number }>
-    | { value?: Partial<{ x: number; y: number; zoom: number }> }
+    | Partial<{ x: number, y: number, zoom: number }>
+    | { value?: Partial<{ x: number, y: number, zoom: number }> }
     | null
     | undefined,
-): Partial<{ x: number; y: number; zoom: number }> {
-  if (!viewport) return {};
-  if ("value" in viewport && viewport.value) return viewport.value;
-  return viewport as Partial<{ x: number; y: number; zoom: number }>;
+): Partial<{ x: number, y: number, zoom: number }> {
+  if (!viewport)
+    return {}
+  if ('value' in viewport && viewport.value)
+    return viewport.value
+  return viewport as Partial<{ x: number, y: number, zoom: number }>
 }
 
 function resolvePointerClientPosition(
-  event: NodeMouseEvent["event"],
-): { clientX: number; clientY: number } | null {
-  if ("clientX" in event && typeof event.clientX === "number") {
+  event: NodeMouseEvent['event'],
+): { clientX: number, clientY: number } | null {
+  if ('clientX' in event && typeof event.clientX === 'number') {
     return {
       clientX: event.clientX,
       clientY: event.clientY,
-    };
+    }
   }
-  const touch =
-    ("touches" in event ? event.touches?.[0] : undefined) ||
-    ("changedTouches" in event ? event.changedTouches?.[0] : undefined);
-  if (!touch) return null;
+  const touch
+    = ('touches' in event ? event.touches?.[0] : undefined)
+      || ('changedTouches' in event ? event.changedTouches?.[0] : undefined)
+  if (!touch)
+    return null
   return {
     clientX: touch.clientX,
     clientY: touch.clientY,
-  };
+  }
 }
 
 function resolveFlowPointFromClient(
   clientX: number,
   clientY: number,
-): { x: number; y: number } | null {
-  const rootRect = rootRef.value?.getBoundingClientRect();
-  if (!rootRect) return null;
+): { x: number, y: number } | null {
+  const rootRect = rootRef.value?.getBoundingClientRect()
+  if (!rootRect)
+    return null
 
-  const viewport = flowViewport.value;
+  const viewport = flowViewport.value
   return {
     x: (clientX - rootRect.left - viewport.x) / viewport.zoom,
     y: (clientY - rootRect.top - viewport.y) / viewport.zoom,
-  };
+  }
 }
 
 function clearPresenceCursorTimer(): void {
-  if (!presenceCursorTimer) return;
-  clearTimeout(presenceCursorTimer);
-  presenceCursorTimer = null;
+  if (!presenceCursorTimer)
+    return
+  clearTimeout(presenceCursorTimer)
+  presenceCursorTimer = null
 }
 
 function isScreenPointNear(
-  left: { x: number; y: number },
-  right: { x: number; y: number },
+  left: { x: number, y: number },
+  right: { x: number, y: number },
   threshold = CURSOR_LABEL_COLLAPSE_DISTANCE,
 ): boolean {
-  return Math.hypot(left.x - right.x, left.y - right.y) <= threshold;
+  return Math.hypot(left.x - right.x, left.y - right.y) <= threshold
 }
 
 function flushPresenceCursor(): void {
-  clearPresenceCursorTimer();
+  clearPresenceCursorTimer()
 
   if (!pendingPresencePoint) {
-    emit("updateCollabCursor", {});
-    return;
+    emit('updateCollabCursor', {})
+    return
   }
 
   const flowPoint = resolveFlowPointFromClient(
     pendingPresencePoint.clientX,
     pendingPresencePoint.clientY,
-  );
-  pendingPresencePoint = null;
+  )
+  pendingPresencePoint = null
   if (!flowPoint) {
-    emit("updateCollabCursor", {});
-    return;
+    emit('updateCollabCursor', {})
+    return
   }
 
-  emit("updateCollabCursor", {
+  emit('updateCollabCursor', {
     cursorX: Number(flowPoint.x.toFixed(2)),
     cursorY: Number(flowPoint.y.toFixed(2)),
-  });
+  })
 }
 
 function clearPresenceCursor(shouldEmit = true): void {
-  pendingPresencePoint = null;
-  clearPresenceCursorTimer();
-  if (shouldEmit) emit("updateCollabCursor", {});
+  pendingPresencePoint = null
+  clearPresenceCursorTimer()
+  if (shouldEmit)
+    emit('updateCollabCursor', {})
 }
 
 function handlePresencePointerMove(event: PointerEvent): void {
-  const rootRect = rootRef.value?.getBoundingClientRect();
+  const rootRect = rootRef.value?.getBoundingClientRect()
   localPointerScreen.value = rootRect
     ? {
         x: event.clientX - rootRect.left,
         y: event.clientY - rootRect.top,
       }
-    : null;
+    : null
   pendingPresencePoint = {
     clientX: event.clientX,
     clientY: event.clientY,
-  };
-  if (presenceCursorTimer) return;
+  }
+  if (presenceCursorTimer)
+    return
   presenceCursorTimer = setTimeout(() => {
-    flushPresenceCursor();
-  }, PRESENCE_CURSOR_FLUSH_DELAY);
+    flushPresenceCursor()
+  }, PRESENCE_CURSOR_FLUSH_DELAY)
 }
 
 function handlePresencePointerLeave(): void {
-  localPointerScreen.value = null;
-  clearPresenceCursor();
+  localPointerScreen.value = null
+  clearPresenceCursor()
 }
 
 function handleFlowInit(instance: VueFlowStore): void {
-  flowInstance.value = instance;
-  syncFlowViewportState(resolveViewportSnapshot(instance.viewport));
+  flowInstance.value = instance
+  syncFlowViewportState(resolveViewportSnapshot(instance.viewport))
 }
 
 function clearZoomControlTimers(): void {
   if (zoomControlRestingTimer) {
-    clearTimeout(zoomControlRestingTimer);
-    zoomControlRestingTimer = null;
+    clearTimeout(zoomControlRestingTimer)
+    zoomControlRestingTimer = null
   }
   if (zoomControlDormantTimer) {
-    clearTimeout(zoomControlDormantTimer);
-    zoomControlDormantTimer = null;
+    clearTimeout(zoomControlDormantTimer)
+    zoomControlDormantTimer = null
   }
 }
 
 function revealZoomControl(options?: {
-  collapseAfterIdle?: boolean;
-  delay?: number;
-  deepDelay?: number;
-  ignoreHover?: boolean;
+  collapseAfterIdle?: boolean
+  delay?: number
+  deepDelay?: number
+  ignoreHover?: boolean
 }): void {
-  zoomControlState.value = "expanded";
-  clearZoomControlTimers();
-  if (!options?.collapseAfterIdle) return;
+  zoomControlState.value = 'expanded'
+  clearZoomControlTimers()
+  if (!options?.collapseAfterIdle)
+    return
   zoomControlRestingTimer = setTimeout(() => {
-    if (zoomControlHovering.value && !options.ignoreHover) return;
-    zoomControlState.value = "resting";
-    zoomControlRestingTimer = null;
-  }, options.delay ?? ZOOM_CONTROL_COLLAPSE_DELAY);
+    if (zoomControlHovering.value && !options.ignoreHover)
+      return
+    zoomControlState.value = 'resting'
+    zoomControlRestingTimer = null
+  }, options.delay ?? ZOOM_CONTROL_COLLAPSE_DELAY)
   zoomControlDormantTimer = setTimeout(() => {
-    if (zoomControlHovering.value && !options.ignoreHover) return;
-    zoomControlState.value = "dormant";
-    zoomControlDormantTimer = null;
-  }, options.deepDelay ?? ZOOM_CONTROL_DEEP_COLLAPSE_DELAY);
+    if (zoomControlHovering.value && !options.ignoreHover)
+      return
+    zoomControlState.value = 'dormant'
+    zoomControlDormantTimer = null
+  }, options.deepDelay ?? ZOOM_CONTROL_DEEP_COLLAPSE_DELAY)
 }
 
 function handleZoomControlPointerEnter(): void {
-  zoomControlHovering.value = true;
-  revealZoomControl();
+  zoomControlHovering.value = true
+  revealZoomControl()
 }
 
 function handleZoomControlPointerMove(): void {
-  if (zoomControlState.value === "expanded") return;
-  zoomControlHovering.value = true;
-  revealZoomControl({ collapseAfterIdle: true });
+  if (zoomControlState.value === 'expanded')
+    return
+  zoomControlHovering.value = true
+  revealZoomControl({ collapseAfterIdle: true })
 }
 
 function handleZoomControlPointerLeave(): void {
-  zoomControlHovering.value = false;
+  zoomControlHovering.value = false
   revealZoomControl({
     collapseAfterIdle: true,
     delay: 260,
     deepDelay: ZOOM_CONTROL_DEEP_COLLAPSE_DELAY,
-  });
+  })
 }
 
 function handleZoomControlFocusIn(): void {
-  revealZoomControl();
+  revealZoomControl()
 }
 
 function handleZoomControlShellClick(): void {
-  if (zoomControlState.value === "expanded") return;
-  zoomControlHovering.value = true;
-  revealZoomControl({ collapseAfterIdle: true });
+  if (zoomControlState.value === 'expanded')
+    return
+  zoomControlHovering.value = true
+  revealZoomControl({ collapseAfterIdle: true })
 }
 
 function handleZoomControlFocusOut(event: FocusEvent): void {
-  const currentTarget = event.currentTarget;
-  const relatedTarget = event.relatedTarget;
+  const currentTarget = event.currentTarget
+  const relatedTarget = event.relatedTarget
   if (
-    currentTarget instanceof HTMLElement &&
-    relatedTarget instanceof Node &&
-    currentTarget.contains(relatedTarget)
-  )
-    return;
-  zoomControlHovering.value = false;
+    currentTarget instanceof HTMLElement
+    && relatedTarget instanceof Node
+    && currentTarget.contains(relatedTarget)
+  ) {
+    return
+  }
+  zoomControlHovering.value = false
   revealZoomControl({
     collapseAfterIdle: true,
     delay: 260,
     deepDelay: ZOOM_CONTROL_DEEP_COLLAPSE_DELAY,
-  });
+  })
 }
 
 function emitViewportSnapshot(zoomOverride?: number): void {
-  if (!flowInstance.value) return;
-  const currentViewport = flowInstance.value.viewport;
+  if (!flowInstance.value)
+    return
+  const currentViewport = flowInstance.value.viewport
   const nextViewport = {
     x: Math.round(Number(currentViewport.x || 0)),
     y: Math.round(Number(currentViewport.y || 0)),
     zoom: clampCanvasZoom(zoomOverride ?? currentViewport.zoom),
-  };
-  syncFlowViewportState(nextViewport);
-  emit("viewport-change", nextViewport);
+  }
+  syncFlowViewportState(nextViewport)
+  emit('viewport-change', nextViewport)
 }
 
 async function zoomCanvasTo(nextZoom: number): Promise<void> {
-  const resolvedZoom = clampCanvasZoom(nextZoom);
-  if (!flowInstance.value) return;
-  revealZoomControl({ collapseAfterIdle: true, ignoreHover: true });
-  await flowInstance.value.zoomTo(resolvedZoom, { duration: 120 });
-  emitViewportSnapshot(resolvedZoom);
+  const resolvedZoom = clampCanvasZoom(nextZoom)
+  if (!flowInstance.value)
+    return
+  revealZoomControl({ collapseAfterIdle: true, ignoreHover: true })
+  await flowInstance.value.zoomTo(resolvedZoom, { duration: 120 })
+  emitViewportSnapshot(resolvedZoom)
 }
 
 async function zoomCanvasToImmediate(nextZoom: number): Promise<void> {
-  const resolvedZoom = clampCanvasZoom(nextZoom);
-  if (!flowInstance.value) return;
-  revealZoomControl({ collapseAfterIdle: true, ignoreHover: true });
-  await flowInstance.value.zoomTo(resolvedZoom, { duration: 0 });
-  emitViewportSnapshot(resolvedZoom);
+  const resolvedZoom = clampCanvasZoom(nextZoom)
+  if (!flowInstance.value)
+    return
+  revealZoomControl({ collapseAfterIdle: true, ignoreHover: true })
+  await flowInstance.value.zoomTo(resolvedZoom, { duration: 0 })
+  emitViewportSnapshot(resolvedZoom)
 }
 
 async function adjustCanvasZoom(delta: number): Promise<void> {
   const currentZoom = clampCanvasZoom(
     flowInstance.value?.viewport.zoom ?? props.viewportZoom,
-  );
-  await zoomCanvasTo(currentZoom + delta);
+  )
+  await zoomCanvasTo(currentZoom + delta)
 }
 
 async function cycleQuickZoomPreset(): Promise<void> {
-  await zoomCanvasTo(nextQuickZoomPreset.value / 100);
+  await zoomCanvasTo(nextQuickZoomPreset.value / 100)
 }
 
 async function fitCanvasView(): Promise<void> {
-  if (!flowInstance.value) return;
-  revealZoomControl({ collapseAfterIdle: true, ignoreHover: true });
+  if (!flowInstance.value)
+    return
+  revealZoomControl({ collapseAfterIdle: true, ignoreHover: true })
   await (
     flowInstance.value as unknown as VueFlowStore & {
       fitView: (options?: {
-        duration?: number;
-        padding?: number;
-      }) => Promise<boolean>;
+        duration?: number
+        padding?: number
+      }) => Promise<boolean>
     }
   ).fitView({
     duration: 160,
     padding: 0.18,
-  });
-  emitViewportSnapshot();
+  })
+  emitViewportSnapshot()
 }
 
 function closeShortcutDialog(): void {
-  shortcutDialogOpen.value = false;
+  shortcutDialogOpen.value = false
 }
 
 function toggleShortcutDialog(): void {
-  shortcutDialogOpen.value = !shortcutDialogOpen.value;
+  shortcutDialogOpen.value = !shortcutDialogOpen.value
 }
 
 function handleRootMouseDown(event: MouseEvent): void {
-  const target = event.target;
+  const target = event.target
   if (shortcutDialogOpen.value && target instanceof Node) {
-    const clickedShortcutButton = shortcutButtonRef.value?.contains(target);
-    const clickedShortcutDialog = shortcutDialogRef.value?.contains(target);
-    if (!clickedShortcutButton && !clickedShortcutDialog) closeShortcutDialog();
+    const clickedShortcutButton = shortcutButtonRef.value?.contains(target)
+    const clickedShortcutDialog = shortcutDialogRef.value?.contains(target)
+    if (!clickedShortcutButton && !clickedShortcutDialog)
+      closeShortcutDialog()
   }
-  revealZoomControl();
-  focusCanvas();
+  revealZoomControl()
+  focusCanvas()
 }
 
 function handleZoomInput(event: Event): void {
-  const nextValue = Number((event.target as HTMLInputElement).value);
-  if (!Number.isFinite(nextValue)) return;
-  void zoomCanvasTo(nextValue / 100);
+  const nextValue = Number((event.target as HTMLInputElement).value)
+  if (!Number.isFinite(nextValue))
+    return
+  void zoomCanvasTo(nextValue / 100)
 }
 
 function resolveZoomPercentFromPointer(
   clientX: number,
   element: HTMLElement,
 ): number {
-  const rect = element.getBoundingClientRect();
-  if (rect.width <= 0) return zoomPercent.value;
-  const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-  const rawPercent =
-    MIN_ZOOM_PERCENT + (MAX_ZOOM_PERCENT - MIN_ZOOM_PERCENT) * ratio;
-  const snappedPercent =
-    Math.round(rawPercent / ZOOM_RANGE_SNAP_STEP) * ZOOM_RANGE_SNAP_STEP;
-  return Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, snappedPercent));
+  const rect = element.getBoundingClientRect()
+  if (rect.width <= 0)
+    return zoomPercent.value
+  const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
+  const rawPercent
+    = MIN_ZOOM_PERCENT + (MAX_ZOOM_PERCENT - MIN_ZOOM_PERCENT) * ratio
+  const snappedPercent
+    = Math.round(rawPercent / ZOOM_RANGE_SNAP_STEP) * ZOOM_RANGE_SNAP_STEP
+  return Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, snappedPercent))
 }
 
 function updateZoomRangeFromPointer(
   clientX: number,
   element: HTMLElement,
 ): void {
-  const nextPercent = resolveZoomPercentFromPointer(clientX, element);
-  if (activeZoomRangePercent === nextPercent) return;
-  activeZoomRangePercent = nextPercent;
-  void zoomCanvasToImmediate(nextPercent / 100);
+  const nextPercent = resolveZoomPercentFromPointer(clientX, element)
+  if (activeZoomRangePercent === nextPercent)
+    return
+  activeZoomRangePercent = nextPercent
+  void zoomCanvasToImmediate(nextPercent / 100)
 }
 
 function resetZoomRangePointerState(): void {
-  activeZoomRangePointerId = null;
-  activeZoomRangePercent = null;
+  activeZoomRangePointerId = null
+  activeZoomRangePercent = null
 }
 
 function handleZoomRangePointerDown(event: PointerEvent): void {
-  if (zoomControlState.value !== "expanded") return;
-  const target = event.target;
+  if (zoomControlState.value !== 'expanded')
+    return
+  const target = event.target
   if (
-    target instanceof HTMLElement &&
-    target.closest(".workspace-design-canvas__zoom-label")
-  )
-    return;
-  const currentTarget = event.currentTarget;
-  if (!(currentTarget instanceof HTMLElement)) return;
-  activeZoomRangePointerId = event.pointerId;
-  currentTarget.setPointerCapture(event.pointerId);
-  event.preventDefault();
-  updateZoomRangeFromPointer(event.clientX, currentTarget);
+    target instanceof HTMLElement
+    && target.closest('.workspace-design-canvas__zoom-label')
+  ) {
+    return
+  }
+  const currentTarget = event.currentTarget
+  if (!(currentTarget instanceof HTMLElement))
+    return
+  activeZoomRangePointerId = event.pointerId
+  currentTarget.setPointerCapture(event.pointerId)
+  event.preventDefault()
+  updateZoomRangeFromPointer(event.clientX, currentTarget)
 }
 
 function handleZoomRangePointerMove(event: PointerEvent): void {
-  if (activeZoomRangePointerId !== event.pointerId) return;
-  const currentTarget = event.currentTarget;
-  if (!(currentTarget instanceof HTMLElement)) return;
-  event.preventDefault();
-  updateZoomRangeFromPointer(event.clientX, currentTarget);
+  if (activeZoomRangePointerId !== event.pointerId)
+    return
+  const currentTarget = event.currentTarget
+  if (!(currentTarget instanceof HTMLElement))
+    return
+  event.preventDefault()
+  updateZoomRangeFromPointer(event.clientX, currentTarget)
 }
 
 function handleZoomRangePointerUp(event: PointerEvent): void {
-  if (activeZoomRangePointerId !== event.pointerId) return;
-  const currentTarget = event.currentTarget;
+  if (activeZoomRangePointerId !== event.pointerId)
+    return
+  const currentTarget = event.currentTarget
   if (
-    currentTarget instanceof HTMLElement &&
-    currentTarget.hasPointerCapture(event.pointerId)
-  )
-    currentTarget.releasePointerCapture(event.pointerId);
-  resetZoomRangePointerState();
-  revealZoomControl({ collapseAfterIdle: true, ignoreHover: true });
+    currentTarget instanceof HTMLElement
+    && currentTarget.hasPointerCapture(event.pointerId)
+  ) {
+    currentTarget.releasePointerCapture(event.pointerId)
+  }
+  resetZoomRangePointerState()
+  revealZoomControl({ collapseAfterIdle: true, ignoreHover: true })
 }
 
 function applyFrameNodePreview(
   frameId: string,
-  patch: { x?: number; y?: number; width?: number; height?: number },
+  patch: { x?: number, y?: number, width?: number, height?: number },
 ): void {
   nodes.value = nodes.value.map((node) => {
-    if (node.id !== frameId) return node;
+    if (node.id !== frameId)
+      return node
     const nextPosition = {
       x:
         patch.x !== undefined
@@ -1014,15 +1041,15 @@ function applyFrameNodePreview(
         patch.y !== undefined
           ? Math.round(Number(patch.y || 0))
           : node.position.y,
-    };
-    const nextWidth =
-      patch.width !== undefined
+    }
+    const nextWidth
+      = patch.width !== undefined
         ? Math.max(280, Math.round(Number(patch.width || 0)))
-        : Number.parseInt(String(node.style?.width || "0")) || 320;
-    const nextHeight =
-      patch.height !== undefined
+        : Number.parseInt(String(node.style?.width || '0')) || 320
+    const nextHeight
+      = patch.height !== undefined
         ? Math.max(180, Math.round(Number(patch.height || 0)))
-        : Number.parseInt(String(node.style?.height || "0")) || 220;
+        : Number.parseInt(String(node.style?.height || '0')) || 220
     return {
       ...node,
       position: nextPosition,
@@ -1031,25 +1058,26 @@ function applyFrameNodePreview(
         width: `${nextWidth}px`,
         height: `${nextHeight}px`,
       },
-    };
-  });
+    }
+  })
 }
 
 function beginFrameDragSession(frameId: string): void {
   if (frameDragCleanupTimer) {
-    clearTimeout(frameDragCleanupTimer);
-    frameDragCleanupTimer = null;
+    clearTimeout(frameDragCleanupTimer)
+    frameDragCleanupTimer = null
   }
-  const selectedIds = normalizeFrameSelection(props.selectionState.frameIds || []);
-  activeFrameDragIds.value = selectedIds.includes(frameId) ? selectedIds : [frameId];
+  const selectedIds = normalizeFrameSelection(props.selectionState.frameIds || [])
+  activeFrameDragIds.value = selectedIds.includes(frameId) ? selectedIds : [frameId]
 }
 
 function scheduleFrameDragSessionCleanup(): void {
-  if (frameDragCleanupTimer) clearTimeout(frameDragCleanupTimer);
+  if (frameDragCleanupTimer)
+    clearTimeout(frameDragCleanupTimer)
   frameDragCleanupTimer = setTimeout(() => {
-    activeFrameDragIds.value = [];
-    frameDragCleanupTimer = null;
-  }, 0);
+    activeFrameDragIds.value = []
+    frameDragCleanupTimer = null
+  }, 0)
 }
 
 watch(
@@ -1062,21 +1090,21 @@ watch(
     frameInteractionEnabled,
   ],
   () => {
-    const activeDragIdSet = new Set(activeFrameDragIds.value);
+    const activeDragIdSet = new Set(activeFrameDragIds.value)
     const currentNodeMap = new Map(
-      nodes.value.map((node) => [normalizeString(node.id), node]),
-    );
+      nodes.value.map(node => [normalizeString(node.id), node]),
+    )
     nodes.value = (props.frames || []).map((frame) => {
-      const shellAssetId = normalizeString(frame.metadata?.device?.shellAssetId);
+      const shellAssetId = normalizeString(frame.metadata?.device?.shellAssetId)
       const deviceShellAsset = shellAssetId
-        ? (props.assets || []).find((asset) => asset.id === shellAssetId) || null
-        : null;
-      const persistedNode = currentNodeMap.get(frame.id);
-      const preserveDuringDrag =
-        activeDragIdSet.has(frame.id) && Boolean(persistedNode);
+        ? (props.assets || []).find(asset => asset.id === shellAssetId) || null
+        : null
+      const persistedNode = currentNodeMap.get(frame.id)
+      const preserveDuringDrag
+        = activeDragIdSet.has(frame.id) && Boolean(persistedNode)
       return {
         id: frame.id,
-        type: "frame",
+        type: 'frame',
         position: preserveDuringDrag
           ? {
               x: Number(persistedNode?.position?.x || frame.x),
@@ -1094,24 +1122,24 @@ watch(
           disabled:
             props.disabled || frame.locked || !frameInteractionEnabled.value,
           onResizePreview: (payload: {
-            x?: number;
-            y?: number;
-            width?: number;
-            height?: number;
+            x?: number
+            y?: number
+            width?: number
+            height?: number
           }) => {
-            applyFrameNodePreview(frame.id, payload);
+            applyFrameNodePreview(frame.id, payload)
           },
           onResizeCommit: (payload: {
-            x?: number;
-            y?: number;
-            width?: number;
-            height?: number;
+            x?: number
+            y?: number
+            width?: number
+            height?: number
           }) => {
-            emit("update-frame-size", {
+            emit('update-frame-size', {
               frameId: frame.id,
               ...payload,
-              historyMergeKey: "frame-resize",
-            });
+              historyMergeKey: 'frame-resize',
+            })
           },
         },
         draggable: frameInteractionEnabled.value && !frame.locked,
@@ -1125,298 +1153,324 @@ watch(
             ? String(persistedNode?.style?.height || `${frame.height}px`)
             : `${frame.height}px`,
         },
-      };
-    });
+      }
+    })
   },
   { immediate: true, deep: true },
-);
+)
 
 watch(
   () => props.viewportZoom,
   async (nextZoom) => {
-    const nextResolvedZoom = clampCanvasZoom(nextZoom);
-    const currentZoom = Number(flowInstance.value?.viewport.zoom || 1);
+    const nextResolvedZoom = clampCanvasZoom(nextZoom)
+    const currentZoom = Number(flowInstance.value?.viewport.zoom || 1)
     if (
-      !flowInstance.value ||
-      Math.abs(currentZoom - nextResolvedZoom) < 0.005
+      !flowInstance.value
+      || Math.abs(currentZoom - nextResolvedZoom) < 0.005
     ) {
-      syncFlowViewportState({ zoom: nextResolvedZoom });
-      return;
+      syncFlowViewportState({ zoom: nextResolvedZoom })
+      return
     }
-    await flowInstance.value.zoomTo(nextResolvedZoom, { duration: 120 });
-    syncFlowViewportState({ zoom: nextResolvedZoom });
+    await flowInstance.value.zoomTo(nextResolvedZoom, { duration: 120 })
+    syncFlowViewportState({ zoom: nextResolvedZoom })
   },
-);
+)
 
 watch(
-  () => props.page?.id || "",
+  () => props.page?.id || '',
   () => {
-    syncFlowViewportState(defaultViewport.value);
+    syncFlowViewportState(defaultViewport.value)
   },
   { immediate: true },
-);
+)
 
 function handleNodeClick(payload: NodeMouseEvent): void {
-  if (!frameInteractionEnabled.value) return;
-  const frameId = normalizeString(payload?.node?.id);
-  if (!frameId) return;
-  if ("shiftKey" in payload.event && payload.event.shiftKey) {
+  if (!frameInteractionEnabled.value)
+    return
+  const frameId = normalizeString(payload?.node?.id)
+  if (!frameId)
+    return
+  if ('shiftKey' in payload.event && payload.event.shiftKey) {
     const nextFrameIds = (props.selectionState.frameIds || []).includes(frameId)
-      ? (props.selectionState.frameIds || []).filter((id) => id !== frameId)
-      : [...(props.selectionState.frameIds || []), frameId];
-    emitFrameSelection(nextFrameIds, frameId);
-  } else {
-    emitFrameSelection([frameId], frameId);
+      ? (props.selectionState.frameIds || []).filter(id => id !== frameId)
+      : [...(props.selectionState.frameIds || []), frameId]
+    emitFrameSelection(nextFrameIds, frameId)
   }
-  focusCanvas();
+  else {
+    emitFrameSelection([frameId], frameId)
+  }
+  focusCanvas()
 }
 
 function handleNodeDoubleClick(payload: NodeMouseEvent): void {
-  const frameId = normalizeString(payload?.node?.id);
-  if (!frameId) return;
-  const frame =
-    (props.frames || []).find((item) => item.id === frameId) || null;
-  if (frame?.kind === "diagram") {
-    emit("open-frame", frameId);
-    return;
+  const frameId = normalizeString(payload?.node?.id)
+  if (!frameId)
+    return
+  const frame
+    = (props.frames || []).find(item => item.id === frameId) || null
+  if (frame?.kind === 'diagram') {
+    emit('open-frame', frameId)
+    return
   }
-  if (!frame) return;
-  if (frame.kind !== "device_mockup" && !canDesignFrameCreateElements(frame)) return;
-  const pointer = resolvePointerClientPosition(payload.event);
-  if (!pointer) return;
-  emit("node-double-click", {
+  if (!frame)
+    return
+  if (frame.kind !== 'device_mockup' && !canDesignFrameCreateElements(frame))
+    return
+  const pointer = resolvePointerClientPosition(payload.event)
+  if (!pointer)
+    return
+  emit('node-double-click', {
     frameId,
     clientX: pointer.clientX,
     clientY: pointer.clientY,
-  });
+  })
 }
 
 function handleNodeDragStart(payload: {
-  node?: { id?: string; position?: { x?: number; y?: number } };
+  node?: { id?: string, position?: { x?: number, y?: number } }
 }): void {
-  if (!frameInteractionEnabled.value) return;
-  const frameId = normalizeString(payload?.node?.id);
-  if (!frameId) return;
-  beginFrameDragSession(frameId);
-  revealZoomControl();
-  setDragFeedback(frameId, payload?.node?.position);
+  if (!frameInteractionEnabled.value)
+    return
+  const frameId = normalizeString(payload?.node?.id)
+  if (!frameId)
+    return
+  beginFrameDragSession(frameId)
+  revealZoomControl()
+  setDragFeedback(frameId, payload?.node?.position)
 }
 
 function handleNodeDrag(payload: {
-  node?: { id?: string; position?: { x?: number; y?: number } };
+  node?: { id?: string, position?: { x?: number, y?: number } }
 }): void {
-  if (!frameInteractionEnabled.value) return;
-  const frameId = normalizeString(payload?.node?.id);
-  if (!frameId) return;
-  revealZoomControl();
-  setDragFeedback(frameId, payload?.node?.position);
+  if (!frameInteractionEnabled.value)
+    return
+  const frameId = normalizeString(payload?.node?.id)
+  if (!frameId)
+    return
+  revealZoomControl()
+  setDragFeedback(frameId, payload?.node?.position)
 }
 
 function handleNodeDragStop(payload: {
-  node?: { id?: string; position?: { x?: number; y?: number } };
-  nodes?: Array<{ id?: string }>;
+  node?: { id?: string, position?: { x?: number, y?: number } }
+  nodes?: Array<{ id?: string }>
 }): void {
-  if (!frameInteractionEnabled.value) return;
-  const frameId = normalizeString(payload?.node?.id);
-  if (!frameId) return;
+  if (!frameInteractionEnabled.value)
+    return
+  const frameId = normalizeString(payload?.node?.id)
+  if (!frameId)
+    return
   if ((payload?.nodes || []).length > 1) {
-    clearDragFeedback();
-    scheduleFrameDragSessionCleanup();
-    return;
+    clearDragFeedback()
+    scheduleFrameDragSessionCleanup()
+    return
   }
 
-  const nextFeedback = setDragFeedback(frameId, payload?.node?.position);
-  emit("update-frame-position", {
+  const nextFeedback = setDragFeedback(frameId, payload?.node?.position)
+  emit('update-frame-position', {
     frameId,
     x: nextFeedback?.x ?? Math.round(Number(payload?.node?.position?.x || 0)),
     y: nextFeedback?.y ?? Math.round(Number(payload?.node?.position?.y || 0)),
-  });
+  })
   if (!(props.selectionState.frameIds || []).includes(frameId))
-    emitFrameSelection([frameId], frameId);
-  revealZoomControl({ collapseAfterIdle: true });
-  clearDragFeedback();
-  scheduleFrameDragSessionCleanup();
+    emitFrameSelection([frameId], frameId)
+  revealZoomControl({ collapseAfterIdle: true })
+  clearDragFeedback()
+  scheduleFrameDragSessionCleanup()
 }
 
 function handleSelectionDragStop(payload: {
-  nodes?: Array<{ id?: string; position?: { x?: number; y?: number } }>;
+  nodes?: Array<{ id?: string, position?: { x?: number, y?: number } }>
 }): void {
-  if (!frameInteractionEnabled.value) return;
+  if (!frameInteractionEnabled.value)
+    return
   const nextPositions = (payload?.nodes || [])
     .map((node) => {
-      const frameId = normalizeString(node.id);
-      if (!frameId) return null;
+      const frameId = normalizeString(node.id)
+      if (!frameId)
+        return null
       return {
         frameId,
         x: Math.round(Number(node.position?.x || 0)),
         y: Math.round(Number(node.position?.y || 0)),
-      };
+      }
     })
-    .filter((item): item is { frameId: string; x: number; y: number } =>
+    .filter((item): item is { frameId: string, x: number, y: number } =>
       Boolean(item),
-    );
+    )
 
   if (nextPositions.length)
-    emit("update-frame-positions", { positions: nextPositions });
-  revealZoomControl({ collapseAfterIdle: true });
-  clearDragFeedback();
-  scheduleFrameDragSessionCleanup();
+    emit('update-frame-positions', { positions: nextPositions })
+  revealZoomControl({ collapseAfterIdle: true })
+  clearDragFeedback()
+  scheduleFrameDragSessionCleanup()
 }
 
 function handleNodesChange(
-  changes: Array<{ id?: string; type?: string; selected?: boolean }>,
+  changes: Array<{ id?: string, type?: string, selected?: boolean }>,
 ): void {
-  if (!frameInteractionEnabled.value) return;
-  const selectionChanges = changes.filter((change) => change.type === "select");
-  if (!selectionChanges.length) return;
+  if (!frameInteractionEnabled.value)
+    return
+  const selectionChanges = changes.filter(change => change.type === 'select')
+  if (!selectionChanges.length)
+    return
 
   const nextSelectionMap = new Map<string, boolean>(
     normalizeFrameSelection(props.selectionState.frameIds || []).map(
-      (frameId) => [frameId, true],
+      frameId => [frameId, true],
     ),
-  );
-  let nextPrimaryFrameId = selectedFrameId.value;
+  )
+  let nextPrimaryFrameId = selectedFrameId.value
   for (const change of selectionChanges) {
-    const frameId = normalizeString(change.id);
-    if (!frameId) continue;
+    const frameId = normalizeString(change.id)
+    if (!frameId)
+      continue
     if (change.selected) {
-      nextSelectionMap.set(frameId, true);
-      nextPrimaryFrameId = frameId;
-    } else {
-      nextSelectionMap.delete(frameId);
-      if (nextPrimaryFrameId === frameId) nextPrimaryFrameId = "";
+      nextSelectionMap.set(frameId, true)
+      nextPrimaryFrameId = frameId
+    }
+    else {
+      nextSelectionMap.delete(frameId)
+      if (nextPrimaryFrameId === frameId)
+        nextPrimaryFrameId = ''
     }
   }
 
   const nextFrameIds = (props.frames || [])
-    .map((frame) => frame.id)
-    .filter((frameId) => nextSelectionMap.has(frameId));
-  emitFrameSelection(nextFrameIds, nextPrimaryFrameId || nextFrameIds[0] || "");
+    .map(frame => frame.id)
+    .filter(frameId => nextSelectionMap.has(frameId))
+  emitFrameSelection(nextFrameIds, nextPrimaryFrameId || nextFrameIds[0] || '')
 }
 
 function handleMoveEnd(payload: {
-  flowTransform?: { x?: number; y?: number; zoom?: number };
+  flowTransform?: { x?: number, y?: number, zoom?: number }
 }): void {
   const nextViewport = {
     x: Math.round(Number(payload?.flowTransform?.x || 0)),
     y: Math.round(Number(payload?.flowTransform?.y || 0)),
     zoom: Number(payload?.flowTransform?.zoom || 1) || 1,
-  };
-  revealZoomControl({ collapseAfterIdle: true });
-  syncFlowViewportState(nextViewport);
-  emit("viewport-change", nextViewport);
+  }
+  revealZoomControl({ collapseAfterIdle: true })
+  syncFlowViewportState(nextViewport)
+  emit('viewport-change', nextViewport)
 }
 
 function handleMove(payload: {
-  flowTransform?: { x?: number; y?: number; zoom?: number };
+  flowTransform?: { x?: number, y?: number, zoom?: number }
 }): void {
-  revealZoomControl();
+  revealZoomControl()
   const nextViewport = {
     x: Math.round(Number(payload?.flowTransform?.x || 0)),
     y: Math.round(Number(payload?.flowTransform?.y || 0)),
     zoom: Number(payload?.flowTransform?.zoom || 1) || 1,
-  };
-  syncFlowViewportState(nextViewport);
-  emit("viewport-change", nextViewport);
+  }
+  syncFlowViewportState(nextViewport)
+  emit('viewport-change', nextViewport)
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  const key = normalizeString(event.key).toLowerCase();
-  if (shortcutDialogOpen.value && key === "escape") {
-    event.preventDefault();
-    closeShortcutDialog();
-    return;
+  const key = normalizeString(event.key).toLowerCase()
+  if (shortcutDialogOpen.value && key === 'escape') {
+    event.preventDefault()
+    closeShortcutDialog()
+    return
   }
 
   if (
-    props.disabled ||
-    props.selectionState.scope !== "frame" ||
-    !selectedFrames.value.length
-  )
-    return;
-
-  const metaOrCtrl = event.metaKey || event.ctrlKey;
-  const primarySelectedFrame =
-    selectedFrames.value.find((frame) => frame.id === selectedFrameId.value) ||
-    selectedFrames.value[0] ||
-    null;
-  const movableFrames = selectedFrames.value.filter((frame) => !frame.locked);
-
-  if (key === "backspace" || key === "delete") {
-    event.preventDefault();
-    emit("delete-frame");
-    return;
-  }
-
-  if (
-    (key === "enter" || key === "return") &&
-    selectedFrames.value.length === 1 &&
-    primarySelectedFrame?.kind === "diagram"
+    props.disabled
+    || props.selectionState.scope !== 'frame'
+    || !selectedFrames.value.length
   ) {
-    event.preventDefault();
-    emit("open-frame", primarySelectedFrame.id);
-    return;
+    return
   }
 
-  if (metaOrCtrl && key === "d") {
-    event.preventDefault();
-    emit("duplicate-frame");
-    return;
+  const metaOrCtrl = event.metaKey || event.ctrlKey
+  const primarySelectedFrame
+    = selectedFrames.value.find(frame => frame.id === selectedFrameId.value)
+      || selectedFrames.value[0]
+      || null
+  const movableFrames = selectedFrames.value.filter(frame => !frame.locked)
+
+  if (key === 'backspace' || key === 'delete') {
+    event.preventDefault()
+    emit('delete-frame')
+    return
   }
 
-  if (!key.startsWith("arrow") || !movableFrames.length) return;
+  if (
+    (key === 'enter' || key === 'return')
+    && selectedFrames.value.length === 1
+    && primarySelectedFrame?.kind === 'diagram'
+  ) {
+    event.preventDefault()
+    emit('open-frame', primarySelectedFrame.id)
+    return
+  }
 
-  event.preventDefault();
-  const step = event.shiftKey ? FRAME_DRAG_GRID_SIZE : 8;
-  const deltaX = key === "arrowleft" ? -step : key === "arrowright" ? step : 0;
-  const deltaY = key === "arrowup" ? -step : key === "arrowdown" ? step : 0;
-  emit("update-frame-positions", {
-    positions: movableFrames.map((frame) => ({
+  if (metaOrCtrl && key === 'd') {
+    event.preventDefault()
+    emit('duplicate-frame')
+    return
+  }
+
+  if (!key.startsWith('arrow') || !movableFrames.length)
+    return
+
+  event.preventDefault()
+  const step = event.shiftKey ? FRAME_DRAG_GRID_SIZE : 8
+  const deltaX = key === 'arrowleft' ? -step : key === 'arrowright' ? step : 0
+  const deltaY = key === 'arrowup' ? -step : key === 'arrowdown' ? step : 0
+  emit('update-frame-positions', {
+    positions: movableFrames.map(frame => ({
       frameId: frame.id,
       x: Math.round(frame.x + deltaX),
       y: Math.round(frame.y + deltaY),
     })),
-    historyMergeKey: "frame-nudge",
-  });
-  revealZoomControl({ collapseAfterIdle: true });
+    historyMergeKey: 'frame-nudge',
+  })
+  revealZoomControl({ collapseAfterIdle: true })
 }
 
 function resolveFloatingChromeTarget(): HTMLElement | null {
-  if (!rootRef.value) return null;
-  const layoutRoot = rootRef.value.closest('[data-testid="wl-design-layout"]');
-  if (!(layoutRoot instanceof HTMLElement)) return rootRef.value;
-  const target = layoutRoot.querySelector("[data-wl-design-floating-controls-root]");
-  return target instanceof HTMLElement ? target : rootRef.value;
+  if (!rootRef.value)
+    return null
+  const layoutRoot = rootRef.value.closest('[data-testid="wl-design-layout"]')
+  if (!(layoutRoot instanceof HTMLElement))
+    return rootRef.value
+  const target = layoutRoot.querySelector('[data-wl-design-floating-controls-root]')
+  return target instanceof HTMLElement ? target : rootRef.value
 }
 
 onMounted(() => {
-  floatingChromeTarget.value = resolveFloatingChromeTarget();
-  if (typeof ResizeObserver === "undefined" || !rootRef.value) return;
+  floatingChromeTarget.value = resolveFloatingChromeTarget()
+  if (typeof ResizeObserver === 'undefined' || !rootRef.value)
+    return
   rootResizeObserver = new ResizeObserver(() => {
     revealZoomControl({
       collapseAfterIdle: true,
       delay: 900,
       deepDelay: ZOOM_CONTROL_DEEP_COLLAPSE_DELAY,
-    });
-  });
-  rootResizeObserver.observe(rootRef.value);
-});
+    })
+  })
+  rootResizeObserver.observe(rootRef.value)
+})
 
 onBeforeUnmount(() => {
-  clearPresenceCursor();
-  clearZoomControlTimers();
-  resetZoomRangePointerState();
-  if (frameDragCleanupTimer) clearTimeout(frameDragCleanupTimer);
-  rootResizeObserver?.disconnect();
-  rootResizeObserver = null;
-  floatingChromeTarget.value = null;
-});
+  clearPresenceCursor()
+  clearZoomControlTimers()
+  resetZoomRangePointerState()
+  if (frameDragCleanupTimer)
+    clearTimeout(frameDragCleanupTimer)
+  rootResizeObserver?.disconnect()
+  rootResizeObserver = null
+  floatingChromeTarget.value = null
+})
 </script>
 
 <template>
   <div
     ref="rootRef"
-    class="workspace-design-canvas__root relative h-full min-h-0 overflow-hidden outline-none"
+    class="workspace-design-canvas__root outline-none h-full min-h-0 relative overflow-hidden"
     :data-zoom-state="zoomControlState"
     :style="{
       ...canvasChromeStyle,
@@ -1492,7 +1546,7 @@ onBeforeUnmount(() => {
     </VueFlow>
 
     <div
-      class="workspace-design-canvas__presence-layer absolute inset-0 overflow-hidden pointer-events-none"
+      class="workspace-design-canvas__presence-layer pointer-events-none inset-0 absolute overflow-hidden"
       data-testid="workspace-design-collab-cursor-overlay"
     >
       <div
@@ -1532,22 +1586,19 @@ onBeforeUnmount(() => {
 
     <div
       v-if="dragFeedback"
-      class="workspace-design-canvas__feedback absolute z-10 min-w-[220px] rounded-2xl border border-slate-700/90 bg-slate-950/88 px-3 py-2 text-[11px] text-slate-300 shadow-[0_18px_48px_rgba(2,6,23,0.3)] backdrop-blur-xl"
+      class="workspace-design-canvas__feedback text-[11px] text-slate-300 px-3 py-2 border border-slate-700/90 rounded-2xl bg-slate-950/88 min-w-[220px] shadow-[0_18px_48px_rgba(2,6,23,0.3)] absolute z-10 backdrop-blur-xl"
     >
-      <div class="flex items-center justify-between gap-3">
-        <span class="font-semibold text-slate-100"
-          >Frame · {{ dragFeedback.frameId }}</span
-        >
+      <div class="flex gap-3 items-center justify-between">
+        <span class="text-slate-100 font-semibold">Frame · {{ dragFeedback.frameId }}</span>
         <span
-          class="rounded-full border border-sky-800 bg-sky-950/40 px-2 py-0.5 font-semibold text-sky-200"
-          >X {{ dragFeedback.x }} / Y {{ dragFeedback.y }}</span
-        >
+          class="text-sky-200 font-semibold px-2 py-0.5 border border-sky-800 rounded-full bg-sky-950/40"
+        >X {{ dragFeedback.x }} / Y {{ dragFeedback.y }}</span>
       </div>
       <div class="mt-2 flex flex-wrap gap-1.5">
         <span
           v-for="hint in dragFeedback.hints"
           :key="`${dragFeedback.frameId}-${hint}`"
-          class="rounded-full border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-slate-300"
+          class="text-[10px] text-slate-300 font-semibold px-2 py-1 border border-slate-800 rounded-full bg-slate-900"
         >
           {{ hint }}
         </span>
@@ -1564,24 +1615,24 @@ onBeforeUnmount(() => {
           <section
             v-if="shortcutDialogOpen"
             ref="shortcutDialogRef"
-            class="workspace-design-canvas__shortcut-dialog w-[320px] max-w-[calc(100vw-32px)] rounded-[12px] border border-slate-200/90 bg-white/96 p-3 text-slate-900 shadow-[0_16px_38px_rgba(15,23,42,0.1)] backdrop-blur-xl"
+            class="workspace-design-canvas__shortcut-dialog text-slate-900 p-3 border border-slate-200/90 rounded-[12px] bg-white/96 max-w-[calc(100vw-32px)] w-[320px] shadow-[0_16px_38px_rgba(15,23,42,0.1)] backdrop-blur-xl"
             role="dialog"
             aria-modal="false"
             aria-label="设计画布快捷键"
           >
-            <div class="flex items-start justify-between gap-3">
+            <div class="flex gap-3 items-start justify-between">
               <div>
                 <p
-                  class="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400"
+                  class="text-xs text-slate-400 tracking-[0.16em] font-semibold uppercase"
                 >
                   Shortcuts
                 </p>
-                <h3 class="mt-1 text-sm font-semibold text-slate-900">
+                <h3 class="text-sm text-slate-900 font-semibold mt-1">
                   设计画布快捷键
                 </h3>
               </div>
               <button
-                class="flex h-7 w-7 items-center justify-center rounded-[10px] border border-slate-200 bg-slate-50 text-slate-500 transition-colors hover:border-slate-300 hover:bg-white hover:text-slate-900"
+                class="text-slate-500 border border-slate-200 rounded-[10px] bg-slate-50 flex h-7 w-7 transition-colors items-center justify-center hover:text-slate-900 hover:border-slate-300 hover:bg-white"
                 type="button"
                 title="关闭快捷键面板"
                 @click="closeShortcutDialog"
@@ -1594,16 +1645,16 @@ onBeforeUnmount(() => {
               <div
                 v-for="item in shortcutItems"
                 :key="item.description"
-                class="flex items-center justify-between gap-3 rounded-[10px] border border-slate-200 bg-slate-50/80 px-3 py-2"
+                class="px-3 py-2 border border-slate-200 rounded-[10px] bg-slate-50/80 flex gap-3 items-center justify-between"
               >
-                <span class="text-xs font-medium text-slate-600">{{
+                <span class="text-xs text-slate-600 font-medium">{{
                   item.description
                 }}</span>
-                <div class="flex flex-wrap justify-end gap-1.5">
+                <div class="flex flex-wrap gap-1.5 justify-end">
                   <span
                     v-for="keyName in item.keys"
                     :key="`${item.description}-${keyName}`"
-                    class="rounded-[8px] border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+                    class="text-[11px] text-slate-700 font-semibold px-2 py-1 border border-slate-200 rounded-[8px] bg-white"
                   >
                     {{ keyName }}
                   </span>
@@ -1614,16 +1665,14 @@ onBeforeUnmount(() => {
 
           <button
             ref="shortcutButtonRef"
-            class="flex h-10 w-10 items-center justify-center rounded-[12px] border border-slate-200/92 bg-white/98 text-slate-500 shadow-[0_12px_24px_rgba(15,23,42,0.08)] transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+            class="text-slate-500 border border-slate-200/92 rounded-[12px] bg-white/98 flex h-10 w-10 shadow-[0_12px_24px_rgba(15,23,42,0.08)] transition-colors items-center justify-center hover:text-slate-900 hover:border-slate-300 hover:bg-slate-50"
             type="button"
             title="查看快捷键"
             aria-haspopup="dialog"
             :aria-expanded="shortcutDialogOpen ? 'true' : 'false'"
             @click="toggleShortcutDialog"
           >
-            <span class="material-symbols-outlined text-[18px]"
-              >question_mark</span
-            >
+            <span class="material-symbols-outlined text-[18px]">question_mark</span>
           </button>
         </div>
 
@@ -1674,7 +1723,7 @@ onBeforeUnmount(() => {
                 aria-label="调整画布缩放"
                 tabindex="-1"
                 @input="handleZoomInput"
-              />
+              >
               <button
                 class="workspace-design-canvas__zoom-label"
                 type="button"
@@ -1701,9 +1750,7 @@ onBeforeUnmount(() => {
               aria-label="适配当前画布"
               @click="void fitCanvasView()"
             >
-              <span class="material-symbols-outlined text-[18px]"
-                >fit_screen</span
-              >
+              <span class="material-symbols-outlined text-[18px]">fit_screen</span>
             </button>
           </div>
         </div>
@@ -1712,12 +1759,12 @@ onBeforeUnmount(() => {
 
     <div
       v-if="!(props.frames || []).length"
-      class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/72 text-center backdrop-blur-[2px]"
+      class="text-center bg-white/72 flex flex-col gap-3 items-center inset-0 justify-center absolute backdrop-blur-[2px]"
     >
-      <h3 class="text-base font-semibold text-slate-900">
+      <h3 class="text-base text-slate-900 font-semibold">
         当前 Page 还没有 Frame
       </h3>
-      <p class="max-w-sm text-sm leading-6 text-slate-500">
+      <p class="text-sm text-slate-500 leading-6 max-w-sm">
         在顶部工具栏插入 `freeform`、`template`、`device_artboard`、
         `device_mockup` 或 `diagram` Frame。
       </p>
@@ -1744,9 +1791,7 @@ onBeforeUnmount(() => {
 }
 
 .workspace-design-canvas__feedback {
-  right: calc(
-    var(--wl-design-right-width, 340px) + (var(--wl-design-gap, 16px) * 2)
-  );
+  right: calc(var(--wl-design-right-width, 340px) + (var(--wl-design-gap, 16px) * 2));
 }
 
 .workspace-design-canvas__presence-layer {
@@ -1809,10 +1854,7 @@ onBeforeUnmount(() => {
   margin: 0 !important;
   left: 16px !important;
   right: auto !important;
-  bottom: calc(
-    16px + var(--workspace-design-control-height) +
-      var(--workspace-design-control-gap)
-  ) !important;
+  bottom: calc(16px + var(--workspace-design-control-height) + var(--workspace-design-control-gap)) !important;
   z-index: 160 !important;
   box-sizing: border-box;
   width: var(--workspace-design-control-width) !important;
@@ -1832,8 +1874,7 @@ onBeforeUnmount(() => {
     box-shadow 180ms ease;
 }
 
-.workspace-design-canvas__root[data-zoom-state="dormant"]
-  :deep(.workspace-design-canvas__flow .vue-flow__minimap) {
+.workspace-design-canvas__root[data-zoom-state='dormant'] :deep(.workspace-design-canvas__flow .vue-flow__minimap) {
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
 }
 
@@ -1873,8 +1914,8 @@ onBeforeUnmount(() => {
     border-color 180ms ease;
 }
 
-.workspace-design-canvas__zoom-shell[data-state="resting"],
-.workspace-design-canvas__zoom-shell[data-state="dormant"] {
+.workspace-design-canvas__zoom-shell[data-state='resting'],
+.workspace-design-canvas__zoom-shell[data-state='dormant'] {
   display: flex;
   align-items: center;
   width: var(--workspace-design-control-width);
@@ -1902,10 +1943,8 @@ onBeforeUnmount(() => {
     transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.workspace-design-canvas__zoom-shell[data-state="resting"]
-  .workspace-design-canvas__zoom-button,
-.workspace-design-canvas__zoom-shell[data-state="dormant"]
-  .workspace-design-canvas__zoom-button {
+.workspace-design-canvas__zoom-shell[data-state='resting'] .workspace-design-canvas__zoom-button,
+.workspace-design-canvas__zoom-shell[data-state='dormant'] .workspace-design-canvas__zoom-button {
   position: absolute;
   inset: 0 auto 0 0;
   opacity: 0;
@@ -1939,10 +1978,8 @@ onBeforeUnmount(() => {
     background-color 180ms ease;
 }
 
-.workspace-design-canvas__zoom-shell[data-state="resting"]
-  .workspace-design-canvas__zoom-range-shell,
-.workspace-design-canvas__zoom-shell[data-state="dormant"]
-  .workspace-design-canvas__zoom-range-shell {
+.workspace-design-canvas__zoom-shell[data-state='resting'] .workspace-design-canvas__zoom-range-shell,
+.workspace-design-canvas__zoom-shell[data-state='dormant'] .workspace-design-canvas__zoom-range-shell {
   position: absolute;
   inset: 0;
   border-right-color: transparent;
@@ -1996,10 +2033,8 @@ onBeforeUnmount(() => {
   outline: none;
 }
 
-.workspace-design-canvas__zoom-shell[data-state="resting"]
-  .workspace-design-canvas__zoom-label,
-.workspace-design-canvas__zoom-shell[data-state="dormant"]
-  .workspace-design-canvas__zoom-label {
+.workspace-design-canvas__zoom-shell[data-state='resting'] .workspace-design-canvas__zoom-label,
+.workspace-design-canvas__zoom-shell[data-state='dormant'] .workspace-design-canvas__zoom-label {
   opacity: 0;
   transform: scale(0.92);
   pointer-events: none;
@@ -2023,10 +2058,8 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.workspace-design-canvas__zoom-shell[data-state="resting"]
-  .workspace-design-canvas__zoom-collapsed-track,
-.workspace-design-canvas__zoom-shell[data-state="dormant"]
-  .workspace-design-canvas__zoom-collapsed-track {
+.workspace-design-canvas__zoom-shell[data-state='resting'] .workspace-design-canvas__zoom-collapsed-track,
+.workspace-design-canvas__zoom-shell[data-state='dormant'] .workspace-design-canvas__zoom-collapsed-track {
   opacity: 1;
   transform: translateY(-50%) scaleX(1);
 }
@@ -2089,10 +2122,7 @@ onBeforeUnmount(() => {
   :deep(.workspace-design-canvas__flow .vue-flow__minimap) {
     left: 16px !important;
     right: auto !important;
-    bottom: calc(
-      16px + var(--workspace-design-control-height) +
-        var(--workspace-design-control-gap)
-    ) !important;
+    bottom: calc(16px + var(--workspace-design-control-height) + var(--workspace-design-control-gap)) !important;
   }
 }
 </style>

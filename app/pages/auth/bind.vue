@@ -187,7 +187,7 @@ onMounted(async () => {
             v-else-if="feishuUnbindConfirmVisible"
             class="p-3 border border-rose-200/90 rounded-2xl bg-rose-50/90 space-y-3"
           >
-            <p class="text-sm text-rose-700 m-0 leading-6">
+            <p class="text-sm text-rose-700 leading-6 m-0">
               解绑后将移除当前账号所有飞书身份映射。请输入 <span class="font-mono">UNBIND</span> 确认。
             </p>
             <input
@@ -209,13 +209,13 @@ onMounted(async () => {
 
           <p
             v-else-if="feishuBindError && !hasFeishuConflict"
-            class="text-sm text-rose-700 m-0 leading-6"
+            class="text-sm text-rose-700 leading-6 m-0"
             :data-testid="feishuConflictCode ? 'auth-bind-feishu-conflict-code' : undefined"
           >
             {{ feishuBindError }}
           </p>
 
-          <p v-if="feishuBindSuccess" class="text-sm text-emerald-700 m-0 leading-6">
+          <p v-if="feishuBindSuccess" class="text-sm text-emerald-700 leading-6 m-0">
             {{ feishuBindSuccess }}
           </p>
         </AuthBindingCard>
@@ -253,7 +253,7 @@ onMounted(async () => {
 
           <p
             v-else-if="oauthBindError && !hasOauthConflict"
-            class="text-sm text-rose-700 m-0 leading-6"
+            class="text-sm text-rose-700 leading-6 m-0"
             :data-testid="oauthConflictCode ? 'auth-bind-oauth-conflict-code' : undefined"
           >
             {{ oauthBindError }}

@@ -188,14 +188,14 @@ watch(flatItems, () => {
                   id="workspace-metak-search-input"
                   ref="inputRef"
                   :value="query"
-                  class="text-[12px] text-slate-900 font-medium leading-5 px-0 py-0 outline-none border-none bg-transparent w-full placeholder:text-slate-400"
+                  class="text-[12px] text-slate-900 leading-5 font-medium px-0 py-0 outline-none border-none bg-transparent w-full placeholder:text-slate-400"
                   data-testid="workspace-metak-search-input"
                   placeholder="搜索命令、资源、会议、竞赛或系统资料库"
                   type="text"
                   @input="onInput"
                 >
               </div>
-              <div class="text-[9px] text-slate-500 font-semibold px-1.5 py-0.5 border border-slate-200 rounded-md bg-slate-50 hidden sm:block leading-none">
+              <div class="text-[9px] text-slate-500 leading-none font-semibold px-1.5 py-0.5 border border-slate-200 rounded-md bg-slate-50 hidden sm:block">
                 {{ shortcutLabel }}
               </div>
             </div>
@@ -231,10 +231,10 @@ watch(flatItems, () => {
                     </span>
                     <span class="flex-1 min-w-0">
                       <span class="flex gap-1.5 items-center">
-                        <span class="text-[13px] font-semibold leading-5 truncate">{{ item.title }}</span>
+                        <span class="text-[13px] leading-5 font-semibold truncate">{{ item.title }}</span>
                         <span
                           v-if="item.badge"
-                          class="text-[9px] text-slate-500 font-semibold px-1.5 py-0.5 rounded-full bg-slate-100 leading-none"
+                          class="text-[9px] text-slate-500 leading-none font-semibold px-1.5 py-0.5 rounded-full bg-slate-100"
                         >
                           {{ item.badge }}
                         </span>
@@ -247,7 +247,7 @@ watch(flatItems, () => {
                       </span>
                     </span>
                     <span class="text-right shrink-0">
-                      <span class="text-[9px] text-slate-400 tracking-[0.12em] font-semibold block uppercase leading-none">
+                      <span class="text-[9px] text-slate-400 leading-none tracking-[0.12em] font-semibold block uppercase">
                         {{ metaTypeLabel(item) }}
                       </span>
                       <span
@@ -278,7 +278,6 @@ watch(flatItems, () => {
               </p>
             </div>
           </div>
-
         </section>
       </div>
     </Transition>

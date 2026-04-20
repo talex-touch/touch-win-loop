@@ -289,7 +289,7 @@ watch(() => route.fullPath, () => {
     </PageHeader>
 
     <SectionCard>
-      <FilterBar class="grid gap-2 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
+      <FilterBar class="gap-2 grid 2xl:grid-cols-7 md:grid-cols-2 xl:grid-cols-4">
         <a-input v-model="filters.keyword" size="small" allow-clear placeholder="关键词" />
         <a-select v-model="filters.syncId" size="small" allow-clear placeholder="同步信息" @change="() => { filters.syncItemId = '' }">
           <a-option v-for="item in resultPayload.syncOptions" :key="item.id" :value="item.id">
@@ -317,7 +317,7 @@ watch(() => route.fullPath, () => {
           </a-button>
         </div>
       </FilterBar>
-      <p class="mt-2 mb-0 text-[11px] text-slate-500">
+      <p class="text-[11px] text-slate-500 mb-0 mt-2">
         支持按同步信息、同步项、scope、externalId、recordId 反查；状态“仅映射”表示 external refs 已落库但索引文档尚未生成。
       </p>
     </SectionCard>
@@ -352,10 +352,10 @@ watch(() => route.fullPath, () => {
 
         <template #syncName="{ record }">
           <div class="min-w-0">
-            <p class="m-0 text-[11px] text-slate-900 font-semibold truncate">
+            <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
               {{ record.syncName || '-' }}
             </p>
-            <p class="m-0 mt-1 text-[10px] text-slate-400 font-mono break-all">
+            <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
               {{ record.syncId || '-' }}
             </p>
           </div>
@@ -363,10 +363,10 @@ watch(() => route.fullPath, () => {
 
         <template #syncItemName="{ record }">
           <div class="min-w-0">
-            <p class="m-0 text-[11px] text-slate-700 truncate">
+            <p class="text-[11px] text-slate-700 m-0 truncate">
               {{ record.syncItemName || '-' }}
             </p>
-            <p class="m-0 mt-1 text-[10px] text-slate-400 font-mono break-all">
+            <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
               {{ record.syncItemId || '-' }}
             </p>
           </div>
@@ -374,40 +374,40 @@ watch(() => route.fullPath, () => {
 
         <template #title="{ record }">
           <div class="min-w-0">
-            <p class="m-0 text-[11px] text-slate-900 font-semibold break-words">
+            <p class="text-[11px] text-slate-900 font-semibold m-0 break-words">
               {{ record.title || '-' }}
             </p>
           </div>
         </template>
 
         <template #snippet="{ record }">
-          <p class="m-0 text-[11px] text-slate-600 break-words">
+          <p class="text-[11px] text-slate-600 m-0 break-words">
             {{ buildSnippet(record) }}
           </p>
         </template>
 
         <template #identity="{ record }">
           <div class="space-y-1">
-            <p class="m-0 text-[10px] text-slate-600 font-mono break-all">
+            <p class="text-[10px] text-slate-600 font-mono m-0 break-all">
               externalId: {{ record.externalId || '-' }}
             </p>
-            <p class="m-0 text-[10px] text-slate-500 font-mono break-all">
+            <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
               entityId: {{ record.entityId || '-' }}
             </p>
-            <p class="m-0 text-[10px] text-slate-400 font-mono break-all">
+            <p class="text-[10px] text-slate-400 font-mono m-0 break-all">
               recordId: {{ record.recordId || '-' }}
             </p>
           </div>
         </template>
 
         <template #runId="{ record }">
-          <p class="m-0 text-[10px] text-slate-500 font-mono break-all">
+          <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
             {{ record.runId || '-' }}
           </p>
         </template>
 
         <template #updatedAt="{ record }">
-          <p class="m-0 text-[11px] text-slate-700">
+          <p class="text-[11px] text-slate-700 m-0">
             {{ formatDateTime(record.updatedAt) }}
           </p>
         </template>
@@ -435,53 +435,53 @@ watch(() => route.fullPath, () => {
 
     <a-drawer v-model:visible="detailVisible" width="760px" title="同步数据详情" unmount-on-close>
       <template v-if="detailRecord">
-        <div class="space-y-3 text-[11px]">
-          <div class="grid gap-2 md:grid-cols-2">
+        <div class="text-[11px] space-y-3">
+          <div class="gap-2 grid md:grid-cols-2">
             <div class="p-2 border border-slate-200 bg-slate-50">
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 scope
               </p>
-              <p class="m-0 mt-1 text-slate-700">
+              <p class="text-slate-700 m-0 mt-1">
                 {{ scopeLabel(detailRecord.scope) }}
               </p>
             </div>
             <div class="p-2 border border-slate-200 bg-slate-50">
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 status
               </p>
-              <p class="m-0 mt-1 text-slate-700">
+              <p class="text-slate-700 m-0 mt-1">
                 {{ statusLabel(detailRecord.status) }}
               </p>
             </div>
             <div class="p-2 border border-slate-200 bg-slate-50">
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 syncId / syncName
               </p>
-              <p class="m-0 mt-1 text-slate-700 break-all">
+              <p class="text-slate-700 m-0 mt-1 break-all">
                 {{ detailRecord.syncId || '-' }} / {{ detailRecord.syncName || '-' }}
               </p>
             </div>
             <div class="p-2 border border-slate-200 bg-slate-50">
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 syncItemId / syncItemName
               </p>
-              <p class="m-0 mt-1 text-slate-700 break-all">
+              <p class="text-slate-700 m-0 mt-1 break-all">
                 {{ detailRecord.syncItemId || '-' }} / {{ detailRecord.syncItemName || '-' }}
               </p>
             </div>
             <div class="p-2 border border-slate-200 bg-slate-50">
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 externalId / entityId
               </p>
-              <p class="m-0 mt-1 text-slate-700 break-all">
+              <p class="text-slate-700 m-0 mt-1 break-all">
                 {{ detailRecord.externalId || '-' }} / {{ detailRecord.entityId || '-' }}
               </p>
             </div>
             <div class="p-2 border border-slate-200 bg-slate-50">
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 recordId / runId
               </p>
-              <p class="m-0 mt-1 text-slate-700 break-all">
+              <p class="text-slate-700 m-0 mt-1 break-all">
                 {{ detailRecord.recordId || '-' }} / {{ detailRecord.runId || '-' }}
               </p>
             </div>
@@ -489,44 +489,44 @@ watch(() => route.fullPath, () => {
 
           <div class="p-3 border border-slate-200 bg-white space-y-2">
             <div>
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 title
               </p>
-              <p class="m-0 mt-1 text-slate-800 break-words">
+              <p class="text-slate-800 m-0 mt-1 break-words">
                 {{ detailRecord.title || '-' }}
               </p>
             </div>
             <div>
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 summary
               </p>
-              <p class="m-0 mt-1 text-slate-700 break-words whitespace-pre-wrap">
+              <p class="text-slate-700 m-0 mt-1 whitespace-pre-wrap break-words">
                 {{ detailRecord.summary || '-' }}
               </p>
             </div>
             <div>
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 body
               </p>
-              <p class="m-0 mt-1 text-slate-700 break-words whitespace-pre-wrap">
+              <p class="text-slate-700 m-0 mt-1 whitespace-pre-wrap break-words">
                 {{ detailRecord.body || '-' }}
               </p>
             </div>
             <div>
-              <p class="m-0 text-slate-400 uppercase">
+              <p class="text-slate-400 m-0 uppercase">
                 keywords
               </p>
-              <p class="m-0 mt-1 text-slate-700 break-words">
+              <p class="text-slate-700 m-0 mt-1 break-words">
                 {{ detailRecord.keywords.length ? detailRecord.keywords.join(' / ') : '-' }}
               </p>
             </div>
           </div>
 
           <div class="p-3 border border-slate-200 bg-white">
-            <p class="m-0 text-slate-400 uppercase">
+            <p class="text-slate-400 m-0 uppercase">
               metadata
             </p>
-            <pre class="mt-2 mb-0 text-[11px] text-slate-700 p-3 rounded bg-slate-50 overflow-x-auto">{{ formatJson(detailRecord.metadata) }}</pre>
+            <pre class="text-[11px] text-slate-700 mb-0 mt-2 p-3 rounded bg-slate-50 overflow-x-auto">{{ formatJson(detailRecord.metadata) }}</pre>
           </div>
         </div>
       </template>

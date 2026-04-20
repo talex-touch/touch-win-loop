@@ -118,7 +118,7 @@ describe('project knowledge focused regression', () => {
     )
     assert.match(
       projectPageSource,
-      /if \(eventType === 'done'\) \{[\s\S]*assistantMetadata = \{[\s\S]*result\.knowledge[\s\S]*\{ knowledge: result\.knowledge \}[\s\S]*\}[\s\S]*renderStreamMessages\(\)/,
+      /if \(eventType === 'done'\) \{[\s\S]*assistantMetadata = \{[\s\S]*result\.knowledge[\s\S]*\{ knowledge: result\.knowledge \}[^}]*\}[\s\S]*renderStreamMessages\(\)/,
       '项目页未在 done 事件把 knowledge 写回当前流式 assistant 消息',
     )
     assert.match(

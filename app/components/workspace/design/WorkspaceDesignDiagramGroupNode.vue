@@ -2,23 +2,6 @@
 import type { GraphSourceGroup, SceneNode } from '~~/shared/types/domain'
 import { computed, onBeforeUnmount, ref } from 'vue'
 
-const MIN_GROUP_WIDTH = 260
-const MIN_GROUP_HEIGHT = 180
-
-type ResizeDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-type ResizePatch = Partial<{ x: number, y: number, width: number, height: number }>
-type ResizeSession = {
-  direction: ResizeDirection
-  startClientX: number
-  startClientY: number
-  startFrame: {
-    x: number
-    y: number
-    width: number
-    height: number
-  }
-}
-
 const props = withDefaults(defineProps<{
   data?: {
     group?: GraphSourceGroup
@@ -31,6 +14,22 @@ const props = withDefaults(defineProps<{
   data: () => ({}),
   selected: false,
 })
+const MIN_GROUP_WIDTH = 260
+const MIN_GROUP_HEIGHT = 180
+
+type ResizeDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+type ResizePatch = Partial<{ x: number, y: number, width: number, height: number }>
+interface ResizeSession {
+  direction: ResizeDirection
+  startClientX: number
+  startClientY: number
+  startFrame: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+}
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -133,65 +132,65 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    class="relative h-full w-full rounded-[26px] border border-sky-400/50 bg-sky-100/30 px-4 py-3 shadow-[inset_0_0_0_1px_rgba(56,189,248,0.12)] transition-colors"
+    class="px-4 py-3 border border-sky-400/50 rounded-[26px] bg-sky-100/30 h-full w-full shadow-[inset_0_0_0_1px_rgba(56,189,248,0.12)] transition-colors relative"
     :class="[
       layoutKind === 'swimlane' ? 'border-dashed' : '',
       selected ? 'ring-2 ring-sky-300/40' : 'hover:border-sky-300/70',
     ]"
   >
-    <div class="flex items-center justify-between gap-3">
-      <div class="rounded-full border border-sky-500/20 bg-white/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-900">
+    <div class="flex gap-3 items-center justify-between">
+      <div class="text-[10px] text-sky-900 tracking-[0.16em] font-semibold px-2.5 py-1 border border-sky-500/20 rounded-full bg-white/60 uppercase">
         {{ layoutKind }}
       </div>
-      <div class="text-[10px] font-semibold text-sky-900/70">
+      <div class="text-[10px] text-sky-900/70 font-semibold">
         {{ group?.childNodeIds?.length || 0 }} nodes
       </div>
     </div>
-    <p class="mt-3 text-sm font-semibold text-sky-950">
+    <p class="text-sm text-sky-950 font-semibold mt-3">
       {{ group?.label || sceneNode?.label || 'Untitled Group' }}
     </p>
-    <p class="mt-1 text-[11px] text-sky-900/70">
+    <p class="text-[11px] text-sky-900/70 mt-1">
       {{ group?.id || sceneNode?.id || 'group' }}
     </p>
 
     <template v-if="selected && !data?.disabled">
       <button
-        class="absolute -left-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-w-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-w-resize shadow-sm top-1/2 absolute -translate-y-1/2 -left-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('w', $event)"
       />
       <button
-        class="absolute -right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-e-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-e-resize shadow-sm top-1/2 absolute -translate-y-1/2 -right-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('e', $event)"
       />
       <button
-        class="absolute left-1/2 -top-1.5 h-3.5 w-3.5 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-n-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-n-resize shadow-sm left-1/2 absolute -translate-x-1/2 -top-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('n', $event)"
       />
       <button
-        class="absolute bottom-[-0.375rem] left-1/2 h-3.5 w-3.5 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-s-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-s-resize shadow-sm bottom-[-0.375rem] left-1/2 absolute -translate-x-1/2"
         type="button"
         @pointerdown.stop.prevent="startResize('s', $event)"
       />
       <button
-        class="absolute -left-1.5 -top-1.5 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-nw-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-nw-resize shadow-sm absolute -left-1.5 -top-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('nw', $event)"
       />
       <button
-        class="absolute -right-1.5 -top-1.5 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-ne-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-ne-resize shadow-sm absolute -right-1.5 -top-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('ne', $event)"
       />
       <button
-        class="absolute -bottom-1.5 -left-1.5 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-sw-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-sw-resize shadow-sm absolute -bottom-1.5 -left-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('sw', $event)"
       />
       <button
-        class="absolute -bottom-1.5 -right-1.5 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-se-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-se-resize shadow-sm absolute -bottom-1.5 -right-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('se', $event)"
       />

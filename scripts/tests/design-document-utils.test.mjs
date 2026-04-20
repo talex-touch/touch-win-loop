@@ -14,13 +14,12 @@ async function loadDesignDocumentUtils() {
   return import(pathToFileURL(DESIGN_DOCUMENT_UTILS_PATH).href)
 }
 
-it('DesignDocumentV1 可从 composition scene 迁移并保持兼容回读', async () => {
+it('designDocumentV1 可从 composition scene 迁移并保持兼容回读', async () => {
   const {
     appendDesignFrameToSceneDocument,
     buildDeviceMockupSceneDocument,
   } = await loadSceneUtils()
   const {
-    createEmptyDesignDocument,
     designDocumentToSceneDocument,
     isDesignDocumentV1,
     parseDesignDocumentString,

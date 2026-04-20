@@ -19,8 +19,8 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  close: []
-  save: []
+  'close': []
+  'save': []
   'update:modelValue': [value: WorkspaceProjectCommonForm]
 }>()
 

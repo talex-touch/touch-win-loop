@@ -32,3 +32,31 @@ export default antfu(
   },
 )
   .append(nuxt)
+  .append({
+    ignores: [
+      '.codexpotter/**',
+    ],
+    rules: {
+      'ts/no-use-before-define': ['error', {
+        classes: true,
+        enums: true,
+        functions: false,
+        typedefs: false,
+        variables: false,
+      }],
+      'vue/custom-event-name-casing': ['error', 'camelCase', {
+        ignores: ['/^[a-z]+(?:-[a-z]+)+$/u'],
+      }],
+      'vue/no-mutating-props': ['error', {
+        shallowOnly: true,
+      }],
+    },
+  })
+  .append({
+    files: [
+      '**/*.d.ts',
+    ],
+    rules: {
+      'vars-on-top': 'off',
+    },
+  })

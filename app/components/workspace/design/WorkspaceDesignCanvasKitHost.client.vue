@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import type {
+  DesignCanvasInteractionContext,
+  DesignCanvasSelectionState,
+} from '~~/app/composables/useDesignCanvasSelection'
+import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
+import type {
   CompositionModel,
   DesignAssetModel,
   DesignElementModel,
@@ -7,12 +12,6 @@ import type {
   DesignPageModel,
 } from '~~/shared/types/domain'
 import type { WorkspaceCollabCursorUser } from '~/components/workspace/collab/presence'
-import { resolveWorkspaceCollabPresenceInitial } from '~/components/workspace/collab/presence'
-import type {
-  DesignCanvasInteractionContext,
-  DesignCanvasSelectionState,
-} from '~~/app/composables/useDesignCanvasSelection'
-import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   createEmptyDesignCanvasSelectionState,
@@ -20,17 +19,80 @@ import {
 import {
   canDesignFrameContainElements,
   canDesignFrameCreateElements,
-  isFlatDesignFrameKind,
   isDesignFrameClipContentEnabled,
+  isFlatDesignFrameKind,
   renderCompositionFramePreviewSvg,
   resolveDesignElementAbsoluteRect,
   resolveDesignElementPresentation,
-  resolveDesignFrameSurfaceRadius,
   resolveDesignFrameGridMetadata,
   resolveDesignFrameProjectionLayoutForFrames,
+  resolveDesignFrameSurfaceRadius,
   resolveDesignPageWorkspaceBackground,
 } from '~~/shared/utils/scene-document'
+import { resolveWorkspaceCollabPresenceInitial } from '~/components/workspace/collab/presence'
 
+const props = withDefaults(defineProps<{
+  page?: DesignPageModel | null
+  frames?: DesignFrameModel[]
+  assets?: DesignAssetModel[]
+  pageRootElements?: DesignElementModel[]
+  frameElements?: Record<string, DesignElementModel[]>
+  frameOwnerFrames?: Record<string, DesignFrameModel>
+  themeTokens?: Record<string, string>
+  activeTool?: DesignEditorTool
+  selectionState?: DesignCanvasSelectionState
+  interactionContext?: DesignCanvasInteractionContext
+  remoteCursors?: WorkspaceCollabCursorUser[]
+  viewportX?: number
+  viewportY?: number
+  viewportZoom?: number
+  mockupScreenEditingFrameId?: string
+  pendingImagePlacement?: PendingImagePlacement | null
+  disabled?: boolean
+}>(), {
+  page: null,
+  frames: () => [],
+  assets: () => [],
+  pageRootElements: () => [],
+  frameElements: () => ({}),
+  frameOwnerFrames: () => ({}),
+  themeTokens: () => ({}),
+  activeTool: 'select',
+  selectionState: () => createEmptyDesignCanvasSelectionState(),
+  interactionContext: () => ({
+    effectiveTool: 'select',
+    isTemporaryHandActive: false,
+    isDeepSelectModifierPressed: false,
+  }),
+  remoteCursors: () => [],
+  viewportX: 0,
+  viewportY: 0,
+  viewportZoom: 1,
+  mockupScreenEditingFrameId: '',
+  pendingImagePlacement: null,
+  disabled: false,
+})
+const emit = defineEmits<{
+  'update-selection': [payload: DesignCanvasSelectionState]
+  'open-frame': [frameId: string]
+  'duplicate-frame': []
+  'delete-frame': []
+  'duplicate-element': []
+  'delete-element': []
+  'update-frame-position': [payload: { frameId: string, x: number, y: number, historyMergeKey?: string }]
+  'update-frame-positions': [payload: { positions: Array<{ frameId: string, x: number, y: number }>, historyMergeKey?: string }]
+  'update-frame-size': [payload: { frameId: string, x?: number, y?: number, width?: number, height?: number, historyMergeKey?: string }]
+  'viewport-change': [payload: { x: number, y: number, zoom: number }]
+  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
+  'create-element': [payload: Partial<DesignElementModel>]
+  'update-element': [payload: { elementId: string, patch: Partial<DesignElementModel>, historyMergeKey?: string }]
+  'update-elements': [payload: { patches: Array<{ elementId: string, patch: Partial<DesignElementModel> }>, historyMergeKey?: string }]
+  'node-double-click': [payload: { frameId: string, clientX: number, clientY: number }]
+  'request-deep-selection': [payload: { ownerFrameId: string, ownerPageId: string, displayFrameId: string, ownerElementId?: string }]
+  'edit-mockup-screen': [payload: { frameId: string }]
+  'update-mockup-screen-transform': [payload: { frameId: string, offsetX: number, offsetY: number, historyMergeKey?: string }]
+  'clear-pending-image-placement': []
+}>()
 const MIN_CANVAS_ZOOM = 0.1
 const MAX_CANVAS_ZOOM = 2.5
 const EMPTY_STAGE_WIDTH = 1600
@@ -76,20 +138,20 @@ const FRAME_DRAG_ALIGN_THRESHOLD = 16
 const MIN_FRAME_WIDTH = 280
 const MIN_FRAME_HEIGHT = 180
 
-type ViewportState = {
+interface ViewportState {
   x: number
   y: number
   zoom: number
 }
 
-type WorldBounds = {
+interface WorldBounds {
   x: number
   y: number
   width: number
   height: number
 }
 
-type RemoteScreenCursor = {
+interface RemoteScreenCursor {
   userId: string
   username: string
   colorToken: string
@@ -98,7 +160,7 @@ type RemoteScreenCursor = {
   label: string
 }
 
-type PanSession = {
+interface PanSession {
   pointerId: number
   startClientX: number
   startClientY: number
@@ -109,7 +171,7 @@ type PanSession = {
 
 type FrameDragAnchor = 'start' | 'center' | 'end'
 
-type FrameDragItem = {
+interface FrameDragItem {
   frameId: string
   label: string
   startX: number
@@ -118,7 +180,7 @@ type FrameDragItem = {
   height: number
 }
 
-type FrameDragFeedback = {
+interface FrameDragFeedback {
   frameId: string
   label: string
   x: number
@@ -126,7 +188,7 @@ type FrameDragFeedback = {
   hints: string[]
 }
 
-type FrameDragSession = {
+interface FrameDragSession {
   pointerId: number
   primaryFrameId: string
   startClientX: number
@@ -139,7 +201,7 @@ type FrameDragSession = {
 
 type ResizeDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 
-type ElementDragItem = {
+interface ElementDragItem {
   elementId: string
   type: DesignElementModel['type']
   startX: number
@@ -157,7 +219,7 @@ type ElementDragItem = {
   preferredFrameId: string
 }
 
-type ElementHitItem = {
+interface ElementHitItem {
   element: DesignElementModel
   displayFrame: DesignFrameModel | null
   ownerFrame: DesignFrameModel | null
@@ -171,7 +233,7 @@ type ElementHitItem = {
   }
 }
 
-type PendingImagePlacement = {
+interface PendingImagePlacement {
   src: string
   name: string
   intrinsicWidth: number
@@ -180,7 +242,7 @@ type PendingImagePlacement = {
   mimeType?: string
 }
 
-type ElementDragSession = {
+interface ElementDragSession {
   pointerId: number
   startClientX: number
   startClientY: number
@@ -200,7 +262,7 @@ type ElementDragSession = {
   items: ElementDragItem[]
 }
 
-type ElementResizeSession = {
+interface ElementResizeSession {
   pointerId: number
   direction: ResizeDirection
   startClientX: number
@@ -218,7 +280,7 @@ type ElementResizeSession = {
   }
 }
 
-type FrameResizeSession = {
+interface FrameResizeSession {
   pointerId: number
   frameId: string
   direction: ResizeDirection
@@ -242,7 +304,7 @@ type FrameResizeSession = {
 
 type CreateElementTool = 'pencil' | 'rectangle' | 'ellipse' | 'arrow' | 'text' | 'image'
 
-type CreateElementSession = {
+interface CreateElementSession {
   pointerId: number
   tool: CreateElementTool
   ownerFrameId: string
@@ -260,7 +322,7 @@ type CreateElementSession = {
   imagePlacement?: PendingImagePlacement | null
 }
 
-type CreateSessionFrameContext = {
+interface CreateSessionFrameContext {
   ownerFrameId: string
   displayFrameId: string
   displayFrameX: number
@@ -270,7 +332,7 @@ type CreateSessionFrameContext = {
   scope: 'frame' | 'page_root'
 }
 
-type TextEditSession = {
+interface TextEditSession {
   elementId: string
   ownerFrameId: string
   displayFrameId: string
@@ -279,7 +341,7 @@ type TextEditSession = {
   selectAllOnOpen: boolean
 }
 
-type SelectionDraft = {
+interface SelectionDraft {
   pointerId: number
   startClientX: number
   startClientY: number
@@ -290,7 +352,7 @@ type SelectionDraft = {
   previewElementIds: string[]
 }
 
-type ElementRotationSession = {
+interface ElementRotationSession {
   pointerId: number
   elementId: string
   startClientX: number
@@ -303,13 +365,13 @@ type ElementRotationSession = {
   historyMergeKey: string
 }
 
-type GroupEditSession = {
+interface GroupEditSession {
   groupId: string
   ownerFrameId: string
   displayFrameId: string
 }
 
-type ElementGuideOverlay = {
+interface ElementGuideOverlay {
   label: string
   x: number
   y: number
@@ -318,7 +380,7 @@ type ElementGuideOverlay = {
   hints: string[]
 }
 
-type AutoLayoutReorderSession = {
+interface AutoLayoutReorderSession {
   pointerId: number
   elementId: string
   ownerFrameId: string
@@ -338,7 +400,7 @@ type AutoLayoutReorderSession = {
   } | null
 }
 
-type MockupScreenDragSession = {
+interface MockupScreenDragSession {
   pointerId: number
   frameId: string
   startClientX: number
@@ -348,12 +410,12 @@ type MockupScreenDragSession = {
   moved: boolean
 }
 
-type RootClientSize = {
+interface RootClientSize {
   width: number
   height: number
 }
 
-type MinimapMetrics = {
+interface MinimapMetrics {
   scale: number
   contentX: number
   contentY: number
@@ -361,14 +423,14 @@ type MinimapMetrics = {
   contentHeight: number
 }
 
-type MinimapFrameItem = {
+interface MinimapFrameItem {
   id: string
   label: string
   style: Record<string, string>
   state: 'default' | 'selected' | 'editing'
 }
 
-type PageRootElementPreviewItem = {
+interface PageRootElementPreviewItem {
   key: string
   element: DesignElementModel
   rect: {
@@ -380,70 +442,6 @@ type PageRootElementPreviewItem = {
 }
 
 type ZoomControlState = 'expanded' | 'resting' | 'dormant'
-
-const props = withDefaults(defineProps<{
-  page?: DesignPageModel | null
-  frames?: DesignFrameModel[]
-  assets?: DesignAssetModel[]
-  pageRootElements?: DesignElementModel[]
-  frameElements?: Record<string, DesignElementModel[]>
-  frameOwnerFrames?: Record<string, DesignFrameModel>
-  themeTokens?: Record<string, string>
-  activeTool?: DesignEditorTool
-  selectionState?: DesignCanvasSelectionState
-  interactionContext?: DesignCanvasInteractionContext
-  remoteCursors?: WorkspaceCollabCursorUser[]
-  viewportX?: number
-  viewportY?: number
-  viewportZoom?: number
-  mockupScreenEditingFrameId?: string
-  pendingImagePlacement?: PendingImagePlacement | null
-  disabled?: boolean
-}>(), {
-  page: null,
-  frames: () => [],
-  assets: () => [],
-  pageRootElements: () => [],
-  frameElements: () => ({}),
-  frameOwnerFrames: () => ({}),
-  themeTokens: () => ({}),
-  activeTool: 'select',
-  selectionState: () => createEmptyDesignCanvasSelectionState(),
-  interactionContext: () => ({
-    effectiveTool: 'select',
-    isTemporaryHandActive: false,
-    isDeepSelectModifierPressed: false,
-  }),
-  remoteCursors: () => [],
-  viewportX: 0,
-  viewportY: 0,
-  viewportZoom: 1,
-  mockupScreenEditingFrameId: '',
-  pendingImagePlacement: null,
-  disabled: false,
-})
-
-const emit = defineEmits<{
-  'update-selection': [payload: DesignCanvasSelectionState]
-  'open-frame': [frameId: string]
-  'duplicate-frame': []
-  'delete-frame': []
-  'duplicate-element': []
-  'delete-element': []
-  'update-frame-position': [payload: { frameId: string, x: number, y: number, historyMergeKey?: string }]
-  'update-frame-positions': [payload: { positions: Array<{ frameId: string, x: number, y: number }>, historyMergeKey?: string }]
-  'update-frame-size': [payload: { frameId: string, x?: number, y?: number, width?: number, height?: number, historyMergeKey?: string }]
-  'viewport-change': [payload: { x: number, y: number, zoom: number }]
-  updateCollabCursor: [value: { cursorX?: number, cursorY?: number }]
-  'create-element': [payload: Partial<DesignElementModel>]
-  'update-element': [payload: { elementId: string, patch: Partial<DesignElementModel>, historyMergeKey?: string }]
-  'update-elements': [payload: { patches: Array<{ elementId: string, patch: Partial<DesignElementModel> }>, historyMergeKey?: string }]
-  'node-double-click': [payload: { frameId: string, clientX: number, clientY: number }]
-  'request-deep-selection': [payload: { ownerFrameId: string, ownerPageId: string, displayFrameId: string, ownerElementId?: string }]
-  'edit-mockup-screen': [payload: { frameId: string }]
-  'update-mockup-screen-transform': [payload: { frameId: string, offsetX: number, offsetY: number, historyMergeKey?: string }]
-  'clear-pending-image-placement': []
-}>()
 
 const rootRef = ref<HTMLDivElement | null>(null)
 const minimapRef = ref<HTMLDivElement | null>(null)
@@ -1110,7 +1108,7 @@ const currentEditingOwnerFrameAutoLayout = computed(() => {
 
 const elementDragEnabled = computed(() => {
   return elementSelectionEnabled.value
-    && !Boolean(currentEditingOwnerFrame.value?.locked)
+    && !currentEditingOwnerFrame.value?.locked
     && !currentEditingOwnerFrameAutoLayout.value
     && !textEditSession.value
     && !pendingImagePlacementState.value
@@ -1123,7 +1121,7 @@ const elementResizeEnabled = computed(() => {
     && Boolean(primaryEditingElementHitItem.value)
     && primaryEditingElementHitItem.value?.element.type !== 'path'
     && primaryEditingElementHitItem.value?.element.type !== 'group'
-  })
+})
 
 const activeCreateElementTool = computed<CreateElementTool | null>(() => {
   if (props.disabled || props.interactionContext.effectiveTool === 'hand')
@@ -1704,15 +1702,6 @@ function roundMetric(value: number): number {
   return Number(value.toFixed(2))
 }
 
-function rotateVector(x: number, y: number, angleInRadians: number): { x: number, y: number } {
-  const cosine = Math.cos(angleInRadians)
-  const sine = Math.sin(angleInRadians)
-  return {
-    x: x * cosine - y * sine,
-    y: x * sine + y * cosine,
-  }
-}
-
 function normalizeRotation(value: number): number {
   const normalized = Math.round(Number.isFinite(value) ? value : 0)
   const wrapped = normalized % 360
@@ -2021,11 +2010,11 @@ function resolveFrameBox(
   frameId: string,
   position?: { x?: number, y?: number },
 ): {
-    x: number
-    y: number
-    width: number
-    height: number
-  } {
+  x: number
+  y: number
+  width: number
+  height: number
+} {
   const frame = normalizedFrames.value.find(item => item.id === normalizeString(frameId)) || null
   const resolvedX = Number(position?.x ?? frame?.x ?? 0)
   const resolvedY = Number(position?.y ?? frame?.y ?? 0)
@@ -2866,9 +2855,9 @@ function resolveElementGuideAdjustment(
     )
   }
 
-  type ElementGuideCandidate = { value: number, label: string }
-  type ElementGuideAnchor = { key: 'start' | 'center' | 'end', value: number, offset: number }
-  type ElementGuideMatch = { delta: number, candidate: ElementGuideCandidate, sourceAnchor: ElementGuideAnchor }
+  interface ElementGuideCandidate { value: number, label: string }
+  interface ElementGuideAnchor { key: 'start' | 'center' | 'end', value: number, offset: number }
+  interface ElementGuideMatch { delta: number, candidate: ElementGuideCandidate, sourceAnchor: ElementGuideAnchor }
 
   const sourceXAnchors: ElementGuideAnchor[] = [
     { key: 'start', value: nextX, offset: 0 },
@@ -3059,11 +3048,11 @@ function applyFrameResizeDelta(
   clientX: number,
   clientY: number,
 ): {
-    x: number
-    y: number
-    width: number
-    height: number
-  } {
+  x: number
+  y: number
+  width: number
+  height: number
+} {
   const deltaX = (clientX - session.startClientX) / viewport.value.zoom
   const deltaY = (clientY - session.startClientY) / viewport.value.zoom
   let { x, y, width, height } = session.startBox
@@ -3160,7 +3149,7 @@ function handleElementPointerDown(item: ElementHitItem, event: PointerEvent): vo
     && !event.shiftKey
   if ((!elementDragEnabled.value && !canAutoLayoutReorder) || textEditSession.value || event.button !== 0 || event.shiftKey)
     return
-  if (Boolean(item.ownerFrame?.locked))
+  if (item.ownerFrame?.locked)
     return
 
   if (canAutoLayoutReorder) {
@@ -4180,7 +4169,7 @@ function handleFramePointerDown(frame: DesignFrameModel, event: PointerEvent): v
 
   const creationTool = activeCreateElementTool.value
   const pendingImagePlacement = pendingImagePlacementState.value
-  if (pendingImagePlacement && event.button === 0 && !Boolean(props.mockupScreenEditingFrameId)) {
+  if (pendingImagePlacement && event.button === 0 && !props.mockupScreenEditingFrameId) {
     const worldPoint = toWorldPoint(event.clientX, event.clientY)
     if (!worldPoint)
       return
@@ -4204,7 +4193,7 @@ function handleFramePointerDown(frame: DesignFrameModel, event: PointerEvent): v
     })
     return
   }
-  if (creationTool && event.button === 0 && !Boolean(props.mockupScreenEditingFrameId)) {
+  if (creationTool && event.button === 0 && !props.mockupScreenEditingFrameId) {
     const worldPoint = toWorldPoint(event.clientX, event.clientY)
     if (!worldPoint)
       return
@@ -4317,14 +4306,14 @@ function handleFrameDoubleClick(frame: DesignFrameModel, event: MouseEvent): voi
   const worldPoint = toWorldPoint(event.clientX, event.clientY)
   const hitItem = worldPoint
     ? resolveFrameElementHitItems(frame, ownerFrame)
-        .filter(item => !item.element.hidden && !item.element.locked)
-        .sort((left, right) => Number(right.element.zIndex || 0) - Number(left.element.zIndex || 0))
-        .find((item) => {
-          return worldPoint.x >= item.rect.x
-            && worldPoint.x <= item.rect.x + item.rect.width
-            && worldPoint.y >= item.rect.y
-            && worldPoint.y <= item.rect.y + item.rect.height
-        }) || null
+      .filter(item => !item.element.hidden && !item.element.locked)
+      .sort((left, right) => Number(right.element.zIndex || 0) - Number(left.element.zIndex || 0))
+      .find((item) => {
+        return worldPoint.x >= item.rect.x
+          && worldPoint.x <= item.rect.x + item.rect.width
+          && worldPoint.y >= item.rect.y
+          && worldPoint.y <= item.rect.y + item.rect.height
+      }) || null
     : null
 
   if (hitItem) {
@@ -4547,7 +4536,7 @@ function handleKeydown(event: KeyboardEvent): void {
 <template>
   <div
     ref="rootRef"
-    class="workspace-design-canvaskit-host relative h-full min-h-0 w-full overflow-hidden rounded-[28px] touch-none outline-none"
+    class="workspace-design-canvaskit-host outline-none rounded-[28px] h-full min-h-0 w-full relative overflow-hidden touch-none"
     :class="stageCursorClass"
     :data-zoom-state="zoomControlState"
     :style="{
@@ -4565,23 +4554,23 @@ function handleKeydown(event: KeyboardEvent): void {
     @pointercancel="handlePointerUp"
     @wheel.prevent="handleWheel"
   >
-    <div class="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.12)_1px,transparent_1px)] bg-[size:32px_32px] opacity-60" />
+    <div class="bg-[linear-gradient(rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.12)_1px,transparent_1px)] bg-[size:32px_32px] opacity-60 pointer-events-none inset-0 absolute" />
 
-    <div class="absolute inset-0 overflow-visible" :style="viewportLayerStyle">
+    <div class="inset-0 absolute overflow-visible" :style="viewportLayerStyle">
       <div
         v-if="!normalizedFrames.length && !pageRootElementPreviewItems.length"
-        class="pointer-events-none absolute overflow-hidden rounded-[32px] border border-dashed border-slate-300/70 bg-white/72 shadow-[0_24px_60px_rgba(15,23,42,0.08)]"
+        class="border border-slate-300/70 rounded-[32px] border-dashed bg-white/72 pointer-events-none shadow-[0_24px_60px_rgba(15,23,42,0.08)] absolute overflow-hidden"
         :style="stageContentBoundsStyle"
       >
         <div class="flex h-full w-full items-center justify-center">
-          <div class="max-w-sm text-center">
-            <p class="text-xs font-semibold uppercase tracking-[0.16em] text-sky-600">
+          <div class="text-center max-w-sm">
+            <p class="text-xs text-sky-600 tracking-[0.16em] font-semibold uppercase">
               CanvasKit Host
             </p>
-            <p class="mt-3 text-lg font-semibold text-slate-900">
+            <p class="text-lg text-slate-900 font-semibold mt-3">
               当前页面还没有可渲染的 Frame
             </p>
-            <p class="mt-2 text-sm leading-6 text-slate-500">
+            <p class="text-sm text-slate-500 leading-6 mt-2">
               这一版 host 已脱离 Vue Flow，后续会在这里补独立图元编辑和客户端导出。
             </p>
           </div>
@@ -4591,7 +4580,7 @@ function handleKeydown(event: KeyboardEvent): void {
       <div
         v-for="item in pageRootElementPreviewItems"
         :key="item.key"
-        class="pointer-events-none absolute select-none"
+        class="pointer-events-none select-none absolute"
         :style="resolvePageRootElementStyle(item)"
       >
         <div
@@ -4698,7 +4687,7 @@ function handleKeydown(event: KeyboardEvent): void {
       <div
         v-for="frame in normalizedFrames"
         :key="`frame-title-${frame.id}`"
-        class="pointer-events-none absolute truncate text-[12px] font-medium leading-none tracking-[0.01em]"
+        class="text-[12px] leading-none tracking-[0.01em] font-medium pointer-events-none truncate absolute"
         :style="resolveFrameTitleStyle(frame)"
       >
         {{ frame.name }}
@@ -4706,13 +4695,13 @@ function handleKeydown(event: KeyboardEvent): void {
 
       <div
         v-if="createElementPreviewRectStyle"
-        class="pointer-events-none absolute border-2 border-dashed border-sky-500/80 bg-sky-200/10"
+        class="border-2 border-sky-500/80 border-dashed bg-sky-200/10 pointer-events-none absolute"
         :style="createElementPreviewRectStyle"
         data-testid="workspace-design-canvaskit-create-preview"
       >
         <div
           v-if="createElementSession?.tool === 'text' || createElementSession?.tool === 'image'"
-          class="absolute left-3 top-3 rounded-full bg-sky-500/12 px-2 py-1 text-[11px] font-semibold text-sky-700"
+          class="text-[11px] text-sky-700 font-semibold px-2 py-1 rounded-full bg-sky-500/12 left-3 top-3 absolute"
         >
           {{ createElementSession?.tool === 'image' ? '放置图片' : '新建文本' }}
         </div>
@@ -4761,34 +4750,34 @@ function handleKeydown(event: KeyboardEvent): void {
 
       <div
         v-if="activeMockupScreenRectStyle"
-        class="pointer-events-none absolute rounded-[22px] border border-dashed border-sky-400/80 bg-sky-300/10 shadow-[0_0_0_1px_rgba(255,255,255,0.8)_inset]"
+        class="border border-sky-400/80 rounded-[22px] border-dashed bg-sky-300/10 pointer-events-none shadow-[0_0_0_1px_rgba(255,255,255,0.8)_inset] absolute"
         :style="activeMockupScreenRectStyle"
         data-testid="workspace-design-canvaskit-mockup-screen"
       />
 
       <div
         v-if="elementGuideVerticalStyle"
-        class="pointer-events-none absolute z-[132] w-px bg-sky-400/80"
+        class="bg-sky-400/80 w-px pointer-events-none absolute z-[132]"
         :style="elementGuideVerticalStyle"
         data-testid="workspace-design-canvaskit-element-guide-vertical"
       />
 
       <div
         v-if="elementGuideHorizontalStyle"
-        class="pointer-events-none absolute z-[132] h-px bg-sky-400/80"
+        class="bg-sky-400/80 h-px pointer-events-none absolute z-[132]"
         :style="elementGuideHorizontalStyle"
         data-testid="workspace-design-canvaskit-element-guide-horizontal"
       />
 
       <div
         v-if="elementGuideOverlay && elementGuideOverlayChipStyle"
-        class="pointer-events-none absolute z-[135] min-w-[180px] rounded-xl border border-slate-900/90 bg-slate-950/88 px-3 py-2 text-[11px] text-slate-200 shadow-[0_18px_48px_rgba(2,6,23,0.28)]"
+        class="text-[11px] text-slate-200 px-3 py-2 border border-slate-900/90 rounded-xl bg-slate-950/88 min-w-[180px] pointer-events-none shadow-[0_18px_48px_rgba(2,6,23,0.28)] absolute z-[135]"
         :style="elementGuideOverlayChipStyle"
         data-testid="workspace-design-canvaskit-element-guide-overlay"
       >
-        <div class="flex items-center justify-between gap-3">
-          <span class="font-semibold text-white">{{ elementGuideOverlay.label }}</span>
-          <span class="rounded-full border border-sky-800 bg-sky-950/40 px-2 py-0.5 font-semibold text-sky-200">
+        <div class="flex gap-3 items-center justify-between">
+          <span class="text-white font-semibold">{{ elementGuideOverlay.label }}</span>
+          <span class="text-sky-200 font-semibold px-2 py-0.5 border border-sky-800 rounded-full bg-sky-950/40">
             X {{ elementGuideOverlay.x }} / Y {{ elementGuideOverlay.y }}
           </span>
         </div>
@@ -4796,7 +4785,7 @@ function handleKeydown(event: KeyboardEvent): void {
           <span
             v-for="hint in elementGuideOverlay.hints"
             :key="`${elementGuideOverlay.label}-${hint}`"
-            class="rounded-full border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-slate-300"
+            class="text-[10px] text-slate-300 font-semibold px-2 py-1 border border-slate-800 rounded-full bg-slate-900"
           >
             {{ hint }}
           </span>
@@ -4805,7 +4794,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
       <div
         v-if="autoLayoutInsertionIndicatorStyle"
-        class="pointer-events-none absolute z-[134] rounded-full bg-sky-500 shadow-[0_0_0_2px_rgba(125,211,252,0.22)]"
+        class="rounded-full bg-sky-500 pointer-events-none shadow-[0_0_0_2px_rgba(125,211,252,0.22)] absolute z-[134]"
         :style="autoLayoutInsertionIndicatorStyle"
         data-testid="workspace-design-canvaskit-autolayout-indicator"
       />
@@ -4822,17 +4811,17 @@ function handleKeydown(event: KeyboardEvent): void {
         }"
         data-testid="workspace-design-canvaskit-frame-guides"
       >
-        <div class="absolute inset-0 border border-sky-400/20" :style="{ borderRadius: `${resolveDesignFrameSurfaceRadius(grid.frame)}px` }" />
+        <div class="border border-sky-400/20 inset-0 absolute" :style="{ borderRadius: `${resolveDesignFrameSurfaceRadius(grid.frame)}px` }" />
         <div
           v-for="guide in grid.columnGuides"
           :key="`column-${grid.frame.id}-${guide}`"
-          class="absolute inset-y-0 border-l border-dashed border-sky-400/30"
+          class="border-l border-sky-400/30 border-dashed inset-y-0 absolute"
           :style="{ left: `${roundMetric(guide - grid.frameBox.x)}px` }"
         />
         <div
           v-for="guide in grid.rowGuides"
           :key="`row-${grid.frame.id}-${guide}`"
-          class="absolute inset-x-0 border-t border-dashed border-sky-400/25"
+          class="border-t border-sky-400/25 border-dashed inset-x-0 absolute"
           :style="{ top: `${roundMetric(guide - grid.frameBox.y)}px` }"
         />
       </div>
@@ -4840,7 +4829,7 @@ function handleKeydown(event: KeyboardEvent): void {
       <button
         v-for="item in overflowFrameElementHitItems"
         :key="`overflow-element-${item.element.id}`"
-        class="absolute border border-transparent bg-transparent focus:outline-none"
+        class="border border-transparent bg-transparent absolute focus:outline-none"
         :style="resolveOverflowElementHitBoxStyle(item)"
         data-canvas-role="element-hit"
         data-testid="workspace-design-canvaskit-overflow-element-hit"
@@ -4854,7 +4843,7 @@ function handleKeydown(event: KeyboardEvent): void {
       <button
         v-for="frame in normalizedFrames"
         :key="frame.id"
-        class="absolute border bg-transparent transition-[box-shadow,border-color] focus:outline-none"
+        class="border bg-transparent transition-[box-shadow,border-color] absolute focus:outline-none"
         :class="{ 'pointer-events-none': createElementEnabled || Boolean(props.mockupScreenEditingFrameId) || Boolean(props.selectionState.editingFrameId) }"
         :style="resolveFrameHitBoxStyle(frame)"
         data-canvas-role="frame-hit"
@@ -4869,7 +4858,7 @@ function handleKeydown(event: KeyboardEvent): void {
       <button
         v-for="item in editingElementHitItems"
         :key="item.element.id"
-        class="absolute rounded-[18px] border border-transparent bg-transparent transition-[box-shadow,border-color,background-color] hover:border-sky-300/60 focus:outline-none"
+        class="border border-transparent rounded-[18px] bg-transparent transition-[box-shadow,border-color,background-color] absolute focus:outline-none hover:border-sky-300/60"
         :class="{ 'pointer-events-none': Boolean(activeCreateElementTool) || Boolean(props.mockupScreenEditingFrameId) || Boolean(pendingImagePlacementState) }"
         :style="resolveElementHitBoxStyle(item)"
         data-canvas-role="element-hit"
@@ -4889,42 +4878,42 @@ function handleKeydown(event: KeyboardEvent): void {
         data-testid="workspace-design-canvaskit-element-resize"
       >
         <button
-          class="pointer-events-auto absolute -left-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-w-resize"
+          class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-w-resize pointer-events-auto shadow-sm top-1/2 absolute -translate-y-1/2 -left-1.5"
           type="button"
           @pointerdown.stop.prevent="handleElementResizePointerDown('w', $event)"
         />
         <button
-          class="pointer-events-auto absolute -right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-e-resize"
+          class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-e-resize pointer-events-auto shadow-sm top-1/2 absolute -translate-y-1/2 -right-1.5"
           type="button"
           @pointerdown.stop.prevent="handleElementResizePointerDown('e', $event)"
         />
         <button
-          class="pointer-events-auto absolute left-1/2 -top-1.5 h-3.5 w-3.5 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-n-resize"
+          class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-n-resize pointer-events-auto shadow-sm left-1/2 absolute -translate-x-1/2 -top-1.5"
           type="button"
           @pointerdown.stop.prevent="handleElementResizePointerDown('n', $event)"
         />
         <button
-          class="pointer-events-auto absolute -bottom-1.5 left-1/2 h-3.5 w-3.5 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-s-resize"
+          class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-s-resize pointer-events-auto shadow-sm left-1/2 absolute -translate-x-1/2 -bottom-1.5"
           type="button"
           @pointerdown.stop.prevent="handleElementResizePointerDown('s', $event)"
         />
         <button
-          class="pointer-events-auto absolute -left-1.5 -top-1.5 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-nw-resize"
+          class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-nw-resize pointer-events-auto shadow-sm absolute -left-1.5 -top-1.5"
           type="button"
           @pointerdown.stop.prevent="handleElementResizePointerDown('nw', $event)"
         />
         <button
-          class="pointer-events-auto absolute -right-1.5 -top-1.5 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-ne-resize"
+          class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-ne-resize pointer-events-auto shadow-sm absolute -right-1.5 -top-1.5"
           type="button"
           @pointerdown.stop.prevent="handleElementResizePointerDown('ne', $event)"
         />
         <button
-          class="pointer-events-auto absolute -bottom-1.5 -left-1.5 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-sw-resize"
+          class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-sw-resize pointer-events-auto shadow-sm absolute -bottom-1.5 -left-1.5"
           type="button"
           @pointerdown.stop.prevent="handleElementResizePointerDown('sw', $event)"
         />
         <button
-          class="pointer-events-auto absolute -bottom-1.5 -right-1.5 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-se-resize"
+          class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-se-resize pointer-events-auto shadow-sm absolute -bottom-1.5 -right-1.5"
           type="button"
           @pointerdown.stop.prevent="handleElementResizePointerDown('se', $event)"
         />
@@ -4936,10 +4925,10 @@ function handleKeydown(event: KeyboardEvent): void {
         :style="elementTransformBoxStyle"
         data-testid="workspace-design-canvaskit-element-rotate"
       >
-        <div class="absolute inset-0 rounded-[16px] border border-sky-400/70 shadow-[0_0_0_1px_rgba(14,165,233,0.16)]" />
-        <div class="absolute left-1/2 top-0 h-7 w-px -translate-x-1/2 -translate-y-full bg-sky-400/80" />
+        <div class="border border-sky-400/70 rounded-[16px] shadow-[0_0_0_1px_rgba(14,165,233,0.16)] inset-0 absolute" />
+        <div class="bg-sky-400/80 h-7 w-px left-1/2 top-0 absolute -translate-x-1/2 -translate-y-full" />
         <button
-          class="pointer-events-auto absolute h-4 w-4 rounded-full border-2 border-white bg-sky-500 shadow-sm cursor-grab active:cursor-grabbing"
+          class="border-2 border-white rounded-full bg-sky-500 h-4 w-4 cursor-grab pointer-events-auto shadow-sm absolute active:cursor-grabbing"
           type="button"
           :style="rotateHandleStyle"
           @pointerdown.stop.prevent="handleElementRotatePointerDown($event)"
@@ -4952,44 +4941,44 @@ function handleKeydown(event: KeyboardEvent): void {
         :style="frameResizeOutlineStyle"
         data-testid="workspace-design-canvaskit-frame-resize"
       >
-        <div class="absolute inset-0 border border-sky-500/80 shadow-[0_0_0_1px_rgba(14,165,233,0.18)]" :style="{ borderRadius: `${resolveDesignFrameSurfaceRadius(frameResizeTarget.frame)}px` }" />
+        <div class="border border-sky-500/80 shadow-[0_0_0_1px_rgba(14,165,233,0.18)] inset-0 absolute" :style="{ borderRadius: `${resolveDesignFrameSurfaceRadius(frameResizeTarget.frame)}px` }" />
         <button
-          class="pointer-events-auto absolute -left-2 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-w-resize"
+          class="border border-white rounded-full bg-sky-500 h-4 w-4 cursor-w-resize pointer-events-auto shadow-sm top-1/2 absolute -translate-y-1/2 -left-2"
           type="button"
           @pointerdown.stop.prevent="handleFrameResizePointerDown('w', $event)"
         />
         <button
-          class="pointer-events-auto absolute -right-2 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-e-resize"
+          class="border border-white rounded-full bg-sky-500 h-4 w-4 cursor-e-resize pointer-events-auto shadow-sm top-1/2 absolute -translate-y-1/2 -right-2"
           type="button"
           @pointerdown.stop.prevent="handleFrameResizePointerDown('e', $event)"
         />
         <button
-          class="pointer-events-auto absolute left-1/2 -top-2 h-4 w-4 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-n-resize"
+          class="border border-white rounded-full bg-sky-500 h-4 w-4 cursor-n-resize pointer-events-auto shadow-sm left-1/2 absolute -translate-x-1/2 -top-2"
           type="button"
           @pointerdown.stop.prevent="handleFrameResizePointerDown('n', $event)"
         />
         <button
-          class="pointer-events-auto absolute -bottom-2 left-1/2 h-4 w-4 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-s-resize"
+          class="border border-white rounded-full bg-sky-500 h-4 w-4 cursor-s-resize pointer-events-auto shadow-sm left-1/2 absolute -translate-x-1/2 -bottom-2"
           type="button"
           @pointerdown.stop.prevent="handleFrameResizePointerDown('s', $event)"
         />
         <button
-          class="pointer-events-auto absolute -left-2 -top-2 h-4 w-4 rounded-full border border-white bg-sky-500 shadow-sm cursor-nw-resize"
+          class="border border-white rounded-full bg-sky-500 h-4 w-4 cursor-nw-resize pointer-events-auto shadow-sm absolute -left-2 -top-2"
           type="button"
           @pointerdown.stop.prevent="handleFrameResizePointerDown('nw', $event)"
         />
         <button
-          class="pointer-events-auto absolute -right-2 -top-2 h-4 w-4 rounded-full border border-white bg-sky-500 shadow-sm cursor-ne-resize"
+          class="border border-white rounded-full bg-sky-500 h-4 w-4 cursor-ne-resize pointer-events-auto shadow-sm absolute -right-2 -top-2"
           type="button"
           @pointerdown.stop.prevent="handleFrameResizePointerDown('ne', $event)"
         />
         <button
-          class="pointer-events-auto absolute -bottom-2 -left-2 h-4 w-4 rounded-full border border-white bg-sky-500 shadow-sm cursor-sw-resize"
+          class="border border-white rounded-full bg-sky-500 h-4 w-4 cursor-sw-resize pointer-events-auto shadow-sm absolute -bottom-2 -left-2"
           type="button"
           @pointerdown.stop.prevent="handleFrameResizePointerDown('sw', $event)"
         />
         <button
-          class="pointer-events-auto absolute -bottom-2 -right-2 h-4 w-4 rounded-full border border-white bg-sky-500 shadow-sm cursor-se-resize"
+          class="border border-white rounded-full bg-sky-500 h-4 w-4 cursor-se-resize pointer-events-auto shadow-sm absolute -bottom-2 -right-2"
           type="button"
           @pointerdown.stop.prevent="handleFrameResizePointerDown('se', $event)"
         />
@@ -4998,19 +4987,19 @@ function handleKeydown(event: KeyboardEvent): void {
 
     <div
       v-if="selectionDraftRectStyle"
-      class="pointer-events-none absolute border-2 border-dashed border-sky-500/80 bg-sky-200/10"
+      class="border-2 border-sky-500/80 border-dashed bg-sky-200/10 pointer-events-none absolute"
       :style="selectionDraftRectStyle"
       data-testid="workspace-design-canvaskit-selection-preview"
     />
 
     <div
       v-if="frameDragFeedback"
-      class="pointer-events-none absolute right-6 top-6 z-[180] min-w-[240px] rounded-2xl border border-slate-900/90 bg-slate-950/90 px-3 py-2 text-[11px] text-slate-300 shadow-[0_18px_48px_rgba(2,6,23,0.28)] backdrop-blur-xl"
+      class="text-[11px] text-slate-300 px-3 py-2 border border-slate-900/90 rounded-2xl bg-slate-950/90 min-w-[240px] pointer-events-none shadow-[0_18px_48px_rgba(2,6,23,0.28)] right-6 top-6 absolute z-[180] backdrop-blur-xl"
       data-testid="workspace-design-canvaskit-frame-feedback"
     >
-      <div class="flex items-center justify-between gap-3">
-        <span class="font-semibold text-slate-100">Frame · {{ frameDragFeedback.label }}</span>
-        <span class="rounded-full border border-sky-800 bg-sky-950/40 px-2 py-0.5 font-semibold text-sky-200">
+      <div class="flex gap-3 items-center justify-between">
+        <span class="text-slate-100 font-semibold">Frame · {{ frameDragFeedback.label }}</span>
+        <span class="text-sky-200 font-semibold px-2 py-0.5 border border-sky-800 rounded-full bg-sky-950/40">
           X {{ frameDragFeedback.x }} / Y {{ frameDragFeedback.y }}
         </span>
       </div>
@@ -5018,7 +5007,7 @@ function handleKeydown(event: KeyboardEvent): void {
         <span
           v-for="hint in frameDragFeedback.hints"
           :key="`${frameDragFeedback.frameId}-${hint}`"
-          class="rounded-full border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] font-semibold text-slate-300"
+          class="text-[10px] text-slate-300 font-semibold px-2 py-1 border border-slate-800 rounded-full bg-slate-900"
         >
           {{ hint }}
         </span>
@@ -5028,7 +5017,7 @@ function handleKeydown(event: KeyboardEvent): void {
     <textarea
       v-if="textEditSession && textEditStyle"
       ref="textEditorRef"
-      class="workspace-design-canvaskit-host__text-editor absolute z-[220] resize-none border border-sky-300/70 bg-white/96 p-3 text-slate-900 shadow-[0_20px_40px_rgba(15,23,42,0.16)] outline-none"
+      class="workspace-design-canvaskit-host__text-editor text-slate-900 p-3 outline-none border border-sky-300/70 bg-white/96 resize-none shadow-[0_20px_40px_rgba(15,23,42,0.16)] absolute z-[220]"
       :style="textEditStyle"
       :value="textEditSession.draftText"
       data-testid="workspace-design-canvaskit-text-editor"
@@ -5151,7 +5140,7 @@ function handleKeydown(event: KeyboardEvent): void {
     <div
       v-for="cursor in remoteScreenCursors"
       :key="`${cursor.userId}:${cursor.username}`"
-      class="pointer-events-none absolute left-0 top-0 z-20"
+      class="pointer-events-none left-0 top-0 absolute z-20"
       data-testid="workspace-design-canvaskit-collab-cursor"
       :style="{ transform: `translate(${cursor.screenX}px, ${cursor.screenY}px)` }"
     >
@@ -5166,7 +5155,7 @@ function handleKeydown(event: KeyboardEvent): void {
           />
         </svg>
         <div
-          class="mt-1 inline-flex max-w-[160px] items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm"
+          class="text-[11px] text-white font-semibold mt-1 px-2.5 py-1 rounded-full inline-flex max-w-[160px] shadow-sm items-center"
           :style="{ backgroundColor: cursor.colorToken }"
         >
           {{ cursor.label }}
@@ -5206,8 +5195,7 @@ function handleKeydown(event: KeyboardEvent): void {
   overflow: hidden;
   border: 1px solid rgba(226, 232, 240, 0.96);
   border-radius: var(--workspace-design-minimap-radius, 14px);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.96) 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.96) 100%);
   box-shadow:
     0 18px 38px rgba(15, 23, 42, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.72);
@@ -5225,7 +5213,7 @@ function handleKeydown(event: KeyboardEvent): void {
   cursor: grabbing;
 }
 
-.workspace-design-canvaskit-host[data-zoom-state="dormant"] .workspace-design-canvaskit-host__minimap {
+.workspace-design-canvaskit-host[data-zoom-state='dormant'] .workspace-design-canvaskit-host__minimap {
   box-shadow:
     0 8px 18px rgba(15, 23, 42, 0.05),
     inset 0 1px 0 rgba(255, 255, 255, 0.72);
@@ -5312,8 +5300,8 @@ function handleKeydown(event: KeyboardEvent): void {
     border-radius 180ms ease;
 }
 
-.workspace-design-canvaskit-host__zoom-shell[data-state="resting"],
-.workspace-design-canvaskit-host__zoom-shell[data-state="dormant"] {
+.workspace-design-canvaskit-host__zoom-shell[data-state='resting'],
+.workspace-design-canvaskit-host__zoom-shell[data-state='dormant'] {
   display: flex;
   align-items: center;
   height: var(--workspace-design-control-hit-height, 28px);
@@ -5345,10 +5333,10 @@ function handleKeydown(event: KeyboardEvent): void {
   cursor: pointer;
 }
 
-.workspace-design-canvaskit-host__zoom-shell[data-state="resting"] .workspace-design-canvaskit-host__zoom-button,
-.workspace-design-canvaskit-host__zoom-shell[data-state="resting"] .workspace-design-canvaskit-host__zoom-fit,
-.workspace-design-canvaskit-host__zoom-shell[data-state="dormant"] .workspace-design-canvaskit-host__zoom-button,
-.workspace-design-canvaskit-host__zoom-shell[data-state="dormant"] .workspace-design-canvaskit-host__zoom-fit {
+.workspace-design-canvaskit-host__zoom-shell[data-state='resting'] .workspace-design-canvaskit-host__zoom-button,
+.workspace-design-canvaskit-host__zoom-shell[data-state='resting'] .workspace-design-canvaskit-host__zoom-fit,
+.workspace-design-canvaskit-host__zoom-shell[data-state='dormant'] .workspace-design-canvaskit-host__zoom-button,
+.workspace-design-canvaskit-host__zoom-shell[data-state='dormant'] .workspace-design-canvaskit-host__zoom-fit {
   position: absolute;
   inset: 0 auto 0 0;
   opacity: 0;
@@ -5396,8 +5384,8 @@ function handleKeydown(event: KeyboardEvent): void {
     transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.workspace-design-canvaskit-host__zoom-shell[data-state="resting"] .workspace-design-canvaskit-host__zoom-range-shell,
-.workspace-design-canvaskit-host__zoom-shell[data-state="dormant"] .workspace-design-canvaskit-host__zoom-range-shell {
+.workspace-design-canvaskit-host__zoom-shell[data-state='resting'] .workspace-design-canvaskit-host__zoom-range-shell,
+.workspace-design-canvaskit-host__zoom-shell[data-state='dormant'] .workspace-design-canvaskit-host__zoom-range-shell {
   position: absolute;
   inset: 0;
   border-right-color: transparent;
@@ -5406,8 +5394,8 @@ function handleKeydown(event: KeyboardEvent): void {
   pointer-events: none;
 }
 
-.workspace-design-canvaskit-host__zoom-shell[data-state="resting"] .workspace-design-canvaskit-host__zoom-label,
-.workspace-design-canvaskit-host__zoom-shell[data-state="dormant"] .workspace-design-canvaskit-host__zoom-label {
+.workspace-design-canvaskit-host__zoom-shell[data-state='resting'] .workspace-design-canvaskit-host__zoom-label,
+.workspace-design-canvaskit-host__zoom-shell[data-state='dormant'] .workspace-design-canvaskit-host__zoom-label {
   opacity: 0;
   transform: scale(0.92);
   pointer-events: none;
@@ -5440,8 +5428,10 @@ function handleKeydown(event: KeyboardEvent): void {
   pointer-events: none;
 }
 
-.workspace-design-canvaskit-host__zoom-shell[data-state="resting"] .workspace-design-canvaskit-host__zoom-collapsed-track,
-.workspace-design-canvaskit-host__zoom-shell[data-state="dormant"] .workspace-design-canvaskit-host__zoom-collapsed-track {
+.workspace-design-canvaskit-host__zoom-shell[data-state='resting']
+  .workspace-design-canvaskit-host__zoom-collapsed-track,
+.workspace-design-canvaskit-host__zoom-shell[data-state='dormant']
+  .workspace-design-canvaskit-host__zoom-collapsed-track {
   opacity: 1;
   transform: translateY(-50%) scaleX(1);
 }

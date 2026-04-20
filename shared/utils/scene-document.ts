@@ -90,10 +90,10 @@ interface ResolvedDesignFrameGrid {
   gutter: number
   visible: boolean
 }
-type DesignExportBackgroundMode = 'transparent' | 'solid' | 'gradient'
+export type DesignExportBackgroundMode = 'transparent' | 'solid' | 'gradient'
 export type DeviceArrangementLayoutPresetKey = 'solo' | 'duo-overlap' | 'trio-fan' | 'desktop-phone' | 'grid'
 export type DeviceArrangementExportSizePresetKey = 'square' | 'portrait-4-5' | 'wide-16-9' | 'story-9-16' | 'custom'
-interface ResolvedDesignPageExport {
+export interface ResolvedDesignPageExport {
   width: number
   height: number
   scale: number
@@ -6302,6 +6302,410 @@ export function buildDeviceMockupSceneDocument(input: {
           },
         }]
       : [],
+  })
+}
+
+export const DEVICE_ARRANGEMENT_LAYOUT_PRESETS: Array<{
+  key: DeviceArrangementLayoutPresetKey
+  title: string
+  description: string
+}> = [
+  { key: 'solo', title: '单设备居中', description: '一张截图，居中展示。' },
+  { key: 'duo-overlap', title: '双设备重叠', description: '两台设备轻微叠放。' },
+  { key: 'trio-fan', title: '三设备扇形', description: '三张截图形成扇形阵列。' },
+  { key: 'desktop-phone', title: '桌面 + 手机', description: '桌面端主体，手机端叠放。' },
+  { key: 'grid', title: '网格排布', description: '多设备均匀排列。' },
+]
+
+export const DEVICE_ARRANGEMENT_EXPORT_SIZE_PRESETS: Array<{
+  key: DeviceArrangementExportSizePresetKey
+  title: string
+  width: number
+  height: number
+}> = [
+  { key: 'square', title: '1:1', width: 1600, height: 1600 },
+  { key: 'portrait-4-5', title: '4:5', width: 1600, height: 2000 },
+  { key: 'wide-16-9', title: '16:9', width: 1920, height: 1080 },
+  { key: 'story-9-16', title: '9:16', width: 1080, height: 1920 },
+  { key: 'custom', title: '自定义', width: 1600, height: 1600 },
+]
+
+export interface DeviceArrangementSceneItemInput {
+  screenshotSrc: string
+  screenshotName?: string
+  screenshotWidth?: number
+  screenshotHeight?: number
+  deviceFramePresetKey?: string
+  shellAsset?: DesignAssetModel | null
+  shellMode?: DeviceShellMode
+}
+
+export interface DeviceArrangementSceneInput {
+  title?: string
+  items?: DeviceArrangementSceneItemInput[]
+  layoutPresetKey?: DeviceArrangementLayoutPresetKey
+  exportSizePresetKey?: DeviceArrangementExportSizePresetKey
+  customWidth?: number
+  customHeight?: number
+  exportScale?: number
+  background?: string
+  backgroundMode?: DesignExportBackgroundMode
+  accent?: string
+  watermarkText?: string
+}
+
+function resolveDeviceArrangementExportSize(input: DeviceArrangementSceneInput): {
+  width: number
+  height: number
+  sizePresetKey: DeviceArrangementExportSizePresetKey
+} {
+  const sizePresetKey = DEVICE_ARRANGEMENT_EXPORT_SIZE_PRESETS.some(item => item.key === input.exportSizePresetKey)
+    ? input.exportSizePresetKey!
+    : 'square'
+  if (sizePresetKey === 'custom') {
+    return {
+      width: Math.max(320, Math.min(6000, Math.round(toFiniteNumber(input.customWidth, 1600)))),
+      height: Math.max(320, Math.min(6000, Math.round(toFiniteNumber(input.customHeight, 1600)))),
+      sizePresetKey,
+    }
+  }
+
+  const preset = DEVICE_ARRANGEMENT_EXPORT_SIZE_PRESETS.find(item => item.key === sizePresetKey)
+    || DEVICE_ARRANGEMENT_EXPORT_SIZE_PRESETS[0]!
+  return {
+    width: preset.width,
+    height: preset.height,
+    sizePresetKey,
+  }
+}
+
+function resolveDeviceArrangementLayoutPresetKey(value: unknown): DeviceArrangementLayoutPresetKey {
+  const normalized = normalizeString(value)
+  return DEVICE_ARRANGEMENT_LAYOUT_PRESETS.some(item => item.key === normalized)
+    ? normalized as DeviceArrangementLayoutPresetKey
+    : 'solo'
+}
+
+function resolveArrangementFitSize(
+  preset: DeviceFramePreset,
+  maxWidth: number,
+  maxHeight: number,
+): { width: number, height: number } {
+  const aspect = Math.max(0.12, preset.screenWidth / Math.max(1, preset.screenHeight))
+  const widthByHeight = maxHeight * aspect
+  if (widthByHeight <= maxWidth) {
+    return {
+      width: Math.max(1, Math.round(widthByHeight)),
+      height: Math.max(1, Math.round(maxHeight)),
+    }
+  }
+  return {
+    width: Math.max(1, Math.round(maxWidth)),
+    height: Math.max(1, Math.round(maxWidth / aspect)),
+  }
+}
+
+function resolveArrangementDevicePlacements(
+  items: DeviceArrangementSceneItemInput[],
+  pageWidth: number,
+  pageHeight: number,
+  layoutPresetKey: DeviceArrangementLayoutPresetKey,
+): Array<{ x: number, y: number, width: number, height: number, rotation: number }> {
+  const count = Math.max(1, items.length)
+  const presetFor = (index: number) => resolveDeviceFramePreset(
+    normalizeString(items[index]?.deviceFramePresetKey) || 'iphone-16-pro',
+  )
+  const centered = (
+    index: number,
+    centerX: number,
+    centerY: number,
+    maxWidthRatio: number,
+    maxHeightRatio: number,
+    rotation = 0,
+  ) => {
+    const size = resolveArrangementFitSize(
+      presetFor(index),
+      pageWidth * maxWidthRatio,
+      pageHeight * maxHeightRatio,
+    )
+    return {
+      x: Math.round(centerX - size.width / 2),
+      y: Math.round(centerY - size.height / 2),
+      width: size.width,
+      height: size.height,
+      rotation,
+    }
+  }
+
+  if (layoutPresetKey === 'desktop-phone' && count > 1) {
+    const placements = [
+      centered(0, pageWidth * 0.46, pageHeight * 0.46, 0.72, 0.54, 0),
+      centered(1, pageWidth * 0.72, pageHeight * 0.58, 0.28, 0.62, 5),
+    ]
+    for (let index = 2; index < count; index += 1)
+      placements.push(centered(index, pageWidth * (0.28 + (index - 2) * 0.18), pageHeight * 0.78, 0.22, 0.32, 0))
+    return placements
+  }
+
+  if (layoutPresetKey === 'duo-overlap' && count > 1) {
+    const rotations = [-7, 7]
+    return Array.from({ length: count }, (_, index) => centered(
+      index,
+      pageWidth * (count === 2 ? (index === 0 ? 0.43 : 0.57) : (0.32 + index * 0.18)),
+      pageHeight * 0.53,
+      0.34,
+      0.64,
+      rotations[index % rotations.length] || 0,
+    ))
+  }
+
+  if (layoutPresetKey === 'trio-fan' && count > 1) {
+    const rotations = count === 2 ? [-8, 8] : [-12, 0, 12]
+    return Array.from({ length: count }, (_, index) => centered(
+      index,
+      pageWidth * (count === 2 ? (index === 0 ? 0.42 : 0.58) : (0.34 + index * (0.32 / Math.max(1, count - 1)))),
+      pageHeight * (index === 1 && count >= 3 ? 0.49 : 0.54),
+      0.3,
+      0.58,
+      rotations[index] ?? 0,
+    ))
+  }
+
+  if (layoutPresetKey === 'grid' && count > 1) {
+    const columns = Math.ceil(Math.sqrt(count))
+    const rows = Math.ceil(count / columns)
+    const marginX = pageWidth * 0.14
+    const marginY = pageHeight * 0.16
+    const cellWidth = (pageWidth - marginX * 2) / columns
+    const cellHeight = (pageHeight - marginY * 2) / rows
+    return Array.from({ length: count }, (_, index) => {
+      const column = index % columns
+      const row = Math.floor(index / columns)
+      return centered(
+        index,
+        marginX + cellWidth * column + cellWidth / 2,
+        marginY + cellHeight * row + cellHeight / 2,
+        (cellWidth / pageWidth) * 0.78,
+        (cellHeight / pageHeight) * 0.82,
+        0,
+      )
+    })
+  }
+
+  return Array.from({ length: count }, (_, index) => centered(
+    index,
+    pageWidth * (count === 1 ? 0.5 : (0.26 + index * (0.48 / Math.max(1, count - 1)))),
+    pageHeight * 0.52,
+    count === 1 ? 0.48 : 0.28,
+    count === 1 ? 0.68 : 0.54,
+    0,
+  ))
+}
+
+export function buildDeviceArrangementSceneDocument(input: DeviceArrangementSceneInput = {}): SceneDocument {
+  const rawItems = ensureArray(input.items).map(entry => normalizeRecord(entry))
+  const items: DeviceArrangementSceneItemInput[] = rawItems
+    .map((entry, index) => ({
+      screenshotSrc: normalizeString(entry.screenshotSrc || entry.imageSrc || entry.src),
+      screenshotName: normalizeString(entry.screenshotName || entry.name) || `截图 ${index + 1}`,
+      screenshotWidth: toPositiveNumber(entry.screenshotWidth || entry.width, 0) || undefined,
+      screenshotHeight: toPositiveNumber(entry.screenshotHeight || entry.height, 0) || undefined,
+      deviceFramePresetKey: normalizeString(entry.deviceFramePresetKey) || 'iphone-16-pro',
+      shellAsset: isRecord(entry.shellAsset) ? normalizeDesignAssetModel(entry.shellAsset, index) : null,
+      shellMode: normalizeString(entry.shellMode) === 'none' || normalizeString(entry.shellMode) === 'external'
+        ? normalizeString(entry.shellMode) as DeviceShellMode
+        : 'builtin',
+    }))
+    .filter(item => Boolean(item.screenshotSrc))
+    .slice(0, 9)
+  const safeItems = items.length > 0
+    ? items
+    : [{
+        screenshotSrc: '',
+        screenshotName: '截图 1',
+        deviceFramePresetKey: 'iphone-16-pro',
+        shellAsset: null,
+        shellMode: 'builtin' as DeviceShellMode,
+      }]
+  const templateKey = 'device-showcase'
+  const exportSize = resolveDeviceArrangementExportSize(input)
+  const layoutPresetKey = resolveDeviceArrangementLayoutPresetKey(input.layoutPresetKey)
+  const background = normalizeString(input.background) || '#f8fafc'
+  const accent = normalizeString(input.accent) || '#38bdf8'
+  const page = createDefaultDesignPage({
+    id: 'device-arrangement-export',
+    name: normalizeString(input.title) || '设备排布',
+    background,
+    metadata: {
+      clipToPage: true,
+      workspaceBackground: background,
+      export: {
+        width: exportSize.width,
+        height: exportSize.height,
+        scale: Math.max(1, toFiniteNumber(input.exportScale, 1)),
+        backgroundMode: normalizeDesignExportBackgroundMode(input.backgroundMode, 'solid'),
+        sizePresetKey: exportSize.sizePresetKey,
+      },
+    },
+  })
+  const sourcePage = createDefaultDesignPage({
+    id: 'device-arrangement-sources',
+    name: '截图源',
+    background: '#f8fafc',
+    metadata: {
+      workspaceBackground: '#f8fafc',
+    },
+  })
+  const placements = resolveArrangementDevicePlacements(safeItems, exportSize.width, exportSize.height, layoutPresetKey)
+  const frames: DesignFrameModel[] = []
+  const elements: DesignElementModel[] = []
+  const assetMap = new Map<string, DesignAssetModel>()
+  const sourceSpacing = 96
+  let sourceCursorX = 80
+
+  safeItems.forEach((item, index) => {
+    const preset = resolveDeviceFramePreset(normalizeString(item.deviceFramePresetKey) || 'iphone-16-pro')
+    const sourceFrameId = `device-arrangement-source-${index + 1}`
+    const mockupFrameId = `device-arrangement-mockup-${index + 1}`
+    const sourceWidth = preset.screenWidth
+    const sourceHeight = preset.screenHeight
+    const sourceFrame = normalizeDesignFrameModel({
+      id: sourceFrameId,
+      pageId: sourcePage.id,
+      name: item.screenshotName || `截图源 ${index + 1}`,
+      kind: 'device_artboard',
+      x: sourceCursorX,
+      y: 120,
+      width: sourceWidth,
+      height: sourceHeight,
+      deviceFramePresetKey: preset.key,
+      metadata: {
+        device: {
+          shellMode: 'none',
+          screenScaleMode: 'fit',
+        },
+      },
+    }, frames.length, sourcePage.id)
+    frames.push(sourceFrame)
+    elements.push(createDesignElement({
+      id: `device-arrangement-image-${index + 1}`,
+      pageId: sourcePage.id,
+      frameId: sourceFrameId,
+      type: 'image',
+      x: 0,
+      y: 0,
+      width: sourceWidth,
+      height: sourceHeight,
+      imageSrc: item.screenshotSrc,
+      zIndex: 0,
+      metadata: {
+        containerRole: 'frame_child',
+      },
+    }, `device-arrangement-image-${index + 1}`))
+    sourceCursorX += sourceWidth + sourceSpacing
+
+    const shellAsset = item.shellAsset || null
+    if (shellAsset?.id)
+      assetMap.set(shellAsset.id, shellAsset)
+    const placement = placements[index] || placements[0]!
+    const mockupFrame = normalizeDesignFrameModel({
+      id: mockupFrameId,
+      pageId: page.id,
+      name: item.screenshotName || `设备 ${index + 1}`,
+      kind: 'device_mockup',
+      x: placement.x,
+      y: placement.y,
+      width: placement.width,
+      height: placement.height,
+      rotation: placement.rotation,
+      deviceFramePresetKey: preset.key,
+      themeTokens: {
+        background: 'transparent',
+        surface: '#ffffff',
+        text: '#0f172a',
+        muted: '#64748b',
+        accent,
+      },
+      metadata: {
+        device: {
+          shellMode: shellAsset?.id ? 'external' : item.shellMode || 'builtin',
+          shellAssetId: shellAsset?.id || undefined,
+          mockupSourceFrameId: sourceFrameId,
+          screenScaleMode: 'fit',
+          showSafeArea: false,
+          screenTransform: {
+            offsetX: 0,
+            offsetY: 0,
+            scale: 1,
+          },
+        },
+      },
+    }, frames.length, page.id)
+    frames.push(mockupFrame)
+  })
+
+  const watermarkText = normalizeString(input.watermarkText)
+  if (watermarkText) {
+    elements.push(createDesignElement({
+      id: 'device-arrangement-watermark',
+      pageId: page.id,
+      type: 'caption',
+      x: Math.max(40, exportSize.width - 460),
+      y: Math.max(40, exportSize.height - 92),
+      width: 380,
+      height: 42,
+      text: watermarkText,
+      zIndex: 100,
+      style: {
+        fontSize: 22,
+        fontWeight: 700,
+        color: '#64748b',
+        opacity: 0.72,
+        textAlign: 'right',
+      },
+      metadata: {
+        containerRole: 'page_root',
+      },
+    }, 'device-arrangement-watermark'))
+  }
+
+  const composition = defaultCompositionModel(templateKey)
+  const base = createEmptySceneDocument({
+    drawMode: 'composition',
+    sourceType: 'image_mockup',
+    templateKey,
+    editorEngine: 'canvaskit_wasm',
+  })
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    templateKey,
+    currentPageId: page.id,
+    pages: [
+      {
+        ...page,
+        frameIds: frames.filter(frame => frame.pageId === page.id).map(frame => frame.id),
+      },
+      {
+        ...sourcePage,
+        frameIds: frames.filter(frame => frame.pageId === sourcePage.id).map(frame => frame.id),
+      },
+    ],
+    frames,
+    elements,
+    assets: [...assetMap.values()],
+    slots: {},
+    themeTokens: {
+      ...composition.themeTokens,
+      background,
+      accent,
+    },
+    aspectRatio: `${exportSize.width}:${exportSize.height}`,
+    deviceFramePresetKey: safeItems[0]?.deviceFramePresetKey || composition.deviceFramePresetKey,
+    metadata: {
+      ...normalizeRecord(composition.metadata),
+      designMode: 'device_arrangement',
+      layoutPresetKey,
+    },
   })
 }
 

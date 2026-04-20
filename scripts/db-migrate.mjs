@@ -81,7 +81,7 @@ if (!pgUrl) {
   process.exit(1)
 }
 
-const hardCutoverNamePattern = /(^|[-_])hard-cutover($|[-_])/i
+const hardCutoverNamePattern = /(?:^|[-_])hard-cutover(?:$|[-_])/i
 const isHardCutoverMigration = [basename(sqlFilePath).replace(/\.sql$/i, ''), migrationKey]
   .some(name => hardCutoverNamePattern.test(String(name || '')))
 

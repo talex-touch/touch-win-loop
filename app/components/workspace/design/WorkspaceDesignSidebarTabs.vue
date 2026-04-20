@@ -1,35 +1,35 @@
 <script setup lang="ts">
-type DesignSidebarTab = "pages" | "frames" | "assets";
+type DesignSidebarTab = 'pages' | 'frames' | 'assets'
 
 const props = withDefaults(
   defineProps<{
-    activeTab?: DesignSidebarTab;
+    activeTab?: DesignSidebarTab
   }>(),
   {
-    activeTab: "pages",
+    activeTab: 'pages',
   },
-);
+)
 
 const emit = defineEmits<{
-  "update:activeTab": [tab: DesignSidebarTab];
-}>();
+  'update:activeTab': [tab: DesignSidebarTab]
+}>()
 
-const tabs: Array<{ id: DesignSidebarTab; label: string; icon: string }> = [
-  { id: "pages", label: "Pages", icon: "description" },
-  { id: "frames", label: "Frames", icon: "dashboard_customize" },
-  { id: "assets", label: "Assets", icon: "imagesmode" },
-];
+const tabs: Array<{ id: DesignSidebarTab, label: string, icon: string }> = [
+  { id: 'pages', label: 'Pages', icon: 'description' },
+  { id: 'frames', label: 'Frames', icon: 'dashboard_customize' },
+  { id: 'assets', label: 'Assets', icon: 'imagesmode' },
+]
 </script>
 
 <template>
   <nav
-    class="inline-flex min-h-0 max-w-full items-center gap-0.5 rounded-[10px] border border-slate-200/90 bg-white/78 p-0.5 backdrop-blur-xl"
+    class="p-0.5 border border-slate-200/90 rounded-[10px] bg-white/78 inline-flex gap-0.5 max-w-full min-h-0 items-center backdrop-blur-xl"
     data-testid="workspace-design-sidebar-tabs"
   >
     <button
       v-for="tab in tabs"
       :key="tab.id"
-      class="group inline-flex min-w-[36px] shrink-0 items-center justify-center gap-1 rounded-[8px] border px-2 py-1.5 text-[10px] font-semibold leading-none tracking-[0.01em] transition-[padding,background-color,border-color,color] duration-200"
+      class="group text-[10px] leading-none tracking-[0.01em] font-semibold px-2 py-1.5 border rounded-[8px] inline-flex shrink-0 gap-1 min-w-[36px] transition-[padding,background-color,border-color,color] duration-200 items-center justify-center"
       :class="
         tab.id === props.activeTab
           ? 'border-slate-300 bg-white text-slate-950'
@@ -43,7 +43,7 @@ const tabs: Array<{ id: DesignSidebarTab; label: string; icon: string }> = [
         tab.icon
       }}</span>
       <span
-        class="overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-200"
+        class="whitespace-nowrap transition-[max-width,opacity,margin] duration-200 overflow-hidden"
         :class="
           tab.id === props.activeTab
             ? 'ml-0.5 max-w-[56px] opacity-100'

@@ -100,12 +100,13 @@ const overviewItems = computed(() => {
 })
 
 const meetingStatus = computed(() => {
-  if (!props.sessionState?.linkedMeetingId)
+  if (!props.sessionState?.linkedMeetingId) {
     return {
       label: '未发起语音答辩',
       detail: '当前仍是文本答辩回合。',
       tone: 'idle',
     }
+  }
 
   if (!props.linkedMeeting) {
     return {
@@ -276,8 +277,7 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
   height: 100%;
   min-height: 0;
   padding: 18px 16px;
-  background:
-    linear-gradient(180deg, rgba(248, 250, 255, 0.98) 0%, rgba(241, 245, 255, 0.98) 100%);
+  background: linear-gradient(180deg, rgba(248, 250, 255, 0.98) 0%, rgba(241, 245, 255, 0.98) 100%);
 }
 
 .workspace-defense-sidebar__overview,

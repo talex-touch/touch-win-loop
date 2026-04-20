@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
 import type { ContextMenuAnchorPoint } from '~/components/ui/context-menu'
+import type { WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
 import CollabPresenceAvatarStack from '~/components/workspace/collab/CollabPresenceAvatarStack.vue'
 
 interface WorkspaceMainPanelTabItem {
@@ -63,7 +63,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="flex w-full min-w-0 flex-col">
+  <div class="flex flex-col min-w-0 w-full">
     <WorkspaceTabStrip
       :open-tabs="props.openTabs"
       :active-tab-id="props.activeTabId"
@@ -90,8 +90,8 @@ const emit = defineEmits<{
       @drag-end="emit('dragEnd')"
     />
 
-    <div class="workspace-main-breadcrumb text-slate-400 border-b border-slate-200 bg-white flex w-full min-w-0 items-center justify-between gap-2">
-      <div class="workspace-main-breadcrumb__scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden">
+    <div class="workspace-main-breadcrumb text-slate-400 border-b border-slate-200 bg-white flex gap-2 min-w-0 w-full items-center justify-between">
+      <div class="workspace-main-breadcrumb__scroll flex flex-1 gap-1.5 min-w-0 items-center overflow-x-auto overflow-y-hidden">
         <template v-for="(item, index) in props.breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
           <span class="truncate" :class="index === props.breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
             {{ item }}
@@ -100,7 +100,7 @@ const emit = defineEmits<{
         </template>
       </div>
 
-      <div class="flex shrink-0 items-center gap-2">
+      <div class="flex shrink-0 gap-2 items-center">
         <CollabPresenceAvatarStack
           v-if="props.collabPresenceUsers.length > 0"
           :users="props.collabPresenceUsers"

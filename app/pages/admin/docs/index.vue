@@ -136,7 +136,7 @@ const faqItems = [
       </div>
     </section>
 
-    <section class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <section class="gap-3 grid md:grid-cols-2 xl:grid-cols-4">
       <NuxtLink
         v-for="item in quickLinks"
         :key="item.to"
@@ -159,7 +159,7 @@ const faqItems = [
         </h2>
       </div>
       <div class="p-4 space-y-3">
-        <div v-for="item in publishSteps" :key="item.title" class="border border-slate-200 rounded-lg p-3 bg-white">
+        <div v-for="item in publishSteps" :key="item.title" class="p-3 border border-slate-200 rounded-lg bg-white">
           <p class="text-sm text-slate-900 font-semibold">
             {{ item.title }}
           </p>
@@ -170,7 +170,7 @@ const faqItems = [
       </div>
     </section>
 
-    <section class="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
+    <section class="gap-4 grid xl:grid-cols-[1.3fr_1fr]">
       <div class="border border-slate-200 rounded-lg bg-white overflow-hidden">
         <div class="px-4 py-3 border-b border-slate-200 bg-slate-50">
           <h2 class="text-sm text-slate-900 font-semibold">
@@ -178,7 +178,7 @@ const faqItems = [
           </h2>
         </div>
         <div class="p-4 space-y-2">
-          <div v-for="item in syncSteps" :key="item" class="text-xs text-slate-600 border border-slate-200 rounded px-3 py-2 bg-slate-50">
+          <div v-for="item in syncSteps" :key="item" class="text-xs text-slate-600 px-3 py-2 border border-slate-200 rounded bg-slate-50">
             {{ item }}
           </div>
         </div>
@@ -191,7 +191,7 @@ const faqItems = [
           </h2>
         </div>
         <div class="p-4 space-y-2">
-          <div v-for="item in reviewRules" :key="item" class="text-xs text-slate-600 border border-slate-200 rounded px-3 py-2 bg-slate-50">
+          <div v-for="item in reviewRules" :key="item" class="text-xs text-slate-600 px-3 py-2 border border-slate-200 rounded bg-slate-50">
             {{ item }}
           </div>
         </div>
@@ -204,7 +204,7 @@ const faqItems = [
           后台页面怎么分工
         </h2>
       </div>
-      <div class="divide-y divide-slate-200">
+      <div class="divide-slate-200 divide-y">
         <div v-for="item in routeGuides" :key="item.path" class="p-4">
           <p class="text-sm text-slate-900 font-medium">
             {{ item.path }}
@@ -223,7 +223,7 @@ const faqItems = [
         </h2>
       </div>
       <div class="p-4 space-y-3">
-        <div v-for="item in faqItems" :key="item.question" class="border border-slate-200 rounded-lg p-3 bg-white">
+        <div v-for="item in faqItems" :key="item.question" class="p-3 border border-slate-200 rounded-lg bg-white">
           <p class="text-sm text-slate-900 font-semibold">
             {{ item.question }}
           </p>

@@ -16,7 +16,7 @@ interface TimelineFormModel {
   sourceLink: string
 }
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   form: TimelineFormModel
   tracks?: TrackOption[]
   includeTrack?: boolean

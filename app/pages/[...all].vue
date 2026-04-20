@@ -8,7 +8,7 @@ const router = useRouter()
 
     <SectionCard>
       <StateBlock tone="warning" centered description="请返回上一页，或从主导航重新进入目标模块。">
-        <div class="mt-4 text-4xl text-amber-600">
+        <div class="text-4xl text-amber-600 mt-4">
           <div i-carbon-warning inline-block />
         </div>
         <ActionBar class="mt-4 justify-center">

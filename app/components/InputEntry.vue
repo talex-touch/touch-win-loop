@@ -16,7 +16,7 @@ function go() {
       placeholder="输入一个昵称"
       type="text"
       autocomplete="off"
-      class="dense-input max-w-[250px] text-center"
+      class="dense-input text-center max-w-[250px]"
       @keydown.enter="go"
     >
     <div>

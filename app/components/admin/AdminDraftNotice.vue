@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   title: string
   updatedAt?: string
   description?: string
@@ -16,7 +16,7 @@ const emit = defineEmits<{
 
 <template>
   <div class="wl-inline-notice wl-inline-notice--success">
-    <p class="m-0 font-semibold">
+    <p class="font-semibold m-0">
       检测到 AI 草稿：{{ title }}
     </p>
     <p class="m-0 mt-2">

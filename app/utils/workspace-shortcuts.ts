@@ -18,11 +18,11 @@ const DEFAULT_SHORTCUT_LABELS: Record<WorkspaceShortcutModifier, string> = {
 }
 
 const SHORTCUT_KEY_LABELS: Record<string, string> = {
-  contextmenu: 'Menu',
-  escape: 'Esc',
-  esc: 'Esc',
+  'contextmenu': 'Menu',
+  'escape': 'Esc',
+  'esc': 'Esc',
   ' ': 'Space',
-  space: 'Space',
+  'space': 'Space',
 }
 
 export function isWorkspaceMacLikePlatform(platform?: string): boolean {

@@ -26,7 +26,7 @@ interface RubricFormModel {
   evidenceRequirementsText: string
 }
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   form: RubricFormModel
   dimensions: RubricDimensionInput[]
   tracks?: TrackOption[]

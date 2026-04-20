@@ -2,19 +2,20 @@
 import type {
   ApiResponse,
   Contest,
-  ProjectKnowledgeIndexSourceStatus,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectKnowledgeIndexSourceStatus,
   ProjectMemberSummary,
   ProjectResourceShareDurationPreset,
   ProjectResourceShareVisibility,
   Resource,
   ResourceCategory,
 } from '~~/shared/types/domain'
-import { Message } from '@arco-design/web-vue'
 import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
 import type { ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
+import type { WorkspaceOutlineNode, WorkspaceOutlineRow, WorkspaceOutlineSection } from '~/utils/workspace-outline'
+import { Message } from '@arco-design/web-vue'
 import { formatFileSize, PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR } from '~~/shared/constants/project-resource-upload'
 import {
   COLLAB_DESIGN_RESOURCE_LABEL,
@@ -22,6 +23,7 @@ import {
   COLLAB_NOTES_RESOURCE_LABEL,
   COLLAB_WORKFLOW_RESOURCE_LABEL,
 } from '~~/shared/utils/collab-resource'
+import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 import {
   isProjectUploadTaskSidebarVisible,
   resolveProjectUploadTaskStatusText,
@@ -37,29 +39,10 @@ import {
   resourceIconClass,
   resourceSourceLabel,
 } from '~/utils/workspace-left-sidebar-helpers'
-import type { WorkspaceOutlineNode, WorkspaceOutlineRow, WorkspaceOutlineSection } from '~/utils/workspace-outline'
 import {
   buildWorkspaceOutlineNavigationHash,
   flattenWorkspaceOutlineRows,
 } from '~/utils/workspace-outline'
-import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
-
-type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
-
-interface WorkspaceLeftModule {
-  id: WorkspaceLeftModuleId
-  title: string
-  icon: string
-  hint: string
-}
-
-interface FilterPreset {
-  id: string
-  title: string
-  level: string
-  trackType: string
-  topK: number
-}
 
 interface ResourceAttributeField {
   label: string
@@ -216,15 +199,6 @@ const emit = defineEmits<{
   'requestContextMenu': [payload: ContextMenuRequest]
 }>()
 
-const LEFT_MODULE_STORAGE_KEY = 'workspace.leftSidebar.activeModule'
-
-const levelLabels: Record<string, string> = {
-  national: '国赛',
-  provincial: '省赛',
-  school: '校赛',
-  industry: '行业赛',
-}
-
 const resourceCategoryOrder: ResourceCategory[] = [
   'basic_info',
   'timeline',
@@ -259,58 +233,6 @@ const resourceCategoryLabels: Record<ResourceCategory, string> = {
   compliance: '合规与版权',
 }
 
-const modules: WorkspaceLeftModule[] = [
-  {
-    id: 'resource_manager',
-    title: '资源管理器',
-    icon: 'description',
-    hint: '项目资料与结构大纲',
-  },
-  {
-    id: 'analysis',
-    title: '竞赛分析',
-    icon: 'grid_view',
-    hint: '筛选与排序',
-  },
-  {
-    id: 'project_config',
-    title: '项目分析',
-    icon: 'manage_search',
-    hint: '分析偏好与 AI 建议',
-  },
-  {
-    id: 'issue_center',
-    title: 'Issue',
-    icon: 'bug_report',
-    hint: '寻疑报告与问题清单',
-  },
-]
-
-const filterPresets: FilterPreset[] = [
-  {
-    id: 'national-ai',
-    title: '国赛 + AI',
-    level: 'national',
-    trackType: 'AI',
-    topK: 6,
-  },
-  {
-    id: 'industry-practice',
-    title: '行业实战',
-    level: 'industry',
-    trackType: '工程落地',
-    topK: 8,
-  },
-  {
-    id: 'school-sprint',
-    title: '校赛冲刺',
-    level: 'school',
-    trackType: '',
-    topK: 5,
-  },
-]
-
-const activeModule = ref<WorkspaceLeftModuleId>('resource_manager')
 const recyclePanelOpen = computed(() => props.recyclePanelOpen)
 const activeResourceId = ref('')
 const renamingResourceId = ref('')
@@ -340,7 +262,6 @@ const libraryImportParentResourceId = ref<string | null>(null)
 const libraryListRef = ref<HTMLElement | null>(null)
 const uploadParentResourceId = ref<string | null>(null)
 const projectResourceUploadInputRef = ref<HTMLInputElement | null>(null)
-const sidebarPanelRef = ref<HTMLElement | null>(null)
 const treeExpanded = reactive<Record<string, boolean>>({})
 const draggingResourceId = ref('')
 const dragOverResourceId = ref('')
@@ -352,9 +273,6 @@ const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
   linkedContestResources: true,
   outline: true,
 })
-
-const showReason = ref(false)
-const showAdminDetails = ref(false)
 
 const suppressResourceSelection = computed(() => props.activeMainTabId === 'dashboard')
 
@@ -406,10 +324,6 @@ function resolveOutlineSectionRows(sectionId: WorkspaceOutlineSection['id']): Wo
 
 function shouldShowOutlineSectionTitle(section: WorkspaceOutlineSection): boolean {
   return section.id !== 'current_content'
-}
-
-function resolveOutlineRowId(node: WorkspaceOutlineNode, sectionId: WorkspaceOutlineSection['id']): string {
-  return `${sectionId}:${node.id}`
 }
 
 function resolveOutlineNodeIndent(depth: number): string {
@@ -1092,101 +1006,6 @@ const resourceKnowledgeRows = computed<ResourceAttributeField[]>(() => {
   ]
 })
 
-const hasReasoning = computed(() => Boolean(props.aiReasoning?.trim()))
-
-const analysisStateLabel = computed(() => {
-  if (props.aiFiltering)
-    return '分析中'
-  if (hasReasoning.value)
-    return '分析完成'
-  return '等待分析'
-})
-
-const configSummary = computed(() => {
-  const chunks: string[] = []
-  if (props.major.trim())
-    chunks.push(`专业：${props.major.trim()}`)
-  if (props.discipline.trim())
-    chunks.push(`方向：${props.discipline.trim()}`)
-  if (props.level.trim())
-    chunks.push(`级别：${levelLabels[props.level] || props.level}`)
-  if (props.trackType.trim())
-    chunks.push(`赛道：${props.trackType.trim()}`)
-  chunks.push(`返回：${props.topK}`)
-  return chunks.join(' · ')
-})
-
-const compactHint = computed(() => {
-  if (props.aiFiltering)
-    return '正在执行筛选，请稍候。'
-
-  const status = props.statusLine?.trim() || ''
-  if (status.includes('失败') || status.includes('不可用'))
-    return status
-
-  if (hasReasoning.value)
-    return '点击“展开原因”查看本次筛选依据。'
-
-  return '点击“AI筛选竞赛”后可查看分析结果。'
-})
-
-const analysisSuggestions = computed(() => {
-  const suggestions: string[] = []
-
-  if (!props.selectedContestId)
-    suggestions.push('先在“竞赛分析”中锁定至少 1 个目标竞赛与赛道。')
-
-  if (!hasReasoning.value)
-    suggestions.push('执行一次 AI 筛选，系统会输出可解释排序与推荐理由。')
-
-  if (hasReasoning.value)
-    suggestions.push('已得到 AI 分析结果，下一步建议进入“项目设置”补全项目底座与竞赛适配稿。')
-
-  if (props.selectedResources.length === 0)
-    suggestions.push('资料池当前为空，建议先在资源管理器补齐规则文档和往届样例。')
-
-  if (suggestions.length === 0)
-    suggestions.push('当前信息较完整，可直接进入 Dashboard 推进提交与终审准备。')
-
-  return suggestions.slice(0, 4)
-})
-
-const latestIssueReport = computed(() => {
-  return props.issueReports[0] || null
-})
-
-const visibleIssues = computed(() => {
-  return props.projectIssues.slice(0, 20)
-})
-
-function issueSeverityLabel(value: string): string {
-  if (value === 'critical')
-    return '严重'
-  if (value === 'high')
-    return '高'
-  if (value === 'low')
-    return '低'
-  return '中'
-}
-
-function issueSeverityClass(value: string): string {
-  if (value === 'critical')
-    return 'workspace-issue-tag workspace-issue-tag--critical'
-  if (value === 'high')
-    return 'workspace-issue-tag workspace-issue-tag--high'
-  if (value === 'low')
-    return 'workspace-issue-tag workspace-issue-tag--low'
-  return 'workspace-issue-tag workspace-issue-tag--medium'
-}
-
-function switchModule(moduleId: string) {
-  if (!isWorkspaceLeftModuleId(moduleId))
-    return
-  projectResourceBatchMenuOpen.value = false
-  projectResourceAddMenuOpen.value = false
-  activeModule.value = moduleId
-}
-
 function enterProjectResourceBatchEditMode() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
@@ -1320,39 +1139,6 @@ function toggleLinkedCategory(contestId: string, categoryId: string) {
 
 function toggleSection(sectionId: ResourceSectionId) {
   sectionExpanded[sectionId] = !sectionExpanded[sectionId]
-}
-
-function openSettingsPanel() {
-  emit('openSettingsPanel')
-}
-
-function openMemberManagementPanel() {
-  emit('openMemberManagementPanel')
-}
-
-function openDefenseMode() {
-  emit('openDefenseMode')
-}
-
-function reloadIssueCenter() {
-  emit('reloadIssues')
-}
-
-function openRecycleBinPanel() {
-  projectResourceAddMenuOpen.value = false
-  resourceActionOpenId.value = ''
-}
-
-function onTopKInput(event: Event) {
-  const target = event.target as HTMLInputElement
-  const value = Number(target.value)
-  emit('update:topK', Number.isNaN(value) ? 1 : value)
-}
-
-function applyFilterPreset(preset: FilterPreset) {
-  emit('update:level', preset.level)
-  emit('update:trackType', preset.trackType)
-  emit('update:topK', preset.topK)
 }
 
 function metadataRecord(resource: Resource): Record<string, unknown> {
@@ -1740,13 +1526,6 @@ function cancelUploadTask(sessionId: string) {
 
 function rebindUploadTask(sessionId: string) {
   emit('rebindUploadTask', sessionId)
-}
-
-function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId {
-  return value === 'resource_manager'
-    || value === 'analysis'
-    || value === 'project_config'
-    || value === 'issue_center'
 }
 
 function openLibraryModal(parentResourceId?: string | null) {
@@ -3044,19 +2823,6 @@ watch(linkedContestResourceGroups, (groups, previousGroups) => {
   }
 }, { immediate: true, deep: true })
 
-watch(() => props.aiFiltering, (next) => {
-  if (!next)
-    return
-  showReason.value = false
-  showAdminDetails.value = false
-})
-
-watch(hasReasoning, (next) => {
-  if (next)
-    return
-  showReason.value = false
-})
-
 watch(() => props.hasActiveProject, (next) => {
   if (next)
     return
@@ -3099,18 +2865,8 @@ onMounted(() => {
   if (!import.meta.client)
     return
 
-  const saved = localStorage.getItem(LEFT_MODULE_STORAGE_KEY)
-  if (saved && isWorkspaceLeftModuleId(saved))
-    activeModule.value = saved
-
   document.addEventListener('pointerdown', closeResourceActionMenuByOutside)
   document.addEventListener('keydown', closeResourceActionMenuByEscape)
-})
-
-watch(activeModule, (value) => {
-  if (!import.meta.client)
-    return
-  localStorage.setItem(LEFT_MODULE_STORAGE_KEY, value)
 })
 
 onBeforeUnmount(() => {
@@ -4022,13 +3778,13 @@ onBeforeUnmount(() => {
               </a-descriptions-item>
             </a-descriptions>
 
-            <div class="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
-              <div class="flex items-start justify-between gap-3">
+            <div class="mt-4 p-3 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+              <div class="flex gap-3 items-start justify-between">
                 <div>
-                  <div class="text-sm font-semibold text-slate-800">
+                  <div class="text-sm text-slate-800 font-semibold">
                     知识索引
                   </div>
-                  <div class="mt-1 text-xs text-slate-500">
+                  <div class="text-xs text-slate-500 mt-1">
                     {{ resourceKnowledgeHeadline }}
                   </div>
                 </div>
@@ -4048,7 +3804,7 @@ onBeforeUnmount(() => {
                 正在加载索引状态...
               </div>
 
-              <div v-else-if="resourceKnowledgeError" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+              <div v-else-if="resourceKnowledgeError" class="text-xs text-rose-600 px-3 py-2 border border-rose-200 rounded bg-rose-50">
                 {{ resourceKnowledgeError }}
               </div>
 

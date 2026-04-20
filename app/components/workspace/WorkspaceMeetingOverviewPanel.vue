@@ -286,7 +286,9 @@ watch(() => props.meetings, (nextMeetings, previousMeetings) => {
 
 @keyframes meeting-overview-card-fresh {
   0% {
-    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.18), 0 12px 30px rgba(37, 99, 235, 0.12);
+    box-shadow:
+      0 0 0 1px rgba(59, 130, 246, 0.18),
+      0 12px 30px rgba(37, 99, 235, 0.12);
   }
 
   100% {

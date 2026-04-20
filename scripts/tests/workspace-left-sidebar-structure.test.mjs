@@ -9,7 +9,7 @@ const WORKSPACE_ANALYSIS_PANEL_FILE = resolve(process.cwd(), 'app/components/wor
 const WORKSPACE_PROJECT_CONFIG_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceProjectConfigPanel.vue')
 const WORKSPACE_ISSUE_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceIssuePanel.vue')
 
-it('WorkspaceLeftSidebar 已下沉为 rail + panel 壳层结构', async () => {
+it('workspaceLeftSidebar 已下沉为 rail + panel 壳层结构', async () => {
   const [
     sidebarSource,
     resourceManagerSource,

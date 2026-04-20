@@ -434,14 +434,14 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
       </div>
     </div>
 
-    <div class="grid gap-0 md:grid-cols-4">
-      <div class="border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50/60">
+    <div class="gap-0 grid md:grid-cols-4">
+      <div class="border-b border-slate-200 bg-slate-50/60 md:border-b-0 md:border-r">
         <div class="grid grid-cols-2">
           <div class="px-3 py-2 border-b border-r border-slate-200">
             <p class="text-[10px] text-slate-400 uppercase">
               待初审
             </p>
-            <p class="text-sm font-semibold text-slate-900 mt-1">
+            <p class="text-sm text-slate-900 font-semibold mt-1">
               {{ summaryStats.pendingFirst }}
             </p>
           </div>
@@ -449,7 +449,7 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
             <p class="text-[10px] text-slate-400 uppercase">
               待二审
             </p>
-            <p class="text-sm font-semibold text-slate-900 mt-1">
+            <p class="text-sm text-slate-900 font-semibold mt-1">
               {{ summaryStats.pendingSecond }}
             </p>
           </div>
@@ -457,7 +457,7 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
             <p class="text-[10px] text-slate-400 uppercase">
               待发布
             </p>
-            <p class="text-sm font-semibold text-slate-900 mt-1">
+            <p class="text-sm text-slate-900 font-semibold mt-1">
               {{ summaryStats.approved }}
             </p>
           </div>
@@ -465,18 +465,18 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
             <p class="text-[10px] text-slate-400 uppercase">
               已发布
             </p>
-            <p class="text-sm font-semibold text-slate-900 mt-1">
+            <p class="text-sm text-slate-900 font-semibold mt-1">
               {{ summaryStats.published }}
             </p>
           </div>
         </div>
       </div>
 
-      <div class="md:col-span-3 p-3">
-        <div v-if="errorText" class="mb-3 text-xs text-rose-600 border border-rose-200 rounded bg-rose-50 px-3 py-2">
+      <div class="p-3 md:col-span-3">
+        <div v-if="errorText" class="text-xs text-rose-600 mb-3 px-3 py-2 border border-rose-200 rounded bg-rose-50">
           {{ errorText }}
         </div>
-        <div v-if="successText" class="mb-3 text-xs text-emerald-700 border border-emerald-200 rounded bg-emerald-50 px-3 py-2">
+        <div v-if="successText" class="text-xs text-emerald-700 mb-3 px-3 py-2 border border-emerald-200 rounded bg-emerald-50">
           {{ successText }}
         </div>
 
@@ -491,7 +491,7 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
           <template #columns>
             <a-table-column title="版本" data-index="versionNumber" :width="92">
               <template #cell="{ record }">
-                <button class="text-left text-xs font-semibold text-slate-900 hover:text-blue-600" @click="selectedVersionId = record.id; openDetail(record.id)">
+                <button class="text-xs text-slate-900 font-semibold text-left hover:text-blue-600" @click="selectedVersionId = record.id; openDetail(record.id)">
                   V{{ record.versionNumber }}
                 </button>
               </template>
@@ -593,8 +593,8 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
         </a-skeleton>
       </div>
 
-      <div v-else-if="detail" class="space-y-4 text-xs">
-        <section class="border border-slate-200 rounded bg-slate-50 p-3">
+      <div v-else-if="detail" class="text-xs space-y-4">
+        <section class="p-3 border border-slate-200 rounded bg-slate-50">
           <div class="flex flex-wrap gap-2 items-center justify-between">
             <div>
               <p class="text-sm text-slate-900 font-semibold">
@@ -608,13 +608,25 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
               {{ statusLabel(detail.version.status) }}
             </a-tag>
           </div>
-          <div class="grid md:grid-cols-2 gap-2 mt-3">
-            <p class="text-slate-600">创建时间：{{ formatDateTime(detail.version.createdAt) }}</p>
-            <p class="text-slate-600">更新时间：{{ formatDateTime(detail.version.updatedAt) }}</p>
-            <p class="text-slate-600">初审人：{{ detail.version.firstReviewByUserId || '-' }}</p>
-            <p class="text-slate-600">二审领取人：{{ detail.version.secondReviewClaimedByUserId || '-' }}</p>
-            <p class="text-slate-600">二审人：{{ detail.version.secondReviewByUserId || '-' }}</p>
-            <p class="text-slate-600">发布人：{{ detail.version.publishedByUserId || '-' }}</p>
+          <div class="mt-3 gap-2 grid md:grid-cols-2">
+            <p class="text-slate-600">
+              创建时间：{{ formatDateTime(detail.version.createdAt) }}
+            </p>
+            <p class="text-slate-600">
+              更新时间：{{ formatDateTime(detail.version.updatedAt) }}
+            </p>
+            <p class="text-slate-600">
+              初审人：{{ detail.version.firstReviewByUserId || '-' }}
+            </p>
+            <p class="text-slate-600">
+              二审领取人：{{ detail.version.secondReviewClaimedByUserId || '-' }}
+            </p>
+            <p class="text-slate-600">
+              二审人：{{ detail.version.secondReviewByUserId || '-' }}
+            </p>
+            <p class="text-slate-600">
+              发布人：{{ detail.version.publishedByUserId || '-' }}
+            </p>
           </div>
           <p class="text-slate-600 mt-2">
             变更摘要：{{ diffSummaryText(detail.version) }}
@@ -625,11 +637,11 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
         </section>
 
         <section v-if="detailContestSnapshot" class="space-y-3">
-          <div class="border border-slate-200 rounded p-3">
+          <div class="p-3 border border-slate-200 rounded">
             <h3 class="text-sm text-slate-900 font-semibold">
               竞赛库快照
             </h3>
-            <div class="grid md:grid-cols-2 gap-2 mt-3">
+            <div class="mt-3 gap-2 grid md:grid-cols-2">
               <p v-for="item in contestSummaryRows(detailContestSnapshot.contest || null)" :key="item.label" class="text-slate-700">
                 <span class="text-slate-400">{{ item.label }}：</span>{{ item.value }}
               </p>
@@ -638,16 +650,16 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
               <p class="text-slate-400 mb-1">
                 时间节点
               </p>
-              <pre class="whitespace-pre-wrap break-words rounded bg-slate-50 border border-slate-200 p-2 text-[11px] text-slate-700">{{ contestTimelineText(detailContestSnapshot.timelines) }}</pre>
+              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ contestTimelineText(detailContestSnapshot.timelines) }}</pre>
             </div>
           </div>
 
-          <div class="border border-slate-200 rounded p-3">
+          <div class="p-3 border border-slate-200 rounded">
             <h3 class="text-sm text-slate-900 font-semibold">
               赛道库快照
             </h3>
-            <div v-if="detailContestSnapshot.tracks.length" class="space-y-2 mt-3">
-              <div v-for="item in detailContestSnapshot.tracks" :key="item.externalId" class="rounded border border-slate-200 p-2 bg-slate-50">
+            <div v-if="detailContestSnapshot.tracks.length" class="mt-3 space-y-2">
+              <div v-for="item in detailContestSnapshot.tracks" :key="item.externalId" class="p-2 border border-slate-200 rounded bg-slate-50">
                 {{ trackSummary(item) }}
               </div>
             </div>
@@ -656,16 +668,16 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
               <p class="text-slate-400 mb-1">
                 赛道时间节点
               </p>
-              <pre class="whitespace-pre-wrap break-words rounded bg-slate-50 border border-slate-200 p-2 text-[11px] text-slate-700">{{ trackTimelineText(detailContestSnapshot.trackTimelines) }}</pre>
+              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ trackTimelineText(detailContestSnapshot.trackTimelines) }}</pre>
             </div>
           </div>
 
-          <div class="border border-slate-200 rounded p-3">
+          <div class="p-3 border border-slate-200 rounded">
             <h3 class="text-sm text-slate-900 font-semibold">
               资料库快照
             </h3>
-            <div v-if="detailContestSnapshot.resources.length" class="space-y-2 mt-3">
-              <div v-for="item in detailContestSnapshot.resources" :key="item.externalId" class="rounded border border-slate-200 p-2 bg-slate-50">
+            <div v-if="detailContestSnapshot.resources.length" class="mt-3 space-y-2">
+              <div v-for="item in detailContestSnapshot.resources" :key="item.externalId" class="p-2 border border-slate-200 rounded bg-slate-50">
                 {{ resourceSummary(item) }}
               </div>
             </div>
@@ -673,24 +685,24 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
           </div>
         </section>
 
-        <section v-else-if="detailPolicySnapshot" class="border border-slate-200 rounded p-3">
+        <section v-else-if="detailPolicySnapshot" class="p-3 border border-slate-200 rounded">
           <h3 class="text-sm text-slate-900 font-semibold">
             政策库快照
           </h3>
-          <div v-if="detailPolicySnapshot.items.length" class="space-y-2 mt-3">
-            <div v-for="item in detailPolicySnapshot.items" :key="item.externalId" class="rounded border border-slate-200 p-2 bg-slate-50">
+          <div v-if="detailPolicySnapshot.items.length" class="mt-3 space-y-2">
+            <div v-for="item in detailPolicySnapshot.items" :key="item.externalId" class="p-2 border border-slate-200 rounded bg-slate-50">
               {{ policySummary(item) }}
             </div>
           </div>
           <a-empty v-else description="当前版本没有政策项" />
         </section>
 
-        <section class="border border-slate-200 rounded p-3">
+        <section class="p-3 border border-slate-200 rounded">
           <h3 class="text-sm text-slate-900 font-semibold">
             审批日志
           </h3>
-          <div v-if="detail.logs.length" class="space-y-2 mt-3">
-            <div v-for="item in detail.logs" :key="item.id" class="rounded border border-slate-200 p-2">
+          <div v-if="detail.logs.length" class="mt-3 space-y-2">
+            <div v-for="item in detail.logs" :key="item.id" class="p-2 border border-slate-200 rounded">
               <div class="flex flex-wrap gap-2 items-center justify-between">
                 <p class="text-slate-900 font-medium">
                   {{ actionLabel(item.action) }}
@@ -702,13 +714,13 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
               <p class="text-slate-500 mt-1">
                 操作人：{{ item.actorUserId || '-' }}
               </p>
-              <pre v-if="Object.keys(item.payload || {}).length" class="mt-2 whitespace-pre-wrap break-words rounded bg-slate-50 border border-slate-200 p-2 text-[11px] text-slate-700">{{ JSON.stringify(item.payload, null, 2) }}</pre>
+              <pre v-if="Object.keys(item.payload || {}).length" class="text-[11px] text-slate-700 mt-2 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ JSON.stringify(item.payload, null, 2) }}</pre>
             </div>
           </div>
           <a-empty v-else description="暂无审批日志" />
         </section>
 
-        <section class="border border-slate-200 rounded p-3 space-y-3">
+        <section class="p-3 border border-slate-200 rounded space-y-3">
           <h3 class="text-sm text-slate-900 font-semibold">
             审批操作
           </h3>

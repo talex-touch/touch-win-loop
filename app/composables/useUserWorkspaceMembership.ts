@@ -1,3 +1,4 @@
+import type { ComputedRef } from 'vue'
 import type {
   ApiResponse,
   InvitationWithToken,
@@ -6,7 +7,6 @@ import type {
   WorkspaceMemberSummary,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
-import type { ComputedRef } from 'vue'
 
 type EditableWorkspaceRole = 'admin' | 'manager' | 'member'
 

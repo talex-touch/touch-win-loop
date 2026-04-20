@@ -1,9 +1,9 @@
+import type { ComputedRef } from 'vue'
 import type {
   DesignElementModel,
   DesignFrameModel,
   DesignPageModel,
 } from '~~/shared/types/domain'
-import type { ComputedRef } from 'vue'
 import { computed } from 'vue'
 
 export type DesignLayerTreeNodeType = 'page' | 'page_root_group' | 'frame' | 'frame_children_group' | 'element'

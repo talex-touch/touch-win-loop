@@ -276,7 +276,8 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.workspace-assistant-message-content__citation-toggle--expanded .workspace-assistant-message-content__citation-toggle-icon {
+.workspace-assistant-message-content__citation-toggle--expanded
+  .workspace-assistant-message-content__citation-toggle-icon {
   transform: rotate(90deg);
 }
 

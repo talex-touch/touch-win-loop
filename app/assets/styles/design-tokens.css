@@ -1,6 +1,6 @@
 :root {
-  --wl-font-sans: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
-  --wl-font-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  --wl-font-sans: 'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  --wl-font-mono: 'IBM Plex Mono', 'SFMono-Regular', 'Consolas', monospace;
 
   --wl-text-caption: 12px;
   --wl-text-body-sm: 13px;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { GraphSourceNode, SceneNode } from '~~/shared/types/domain'
-import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
+import { computed } from 'vue'
 
 const props = withDefaults(defineProps<{
   data?: {
@@ -26,27 +26,27 @@ const nodeType = computed(() => normalizeString(graphNode.value?.type) || 'node'
 
 <template>
   <div
-    class="relative h-full w-full cursor-pointer rounded-[20px] border bg-slate-950/96 px-4 py-3 shadow-[0_18px_56px_rgba(15,23,42,0.22)] transition-colors"
+    class="px-4 py-3 border rounded-[20px] bg-slate-950/96 h-full w-full cursor-pointer shadow-[0_18px_56px_rgba(15,23,42,0.22)] transition-colors relative"
     :class="selected ? 'border-sky-400 ring-2 ring-sky-300/30' : 'border-slate-700/80 hover:border-slate-500'"
   >
     <Handle
       type="target"
       :position="Position.Left"
-      class="!h-3 !w-3 !border-2 !border-slate-950 !bg-sky-400"
+      class="!border-2 !border-slate-950 !bg-sky-400 !h-3 !w-3"
     />
     <Handle
       type="source"
       :position="Position.Right"
-      class="!h-3 !w-3 !border-2 !border-slate-950 !bg-sky-400"
+      class="!border-2 !border-slate-950 !bg-sky-400 !h-3 !w-3"
     />
 
-    <div class="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+    <div class="text-[10px] text-slate-400 tracking-[0.16em] font-semibold px-2.5 py-1 border border-white/10 rounded-full bg-white/5 uppercase">
       {{ nodeType }}
     </div>
-    <p class="mt-3 text-sm font-semibold leading-6 text-slate-100">
+    <p class="text-sm text-slate-100 leading-6 font-semibold mt-3">
       {{ nodeLabel }}
     </p>
-    <p class="mt-2 text-[11px] text-slate-500">
+    <p class="text-[11px] text-slate-500 mt-2">
       {{ graphNode?.id || sceneNode?.id || 'node' }}
     </p>
   </div>

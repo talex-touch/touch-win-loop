@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed } from 'vue'
 
 const props = withDefaults(
   defineProps<{
-    leftWidth?: number;
-    leftCollapsed?: boolean;
-    collapsedLeftWidth?: number;
-    rightWidth?: number;
-    rightCollapsed?: boolean;
-    collapsedRightWidth?: number;
-    minCanvasWidth?: number;
-    gap?: number;
+    leftWidth?: number
+    leftCollapsed?: boolean
+    collapsedLeftWidth?: number
+    rightWidth?: number
+    rightCollapsed?: boolean
+    collapsedRightWidth?: number
+    minCanvasWidth?: number
+    gap?: number
   }>(),
   {
     leftWidth: 336,
@@ -22,33 +22,33 @@ const props = withDefaults(
     minCanvasWidth: 720,
     gap: 14,
   },
-);
+)
 
 const layoutStyle = computed<Record<string, string>>(() => {
   const leftWidth = props.leftCollapsed
     ? props.collapsedLeftWidth
-    : props.leftWidth;
+    : props.leftWidth
   const rightWidth = props.rightCollapsed
     ? props.collapsedRightWidth
-    : props.rightWidth;
+    : props.rightWidth
   return {
-    "--wl-design-gap": `${props.gap}px`,
-    "--wl-design-left-width": `${leftWidth}px`,
-    "--wl-design-right-width": `${rightWidth}px`,
-    "--wl-design-min-canvas-width": `${props.minCanvasWidth}px`,
-  };
-});
+    '--wl-design-gap': `${props.gap}px`,
+    '--wl-design-left-width': `${leftWidth}px`,
+    '--wl-design-right-width': `${rightWidth}px`,
+    '--wl-design-min-canvas-width': `${props.minCanvasWidth}px`,
+  }
+})
 </script>
 
 <template>
   <div
-    class="wl-design-layout relative h-full min-h-0 w-full overflow-hidden"
+    class="wl-design-layout h-full min-h-0 w-full relative overflow-hidden"
     :style="layoutStyle"
     :data-left-collapsed="props.leftCollapsed ? 'true' : 'false'"
     :data-right-collapsed="props.rightCollapsed ? 'true' : 'false'"
     data-testid="wl-design-layout"
   >
-    <section class="absolute inset-0 z-0 min-h-0 min-w-0">
+    <section class="min-h-0 min-w-0 inset-0 absolute z-0">
       <slot name="canvas" />
     </section>
 
@@ -75,7 +75,7 @@ const layoutStyle = computed<Record<string, string>>(() => {
       data-wl-design-floating-controls-root
     />
 
-    <div class="pointer-events-none absolute inset-0 z-[50]">
+    <div class="pointer-events-none inset-0 absolute z-[50]">
       <slot name="overlay" />
     </div>
   </div>
@@ -92,19 +92,13 @@ const layoutStyle = computed<Record<string, string>>(() => {
 
 .wl-design-layout__dock--left {
   left: var(--wl-design-gap);
-  width: min(
-    var(--wl-design-left-width),
-    calc(100vw - (var(--wl-design-gap) * 2))
-  );
+  width: min(var(--wl-design-left-width), calc(100vw - (var(--wl-design-gap) * 2)));
   transition: width 240ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .wl-design-layout__dock--right {
   right: var(--wl-design-gap);
-  width: min(
-    var(--wl-design-right-width),
-    calc(100vw - (var(--wl-design-gap) * 2))
-  );
+  width: min(var(--wl-design-right-width), calc(100vw - (var(--wl-design-gap) * 2)));
   transition: width 240ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -166,13 +160,12 @@ const layoutStyle = computed<Record<string, string>>(() => {
     height: min(36vh, 320px);
   }
 
-  .wl-design-layout[data-left-collapsed="true"] .wl-design-layout__dock--left {
+  .wl-design-layout[data-left-collapsed='true'] .wl-design-layout__dock--left {
     right: auto;
     width: min(var(--wl-design-left-width), calc(100vw - 24px));
   }
 
-  .wl-design-layout[data-right-collapsed="true"]
-    .wl-design-layout__dock--right {
+  .wl-design-layout[data-right-collapsed='true'] .wl-design-layout__dock--right {
     left: auto;
     width: min(var(--wl-design-right-width), calc(100vw - 24px));
   }

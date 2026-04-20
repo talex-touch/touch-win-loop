@@ -54,13 +54,13 @@ function centerY(node: SceneNode): number {
 
 <template>
   <div class="bg-slate-50 h-full min-h-0 w-full overflow-auto">
-    <div v-if="isComposition" class="flex min-h-full items-center justify-center p-6">
-      <div class="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" v-html="svgMarkup" />
+    <div v-if="isComposition" class="p-6 flex min-h-full items-center justify-center">
+      <div class="border border-slate-200 rounded-2xl bg-white w-full shadow-sm overflow-hidden" v-html="svgMarkup" />
     </div>
 
-    <div v-else-if="normalizedDocument.sceneModel.nodes.length > 0" class="h-full min-h-full p-4">
+    <div v-else-if="normalizedDocument.sceneModel.nodes.length > 0" class="p-4 h-full min-h-full">
       <svg
-        class="h-full min-h-[520px] w-full rounded-2xl border border-slate-200 bg-white shadow-sm"
+        class="border border-slate-200 rounded-2xl bg-white h-full min-h-[520px] w-full shadow-sm"
         :viewBox="`0 0 ${artboard.width} ${artboard.height}`"
         xmlns="http://www.w3.org/2000/svg"
       >
@@ -151,12 +151,12 @@ function centerY(node: SceneNode): number {
       </svg>
     </div>
 
-    <div v-else class="flex min-h-full items-center justify-center p-6">
-      <div class="max-w-md rounded-2xl border border-slate-300 border-dashed bg-white px-6 py-8 text-center shadow-sm">
-        <div class="text-sm font-semibold text-slate-800">
+    <div v-else class="p-6 flex min-h-full items-center justify-center">
+      <div class="px-6 py-8 text-center border border-slate-300 rounded-2xl border-dashed bg-white max-w-md shadow-sm">
+        <div class="text-sm text-slate-800 font-semibold">
           当前 SceneDocument 还没有可预览内容
         </div>
-        <p class="mt-2 text-xs leading-6 text-slate-500">
+        <p class="text-xs text-slate-500 leading-6 mt-2">
           可以先导入 Mermaid、Markdown 大纲、DDL，或者在设计页上传截图生成设备边框预览。
         </p>
       </div>

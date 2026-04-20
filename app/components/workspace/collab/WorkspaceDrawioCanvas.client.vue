@@ -303,7 +303,7 @@ defineExpose({
 
       <div
         v-if="locateFeedbackMessage"
-        class="pointer-events-none absolute left-4 top-4 z-10 rounded-2xl border border-sky-200 bg-sky-50/96 px-4 py-2 text-[12px] font-semibold leading-5 text-sky-700 shadow-sm"
+        class="text-[12px] text-sky-700 leading-5 font-semibold px-4 py-2 border border-sky-200 rounded-2xl bg-sky-50/96 pointer-events-none shadow-sm left-4 top-4 absolute z-10"
       >
         {{ locateFeedbackMessage }}
       </div>

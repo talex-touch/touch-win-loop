@@ -131,7 +131,7 @@ describe('飞书多维表格版本草稿链路', () => {
     assert.match(componentSource, /SYNC_RUN_ALL_SKIPPED_HINT/, '编辑器未提供全量跳过提示文案')
     assert.match(componentSource, /function syncRunHintText\(/, '编辑器未统一输出执行结果提示')
     assert.match(componentSource, /computed\(\(\) => 'body'\)/, '编辑器未把选择器弹层挂回 body，可能仍被 Drawer 层级吃掉')
-    assert.match(serviceSource, /function buildSummaryBase\(records: FeishuBitableRecord\[], sourceRecordCount\?: number\)/, '服务端未支持按原始记录数构建汇总')
+    assert.match(serviceSource, /function buildSummaryBase\(records: FeishuBitableRecord\[\], sourceRecordCount\?: number\)/, '服务端未支持按原始记录数构建汇总')
     assert.match(serviceSource, /skippedCount:\s*Math\.max\(0,\s*fetchedCount - processedCount\)/, '服务端未把过滤掉的记录计入跳过数')
     assert.match(serviceSource, /sourceRecordCount:\s*records\.length/, '执行链路未透传原始飞书记录数')
     assert.match(serviceSource, /contestId: toText\(result\.rows\[0\]\?\.live_entity_id\) \|\| null/, '赛事关联解析仍未改用本地 toText')

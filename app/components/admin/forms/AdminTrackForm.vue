@@ -18,7 +18,7 @@ interface TrackFormModel {
   status: ContestStatus
 }
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   form: TrackFormModel
   loading?: boolean
   saving?: boolean

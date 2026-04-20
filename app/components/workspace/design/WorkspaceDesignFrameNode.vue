@@ -8,30 +8,13 @@ import type {
 } from '~~/shared/types/domain'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import {
-  isFlatDesignFrameKind,
   isDesignFrameClipContentEnabled,
   isDeviceDesignFrameKind,
+  isFlatDesignFrameKind,
   renderCompositionFramePreviewSvg,
   resolveDesignFrameSurfaceBackground,
   resolveDesignFrameSurfaceRadius,
 } from '~~/shared/utils/scene-document'
-
-const MIN_FRAME_WIDTH = 280
-const MIN_FRAME_HEIGHT = 180
-
-type ResizeDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-type ResizePatch = Partial<{ x: number, y: number, width: number, height: number }>
-type ResizeSession = {
-  direction: ResizeDirection
-  startClientX: number
-  startClientY: number
-  startFrame: {
-    x: number
-    y: number
-    width: number
-    height: number
-  }
-}
 
 const props = withDefaults(defineProps<{
   frame: DesignFrameModel
@@ -51,6 +34,22 @@ const props = withDefaults(defineProps<{
   onResizePreview: undefined,
   onResizeCommit: undefined,
 })
+const MIN_FRAME_WIDTH = 280
+const MIN_FRAME_HEIGHT = 180
+
+type ResizeDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+type ResizePatch = Partial<{ x: number, y: number, width: number, height: number }>
+interface ResizeSession {
+  direction: ResizeDirection
+  startClientX: number
+  startClientY: number
+  startFrame: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+}
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -241,7 +240,7 @@ onBeforeUnmount(() => {
 
 <template>
   <article
-    class="relative h-full w-full overflow-hidden border"
+    class="border h-full w-full relative overflow-hidden"
     :class="selected ? 'border-sky-400 ring-2 ring-sky-300/40' : 'border-slate-300'"
     :style="{
       backgroundColor: themeTokens.background,
@@ -251,18 +250,18 @@ onBeforeUnmount(() => {
     }"
   >
     <div
-      class="absolute inset-0"
+      class="inset-0 absolute"
       :style="{
         background: themeTokens.background,
       }"
     />
-    <div class="absolute left-5 top-4 z-10 flex flex-wrap items-center gap-2">
-      <span class="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/90">
+    <div class="flex flex-wrap gap-2 items-center left-5 top-4 absolute z-10">
+      <span class="text-[10px] text-white/90 tracking-[0.18em] font-semibold px-2.5 py-1 border border-white/15 rounded-full bg-white/10 uppercase">
         {{ frame.kind }}
       </span>
       <span
         v-if="badgeText"
-        class="rounded-full px-2.5 py-1 text-[10px] font-semibold"
+        class="text-[10px] font-semibold px-2.5 py-1 rounded-full"
         :style="{
           backgroundColor: `${themeTokens.accent}22`,
           color: themeTokens.accent,
@@ -272,7 +271,7 @@ onBeforeUnmount(() => {
       </span>
       <span
         v-if="frame.locked"
-        class="rounded-full border border-amber-200/40 bg-amber-300/10 px-2.5 py-1 text-[10px] font-semibold text-amber-100"
+        class="text-[10px] text-amber-100 font-semibold px-2.5 py-1 border border-amber-200/40 rounded-full bg-amber-300/10"
       >
         Locked
       </span>
@@ -280,45 +279,45 @@ onBeforeUnmount(() => {
 
     <template v-if="isDeviceFrame">
       <div
-        class="pointer-events-none absolute inset-0 overflow-hidden"
+        class="pointer-events-none inset-0 absolute overflow-hidden"
         :style="{ background: 'transparent' }"
         v-html="deviceFramePreviewSvg"
       />
     </template>
 
     <template v-else-if="frame.kind === 'diagram'">
-      <div class="absolute inset-0 p-6 pt-16">
-        <div class="grid grid-cols-3 gap-3">
-          <div class="rounded-2xl border border-white/10 bg-white/10 p-3">
-            <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/50">
+      <div class="p-6 pt-16 inset-0 absolute">
+        <div class="gap-3 grid grid-cols-3">
+          <div class="p-3 border border-white/10 rounded-2xl bg-white/10">
+            <p class="text-[10px] text-white/50 tracking-[0.16em] font-semibold uppercase">
               Draw Mode
             </p>
-            <p class="mt-2 text-sm font-semibold text-white">
+            <p class="text-sm text-white font-semibold mt-2">
               {{ diagramStats.drawMode }}
             </p>
           </div>
-          <div class="rounded-2xl border border-white/10 bg-white/10 p-3">
-            <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/50">
+          <div class="p-3 border border-white/10 rounded-2xl bg-white/10">
+            <p class="text-[10px] text-white/50 tracking-[0.16em] font-semibold uppercase">
               Nodes
             </p>
-            <p class="mt-2 text-sm font-semibold text-white">
+            <p class="text-sm text-white font-semibold mt-2">
               {{ diagramStats.nodeCount }}
             </p>
           </div>
-          <div class="rounded-2xl border border-white/10 bg-white/10 p-3">
-            <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/50">
+          <div class="p-3 border border-white/10 rounded-2xl bg-white/10">
+            <p class="text-[10px] text-white/50 tracking-[0.16em] font-semibold uppercase">
               Edges
             </p>
-            <p class="mt-2 text-sm font-semibold text-white">
+            <p class="text-sm text-white font-semibold mt-2">
               {{ diagramStats.edgeCount }}
             </p>
           </div>
         </div>
-        <div class="mt-5 rounded-[24px] border border-dashed border-white/12 bg-white/5 p-5">
-          <h3 class="text-xl font-semibold leading-tight" :style="{ color: themeTokens.text }">
+        <div class="mt-5 p-5 border border-white/12 rounded-[24px] border-dashed bg-white/5">
+          <h3 class="text-xl leading-tight font-semibold" :style="{ color: themeTokens.text }">
             {{ titleText }}
           </h3>
-          <p class="mt-3 text-sm leading-6" :style="{ color: themeTokens.muted }">
+          <p class="text-sm leading-6 mt-3" :style="{ color: themeTokens.muted }">
             双击后进入图编辑态的下一步仍然走语义化结构，不把节点打散成普通自由对象。
           </p>
         </div>
@@ -326,31 +325,31 @@ onBeforeUnmount(() => {
     </template>
 
     <template v-else>
-      <div class="absolute inset-0 p-6 pt-16">
-        <h3 class="max-w-[70%] text-2xl font-semibold leading-tight" :style="{ color: themeTokens.text }">
+      <div class="p-6 pt-16 inset-0 absolute">
+        <h3 class="text-2xl leading-tight font-semibold max-w-[70%]" :style="{ color: themeTokens.text }">
           {{ titleText }}
         </h3>
-        <p v-if="subtitleText" class="mt-3 max-w-[76%] text-sm leading-6" :style="{ color: themeTokens.muted }">
+        <p v-if="subtitleText" class="text-sm leading-6 mt-3 max-w-[76%]" :style="{ color: themeTokens.muted }">
           {{ subtitleText }}
         </p>
-        <div class="mt-6 grid h-[58%] grid-cols-[minmax(0,1fr),220px] gap-4">
-          <div class="rounded-[24px] border border-white/10 bg-white/10 p-4">
-            <div class="flex h-full flex-col justify-between">
+        <div class="mt-6 gap-4 grid grid-cols-[minmax(0,1fr),220px] h-[58%]">
+          <div class="p-4 border border-white/10 rounded-[24px] bg-white/10">
+            <div class="flex flex-col h-full justify-between">
               <div class="space-y-3">
-                <div class="h-3 w-24 rounded-full bg-white/15" />
-                <div class="h-3 w-full rounded-full bg-white/10" />
-                <div class="h-3 w-[82%] rounded-full bg-white/10" />
+                <div class="rounded-full bg-white/15 h-3 w-24" />
+                <div class="rounded-full bg-white/10 h-3 w-full" />
+                <div class="rounded-full bg-white/10 h-3 w-[82%]" />
               </div>
               <div class="flex gap-2">
-                <span class="h-2.5 w-2.5 rounded-full bg-white/20" />
-                <span class="h-2.5 w-2.5 rounded-full bg-white/20" />
-                <span class="h-2.5 w-2.5 rounded-full bg-white/20" />
+                <span class="rounded-full bg-white/20 h-2.5 w-2.5" />
+                <span class="rounded-full bg-white/20 h-2.5 w-2.5" />
+                <span class="rounded-full bg-white/20 h-2.5 w-2.5" />
               </div>
             </div>
           </div>
-          <div class="overflow-hidden rounded-[24px] border border-white/10 bg-white/10">
+          <div class="border border-white/10 rounded-[24px] bg-white/10 overflow-hidden">
             <img v-if="imageSrc" :src="imageSrc" alt="" class="h-full w-full object-cover">
-            <div v-else class="flex h-full items-center justify-center text-sm font-medium text-white/50">
+            <div v-else class="text-sm text-white/50 font-medium flex h-full items-center justify-center">
               图片 / 形状
             </div>
           </div>
@@ -360,42 +359,42 @@ onBeforeUnmount(() => {
 
     <template v-if="selected && !disabled">
       <button
-        class="absolute -left-1.5 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-w-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-w-resize shadow-sm top-1/2 absolute z-20 -translate-y-1/2 -left-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('w', $event)"
       />
       <button
-        class="absolute -right-1.5 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-e-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-e-resize shadow-sm top-1/2 absolute z-20 -translate-y-1/2 -right-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('e', $event)"
       />
       <button
-        class="absolute left-1/2 -top-1.5 z-20 h-3.5 w-3.5 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-n-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-n-resize shadow-sm left-1/2 absolute z-20 -translate-x-1/2 -top-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('n', $event)"
       />
       <button
-        class="absolute bottom-[-0.375rem] left-1/2 z-20 h-3.5 w-3.5 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-s-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-s-resize shadow-sm bottom-[-0.375rem] left-1/2 absolute z-20 -translate-x-1/2"
         type="button"
         @pointerdown.stop.prevent="startResize('s', $event)"
       />
       <button
-        class="absolute -left-1.5 -top-1.5 z-20 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-nw-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-nw-resize shadow-sm absolute z-20 -left-1.5 -top-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('nw', $event)"
       />
       <button
-        class="absolute -right-1.5 -top-1.5 z-20 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-ne-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-ne-resize shadow-sm absolute z-20 -right-1.5 -top-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('ne', $event)"
       />
       <button
-        class="absolute -bottom-1.5 -left-1.5 z-20 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-sw-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-sw-resize shadow-sm absolute z-20 -bottom-1.5 -left-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('sw', $event)"
       />
       <button
-        class="absolute -bottom-1.5 -right-1.5 z-20 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-se-resize"
+        class="border border-white rounded-full bg-sky-500 h-3.5 w-3.5 cursor-se-resize shadow-sm absolute z-20 -bottom-1.5 -right-1.5"
         type="button"
         @pointerdown.stop.prevent="startResize('se', $event)"
       />

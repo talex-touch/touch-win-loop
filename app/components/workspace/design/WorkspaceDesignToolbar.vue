@@ -57,7 +57,7 @@ function handleImageInputChange(event: Event): void {
 
 <template>
   <div
-    class="workspace-design-toolbar no-scrollbar flex flex-nowrap items-end justify-center gap-2 overflow-x-auto px-2 py-2"
+    class="workspace-design-toolbar no-scrollbar px-2 py-2 flex flex-nowrap gap-2 items-end justify-center overflow-x-auto"
     data-testid="workspace-design-toolbar"
     @mouseleave="handleToolHover(null)"
   >

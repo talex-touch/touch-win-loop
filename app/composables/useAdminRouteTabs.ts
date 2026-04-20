@@ -40,16 +40,16 @@ function normalizeAdminRoutePath(path: string): string {
 
 function resolveContestModuleLabel(segment: string): string {
   const map: Record<string, string> = {
-    overview: '基础信息',
-    faq: 'FAQ',
-    tracks: '赛道',
+    'overview': '基础信息',
+    'faq': 'FAQ',
+    'tracks': '赛道',
     'track-timelines': '赛道时间线',
-    timelines: '时间节点',
-    rubrics: '评委细则',
+    'timelines': '时间节点',
+    'rubrics': '评委细则',
     'judge-guidelines': '赛道详解',
-    resources: '资料',
+    'resources': '资料',
     'ai-prompts': 'AI提示词',
-    audit: '审计历史',
+    'audit': '审计历史',
   }
   return map[segment] || segment
 }

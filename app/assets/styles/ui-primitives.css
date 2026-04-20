@@ -406,7 +406,14 @@
   font-family: var(--wl-font-sans);
 }
 
-:where(.arco-btn-size-small, .arco-btn-size-mini, .arco-select-view-size-small, .arco-picker-size-small, .arco-input-size-small, .arco-input-number-size-small) {
+:where(
+  .arco-btn-size-small,
+  .arco-btn-size-mini,
+  .arco-select-view-size-small,
+  .arco-picker-size-small,
+  .arco-input-size-small,
+  .arco-input-number-size-small
+) {
   font-size: var(--wl-text-body-sm);
 }
 
@@ -439,50 +446,50 @@
   background: var(--wl-surface);
 }
 
-:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell) :where(button, input, textarea, select) {
+:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell)
+  :where(button, input, textarea, select) {
   font-family: inherit;
 }
 
-:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell) :where(.text-\[10px\], .text-\[11px\]) {
+:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell)
+  :where(.text-\[10px\], .text-\[11px\]) {
   font-size: var(--wl-text-caption) !important;
   line-height: var(--wl-leading-normal) !important;
 }
 
-:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell) :where(
-  [class*="__meta"],
-  [class*="__hint"],
-  [class*="__status"],
-  [class*="__count"],
-  [class*="__line"],
-  [class*="__detail"],
-  [class*="__subtitle"],
-  [class*="__label"],
-  [class*="__value"],
-  .workspace-empty-text,
-  .workspace-log-text,
-  .workspace-config-summary
-) {
+:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell)
+  :where(
+    [class*='__meta'],
+    [class*='__hint'],
+    [class*='__status'],
+    [class*='__count'],
+    [class*='__line'],
+    [class*='__detail'],
+    [class*='__subtitle'],
+    [class*='__label'],
+    [class*='__value'],
+    .workspace-empty-text,
+    .workspace-log-text,
+    .workspace-config-summary
+  ) {
   font-size: var(--wl-text-caption) !important;
   line-height: var(--wl-leading-normal);
 }
 
-:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell) :where(
-  [class*="__title"],
-  [class*="__name"],
-  .workspace-tree-block__title,
-  .workspace-card h3
-) {
+:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell)
+  :where([class*='__title'], [class*='__name'], .workspace-tree-block__title, .workspace-card h3) {
   color: var(--wl-text-primary);
 }
 
-:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell) :where(
-  .workspace-btn,
-  .workspace-pill,
-  .workspace-inline-action,
-  .workspace-upload-task-row__action,
-  .workspace-upload-drawer__action,
-  .workspace-mode-select
-) {
+:where(.workspace-left-dock, .workspace-main-panel, .workspace-right-sidebar, .workspace-status-shell)
+  :where(
+    .workspace-btn,
+    .workspace-pill,
+    .workspace-inline-action,
+    .workspace-upload-task-row__action,
+    .workspace-upload-drawer__action,
+    .workspace-mode-select
+  ) {
   font-size: var(--wl-text-caption);
 }
 

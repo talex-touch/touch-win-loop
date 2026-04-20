@@ -83,7 +83,7 @@ onMounted(loadData)
     </section>
 
     <section class="border border-slate-200 rounded-lg bg-white overflow-hidden">
-      <div class="px-4 py-3 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+      <div class="px-4 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
         <p class="text-sm text-slate-900 font-semibold">
           已发布政策项
         </p>
@@ -98,7 +98,7 @@ onMounted(loadData)
         </a-skeleton>
       </div>
 
-      <div v-else-if="items.length" class="divide-y divide-slate-200">
+      <div v-else-if="items.length" class="divide-slate-200 divide-y">
         <div v-for="item in items" :key="item.id" class="p-4">
           <div class="flex flex-wrap gap-2 items-center justify-between">
             <div>
@@ -116,7 +116,7 @@ onMounted(loadData)
           <p class="text-xs text-slate-600 mt-3">
             {{ item.summary || '暂无简介' }}
           </p>
-          <div class="grid md:grid-cols-2 gap-2 mt-3 text-[11px] text-slate-500">
+          <div class="text-[11px] text-slate-500 mt-3 gap-2 grid md:grid-cols-2">
             <p>官网资料：{{ item.officialMaterial || '-' }}</p>
             <p>官网链接：{{ item.officialMaterialLink || '-' }}</p>
             <p>微信公众号：{{ item.wechatMaterial || '-' }}</p>

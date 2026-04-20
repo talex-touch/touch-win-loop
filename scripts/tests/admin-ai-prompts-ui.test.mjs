@@ -25,7 +25,7 @@ it('页面已切换为多 Provider 管理入口', async () => {
   assert.doesNotMatch(source, /这里只保留共享上游连接信息/, '不应继续展示共享上游说明')
 })
 
-it('Provider 类型固定包含 LLM 与 search-only 首批枚举', async () => {
+it('provider 类型固定包含 LLM 与 search-only 首批枚举', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
   assert.match(source, /value:\s*'newapi'[\s\S]*label:\s*'NewAPI'/, '缺少 NewAPI 类型')
@@ -44,7 +44,7 @@ it('默认模型与联网能力不再单独占据渠道和模型页', async () =
   assert.doesNotMatch(source, /价格优先级固定为 手工覆盖 > NewAPI 导入 > none。/, '旧统一模型池说明不应继续存在')
 })
 
-it('Provider 抽屉支持独立测试、拉取模型和维护模型池', async () => {
+it('provider 抽屉支持独立测试、拉取模型和维护模型池', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
   assert.match(source, /v-model:visible="providerEditorVisible"/, '缺少 Provider 编辑抽屉')

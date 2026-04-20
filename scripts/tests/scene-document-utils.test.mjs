@@ -9,7 +9,7 @@ async function loadSceneUtils() {
   return import(pathToFileURL(SCENE_UTILS_PATH).href)
 }
 
-it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', async () => {
+it('mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', async () => {
   const {
     appendDesignElementToSceneDocument,
     appendDesignFrameToSceneDocument,
@@ -109,7 +109,7 @@ it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', 
         path: 'apps/web',
         dependencies: {
           '@winloop/api': 'workspace:*',
-          vue: '^3.5.0',
+          'vue': '^3.5.0',
         },
       },
       {
@@ -117,7 +117,7 @@ it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', 
         path: 'apps/api',
         dependencies: {
           '@winloop/shared': 'workspace:*',
-          pg: '^8.16.0',
+          'pg': '^8.16.0',
         },
       },
       {
@@ -150,8 +150,8 @@ it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', 
 
   const architectureMermaid = exportArchitectureModelToMermaid(dockerComposeArchitecture.sceneDocument, 'dependency_map')
   assert.match(architectureMermaid, /flowchart TD/)
-  assert.match(architectureMermaid, /web -->\|\"depends_on\"\| api/)
-  assert.match(architectureMermaid, /api -->\|\"depends_on\"\| postgres/)
+  assert.match(architectureMermaid, /web -->\|"depends_on"\| api/)
+  assert.match(architectureMermaid, /api -->\|"depends_on"\| postgres/)
 
   const architectureWithContext = importArchitectureFromMetadata({
     systems: [{ id: 'system-platform', label: '平台系统', type: 'system' }],
