@@ -154,6 +154,8 @@ describe('飞书多维表格版本草稿链路', () => {
     assert.match(serviceSource, /SYNC_RUN_DIAGNOSTIC_SAMPLE_LIMIT/, '执行链路未限制详细诊断样本数量')
     assert.match(serviceSource, /filteredSamples\.push/, '执行链路未记录规则过滤样本')
     assert.match(serviceSource, /businessSkipSamples/, '执行链路未记录业务跳过样本')
+    assert.match(serviceSource, /function normalizeWritebackStatusField/, '执行链路未保护回填状态误写入记录状态字段')
+    assert.match(serviceSource, /field === autoSync\.recordStatusField && autoSync\.syncStatusField/, '回填状态字段误指向记录状态时未改写到同步信息')
     assert.match(typeSource, /export interface FeishuBitableSyncRunDiagnostics/, '共享类型未声明执行诊断结构')
     assert.match(typeSource, /filteredSamples\?: Array/, '共享类型未声明规则过滤样本')
     assert.match(typeSource, /businessSkipSamples\?: Array/, '共享类型未声明业务跳过样本')

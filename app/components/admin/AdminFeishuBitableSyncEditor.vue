@@ -283,8 +283,8 @@ const QUICK_START_STEPS = [
   '6. 首次建议手动执行一次，确认飞书侧出现已同步状态。',
 ]
 
-const WRITEBACK_FIELD_CONFIGS: Array<{ key: SyncWritebackFieldKey, label: string }> = [
-  { key: 'status', label: '状态字段' },
+const WRITEBACK_FIELD_CONFIGS: Array<{ key: SyncWritebackFieldKey, label: string, helper?: string }> = [
+  { key: 'status', label: '同步状态回填字段', helper: '建议选择“同步信息”。同步成功会把成功值写到这里，不要选择“记录状态”。' },
   { key: 'syncedAt', label: '同步时间字段' },
   { key: 'errorMessage', label: '错误摘要字段' },
   { key: 'reasonCode', label: '原因码字段' },
@@ -504,6 +504,15 @@ const selectedWritebackFieldCount = computed(() => WRITEBACK_FIELD_CONFIGS.filte
 const writebackSelectableFieldCount = computed(() => fieldInspection.value.filter(field => Boolean(toText(field.fieldName))).length)
 const writebackStatusLabel = computed(() => writebackForm.enabled ? '已启用回填' : '未启用回填')
 const savedAutoSyncState = computed(() => buildAutoSyncFormState(parseJsonTextLoose(itemForm.autoSyncText), itemForm.entityType))
+const writebackStatusFieldRisk = computed(() => {
+  if (!writebackForm.enabled || !savedAutoSyncState.value.enabled)
+    return false
+  const statusField = toText(writebackForm.status)
+  return Boolean(statusField && statusField === toText(savedAutoSyncState.value.recordStatusField) && toText(savedAutoSyncState.value.syncStatusField))
+})
+const effectiveWritebackStatusField = computed(() => writebackStatusFieldRisk.value
+  ? toText(savedAutoSyncState.value.syncStatusField)
+  : toText(writebackForm.status))
 const autoSyncStatusLabel = computed(() => savedAutoSyncState.value.enabled ? '已启用自动同步' : '未启用自动同步')
 const savedAutoSyncCompletedValues = computed(() => splitMultiValueText(savedAutoSyncState.value.completedValuesText))
 const savedAutoSyncWatchedFields = computed(() => splitMultiValueText(savedAutoSyncState.value.watchedFieldNamesText))
@@ -1234,11 +1243,15 @@ function isRequiredMappingField(entityType: FeishuBitableSyncItemEntityType, tar
   return listRequiredSyncItemFieldGroups(entityType).some(group => group.keys.includes(targetKey))
 }
 
+function resolveWritebackStatusFieldForPayload(): string {
+  return effectiveWritebackStatusField.value
+}
+
 function buildWritebackPayload(): Record<string, unknown> {
   return {
     enabled: Boolean(writebackForm.enabled),
     fields: {
-      status: toText(writebackForm.status),
+      status: resolveWritebackStatusFieldForPayload(),
       syncedAt: toText(writebackForm.syncedAt),
       errorMessage: toText(writebackForm.errorMessage),
       reasonCode: toText(writebackForm.reasonCode),
@@ -3999,6 +4012,9 @@ watch(() => props.selectedItemId, (value) => {
               刷新字段
             </a-button>
           </div>
+          <a-alert v-if="writebackStatusFieldRisk" type="warning" :show-icon="true">
+            当前“同步状态回填字段”选成了“{{ savedAutoSyncState.recordStatusField || '记录状态' }}”。保存时会自动改写到“{{ effectiveWritebackStatusField || '同步信息' }}”，避免把“已同步”写入业务记录状态。
+          </a-alert>
           <div class="text-[11px] text-slate-600 font-medium block">
             <div>启用回填</div>
             <div class="mt-2">
@@ -4029,6 +4045,9 @@ watch(() => props.selectedItemId, (value) => {
                   {{ fieldName }}
                 </a-option>
               </a-select>
+              <p v-if="field.helper" class="text-[10px] text-slate-400 m-0 mt-1 font-normal">
+                {{ field.helper }}
+              </p>
             </label>
             <label class="text-[11px] text-slate-600 font-medium block">
               成功值

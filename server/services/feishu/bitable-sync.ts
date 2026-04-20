@@ -822,6 +822,20 @@ function normalizeAutoSyncConfig(raw: unknown): NormalizedAutoSync {
   }
 }
 
+function normalizeWritebackStatusField(
+  rawField: unknown,
+  autoSync: NormalizedAutoSync,
+): string {
+  const field = toText(rawField)
+  if (!autoSync.enabled)
+    return field
+  if (!field)
+    return autoSync.syncStatusField
+  if (field === autoSync.recordStatusField && autoSync.syncStatusField)
+    return autoSync.syncStatusField
+  return field
+}
+
 function normalizeWritebackConfig(raw: unknown, autoSync?: FeishuBitableAutoSyncConfig | NormalizedAutoSync | null): NormalizedWriteback {
   const source = parseJsonObject(raw)
   const fields = parseJsonObject(source.fields)
@@ -831,7 +845,7 @@ function normalizeWritebackConfig(raw: unknown, autoSync?: FeishuBitableAutoSync
   return {
     enabled: source.enabled !== false,
     fields: {
-      status: toText(fields.status) || (normalizedAutoSync.enabled ? normalizedAutoSync.syncStatusField : ''),
+      status: normalizeWritebackStatusField(fields.status, normalizedAutoSync),
       syncedAt: toText(fields.syncedAt),
       errorMessage: toText(fields.errorMessage),
       reasonCode: toText(fields.reasonCode),
