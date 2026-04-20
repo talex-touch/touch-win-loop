@@ -65,6 +65,8 @@ it('飞书集成页与资料管理页会补齐同步数据查询入口', async (
   assert.match(overviewSource, /查看所有已同步的数据/, '飞书集成配置卡片未提供全局同步数据入口')
   assert.match(overviewSource, /查看同步数据/, '飞书同步信息列表未提供按 syncId 查询入口')
   assert.match(overviewSource, /buildSyncedDataLink\(\{ syncId: record\.id \}\)/, '飞书同步信息行入口未绑定 syncId')
+  assert.match(overviewSource, /const router = useRouter\(\)/, '飞书同步数据入口缺少路由解析兜底')
+  assert.match(overviewSource, /window\.location\.assign\(router\.resolve\(target\)\.href\)/, '飞书同步数据入口未在导航失败时降级为浏览器跳转')
   assert.match(resourcePageSource, /全览/, '资料管理页未提供同步数据全览入口')
   assert.match(resourcePageSource, /path: '\/admin\/integrations\/feishu\/data'[\s\S]*scope: 'resource'/, '资料管理页全览入口未跳转到 resource 视角的查询台')
 })

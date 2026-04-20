@@ -43,6 +43,7 @@ interface SourceViewsPayload {
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
+const router = useRouter()
 
 type ApiRequestError = Error & {
   statusCode?: number
@@ -535,7 +536,14 @@ function buildSyncedDataLink(options?: { syncId?: string }) {
 }
 
 async function openSyncedData(options?: { syncId?: string }) {
-  await navigateTo(buildSyncedDataLink(options))
+  const target = buildSyncedDataLink(options)
+  try {
+    await navigateTo(target)
+  }
+  catch {
+    if (import.meta.client)
+      window.location.assign(router.resolve(target).href)
+  }
 }
 
 function buildCreateSourceConfig(): FeishuBitableSourceConfig {
