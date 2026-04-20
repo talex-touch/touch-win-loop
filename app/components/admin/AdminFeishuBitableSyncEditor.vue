@@ -13,6 +13,7 @@ import type {
   FeishuBitableViewMeta,
   FeishuFieldDiagnosticItem,
   FeishuFieldInspectionItem,
+  FeishuSyncIssue,
   FeishuTaskLatestRunSummary,
   FeishuTaskScheduleMode,
 } from '~~/shared/types/domain'
@@ -416,6 +417,8 @@ const loadingViews = ref(false)
 const loadingFieldInspection = ref(false)
 const creatingItem = ref(false)
 const itemToggleMutating = reactive<Record<string, boolean>>({})
+const issueActionMutating = reactive<Record<string, boolean>>({})
+const editorRootRef = ref<HTMLElement | null>(null)
 const addItemDrawerVisible = ref(false)
 const itemDrawerVisible = ref(false)
 const quickStartGuideVisible = ref(false)
@@ -588,7 +591,7 @@ const currentItemLogSelectedRun = computed(() => {
 })
 const syncEnvironmentLabel = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.label || '未标记')
 const syncEnvironmentTagColor = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.tagColor || 'gray')
-const selectPopupContainer = computed(() => 'body')
+const selectPopupContainer = computed(() => editorRootRef.value)
 const mappingSelectPopupContainer = computed(() => 'body')
 const writebackSelectPopupContainer = computed(() => 'body')
 const autoSyncSelectPopupContainer = computed(() => 'body')
@@ -852,6 +855,20 @@ function syncIssueStatusColor(status?: string | null): string {
   if (status === 'ignored')
     return 'gray'
   return 'gray'
+}
+
+function sortedSyncIssues(issues: FeishuSyncIssue[] = []): FeishuSyncIssue[] {
+  const statusOrder: Record<string, number> = {
+    open: 0,
+    resolved: 1,
+    ignored: 2,
+  }
+  return [...issues].sort((left, right) => {
+    const statusDiff = (statusOrder[left.status] ?? 9) - (statusOrder[right.status] ?? 9)
+    if (statusDiff !== 0)
+      return statusDiff
+    return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''))
+  })
 }
 
 function formatDateTime(value?: string | null): string {
@@ -1130,11 +1147,11 @@ function extractSyncIssueFieldHints(code?: string | null, message?: string | nul
 
   const normalizedMessage = toText(message)
   for (const match of normalizedMessage.matchAll(/[（(]([^）)]+)[）)]/g))
-    collectSyncIssueFieldHints(hints, match[1])
+    collectSyncIssueFieldHints(hints, match[1] || '')
 
   const requiredFieldMatch = normalizedMessage.match(/必要字段[:：]?\s*([\w~\s,，/、或和]+)/)
   if (requiredFieldMatch)
-    collectSyncIssueFieldHints(hints, requiredFieldMatch[1])
+    collectSyncIssueFieldHints(hints, requiredFieldMatch[1] || '')
 
   for (const match of normalizedMessage.matchAll(/\b[a-z]\w*(?:~\w+)?\b/gi)) {
     const token = match[0]
@@ -1331,6 +1348,42 @@ async function refreshCurrentItemLogDrawer() {
   if (!itemId)
     return
   await loadCurrentItemLogDetail(itemId, currentItemLogSelectedRunId.value)
+}
+
+async function handleSyncIssueAction(issue: FeishuSyncIssue, action: 'resolve' | 'ignore') {
+  const issueId = toText(issue.id)
+  if (!issueId || issue.status !== 'open')
+    return
+
+  issueActionMutating[issueId] = true
+  clearFeedback()
+  try {
+    const path = action === 'resolve'
+      ? `/admin/integrations/feishu/link-issues/${encodeURIComponent(issueId)}/resolve`
+      : `/admin/integrations/feishu/link-issues/${encodeURIComponent(issueId)}/ignore`
+    await requestApi<FeishuSyncIssue>(
+      endpoint(path),
+      {
+        method: 'POST',
+        body: action === 'resolve'
+          ? { resolutionPayload: { source: 'sync_item_editor' } }
+          : { reason: '管理员手动忽略' },
+      },
+      action === 'resolve' ? '关联问题标记失败。' : '关联问题忽略失败。',
+    )
+
+    await loadSyncDetail()
+    if (currentItemLogVisible.value)
+      await refreshCurrentItemLogDrawer()
+    emit('updated')
+    setSuccess(action === 'resolve' ? '关联问题已标记为已解决。' : '关联问题已忽略。')
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || (action === 'resolve' ? '关联问题标记失败。' : '关联问题忽略失败。')))
+  }
+  finally {
+    issueActionMutating[issueId] = false
+  }
 }
 
 function selectCurrentItemLogRun(runId: string) {
@@ -2457,7 +2510,7 @@ watch(() => props.selectedItemId, (value) => {
 </script>
 
 <template>
-  <div class="space-y-4" :class="embedded ? 'pb-4' : ''">
+  <div ref="editorRootRef" class="space-y-4" :class="embedded ? 'pb-4' : ''">
     <div class="flex flex-wrap gap-3 items-start justify-between">
       <div class="space-y-1">
         <div class="flex gap-2 items-center">
@@ -2884,7 +2937,7 @@ watch(() => props.selectedItemId, (value) => {
                       v-for="option in itemEntityTypeOptions"
                       :key="`item-entity-${option.value}`"
                       type="button"
-                      class="px-3 py-1.5 border text-[11px] transition-colors"
+                      class="text-[11px] px-3 py-1.5 border transition-colors"
                       :class="itemForm.entityType === option.value ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'"
                       :aria-pressed="itemForm.entityType === option.value"
                       @click="itemForm.entityType = option.value"
@@ -2949,7 +3002,7 @@ watch(() => props.selectedItemId, (value) => {
                     placeholder="选择视图（可选）"
                     @change="handleItemViewChange"
                   >
-                    <a-option :value="''">
+                    <a-option value="">
                       全部视图（不限制）
                     </a-option>
                     <a-option v-for="item in availableViews" :key="item.viewId" :value="item.viewId">
@@ -3400,14 +3453,25 @@ watch(() => props.selectedItemId, (value) => {
                   </div>
                 </div>
                 <div v-if="currentItem.issues.length" class="space-y-2">
-                  <div v-for="issue in currentItem.issues" :key="issue.id" class="px-3 py-2 border border-slate-200 rounded">
+                  <div v-for="issue in sortedSyncIssues(currentItem.issues)" :key="issue.id" class="px-3 py-2 border border-slate-200 rounded">
                     <div class="flex flex-wrap gap-2 items-center">
-                      <p class="text-[11px] text-slate-900 m-0">
-                        {{ issue.reasonCode }} / {{ issue.status }}
-                      </p>
+                      <a-tag size="small" :color="syncIssueStatusColor(issue.status)">
+                        {{ syncIssueStatusLabel(issue.status) }}
+                      </a-tag>
+                      <a-tag size="small">
+                        {{ issue.reasonCode || '未标记原因' }}
+                      </a-tag>
                       <a-tag size="small" :color="syncIssueCategoryColor(issue.reasonCode, issue.message)">
                         归因：{{ syncIssueCategoryLabel(issue.reasonCode, issue.message) }}
                       </a-tag>
+                      <div v-if="issue.status === 'open'" class="ml-auto flex gap-1">
+                        <a-button size="mini" :loading="issueActionMutating[issue.id]" @click="handleSyncIssueAction(issue, 'resolve')">
+                          标记已解决
+                        </a-button>
+                        <a-button size="mini" status="warning" :loading="issueActionMutating[issue.id]" @click="handleSyncIssueAction(issue, 'ignore')">
+                          忽略
+                        </a-button>
+                      </div>
                     </div>
                     <p class="text-[10px] text-slate-500 m-0 mt-1">
                       {{ issue.message }}
@@ -3603,7 +3667,7 @@ watch(() => props.selectedItemId, (value) => {
               </div>
             </div>
             <div v-if="currentItemLogItemDetail.issues.length" class="space-y-2">
-              <div v-for="issue in currentItemLogItemDetail.issues" :key="issue.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+              <div v-for="issue in sortedSyncIssues(currentItemLogItemDetail.issues)" :key="issue.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
                 <div class="flex flex-wrap gap-2 items-center">
                   <a-tag size="small" :color="syncIssueStatusColor(issue.status)">
                     {{ syncIssueStatusLabel(issue.status) }}
@@ -3612,6 +3676,14 @@ watch(() => props.selectedItemId, (value) => {
                     归因：{{ syncIssueCategoryLabel(issue.reasonCode, issue.message) }}
                   </a-tag>
                   <span class="text-[10px] text-slate-500 font-mono">{{ issue.id }}</span>
+                  <div v-if="issue.status === 'open'" class="ml-auto flex gap-1">
+                    <a-button size="mini" :loading="issueActionMutating[issue.id]" @click="handleSyncIssueAction(issue, 'resolve')">
+                      标记已解决
+                    </a-button>
+                    <a-button size="mini" status="warning" :loading="issueActionMutating[issue.id]" @click="handleSyncIssueAction(issue, 'ignore')">
+                      忽略
+                    </a-button>
+                  </div>
                 </div>
                 <p class="text-[10px] text-slate-700 m-0 break-all">
                   {{ issue.message }}
@@ -4244,7 +4316,7 @@ watch(() => props.selectedItemId, (value) => {
               v-for="option in newItemEntityTypeOptions"
               :key="`new-item-entity-${option.value}`"
               type="button"
-              class="px-3 py-1.5 border text-[11px] transition-colors"
+              class="text-[11px] px-3 py-1.5 border transition-colors"
               :class="newItemForm.entityType === option.value ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'"
               :aria-pressed="newItemForm.entityType === option.value"
               @click="newItemForm.entityType = option.value"
@@ -4286,7 +4358,7 @@ watch(() => props.selectedItemId, (value) => {
             placeholder="选择视图（可选）"
             @change="handleNewItemViewChange"
           >
-            <a-option :value="''">
+            <a-option value="">
               全部视图（不限制）
             </a-option>
             <a-option v-for="item in newItemViews" :key="item.viewId" :value="item.viewId">

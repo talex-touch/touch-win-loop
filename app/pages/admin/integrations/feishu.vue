@@ -15,6 +15,7 @@ import type {
   FeishuBitableViewMeta,
   FeishuChatCandidate,
   FeishuIntegrationConfig,
+  FeishuSyncIssue,
   PlatformPermission,
 } from '~~/shared/types/domain'
 import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
@@ -103,6 +104,7 @@ const syncToggleMutating = reactive<Record<string, boolean>>({})
 const archivingSyncMutating = reactive<Record<string, boolean>>({})
 const restoringSyncMutating = reactive<Record<string, boolean>>({})
 const syncItemToggleMutating = reactive<Record<string, boolean>>({})
+const issueActionMutating = reactive<Record<string, boolean>>({})
 
 const createSyncDrawerVisible = ref(false)
 const editSyncDrawerVisible = ref(false)
@@ -363,6 +365,20 @@ function syncIssueStatusColor(status?: string | null): string {
   return 'gray'
 }
 
+function sortedSyncIssues(issues: FeishuSyncIssue[] = []): FeishuSyncIssue[] {
+  const statusOrder: Record<string, number> = {
+    open: 0,
+    resolved: 1,
+    ignored: 2,
+  }
+  return [...issues].sort((left, right) => {
+    const statusDiff = (statusOrder[left.status] ?? 9) - (statusOrder[right.status] ?? 9)
+    if (statusDiff !== 0)
+      return statusDiff
+    return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''))
+  })
+}
+
 function syncRunModeLabel(mode?: string | null): string {
   if (mode === 'full')
     return '全量'
@@ -516,6 +532,10 @@ function buildSyncedDataLink(options?: { syncId?: string }) {
   return Object.keys(query).length
     ? { path: '/admin/integrations/feishu/data', query }
     : '/admin/integrations/feishu/data'
+}
+
+async function openSyncedData(options?: { syncId?: string }) {
+  await navigateTo(buildSyncedDataLink(options))
 }
 
 function buildCreateSourceConfig(): FeishuBitableSourceConfig {
@@ -735,6 +755,41 @@ async function refreshSyncItemLogDrawer() {
   }
   finally {
     syncItemLogLoading.value = false
+  }
+}
+
+async function handleSyncIssueAction(issue: FeishuSyncIssue, action: 'resolve' | 'ignore') {
+  const issueId = String(issue.id || '').trim()
+  if (!issueId || issue.status !== 'open')
+    return
+
+  issueActionMutating[issueId] = true
+  setError('')
+  setSuccess('')
+  try {
+    const path = action === 'resolve'
+      ? `/admin/integrations/feishu/link-issues/${encodeURIComponent(issueId)}/resolve`
+      : `/admin/integrations/feishu/link-issues/${encodeURIComponent(issueId)}/ignore`
+    await requestApi<FeishuSyncIssue>(
+      endpoint(path),
+      {
+        method: 'POST',
+        body: action === 'resolve'
+          ? { resolutionPayload: { source: 'feishu_integration_page' } }
+          : { reason: '管理员手动忽略' },
+      },
+      action === 'resolve' ? '关联问题标记失败。' : '关联问题忽略失败。',
+    )
+
+    await refreshSyncItemLogDrawer()
+    await loadSyncs()
+    setSuccess(action === 'resolve' ? '关联问题已标记为已解决。' : '关联问题已忽略。')
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || (action === 'resolve' ? '关联问题标记失败。' : '关联问题忽略失败。')))
+  }
+  finally {
+    issueActionMutating[issueId] = false
   }
 }
 
@@ -1418,6 +1473,20 @@ onMounted(initializePage)
       </section>
 
       <template v-else>
+        <section v-if="canReadSyncedData" class="p-3 border border-slate-200 bg-white flex flex-wrap gap-2 items-center justify-between">
+          <div>
+            <h2 class="text-[12px] text-slate-900 font-semibold m-0">
+              飞书同步数据
+            </h2>
+            <p class="text-[10px] text-slate-500 m-0 mt-1">
+              浏览飞书导入后的索引、映射和待审草稿。
+            </p>
+          </div>
+          <a-button size="small" type="primary" @click="openSyncedData()">
+            查看所有已同步的数据
+          </a-button>
+        </section>
+
         <section v-if="canManageConfig" class="p-3 border border-slate-200 bg-white space-y-3">
           <div class="flex flex-wrap gap-2 items-center justify-between">
             <div>
@@ -1429,9 +1498,6 @@ onMounted(initializePage)
               </p>
             </div>
             <div class="flex flex-wrap gap-2 items-center">
-              <NuxtLink v-if="canReadSyncedData" class="dense-btn" :to="buildSyncedDataLink()">
-                查看所有已同步的数据
-              </NuxtLink>
               <a-button size="small" type="primary" @click="openConfigDialog">
                 打开配置
               </a-button>
@@ -1594,9 +1660,14 @@ onMounted(initializePage)
 
             <template #actions="{ record }">
               <div class="flex flex-wrap gap-1">
-                <NuxtLink v-if="canReadSyncedData" class="dense-btn" :to="buildSyncedDataLink({ syncId: record.id })">
+                <a-button
+                  v-if="canReadSyncedData"
+                  size="mini"
+                  :data-sync-data-link="buildSyncedDataLink({ syncId: record.id })"
+                  @click="openSyncedData({ syncId: record.id })"
+                >
                   查看同步数据
-                </NuxtLink>
+                </a-button>
                 <a-button
                   size="mini"
                   type="primary"
@@ -2494,7 +2565,7 @@ onMounted(initializePage)
                 </div>
               </div>
               <div v-if="syncItemLogItemDetail.issues.length" class="space-y-2">
-                <div v-for="issue in syncItemLogItemDetail.issues" :key="issue.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+                <div v-for="issue in sortedSyncIssues(syncItemLogItemDetail.issues)" :key="issue.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
                   <div class="flex flex-wrap gap-2 items-center">
                     <a-tag :color="syncIssueStatusColor(issue.status)" size="small">
                       {{ syncIssueStatusLabel(issue.status) }}
@@ -2503,6 +2574,14 @@ onMounted(initializePage)
                       {{ issue.reasonCode || '未标记原因' }}
                     </a-tag>
                     <span class="text-[10px] text-slate-500 font-mono">{{ issue.id }}</span>
+                    <div v-if="issue.status === 'open'" class="ml-auto flex gap-1">
+                      <a-button size="mini" :loading="issueActionMutating[issue.id]" @click="handleSyncIssueAction(issue, 'resolve')">
+                        标记已解决
+                      </a-button>
+                      <a-button size="mini" status="warning" :loading="issueActionMutating[issue.id]" @click="handleSyncIssueAction(issue, 'ignore')">
+                        忽略
+                      </a-button>
+                    </div>
                   </div>
                   <p class="text-[10px] text-slate-700 m-0 break-all">
                     {{ issue.message }}
