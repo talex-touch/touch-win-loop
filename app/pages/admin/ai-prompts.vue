@@ -286,10 +286,10 @@ const providerTypeGuides: Record<ProviderType, ProviderTypeGuide> = {
   },
   'dashscope-bailian': {
     title: '百炼 DashScope',
-    summary: '聊天走百炼 OpenAI 兼容地址；多模态 Embedding 可走百炼原生接口。',
+    summary: 'Provider 只填百炼服务根地址；聊天、模型列表与多模态 Embedding 路径由系统自动补齐。',
     providerPlaceholder: 'dashscope',
-    baseURLPlaceholder: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    baseURLHint: 'Base URL 只用于聊天兼容层；LangChain 会请求 compatible-mode/v1/chat/completions，百炼多模态 Embedding 会自动改走原生 /api/v1/services/embeddings/multimodal-embedding/multimodal-embedding。',
+    baseURLPlaceholder: 'https://dashscope.aliyuncs.com',
+    baseURLHint: 'Base URL 填服务根地址即可；系统会为聊天补 compatible-mode/v1/chat/completions，为模型列表补 compatible-mode/v1/models，为百炼多模态 Embedding 补原生 /api/v1/services/embeddings/multimodal-embedding/multimodal-embedding。',
     apiKeyPlaceholder: 'DASHSCOPE_API_KEY',
     apiKeyHint: '填写 DashScope API Key，不需要 Bearer 前缀；留空保持已保存密钥不变。',
     clientTypeHint: '当前不是 @langchain/community 的 AlibabaTongyi 包；聊天使用 @langchain/openai + 百炼 compatible-mode。',
@@ -2137,7 +2137,7 @@ onMounted(async () => {
     <a-drawer
       v-model:visible="providerEditorVisible"
       :title="providerEditorIsCreate ? '新增 Provider' : `编辑 Provider · ${providerEditorForm.name || providerEditorForm.id}`"
-      :width="760"
+      width="min(1120px, calc(100vw - 32px))"
       unmount-on-close
     >
       <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">

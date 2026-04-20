@@ -49,10 +49,13 @@ describe('admin-ai provider models', () => {
     )
   })
 
-  it('base url 会自动规范为根地址，并在请求时补 /v1', () => {
+  it('base url 会自动规范为根地址，并在请求时按 provider 补路径', () => {
     expect(normalizePlatformAiBaseURL('https://newapi.example/v1', 'newapi')).toBe('https://newapi.example')
     expect(normalizePlatformAiBaseURL('https://newapi.example/v1/models', 'newapi')).toBe('https://newapi.example')
     expect(resolvePlatformAiRequestBaseURL('https://newapi.example', 'newapi')).toBe('https://newapi.example/v1')
+    expect(normalizePlatformAiBaseURL('https://dashscope.aliyuncs.com/compatible-mode/v1', 'dashscope')).toBe('https://dashscope.aliyuncs.com')
+    expect(normalizePlatformAiBaseURL('https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding', 'dashscope')).toBe('https://dashscope.aliyuncs.com')
+    expect(resolvePlatformAiRequestBaseURL('https://dashscope.aliyuncs.com', 'dashscope')).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1')
     expect(resolvePlatformAiRequestBaseURL('', 'newapi')).toBe('')
   })
 

@@ -2,11 +2,27 @@ function toText(value: unknown): string {
   return String(value || '').trim()
 }
 
-export function normalizePlatformAiBaseURL(baseURL: unknown, _provider = ''): string {
+function isDashScopeProvider(provider: unknown, baseURL: unknown): boolean {
+  const text = `${toText(provider)} ${toText(baseURL)}`.toLowerCase()
+  return text.includes('dashscope')
+    || text.includes('bailian')
+    || text.includes('qwen')
+    || text.includes('aliyuncs.com')
+}
+
+export function normalizePlatformAiBaseURL(baseURL: unknown, provider = ''): string {
   const raw = toText(baseURL)
   if (!raw)
     return ''
   let normalized = raw.replace(/\/+$/, '')
+
+  if (isDashScopeProvider(provider, normalized)) {
+    normalized = normalized.replace(/\/api\/v1\/services\/embeddings\/multimodal-embedding\/multimodal-embedding$/i, '')
+    normalized = normalized.replace(/\/compatible-mode\/v1\/chat\/completions$/i, '')
+    normalized = normalized.replace(/\/compatible-mode\/v1\/models$/i, '')
+    normalized = normalized.replace(/\/compatible-mode\/v1$/i, '')
+    normalized = normalized.replace(/\/compatible-mode$/i, '')
+  }
 
   normalized = normalized.replace(/\/v1\/chat\/completions$/i, '')
   normalized = normalized.replace(/\/v1\/responses$/i, '')
@@ -27,6 +43,8 @@ export function resolvePlatformAiRequestBaseURL(baseURL: unknown, provider = '')
   const normalized = normalizePlatformAiBaseURL(baseURL, provider)
   if (!normalized)
     return ''
+  if (isDashScopeProvider(provider, normalized))
+    return `${normalized}/compatible-mode/v1`
   return `${normalized}/v1`
 }
 

@@ -58,6 +58,8 @@ it('provider 抽屉支持独立测试、拉取模型和维护模型池', async (
   assert.match(source, /Provider 模型池/, '缺少 Provider 模型池区域')
   assert.match(source, /每个 LLM Provider 维护自己的模型池、能力标签、接入参数与价格覆盖。/, '缺少 Provider 级模型池说明')
   assert.match(source, /Provider 只保存连接身份；模型能力与接入细节在模型池里维护。/, 'Provider 抽屉应按连接与模型池分层')
+  assert.match(source, /https:\/\/dashscope\.aliyuncs\.com/, '百炼 Base URL 应提示填写服务根地址')
+  assert.match(source, /为聊天补 compatible-mode\/v1\/chat\/completions/, '百炼路径应由系统自动补齐')
   assert.doesNotMatch(source, /API Key 模式/, 'Provider API Key 不应再暴露模式下拉')
   assert.match(source, /填写即替换并持久化；留空则保持已保存密钥不变。/, 'API Key 应采用输入即替换、留空保持的规则')
   assert.doesNotMatch(source, /百炼原生 SDK/, '暂不应暴露不可用的百炼原生聊天接入')
