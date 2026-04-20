@@ -11,6 +11,8 @@ const props = withDefaults(defineProps<{
   currentUserAvatarUrl?: string | null
   riskSummary?: string
   openIssues?: ProjectIssue[]
+  aiEnabled?: boolean
+  aiDisabledReason?: string
 }>(), {
   open: false,
   chatMessages: () => [],
@@ -20,12 +22,14 @@ const props = withDefaults(defineProps<{
   currentUserAvatarUrl: '',
   riskSummary: '',
   openIssues: () => [],
+  aiEnabled: true,
+  aiDisabledReason: '',
 })
 
 const emit = defineEmits<{
-  close: []
-  sendChat: []
-  openResource: [resourceId: string]
+  'close': []
+  'sendChat': []
+  'openResource': [resourceId: string]
   'update:chatInput': [value: string]
 }>()
 
@@ -146,12 +150,16 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
             :value="props.chatInput"
             :placeholder="inputPlaceholder"
             rows="4"
+            :disabled="!props.aiEnabled"
             @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
           />
+          <p v-if="!props.aiEnabled" class="workspace-final-review-sidebar__disabled-reason">
+            {{ props.aiDisabledReason || '当前 AI 未配置，已禁用终审助手。请先在后台完成模型与密钥配置。' }}
+          </p>
           <button
             class="workspace-final-review-sidebar__send"
             type="button"
-            :disabled="props.chatLoading"
+            :disabled="props.chatLoading || !props.aiEnabled"
             @click="emit('sendChat')"
           >
             发送给终审助手
@@ -418,6 +426,19 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
   outline: none;
   border-color: #94b5ec;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.workspace-final-review-sidebar__textarea:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.workspace-final-review-sidebar__disabled-reason {
+  margin: -2px 0 0;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .workspace-final-review-sidebar__send {

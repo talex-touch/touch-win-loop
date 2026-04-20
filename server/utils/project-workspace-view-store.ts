@@ -168,7 +168,9 @@ function normalizeProjectWorkspaceViewStatePayloadWithOptions(
   const requestedActiveTabId = normalizeString(source.activeMainTabId)
 
   const requestedWorkbenchMode = normalizeString(source.workbenchMode)
-  const workbenchMode = requestedWorkbenchMode === 'defense' ? 'defense' : 'project'
+  const workbenchMode = requestedWorkbenchMode === 'defense' || requestedWorkbenchMode === 'final_review'
+    ? requestedWorkbenchMode
+    : 'project'
 
   const previewResourceId = normalizeString(source.previewResourceId)
   const openChatSessionIds = normalizeOpenChatSessionIds(source.openChatSessionIds)

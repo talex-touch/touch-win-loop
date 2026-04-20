@@ -767,7 +767,6 @@ const {
   rememberPreFinalReviewWorkbenchState,
   restorePreFinalReviewWorkbenchState,
   closeFinalReviewDrawers,
-  toggleFinalReviewMaterialsDrawer,
   toggleRightSidebar,
   ensureWorkspaceMainTabOpen,
   ensureMeetingDetailTabOpen,
@@ -811,11 +810,13 @@ const documentAssistRequestState = reactive<MarkdownDocumentAssistRequestState>(
   selectionRange: null,
 })
 const appliedAgentDocDraftKeys = ref<string[]>([])
+const projectIssuesLoadedProjectId = ref('')
 
 function clearLoadedScopeSnapshots(): void {
   resourcesLoadedProjectId.value = ''
   resourceLibraryLoadedProjectId.value = ''
   projectResourceSharesLoadedProjectId.value = ''
+  projectIssuesLoadedProjectId.value = ''
   selectedContestDetailContestId.value = ''
   mappingLoadedScopeKey.value = ''
   chatSessionsLoadedScopeKey.value = ''
@@ -3325,6 +3326,25 @@ const finalReviewReadinessPercent = computed(() => {
   const total = finalReviewChecklistItems.value.reduce((sum, item) => sum + weights[item.status], 0)
   return Math.round((total / finalReviewChecklistItems.value.length) * 100)
 })
+
+async function refreshFinalReviewContext(): Promise<void> {
+  if (!activeProjectId.value)
+    return
+
+  const contestId = normalizeString(selectedContestId.value)
+  const tasks: Array<Promise<unknown>> = [
+    loadProjectResources(),
+    loadProjectResourceShares(),
+    loadProjectIssues(),
+    loadProjectSettings(contestId),
+  ]
+
+  if (contestId)
+    tasks.push(loadSelectedContestDetail(contestId))
+
+  await Promise.allSettled(tasks)
+}
+
 const metaKResourceTitleMap = computed(() => {
   return new Map(selectedResources.value.map(resource => [resource.id, resolveMetaKResourceTitle(resource)]))
 })
@@ -6441,9 +6461,11 @@ interface ProjectIssuesBundle {
 
 async function loadProjectIssues() {
   const projectId = String(activeProjectId.value || '').trim()
+  const sameProjectRefresh = projectIssuesLoadedProjectId.value === projectId
   if (!projectId) {
     projectIssueReports.value = []
     projectIssues.value = []
+    projectIssuesLoadedProjectId.value = ''
     return
   }
 
@@ -6460,11 +6482,13 @@ async function loadProjectIssues() {
       return
     projectIssueReports.value = response.data.reports || []
     projectIssues.value = response.data.issues || []
+    projectIssuesLoadedProjectId.value = projectId
   }
   catch {
-    if (activeProjectId.value === projectId) {
+    if (activeProjectId.value === projectId && !sameProjectRefresh) {
       projectIssueReports.value = []
       projectIssues.value = []
+      projectIssuesLoadedProjectId.value = ''
     }
   }
   finally {
@@ -10690,6 +10714,13 @@ async function openDashboardFromFinalReview(): Promise<void> {
 
 function openMaterialsDrawerFromFinalReview(): void {
   finalReviewMaterialsOpen.value = true
+  void refreshFinalReviewContext()
+}
+
+function toggleFinalReviewMaterialsDrawerFromFinalReview(): void {
+  finalReviewMaterialsOpen.value = !finalReviewMaterialsOpen.value
+  if (finalReviewMaterialsOpen.value)
+    void refreshFinalReviewContext()
 }
 
 async function openResourceFromFinalReview(resourceId: string): Promise<void> {
@@ -11203,6 +11234,8 @@ watch(activeChatSessionId, (nextValue, previousValue) => {
 watch(workbenchMode, (nextValue, previousValue) => {
   if (nextValue === previousValue)
     return
+  if (nextValue === 'final_review')
+    void refreshFinalReviewContext()
   if (previousValue === 'defense' && nextValue !== 'defense')
     void teardownDefenseRealtimeBridge()
 })
@@ -12498,7 +12531,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
             :class="{ 'workspace-final-review-edge--active': finalReviewMaterialsOpen }"
             type="button"
             title="打开终审资料抽屉"
-            @click="toggleFinalReviewMaterialsDrawer"
+            @click="toggleFinalReviewMaterialsDrawerFromFinalReview"
           >
             <span class="material-symbols-outlined workspace-final-review-edge__icon">folder_open</span>
             <span class="workspace-final-review-edge__label">资料</span>
@@ -12562,6 +12595,8 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
             :current-user-avatar-url="me?.user.avatarUrl || ''"
             :risk-summary="latestIssueReport?.summary || ''"
             :open-issues="finalReviewOpenIssues"
+            :ai-enabled="currentAiModeAvailable"
+            :ai-disabled-reason="currentAiDisabledReason"
             @close="finalReviewAssistantOpen = false"
             @open-resource="openResourceFromFinalReview"
             @send-chat="sendChatMessage"
