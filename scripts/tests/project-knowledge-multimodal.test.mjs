@@ -79,6 +79,8 @@ describe('project knowledge multimodal', () => {
     ])
 
     assert.match(knowledgeAiSource, /resolveDashScopeNativeBaseURL/, 'knowledge-ai 未推导百炼原生地域地址')
+    assert.match(knowledgeAiSource, /resolveKnowledgeEmbeddingChannelKey/, 'knowledge-ai 未按文本与视觉输入选择 Embedding 场景')
+    assert.match(knowledgeAiSource, /knowledge_visual_embedding/, 'knowledge-ai 未接入视觉 Embedding 场景')
     assert.match(knowledgeAiSource, /bailian-multimodal/, 'knowledge-ai 未增加百炼多模态 dispatcher')
     assert.match(knowledgeAiSource, /api\/v1\/services\/embeddings\/multimodal-embedding\/multimodal-embedding/, 'knowledge-ai 未调用百炼原生多模态接口')
     assert.match(knowledgeAiSource, /BAILIAN_MULTIMODAL_RUNTIME_NOT_CONFIGURED/, 'knowledge-ai 未对多模态缺配置做严格失败')

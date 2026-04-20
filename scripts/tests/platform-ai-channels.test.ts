@@ -5,6 +5,7 @@ import {
   buildPlatformAiRegistryJson,
   inferPlatformAiModelCapabilities,
   resolveAiRuntimeForChannel,
+  resolvePlatformAiChannelEmbeddingApiStyle,
   resolvePlatformAiChannelModelCapability,
   resolvePlatformAiRegistry,
   resolvePlatformAiRuntimeByCapability,
@@ -319,13 +320,14 @@ describe('platform-ai-channels', () => {
           baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
           models: [
             { model: 'qwen-plus', enabled: true, format: 'response', capabilities: ['chat'] },
+            { model: 'text-embedding-v4', enabled: true, format: 'openai-compatible', capabilities: ['embedding'], embeddingApiStyle: 'openai-compatible-text', embeddingDimensions: 1024 },
             { model: 'tongyi-embedding-vision-plus', enabled: true, format: 'openai-compatible', capabilities: ['embedding'], embeddingDimensions: 1024 },
           ],
         },
       ],
       defaults: {
         defaultModel: 'qwen-plus',
-        embeddingModel: 'tongyi-embedding-vision-plus',
+        embeddingModel: 'text-embedding-v4',
         visionModel: '',
         documentModel: 'qwen-plus',
       },
@@ -334,14 +336,21 @@ describe('platform-ai-channels', () => {
     const registry = resolvePlatformAiRegistry(runtime)
     expect(registry.providers[0]?.models.find(item => item.model === 'qwen-plus')?.format).toBe('openai-compatible')
     const embeddingRuntime = resolvePlatformAiRuntimeByCapability(runtime, 'embedding')
-    expect(embeddingRuntime?.modelConfig.model).toBe('tongyi-embedding-vision-plus')
-    expect(embeddingRuntime?.modelConfig.embeddingApiStyle).toBe('bailian-multimodal')
+    expect(embeddingRuntime?.modelConfig.model).toBe('text-embedding-v4')
+    expect(embeddingRuntime?.modelConfig.embeddingApiStyle).toBe('openai-compatible-text')
     expect(resolvePlatformAiChannelModelCapability('knowledge_embedding')).toBe('embedding')
+    expect(resolvePlatformAiChannelEmbeddingApiStyle('knowledge_embedding')).toBe('openai-compatible-text')
+    expect(resolvePlatformAiChannelEmbeddingApiStyle('knowledge_visual_embedding')).toBe('bailian-multimodal')
 
     const embeddingScene = registry.channels.find(item => item.key === 'knowledge_embedding')
-    expect(embeddingScene?.modelFallback).toEqual(['tongyi-embedding-vision-plus'])
+    expect(embeddingScene?.modelFallback).toEqual(['text-embedding-v4'])
     const embeddingSceneRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_embedding')
-    expect(embeddingSceneRuntime.ai.model).toBe('tongyi-embedding-vision-plus')
+    expect(embeddingSceneRuntime.ai.model).toBe('text-embedding-v4')
+
+    const visualEmbeddingScene = registry.channels.find(item => item.key === 'knowledge_visual_embedding')
+    expect(visualEmbeddingScene?.modelFallback).toEqual(['tongyi-embedding-vision-plus'])
+    const visualEmbeddingSceneRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_visual_embedding')
+    expect(visualEmbeddingSceneRuntime.ai.model).toBe('tongyi-embedding-vision-plus')
   })
 
   it('只绑定 search-only Provider 时会回退到未配置运行时', () => {

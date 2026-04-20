@@ -35,6 +35,7 @@ export type PlatformAiChannelKey
     | 'admin_general'
     | 'admin_publish_assistant'
     | 'knowledge_embedding'
+    | 'knowledge_visual_embedding'
     | 'document_analysis'
 
 export interface PlatformAiProviderModelConfig {
@@ -191,7 +192,8 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
   { key: 'workspace_canvas_refine', label: '画布续改', description: '基于现有图结构重写和优化结构源' },
   { key: 'admin_general', label: '管理助手-通用', description: '后台管理通用任务' },
   { key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议' },
-  { key: 'knowledge_embedding', label: '知识库 Embedding', description: '知识库文本、多模态向量与检索索引' },
+  { key: 'knowledge_embedding', label: '知识库文本 Embedding', description: '知识库文本向量与检索索引' },
+  { key: 'knowledge_visual_embedding', label: '知识库视觉 Embedding', description: '图片、视频、多图与图文融合向量' },
   { key: 'document_analysis', label: '文档分析', description: '文档解析、预览与重解析' },
 ]
 
@@ -916,25 +918,6 @@ function resolveDefaultProviderIds(providers: PlatformAiProviderConfig[]): strin
   return primary ? [primary.id] : []
 }
 
-function resolveDefaultModelsForChannel(
-  key: PlatformAiChannelKey,
-  defaults: PlatformAiSharedDefaults,
-  providers: PlatformAiProviderConfig[],
-): string[] {
-  const capability = resolvePlatformAiChannelModelCapability(key)
-  const preferred = capability === 'embedding'
-    ? defaults.embeddingModel
-    : key === 'document_analysis' || isDocumentAssistChannelKey(key)
-      ? defaults.documentModel
-      : defaults.defaultModel
-  const firstAvailable = providers
-    .filter(provider => provider.capability === 'llm')
-    .flatMap(provider => provider.models)
-    .find(item => item.enabled && platformAiModelHasCapability(item, capability))
-    ?.model || ''
-  return dedupeStrings([preferred, firstAvailable])
-}
-
 function extractProviderIds(raw: unknown): string[] {
   if (!Array.isArray(raw))
     return []
@@ -1135,9 +1118,63 @@ function defaultModelForCapability(defaults: PlatformAiSharedDefaults, capabilit
 }
 
 export function resolvePlatformAiChannelModelCapability(key: PlatformAiChannelKey): PlatformAiModelCapability {
-  if (key === 'knowledge_embedding')
+  if (key === 'knowledge_embedding' || key === 'knowledge_visual_embedding')
     return 'embedding'
   return 'chat'
+}
+
+export function resolvePlatformAiChannelEmbeddingApiStyle(key: PlatformAiChannelKey): ProjectKnowledgeEmbeddingApiStyle | null {
+  if (key === 'knowledge_embedding')
+    return 'openai-compatible-text'
+  if (key === 'knowledge_visual_embedding')
+    return 'bailian-multimodal'
+  return null
+}
+
+function platformAiModelMatchesChannel(
+  model: Pick<PlatformAiProviderModelConfig, 'capabilities' | 'embeddingApiStyle'> | null | undefined,
+  key: PlatformAiChannelKey,
+): boolean {
+  const capability = resolvePlatformAiChannelModelCapability(key)
+  if (!platformAiModelHasCapability(model, capability))
+    return false
+
+  const embeddingApiStyle = resolvePlatformAiChannelEmbeddingApiStyle(key)
+  if (!embeddingApiStyle)
+    return true
+
+  return normalizeProjectKnowledgeEmbeddingApiStyle(model?.embeddingApiStyle) === embeddingApiStyle
+}
+
+function resolveProviderModelForChannel(
+  provider: PlatformAiProviderConfig | null,
+  model: string,
+  key: PlatformAiChannelKey,
+): PlatformAiProviderModelConfig | null {
+  const modelConfig = resolveProviderModel(provider, model, resolvePlatformAiChannelModelCapability(key))
+  if (!platformAiModelMatchesChannel(modelConfig, key))
+    return null
+  return modelConfig
+}
+
+function resolveDefaultModelsForChannel(
+  key: PlatformAiChannelKey,
+  defaults: PlatformAiSharedDefaults,
+  providers: PlatformAiProviderConfig[],
+): string[] {
+  const capability = resolvePlatformAiChannelModelCapability(key)
+  const preferred = capability === 'embedding'
+    ? defaults.embeddingModel
+    : key === 'document_analysis' || isDocumentAssistChannelKey(key)
+      ? defaults.documentModel
+      : defaults.defaultModel
+  const firstAvailable = providers
+    .filter(provider => provider.capability === 'llm')
+    .flatMap(provider => provider.models)
+    .find(item => item.enabled && platformAiModelMatchesChannel(item, key))
+    ?.model || ''
+  const preferredAvailable = Boolean(preferred && providers.some(provider => resolveProviderModelForChannel(provider, preferred, key)))
+  return dedupeStrings([preferredAvailable ? preferred : '', firstAvailable])
 }
 
 export function resolvePlatformAiRuntimeByCapability(
@@ -1222,23 +1259,22 @@ function resolveChannelCandidates(
   }
 
   const requestedModels = dedupeStrings(channel.modelFallback)
-  const capability = resolvePlatformAiChannelModelCapability(channel.key)
-  let modelOrder = requestedModels.filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model, capability)))
+  let modelOrder = requestedModels.filter(model => eligibleProviders.some(provider => resolveProviderModelForChannel(provider, model, channel.key)))
   const usedFallback = modelOrder.length === 0
 
   if (modelOrder.length === 0) {
     modelOrder = resolveDefaultModelsForChannel(channel.key, defaults, eligibleProviders)
-      .filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model, capability)))
+      .filter(model => eligibleProviders.some(provider => resolveProviderModelForChannel(provider, model, channel.key)))
   }
 
   const candidates: PlatformAiResolvedChannelCandidate[] = []
   let candidateIndex = 0
 
   for (const model of modelOrder) {
-    const providersWithModel = eligibleProviders.filter(provider => resolveProviderModel(provider, model, capability))
+    const providersWithModel = eligibleProviders.filter(provider => resolveProviderModelForChannel(provider, model, channel.key))
     const orderedProviders = rotateProviders(channel.key, model, providersWithModel, channel.loadBalanceStrategy)
     for (const provider of orderedProviders) {
-      const modelConfig = resolveProviderModel(provider, model, capability)
+      const modelConfig = resolveProviderModelForChannel(provider, model, channel.key)
       if (!modelConfig)
         continue
       candidates.push({

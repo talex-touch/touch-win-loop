@@ -38,6 +38,7 @@ type PlatformAiChannelKey
     | 'admin_general'
     | 'admin_publish_assistant'
     | 'knowledge_embedding'
+    | 'knowledge_visual_embedding'
     | 'document_analysis'
 
 interface ProviderModelItem {
@@ -957,20 +958,28 @@ const allPulledModelsIndeterminate = computed(() => {
 const pulledEmbeddingCandidateCount = computed(() => pulledProviderModels.value.filter(item => item.capabilities.includes('embedding')).length)
 
 function sceneRequiredCapability(key: PlatformAiChannelKey): ModelCapability {
-  if (key === 'knowledge_embedding')
+  if (key === 'knowledge_embedding' || key === 'knowledge_visual_embedding')
     return 'embedding'
   return 'chat'
+}
+
+function sceneEmbeddingApiStyleFilter(key: PlatformAiChannelKey): EmbeddingApiStyle | null {
+  if (key === 'knowledge_embedding')
+    return 'openai-compatible-text'
+  if (key === 'knowledge_visual_embedding')
+    return 'bailian-multimodal'
+  return null
 }
 
 function sceneCanRunChatTest(scene: Pick<SceneItem, 'key'>): boolean {
   return sceneRequiredCapability(scene.key) === 'chat'
 }
 
-function resolveSceneModelCatalog(providerIds: string[], currentModels: string[] = [], capability: ModelCapability = 'chat'): Array<{ model: string, label: string, priceText: string }> {
+function resolveSceneModelCatalog(providerIds: string[], currentModels: string[] = [], capability: ModelCapability = 'chat', embeddingApiStyle: EmbeddingApiStyle | null = null): Array<{ model: string, label: string, priceText: string }> {
   const providerSet = new Set(providerIds)
   const map = new Map<string, { model: string, label: string, priceText: string }>()
   for (const provider of providers.value.filter(item => item.capability === 'llm' && providerSet.has(item.id))) {
-    for (const model of provider.models.filter(item => item.enabled && modelHasCapability(item, capability))) {
+    for (const model of provider.models.filter(item => item.enabled && modelHasCapability(item, capability) && (!embeddingApiStyle || item.embeddingApiStyle === embeddingApiStyle))) {
       if (!map.has(model.model)) {
         map.set(model.model, {
           model: model.model,
@@ -993,7 +1002,7 @@ function resolveSceneModelCatalog(providerIds: string[], currentModels: string[]
   return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
 }
 
-const sceneEditorModelOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.modelFallback, sceneRequiredCapability(sceneEditorForm.key)))
+const sceneEditorModelOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.modelFallback, sceneRequiredCapability(sceneEditorForm.key), sceneEmbeddingApiStyleFilter(sceneEditorForm.key)))
 const sceneBatchModelOptions = computed(() => resolveSceneModelCatalog(sceneBatchForm.providerIds, sceneBatchForm.modelFallback))
 
 function resolveDefaultModelOptions(capability: ModelCapability): Array<{ model: string, label: string, providerName: string }> {
@@ -1021,8 +1030,8 @@ function normalizeSceneProviderIds(providerIds: string[]): string[] {
   return dedupeStrings(providerIds).filter(item => llmProviderIdSet.has(item))
 }
 
-function normalizeSceneModelFallback(modelFallback: string[], providerIds: string[], capability: ModelCapability = 'chat'): string[] {
-  const catalog = new Set(resolveSceneModelCatalog(providerIds, [], capability).map(item => item.model))
+function normalizeSceneModelFallback(modelFallback: string[], providerIds: string[], capability: ModelCapability = 'chat', embeddingApiStyle: EmbeddingApiStyle | null = null): string[] {
+  const catalog = new Set(resolveSceneModelCatalog(providerIds, [], capability, embeddingApiStyle).map(item => item.model))
   const normalized = dedupeStrings(modelFallback)
   if (catalog.size === 0)
     return normalized
@@ -1065,14 +1074,16 @@ function sceneUsageHint(scene: SceneItem): string {
   if (scene.key === 'document_analysis')
     return '默认文档分析入口'
   if (scene.key === 'knowledge_embedding')
-    return '默认向量入口'
+    return '文本向量入口'
+  if (scene.key === 'knowledge_visual_embedding')
+    return '视觉向量入口'
   return ''
 }
 
 function sceneUsageHintColor(scene: SceneItem): 'arcoblue' | 'green' | 'gray' {
   if (scene.key === 'project_chat')
     return 'arcoblue'
-  if (scene.key === 'document_analysis' || scene.key === 'knowledge_embedding')
+  if (scene.key === 'document_analysis' || scene.key === 'knowledge_embedding' || scene.key === 'knowledge_visual_embedding')
     return 'green'
   return 'gray'
 }
@@ -1176,7 +1187,7 @@ async function saveConsole() {
             enabled: item.enabled,
             providerIds: normalizeSceneProviderIds(item.providerIds),
             loadBalanceStrategy: item.loadBalanceStrategy,
-            modelFallback: normalizeSceneModelFallback(item.modelFallback, item.providerIds, sceneRequiredCapability(item.key)),
+            modelFallback: normalizeSceneModelFallback(item.modelFallback, item.providerIds, sceneRequiredCapability(item.key), sceneEmbeddingApiStyleFilter(item.key)),
             prompt: item.prompt,
           })),
         },
@@ -1298,7 +1309,7 @@ function removeProvider(providerId: string) {
     return {
       ...scene,
       providerIds,
-      modelFallback: normalizeSceneModelFallback(scene.modelFallback, providerIds, sceneRequiredCapability(scene.key)),
+      modelFallback: normalizeSceneModelFallback(scene.modelFallback, providerIds, sceneRequiredCapability(scene.key), sceneEmbeddingApiStyleFilter(scene.key)),
     }
   })
 }
@@ -1578,7 +1589,7 @@ function saveSceneDrawer() {
     enabled: Boolean(sceneEditorForm.enabled),
     providerIds,
     loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
-    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds, sceneRequiredCapability(sceneEditorForm.key)),
+    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds, sceneRequiredCapability(sceneEditorForm.key), sceneEmbeddingApiStyleFilter(sceneEditorForm.key)),
     prompt: String(sceneEditorForm.prompt || ''),
   })
   sceneItems.value = next
@@ -1604,7 +1615,7 @@ function applySceneBatchConfig() {
     ...item,
     providerIds,
     loadBalanceStrategy: sceneBatchForm.loadBalanceStrategy,
-    modelFallback: normalizeSceneModelFallback(sceneBatchForm.modelFallback, providerIds, sceneRequiredCapability(item.key)),
+    modelFallback: normalizeSceneModelFallback(sceneBatchForm.modelFallback, providerIds, sceneRequiredCapability(item.key), sceneEmbeddingApiStyleFilter(item.key)),
   }))
   sceneBatchEditorVisible.value = false
   Message.success(`已为 ${sceneItems.value.length} 个场景应用统一 Provider 与回退策略。`)
@@ -1616,7 +1627,7 @@ function applyCurrentSceneConfigToAll() {
     ...item,
     providerIds,
     loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
-    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds, sceneRequiredCapability(item.key)),
+    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds, sceneRequiredCapability(item.key), sceneEmbeddingApiStyleFilter(item.key)),
   }))
   Message.success(`已将「${sceneEditorForm.label}」的 Provider 绑定与回退策略复制到全部场景。`)
 }

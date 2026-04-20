@@ -13,7 +13,7 @@ import {
   resolveDashScopeNativeBaseURL,
   resolvePlatformAiRequestBaseURL,
 } from '~~/server/utils/platform-ai-base-url'
-import { resolvePlatformAiRuntimeByCapability } from '~~/server/utils/platform-ai-channels'
+import { resolveAiRuntimeForChannel, resolvePlatformAiRuntimeByCapability } from '~~/server/utils/platform-ai-channels'
 import {
   normalizePlatformAiClientType,
   normalizeProjectKnowledgeEmbeddingApiStyle,
@@ -264,6 +264,20 @@ function normalizeBailianEmbeddingType(value: unknown, fallback: ProjectKnowledg
   return fallback
 }
 
+function resolveKnowledgeEmbeddingChannelKey(
+  contents: KnowledgeEmbeddingContentItem[],
+  inputType: ProjectKnowledgeEmbeddingInputType | undefined,
+  fusionUsed: boolean,
+): 'knowledge_embedding' | 'knowledge_visual_embedding' {
+  const normalizedInputType = String(inputType || '').trim()
+  if (fusionUsed || normalizedInputType === 'image' || normalizedInputType === 'video' || normalizedInputType === 'multi_images' || normalizedInputType === 'fused')
+    return 'knowledge_visual_embedding'
+
+  return contents.some(item => typeof item !== 'string' && !('text' in item))
+    ? 'knowledge_visual_embedding'
+    : 'knowledge_embedding'
+}
+
 async function createOpenAiCompatibleTextEmbedding(input: {
   text: string
   provider: string
@@ -476,7 +490,25 @@ export async function createKnowledgeEmbedding(input: {
   event?: H3Event
 }): Promise<KnowledgeEmbeddingResult> {
   const { runtime } = await readEffectiveRuntimeSettings(input.event)
-  const modelRuntime = resolvePlatformAiRuntimeByCapability(runtime, 'embedding', runtime.ai.embeddingModel)
+  const sourceText = normalizeKnowledgeEmbeddingInputText({
+    text: input.text,
+    contents: input.contents,
+  })
+  const contents = normalizeKnowledgeEmbeddingContents({
+    text: input.text,
+    contents: input.contents,
+  })
+  const fusionUsed = Boolean(input.enableFusion)
+  const embeddingChannelKey = resolveKnowledgeEmbeddingChannelKey(contents, input.inputType, fusionUsed)
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, embeddingChannelKey)
+  const channelCandidate = channelRuntime.candidates.find(candidate => candidate.provider && candidate.modelConfig?.capabilities.includes('embedding')) || null
+  const modelRuntime = channelCandidate?.provider && channelCandidate.modelConfig
+    ? {
+        provider: channelCandidate.provider,
+        modelConfig: channelCandidate.modelConfig,
+        ai: channelCandidate.ai,
+      }
+    : resolvePlatformAiRuntimeByCapability(runtime, 'embedding', runtime.ai.embeddingModel)
   const embeddingAi = modelRuntime?.ai || runtime.ai
   const provider = normalizeAiRuntimeProvider(embeddingAi.provider)
   const apiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(modelRuntime?.modelConfig.embeddingApiStyle, runtime.ai.embeddingApiStyle)
@@ -489,14 +521,6 @@ export async function createKnowledgeEmbedding(input: {
   const normalizedApiKey = normalizePlatformAiApiKey(embeddingAi.apiKey)
   const timeoutMs = Math.max(3_000, Math.min(120_000, Number(embeddingAi.timeoutMs || 15_000)))
   const maxRetries = Math.max(0, Math.min(6, Number(embeddingAi.maxRetries || 0)))
-  const sourceText = normalizeKnowledgeEmbeddingInputText({
-    text: input.text,
-    contents: input.contents,
-  })
-  const contents = normalizeKnowledgeEmbeddingContents({
-    text: input.text,
-    contents: input.contents,
-  })
 
   if (apiStyle === 'bailian-multimodal') {
     const embeddingRuntimeConfigured = isAiRuntimeConfigured({
@@ -508,7 +532,6 @@ export async function createKnowledgeEmbedding(input: {
     if (!embeddingRuntimeConfigured || !normalizedApiKey)
       throw new Error('BAILIAN_MULTIMODAL_RUNTIME_NOT_CONFIGURED')
 
-    const fusionUsed = Boolean(input.enableFusion)
     return createBailianMultimodalEmbedding({
       contents,
       provider,
