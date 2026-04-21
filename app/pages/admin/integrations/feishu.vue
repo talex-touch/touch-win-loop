@@ -166,6 +166,8 @@ const canManageBitable = computed(() => permissions.value.includes('contest.writ
 const canReadSyncedData = computed(() => permissions.value.includes('contest.read_internal'))
 const canAccessPage = computed(() => canManageConfig.value || canManageBitable.value)
 const loadingAny = computed(() => loadingPermissions.value || loadingConfig.value || loadingSyncs.value)
+const normalizedPath = computed(() => route.path.replace(/\/+$/, '') || '/')
+const isOverviewRoute = computed(() => normalizedPath.value === '/admin/integrations/feishu')
 
 const {
   loading: feishuDirectoryLoading,
@@ -1438,6 +1440,8 @@ async function manualAddContestAdminByUnionId(unionId: string) {
 
 async function initializePage() {
   clearFeedback()
+  if (!isOverviewRoute.value)
+    return
   await loadPermissions()
   if (!canAccessPage.value)
     return
@@ -1448,449 +1452,437 @@ async function initializePage() {
   ])
 }
 
+watch(
+  () => isOverviewRoute.value,
+  (value, previousValue) => {
+    if (value && !previousValue)
+      void initializePage()
+  },
+)
+
 onMounted(initializePage)
 </script>
 
 <template>
   <div class="text-[11px] space-y-3">
-    <section v-if="loadingAny" class="p-3 border border-slate-200 bg-white">
-      <a-skeleton :animation="true">
-        <a-skeleton-line :rows="10" />
-      </a-skeleton>
-    </section>
-
-    <template v-else>
-      <section
-        v-if="errorText"
-        class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
-      >
-        {{ errorText }}
-      </section>
-      <section
-        v-if="successText"
-        class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50"
-      >
-        {{ successText }}
-      </section>
-
-      <section
-        v-if="!canAccessPage"
-        class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
-      >
-        403：当前账号无飞书集成权限。需要 `role.assign` 或 `contest.write`。
+    <template v-if="isOverviewRoute">
+      <section v-if="loadingAny" class="p-3 border border-slate-200 bg-white">
+        <a-skeleton :animation="true">
+          <a-skeleton-line :rows="10" />
+        </a-skeleton>
       </section>
 
       <template v-else>
-        <section v-if="canReadSyncedData" class="p-3 border border-slate-200 bg-white flex flex-wrap gap-2 items-center justify-between">
-          <div>
-            <h2 class="text-[12px] text-slate-900 font-semibold m-0">
-              飞书同步数据
-            </h2>
-            <p class="text-[10px] text-slate-500 m-0 mt-1">
-              浏览飞书导入后的索引、映射和待审草稿。
-            </p>
-          </div>
-          <a-button size="small" type="primary" @click="openSyncedData()">
-            查看所有已同步的数据
-          </a-button>
+        <section
+          v-if="errorText"
+          class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
+        >
+          {{ errorText }}
+        </section>
+        <section
+          v-if="successText"
+          class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50"
+        >
+          {{ successText }}
         </section>
 
-        <section v-if="canManageConfig" class="p-3 border border-slate-200 bg-white space-y-3">
-          <div class="flex flex-wrap gap-2 items-center justify-between">
-            <div>
-              <h2 class="text-[12px] text-slate-900 font-semibold m-0">
-                飞书集成配置
-              </h2>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                `role.assign` 权限可维护 OAuth、事件回调与管理员手动授权配置。
-              </p>
-            </div>
-            <div class="flex flex-wrap gap-2 items-center">
-              <a-button size="small" type="primary" @click="openConfigDialog">
-                打开配置
-              </a-button>
-            </div>
-          </div>
-
-          <div class="text-[10px] text-slate-600 p-3 border border-slate-200 bg-slate-50 space-y-1">
-            <p class="m-0">
-              当前状态：{{ config?.enabled ? '已启用' : '未启用' }}，App ID：{{ config?.appId || '-' }}
-            </p>
-            <p class="m-0">
-              当前生效版本：{{ config?.startupEffectiveVersion || '-' }}；
-              Commit：{{ config?.startupEffectiveCommitSha || '-' }}
-            </p>
-            <p class="text-slate-500 m-0">
-              版本来源：{{ buildValueSourceLabel(config?.startupVersionSource) }}；
-              Commit 来源：{{ buildValueSourceLabel(config?.startupCommitShaSource) }}
-            </p>
-            <p class="m-0">
-              App Secret：{{ config?.appSecretConfigured ? '已配置' : '未配置' }}；
-              Event Token：{{ config?.eventTokenConfigured ? '已配置' : '未配置' }}；
-              Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}
-            </p>
-            <p v-if="config?.updatedAt" class="m-0">
-              最近更新：{{ config.updatedAt }}（{{ config.updatedByUserId || 'unknown' }}）
-            </p>
-          </div>
+        <section
+          v-if="!canAccessPage"
+          class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
+        >
+          403：当前账号无飞书集成权限。需要 `role.assign` 或 `contest.write`。
         </section>
 
-        <section v-if="canManageBitable" class="p-3 border border-slate-200 bg-white space-y-3">
-          <div class="flex flex-wrap gap-2 items-center justify-between">
+        <template v-else>
+          <section v-if="canReadSyncedData" class="p-3 border border-slate-200 bg-white flex flex-wrap gap-2 items-center justify-between">
             <div>
               <h2 class="text-[12px] text-slate-900 font-semibold m-0">
-                多维表格同步信息
+                飞书同步数据
               </h2>
               <p class="text-[10px] text-slate-500 m-0 mt-1">
-                一条记录代表一个飞书多维主库。创建后直接在编辑抽屉里继续配置多个子表同步项与字段映射。
+                浏览飞书导入后的索引、映射和待审草稿。
               </p>
             </div>
-            <div class="flex gap-3 items-center">
-              <label class="text-[10px] text-slate-500 flex gap-2 items-center">
-                <a-switch v-model="showArchivedSyncs" size="small" @change="refreshSyncList" />
-                <span>显示已归档</span>
-              </label>
-              <a-button size="small" type="primary" @click="openCreateSyncDrawer">
-                新建同步信息
-              </a-button>
-              <a-button size="small" :loading="loadingSyncs" @click="refreshSyncList">
-                刷新
-              </a-button>
-            </div>
-          </div>
+            <a-button size="small" type="primary" @click="openSyncedData()">
+              查看所有已同步的数据
+            </a-button>
+          </section>
 
-          <a-table
-            v-model:expanded-keys="expandedSyncKeys"
-            :columns="syncColumns"
-            :data="syncs"
-            :pagination="false"
-            row-key="id"
-            size="small"
-            :bordered="{ cell: true }"
-            :expandable="{ width: 48 }"
-            @expand="handleSyncRowExpand"
-          >
-            <template #name="{ record }">
-              <div class="min-w-0">
-                <div class="flex gap-2 min-w-0 items-center">
-                  <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
-                    {{ record.name }}
+          <section v-if="canManageConfig" class="p-3 border border-slate-200 bg-white space-y-3">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
+              <div>
+                <h2 class="text-[12px] text-slate-900 font-semibold m-0">
+                  飞书集成配置
+                </h2>
+                <p class="text-[10px] text-slate-500 m-0 mt-1">
+                  `role.assign` 权限可维护 OAuth、事件回调与管理员手动授权配置。
+                </p>
+              </div>
+              <div class="flex flex-wrap gap-2 items-center">
+                <a-button size="small" type="primary" @click="openConfigDialog">
+                  打开配置
+                </a-button>
+              </div>
+            </div>
+
+            <div class="text-[10px] text-slate-600 p-3 border border-slate-200 bg-slate-50 space-y-1">
+              <p class="m-0">
+                当前状态：{{ config?.enabled ? '已启用' : '未启用' }}，App ID：{{ config?.appId || '-' }}
+              </p>
+              <p class="m-0">
+                当前生效版本：{{ config?.startupEffectiveVersion || '-' }}；
+                Commit：{{ config?.startupEffectiveCommitSha || '-' }}
+              </p>
+              <p class="text-slate-500 m-0">
+                版本来源：{{ buildValueSourceLabel(config?.startupVersionSource) }}；
+                Commit 来源：{{ buildValueSourceLabel(config?.startupCommitShaSource) }}
+              </p>
+              <p class="m-0">
+                App Secret：{{ config?.appSecretConfigured ? '已配置' : '未配置' }}；
+                Event Token：{{ config?.eventTokenConfigured ? '已配置' : '未配置' }}；
+                Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}
+              </p>
+              <p v-if="config?.updatedAt" class="m-0">
+                最近更新：{{ config.updatedAt }}（{{ config.updatedByUserId || 'unknown' }}）
+              </p>
+            </div>
+          </section>
+
+          <section v-if="canManageBitable" class="p-3 border border-slate-200 bg-white space-y-3">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
+              <div>
+                <h2 class="text-[12px] text-slate-900 font-semibold m-0">
+                  多维表格同步信息
+                </h2>
+                <p class="text-[10px] text-slate-500 m-0 mt-1">
+                  一条记录代表一个飞书多维主库。创建后直接在编辑抽屉里继续配置多个子表同步项与字段映射。
+                </p>
+              </div>
+              <div class="flex gap-3 items-center">
+                <label class="text-[10px] text-slate-500 flex gap-2 items-center">
+                  <a-switch v-model="showArchivedSyncs" size="small" @change="refreshSyncList" />
+                  <span>显示已归档</span>
+                </label>
+                <a-button size="small" type="primary" @click="openCreateSyncDrawer">
+                  新建同步信息
+                </a-button>
+                <a-button size="small" :loading="loadingSyncs" @click="refreshSyncList">
+                  刷新
+                </a-button>
+              </div>
+            </div>
+
+            <a-table
+              v-model:expanded-keys="expandedSyncKeys"
+              :columns="syncColumns"
+              :data="syncs"
+              :pagination="false"
+              row-key="id"
+              size="small"
+              :bordered="{ cell: true }"
+              :expandable="{ width: 48 }"
+              @expand="handleSyncRowExpand"
+            >
+              <template #name="{ record }">
+                <div class="min-w-0">
+                  <div class="flex gap-2 min-w-0 items-center">
+                    <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
+                      {{ record.name }}
+                    </p>
+                    <a-tag v-if="record.source?.environment" :color="syncEnvironmentTagColor(record.source.environment)" size="small">
+                      {{ syncEnvironmentLabel(record.source.environment) }}
+                    </a-tag>
+                    <a-tag v-if="!record.enabled && !record.archivedAt" color="gold" size="small">
+                      已禁用
+                    </a-tag>
+                    <a-tag v-if="record.archivedAt" color="gray" size="small">
+                      已归档
+                    </a-tag>
+                  </div>
+                  <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
+                    {{ record.id }}
                   </p>
-                  <a-tag v-if="record.source?.environment" :color="syncEnvironmentTagColor(record.source.environment)" size="small">
-                    {{ syncEnvironmentLabel(record.source.environment) }}
+                  <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
+                    归档时间：{{ formatDateTime(record.archivedAt) }}
+                  </p>
+                </div>
+              </template>
+
+              <template #source="{ record }">
+                <p class="text-[10px] text-slate-600 font-mono m-0">
+                  {{ record.source?.appName || record.source?.appToken }}
+                </p>
+                <p class="text-[10px] text-slate-500 m-0 mt-1">
+                  环境：{{ syncEnvironmentLabel(record.source?.environment) }}
+                </p>
+                <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                  {{ record.source?.appToken || '-' }}
+                </p>
+              </template>
+
+              <template #itemCount="{ record }">
+                <div class="space-y-1">
+                  <a-tag color="arcoblue" size="small">
+                    {{ record.itemCount }} 个子表项
                   </a-tag>
-                  <a-tag v-if="!record.enabled && !record.archivedAt" color="gold" size="small">
-                    已禁用
+                  <p class="text-[10px] text-slate-500 m-0">
+                    {{ record.enabled ? `已启用 ${record.enabledItemCount}` : '主同步已禁用' }}
+                  </p>
+                  <a-button size="mini" type="text" class="!px-0" @click.stop="toggleSyncExpanded(record)">
+                    {{ expandedSyncKeys.includes(record.id) ? '收起子项' : '展开查看' }}
+                  </a-button>
+                </div>
+              </template>
+
+              <template #latestRun="{ record }">
+                <div>
+                  <p class="text-[10px] text-slate-700 m-0">
+                    {{ syncLatestRunSummary(record) }}
+                  </p>
+                  <p class="text-[10px] text-slate-400 m-0 mt-1">
+                    更新时间：{{ formatDateTime(record.updatedAt) }}
+                  </p>
+                </div>
+              </template>
+
+              <template #schedule="{ record }">
+                <div class="space-y-1">
+                  <a-tag :color="syncScheduleStatusColor(record)" size="small">
+                    {{ syncScheduleStatusLabel(record) }}
                   </a-tag>
-                  <a-tag v-if="record.archivedAt" color="gray" size="small">
+                  <p class="text-[10px] text-slate-500 m-0">
+                    模式：{{ scheduleModeLabel(record.schedule?.mode) }}
+                  </p>
+                  <p class="text-[10px] text-slate-500 m-0">
+                    下次：{{ formatDateTime(record.scheduleRuntime?.nextRunAt) }}
+                  </p>
+                  <p v-if="record.scheduleRuntime?.lastError" class="text-[10px] text-rose-500 m-0 break-all">
+                    错误：{{ record.scheduleRuntime.lastError }}
+                  </p>
+                </div>
+              </template>
+
+              <template #issueStats="{ record }">
+                <a-tag :color="record.issueStats.open ? 'red' : 'gray'" size="small">
+                  待处理 {{ record.issueStats.open }}
+                </a-tag>
+              </template>
+
+              <template #updatedAt="{ record }">
+                <div>
+                  <p class="text-[10px] text-slate-700 m-0">
+                    {{ formatDateTime(record.updatedAt) }}
+                  </p>
+                  <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
                     已归档
-                  </a-tag>
-                </div>
-                <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
-                  {{ record.id }}
-                </p>
-                <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
-                  归档时间：{{ formatDateTime(record.archivedAt) }}
-                </p>
-              </div>
-            </template>
-
-            <template #source="{ record }">
-              <p class="text-[10px] text-slate-600 font-mono m-0">
-                {{ record.source?.appName || record.source?.appToken }}
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                环境：{{ syncEnvironmentLabel(record.source?.environment) }}
-              </p>
-              <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
-                {{ record.source?.appToken || '-' }}
-              </p>
-            </template>
-
-            <template #itemCount="{ record }">
-              <div class="space-y-1">
-                <a-tag color="arcoblue" size="small">
-                  {{ record.itemCount }} 个子表项
-                </a-tag>
-                <p class="text-[10px] text-slate-500 m-0">
-                  {{ record.enabled ? `已启用 ${record.enabledItemCount}` : '主同步已禁用' }}
-                </p>
-                <a-button size="mini" type="text" class="!px-0" @click.stop="toggleSyncExpanded(record)">
-                  {{ expandedSyncKeys.includes(record.id) ? '收起子项' : '展开查看' }}
-                </a-button>
-              </div>
-            </template>
-
-            <template #latestRun="{ record }">
-              <div>
-                <p class="text-[10px] text-slate-700 m-0">
-                  {{ syncLatestRunSummary(record) }}
-                </p>
-                <p class="text-[10px] text-slate-400 m-0 mt-1">
-                  更新时间：{{ formatDateTime(record.updatedAt) }}
-                </p>
-              </div>
-            </template>
-
-            <template #schedule="{ record }">
-              <div class="space-y-1">
-                <a-tag :color="syncScheduleStatusColor(record)" size="small">
-                  {{ syncScheduleStatusLabel(record) }}
-                </a-tag>
-                <p class="text-[10px] text-slate-500 m-0">
-                  模式：{{ scheduleModeLabel(record.schedule?.mode) }}
-                </p>
-                <p class="text-[10px] text-slate-500 m-0">
-                  下次：{{ formatDateTime(record.scheduleRuntime?.nextRunAt) }}
-                </p>
-                <p v-if="record.scheduleRuntime?.lastError" class="text-[10px] text-rose-500 m-0 break-all">
-                  错误：{{ record.scheduleRuntime.lastError }}
-                </p>
-              </div>
-            </template>
-
-            <template #issueStats="{ record }">
-              <a-tag :color="record.issueStats.open ? 'red' : 'gray'" size="small">
-                待处理 {{ record.issueStats.open }}
-              </a-tag>
-            </template>
-
-            <template #updatedAt="{ record }">
-              <div>
-                <p class="text-[10px] text-slate-700 m-0">
-                  {{ formatDateTime(record.updatedAt) }}
-                </p>
-                <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
-                  已归档
-                </p>
-              </div>
-            </template>
-
-            <template #actions="{ record }">
-              <div class="flex flex-wrap gap-1">
-                <a-button
-                  v-if="canReadSyncedData"
-                  size="mini"
-                  :data-sync-data-link="buildSyncedDataLink({ syncId: record.id })"
-                  @click="openSyncedData({ syncId: record.id })"
-                >
-                  查看同步数据
-                </a-button>
-                <a-button
-                  size="mini"
-                  type="primary"
-                  :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
-                  @click="openEditSyncDrawer(record.id, { includeArchived: Boolean(record.archivedAt) })"
-                >
-                  {{ record.archivedAt ? '查看同步信息' : '编辑同步信息' }}
-                </a-button>
-                <a-button
-                  v-if="!record.archivedAt"
-                  size="mini"
-                  :type="record.enabled ? 'outline' : 'primary'"
-                  :status="record.enabled ? 'warning' : 'success'"
-                  :loading="syncToggleMutating[record.id]"
-                  :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id]"
-                  @click="toggleSyncEnabled(record, !record.enabled)"
-                >
-                  {{ record.enabled ? '禁用' : '启用' }}
-                </a-button>
-                <a-popconfirm
-                  v-if="!record.archivedAt"
-                  content="确认归档该同步信息吗？归档后会自动停用全部子表同步项与定时调度，列表默认不再展示。"
-                  type="warning"
-                  @ok="archiveSync(record)"
-                >
-                  <a-button
-                    size="mini"
-                    status="danger"
-                    :loading="archivingSyncMutating[record.id]"
-                    :disabled="restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
-                  >
-                    归档
-                  </a-button>
-                </a-popconfirm>
-                <a-popconfirm
-                  v-else
-                  content="确认恢复该同步信息吗？恢复后只会恢复主记录本身，子表同步项与定时调度仍保持停用，需要手动重新启用。"
-                  type="warning"
-                  @ok="restoreSync(record)"
-                >
-                  <a-button
-                    size="mini"
-                    :loading="restoringSyncMutating[record.id]"
-                    :disabled="archivingSyncMutating[record.id] || syncToggleMutating[record.id]"
-                  >
-                    恢复归档
-                  </a-button>
-                </a-popconfirm>
-              </div>
-            </template>
-
-            <template #expand-row="{ record: syncRecord }">
-              <div class="p-3 bg-slate-50 space-y-3">
-                <div class="flex flex-wrap gap-2 items-center justify-between">
-                  <div>
-                    <p class="text-[11px] text-slate-900 font-semibold m-0">
-                      子表同步项快速预览
-                    </p>
-                    <p class="text-[10px] text-slate-500 m-0 mt-1">
-                      这里展示当前主同步下的子表同步项、运行状态和调度概况。
-                    </p>
-                  </div>
-                  <a-button
-                    size="mini"
-                    type="outline"
-                    @click="openEditSyncDrawer(syncRecord.id, { includeArchived: Boolean(syncRecord.archivedAt) })"
-                  >
-                    进入完整编辑
-                  </a-button>
-                </div>
-
-                <section v-if="expandedSyncLoading[syncRecord.id]" class="p-3 border border-slate-200 bg-white">
-                  <a-skeleton :animation="true">
-                    <a-skeleton-line :rows="4" />
-                  </a-skeleton>
-                </section>
-
-                <section
-                  v-else-if="expandedSyncErrors[syncRecord.id]"
-                  class="p-3 border border-rose-200 bg-rose-50 flex flex-wrap gap-2 items-center justify-between"
-                >
-                  <p class="text-[10px] text-rose-600 m-0">
-                    {{ expandedSyncErrors[syncRecord.id] }}
                   </p>
-                  <a-button size="mini" status="danger" @click="loadExpandedSyncDetail(syncRecord, true)">
-                    重试
-                  </a-button>
-                </section>
+                </div>
+              </template>
 
-                <template v-else-if="expandedSyncDetails[syncRecord.id]?.items?.length">
-                  <div class="text-[10px] text-slate-500 flex flex-wrap gap-2 items-center">
-                    <span>共 {{ expandedSyncDetails[syncRecord.id]?.items?.length || 0 }} 个子表同步项</span>
-                    <span>已启用 {{ expandedSyncDetails[syncRecord.id]?.items?.filter(item => item.isEnabled).length || 0 }} 个</span>
+              <template #actions="{ record }">
+                <div class="flex flex-wrap gap-1">
+                  <a-button
+                    v-if="canReadSyncedData"
+                    size="mini"
+                    :data-sync-data-link="buildSyncedDataLink({ syncId: record.id })"
+                    @click="openSyncedData({ syncId: record.id })"
+                  >
+                    查看同步数据
+                  </a-button>
+                  <a-button
+                    size="mini"
+                    type="primary"
+                    :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
+                    @click="openEditSyncDrawer(record.id, { includeArchived: Boolean(record.archivedAt) })"
+                  >
+                    {{ record.archivedAt ? '查看同步信息' : '编辑同步信息' }}
+                  </a-button>
+                  <a-button
+                    v-if="!record.archivedAt"
+                    size="mini"
+                    :type="record.enabled ? 'outline' : 'primary'"
+                    :status="record.enabled ? 'warning' : 'success'"
+                    :loading="syncToggleMutating[record.id]"
+                    :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id]"
+                    @click="toggleSyncEnabled(record, !record.enabled)"
+                  >
+                    {{ record.enabled ? '禁用' : '启用' }}
+                  </a-button>
+                  <a-popconfirm
+                    v-if="!record.archivedAt"
+                    content="确认归档该同步信息吗？归档后会自动停用全部子表同步项与定时调度，列表默认不再展示。"
+                    type="warning"
+                    @ok="archiveSync(record)"
+                  >
+                    <a-button
+                      size="mini"
+                      status="danger"
+                      :loading="archivingSyncMutating[record.id]"
+                      :disabled="restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
+                    >
+                      归档
+                    </a-button>
+                  </a-popconfirm>
+                  <a-popconfirm
+                    v-else
+                    content="确认恢复该同步信息吗？恢复后只会恢复主记录本身，子表同步项与定时调度仍保持停用，需要手动重新启用。"
+                    type="warning"
+                    @ok="restoreSync(record)"
+                  >
+                    <a-button
+                      size="mini"
+                      :loading="restoringSyncMutating[record.id]"
+                      :disabled="archivingSyncMutating[record.id] || syncToggleMutating[record.id]"
+                    >
+                      恢复归档
+                    </a-button>
+                  </a-popconfirm>
+                </div>
+              </template>
+
+              <template #expand-row="{ record: syncRecord }">
+                <div class="p-3 bg-slate-50 space-y-3">
+                  <div class="flex flex-wrap gap-2 items-center justify-between">
+                    <div>
+                      <p class="text-[11px] text-slate-900 font-semibold m-0">
+                        子表同步项快速预览
+                      </p>
+                      <p class="text-[10px] text-slate-500 m-0 mt-1">
+                        这里展示当前主同步下的子表同步项、运行状态和调度概况。
+                      </p>
+                    </div>
+                    <a-button
+                      size="mini"
+                      type="outline"
+                      @click="openEditSyncDrawer(syncRecord.id, { includeArchived: Boolean(syncRecord.archivedAt) })"
+                    >
+                      进入完整编辑
+                    </a-button>
                   </div>
 
-                  <a-table
-                    :columns="syncItemPreviewColumns"
-                    :data="expandedSyncDetails[syncRecord.id]?.items || []"
-                    :pagination="false"
-                    row-key="id"
-                    size="small"
-                    :bordered="{ cell: true }"
+                  <section v-if="expandedSyncLoading[syncRecord.id]" class="p-3 border border-slate-200 bg-white">
+                    <a-skeleton :animation="true">
+                      <a-skeleton-line :rows="4" />
+                    </a-skeleton>
+                  </section>
+
+                  <section
+                    v-else-if="expandedSyncErrors[syncRecord.id]"
+                    class="p-3 border border-rose-200 bg-rose-50 flex flex-wrap gap-2 items-center justify-between"
                   >
-                    <template #itemName="{ record: item }">
-                      <div class="min-w-0">
-                        <div class="flex flex-wrap gap-2 items-center">
-                          <p class="text-[10px] text-slate-900 font-semibold m-0">
-                            {{ item.name }}
+                    <p class="text-[10px] text-rose-600 m-0">
+                      {{ expandedSyncErrors[syncRecord.id] }}
+                    </p>
+                    <a-button size="mini" status="danger" @click="loadExpandedSyncDetail(syncRecord, true)">
+                      重试
+                    </a-button>
+                  </section>
+
+                  <template v-else-if="expandedSyncDetails[syncRecord.id]?.items?.length">
+                    <div class="text-[10px] text-slate-500 flex flex-wrap gap-2 items-center">
+                      <span>共 {{ expandedSyncDetails[syncRecord.id]?.items?.length || 0 }} 个子表同步项</span>
+                      <span>已启用 {{ expandedSyncDetails[syncRecord.id]?.items?.filter(item => item.isEnabled).length || 0 }} 个</span>
+                    </div>
+
+                    <a-table
+                      :columns="syncItemPreviewColumns"
+                      :data="expandedSyncDetails[syncRecord.id]?.items || []"
+                      :pagination="false"
+                      row-key="id"
+                      size="small"
+                      :bordered="{ cell: true }"
+                    >
+                      <template #itemName="{ record: item }">
+                        <div class="min-w-0">
+                          <div class="flex flex-wrap gap-2 items-center">
+                            <p class="text-[10px] text-slate-900 font-semibold m-0">
+                              {{ item.name }}
+                            </p>
+                            <a-tag size="small" color="arcoblue">
+                              {{ syncItemEntityTypeLabel(item.entityType) }}
+                            </a-tag>
+                            <a-tag v-if="!item.isEnabled" size="small" color="gray">
+                              已禁用
+                            </a-tag>
+                            <a-tag v-else-if="!syncRecord.enabled" size="small" color="gold">
+                              受主同步影响
+                            </a-tag>
+                          </div>
+                          <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                            {{ item.id }}
                           </p>
-                          <a-tag size="small" color="arcoblue">
-                            {{ syncItemEntityTypeLabel(item.entityType) }}
-                          </a-tag>
-                          <a-tag v-if="!item.isEnabled" size="small" color="gray">
-                            已禁用
-                          </a-tag>
-                          <a-tag v-else-if="!syncRecord.enabled" size="small" color="gold">
-                            受主同步影响
+                        </div>
+                      </template>
+
+                      <template #itemSource="{ record: item }">
+                        <div>
+                          <p class="text-[10px] text-slate-700 m-0">
+                            {{ item.source?.tableName || item.tableId || '-' }}
+                            <span class="text-slate-400"> / </span>
+                            {{ item.source?.viewName || item.viewId || '-' }}
+                          </p>
+                          <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                            {{ item.tableId || '-' }}
+                          </p>
+                        </div>
+                      </template>
+
+                      <template #itemStatus="{ record: item }">
+                        <div class="space-y-1">
+                          <label class="text-[10px] text-slate-500 flex gap-2 items-center">
+                            <span>启用</span>
+                            <a-switch
+                              :model-value="item.isEnabled"
+                              size="small"
+                              :loading="syncItemToggleMutating[item.id]"
+                              :disabled="Boolean(syncRecord.archivedAt)"
+                              @change="(value) => toggleExpandedSyncItemEnabled(syncRecord, item, Boolean(value))"
+                            />
+                          </label>
+                          <a-tag v-if="!syncRecord.enabled" size="small" color="gold">
+                            主同步已禁用
                           </a-tag>
                         </div>
-                        <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
-                          {{ item.id }}
-                        </p>
-                      </div>
-                    </template>
+                      </template>
 
-                    <template #itemSource="{ record: item }">
-                      <div>
-                        <p class="text-[10px] text-slate-700 m-0">
-                          {{ item.source?.tableName || item.tableId || '-' }}
-                          <span class="text-slate-400"> / </span>
-                          {{ item.source?.viewName || item.viewId || '-' }}
-                        </p>
-                        <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
-                          {{ item.tableId || '-' }}
-                        </p>
-                      </div>
-                    </template>
+                      <template #itemLatestRun="{ record: item }">
+                        <div class="space-y-1">
+                          <a-tag :color="runStatusColor(item.latestRunSummary?.status)" size="small">
+                            {{ item.latestRunSummary ? runStatusLabel(item.latestRunSummary.status) : '未执行' }}
+                          </a-tag>
+                          <p class="text-[10px] text-slate-500 m-0">
+                            {{ syncItemLatestRunSummary(item) }}
+                          </p>
+                          <p v-if="item.latestRunSummary?.errorCount" class="text-[10px] text-rose-500 m-0">
+                            最近错误数：{{ item.latestRunSummary.errorCount }}
+                          </p>
+                        </div>
+                      </template>
 
-                    <template #itemStatus="{ record: item }">
-                      <div class="space-y-1">
-                        <label class="text-[10px] text-slate-500 flex gap-2 items-center">
-                          <span>启用</span>
-                          <a-switch
-                            :model-value="item.isEnabled"
-                            size="small"
-                            :loading="syncItemToggleMutating[item.id]"
-                            :disabled="Boolean(syncRecord.archivedAt)"
-                            @change="(value) => toggleExpandedSyncItemEnabled(syncRecord, item, Boolean(value))"
-                          />
-                        </label>
-                        <a-tag v-if="!syncRecord.enabled" size="small" color="gold">
-                          主同步已禁用
-                        </a-tag>
-                      </div>
-                    </template>
-
-                    <template #itemLatestRun="{ record: item }">
-                      <div class="space-y-1">
-                        <a-tag :color="runStatusColor(item.latestRunSummary?.status)" size="small">
-                          {{ item.latestRunSummary ? runStatusLabel(item.latestRunSummary.status) : '未执行' }}
-                        </a-tag>
-                        <p class="text-[10px] text-slate-500 m-0">
-                          {{ syncItemLatestRunSummary(item) }}
-                        </p>
-                        <p v-if="item.latestRunSummary?.errorCount" class="text-[10px] text-rose-500 m-0">
-                          最近错误数：{{ item.latestRunSummary.errorCount }}
-                        </p>
-                      </div>
-                    </template>
-
-                    <template #itemSchedule="{ record: item }">
-                      <div class="space-y-1">
-                        <a-tag :color="syncItemScheduleStatusColor(syncRecord, item)" size="small">
-                          {{ syncItemScheduleStatusLabel(syncRecord, item) }}
-                        </a-tag>
-                        <p class="text-[10px] text-slate-500 m-0">
-                          模式：{{ scheduleModeLabel(item.schedule?.mode) }}
-                        </p>
-                        <p class="text-[10px] text-slate-500 m-0">
-                          下次：{{ formatDateTime(item.scheduleRuntime?.nextRunAt) }}
-                        </p>
-                      </div>
-                    </template>
-
-                    <template #itemActions="{ record: item }">
-                      <div class="flex flex-wrap gap-1">
-                        <a-button
-                          size="mini"
-                          @click="openSyncItemLogDrawer(syncRecord, item)"
-                        >
-                          执行日志
-                        </a-button>
-                        <a-button
-                          size="mini"
-                          type="primary"
-                          @click="openSyncItemEditor(syncRecord, item)"
-                        >
-                          编辑子项
-                        </a-button>
-                      </div>
-                    </template>
-                  </a-table>
-                </template>
-
-                <section v-else class="p-3 border border-slate-300 border-dashed bg-white">
-                  <p class="text-[10px] text-slate-500 m-0">
-                    当前还没有子表同步项。可以直接进入编辑抽屉新增并配置字段映射。
-                  </p>
-                </section>
-              </div>
-            </template>
-          </a-table>
-        </section>
+                      <template #itemSchedule="{ record: item }">
+                        <div class="space-y-1">
+                          <a-tag :color="syncItemScheduleStatusColor(syncRecord, item)" size="small">
+                            {{ syncItemScheduleStatusLabel(syncRecord, item) }}
+                          </a-tag>
+                          <p class="text-[10px] text-slate-500 m-0">
+                            模式：{{ scheduleModeLabel(item.schedule?.mode) }}
+                          </p>
+                          <p class="text-[10px] text-slate-500 m-0">
+                            下次：{{ formatDateTime(item.scheduleRuntime?.nextRunAt) }}
+                          </p>
+                        </div>
+                      </template>
+                    </a-table>
+                  </template>
+                </div>
+              </template>
+            </a-table>
+          </section>
+        </template>
       </template>
     </template>
+
+    <NuxtPage v-else />
 
     <a-drawer
       v-model:visible="configDialogVisible"
