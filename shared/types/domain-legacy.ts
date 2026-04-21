@@ -4410,6 +4410,28 @@ export interface FeishuBitableSyncRunDiagnostics {
   }>
 }
 
+export type FeishuSyncRunSampleType = 'auto_sync_filtered' | 'business_skipped'
+
+export interface FeishuSyncRunSampleRecord {
+  id: string
+  runId: string
+  syncItemId: string
+  sampleType: FeishuSyncRunSampleType
+  sampleIndex: number
+  recordId: string
+  externalId: string | null
+  reasonCode: string | null
+  payload: Record<string, unknown>
+  createdAt: string
+}
+
+export interface FeishuSyncRunSamplePage {
+  items: FeishuSyncRunSampleRecord[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 export interface FeishuBitableAppMeta {
   appToken: string
   name: string
@@ -4761,11 +4783,22 @@ export interface FeishuSyncedDataRecord {
   updatedAt: string
 }
 
+export interface FeishuSyncedDataMetrics {
+  effectiveEntityTotal: number
+  latestRunSourceRowTotal: number
+  latestRunAutoFilteredTotal: number
+  latestRunBusinessSkippedTotal: number
+  rawCountBasis: 'latest_run_per_sync_item'
+}
+
 export interface FeishuSyncedDataResult {
   items: FeishuSyncedDataRecord[]
   total: number
   page: number
   pageSize: number
+  metrics: FeishuSyncedDataMetrics
+  rawMetricAvailable: boolean
+  rawMetricNotice: string
   syncOptions: FeishuSyncedDataSyncOption[]
   syncItemOptions: FeishuSyncedDataSyncItemOption[]
 }

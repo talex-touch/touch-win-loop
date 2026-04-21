@@ -46,14 +46,27 @@ type ApiRequestError = Error & {
 
 const loading = ref(false)
 const errorText = ref('')
-const resultPayload = ref<FeishuSyncedDataResult>({
-  items: [],
-  total: 0,
-  page: 1,
-  pageSize: 20,
-  syncOptions: [],
-  syncItemOptions: [],
-})
+function createEmptyResultPayload(): FeishuSyncedDataResult {
+  return {
+    items: [],
+    total: 0,
+    page: 1,
+    pageSize: 20,
+    metrics: {
+      effectiveEntityTotal: 0,
+      latestRunSourceRowTotal: 0,
+      latestRunAutoFilteredTotal: 0,
+      latestRunBusinessSkippedTotal: 0,
+      rawCountBasis: 'latest_run_per_sync_item',
+    },
+    rawMetricAvailable: true,
+    rawMetricNotice: '',
+    syncOptions: [],
+    syncItemOptions: [],
+  }
+}
+
+const resultPayload = ref<FeishuSyncedDataResult>(createEmptyResultPayload())
 const detailVisible = ref(false)
 const detailRecord = ref<FeishuSyncedDataRecord | null>(null)
 const filters = reactive({
@@ -73,6 +86,43 @@ const hasActiveFilters = computed(() => Boolean(
   || filters.externalId
   || filters.recordId,
 ))
+
+const showRawMetrics = computed(() => resultPayload.value.rawMetricAvailable)
+const summaryMetricCards = computed(() => {
+  const cards = [{
+    key: 'effective',
+    label: '当前有效实体数',
+    value: resultPayload.value.metrics.effectiveEntityTotal,
+    tone: 'text-slate-900',
+    helper: '当前筛选条件下仍然可见的落库结果。',
+  }]
+  if (showRawMetrics.value) {
+    cards.push(
+      {
+        key: 'source',
+        label: '最近运行源行数',
+        value: resultPayload.value.metrics.latestRunSourceRowTotal,
+        tone: 'text-blue-700',
+        helper: '按各同步项最近一次运行聚合。',
+      },
+      {
+        key: 'filtered',
+        label: '规则过滤',
+        value: resultPayload.value.metrics.latestRunAutoFilteredTotal,
+        tone: 'text-amber-700',
+        helper: '命中过滤规则、未进入业务处理的源行。',
+      },
+      {
+        key: 'skipped',
+        label: '业务跳过',
+        value: resultPayload.value.metrics.latestRunBusinessSkippedTotal,
+        tone: 'text-orange-700',
+        helper: '进入业务处理但被校验跳过的记录。',
+      },
+    )
+  }
+  return cards
+})
 
 const currentFilterSummary = computed(() => {
   const parts = [
@@ -242,12 +292,9 @@ async function loadData() {
   }
   catch (error: any) {
     resultPayload.value = {
-      items: [],
-      total: 0,
+      ...createEmptyResultPayload(),
       page: currentPage(),
       pageSize: 20,
-      syncOptions: [],
-      syncItemOptions: [],
     }
     errorText.value = String(error?.data?.message || '飞书已同步数据加载失败。')
   }
@@ -361,10 +408,33 @@ watch(() => route.fullPath, () => {
         </div>
       </FilterBar>
       <p class="text-[11px] text-slate-500 mb-0 mt-2">
-        支持按同步信息、同步项、scope、externalId、recordId 反查；状态“仅映射”表示 external refs 已落库但索引文档尚未生成。
+        这页展示的是飞书同步后已经进入平台落库的当前结果，不是飞书原始导入行仓库；状态“仅映射”表示 external refs 已落库但索引文档尚未生成。
       </p>
       <p class="text-[11px] text-slate-500 mb-0 mt-1">
-        当前筛选：{{ currentFilterSummary }} / 总数：{{ resultPayload.total }}
+        同一业务实体的历史更新会在这里折叠为当前结果；`track / resource` 等会先合并进草稿快照再展开，规则过滤和业务跳过不会进入下方列表。
+      </p>
+      <p class="text-[11px] text-slate-500 mb-0 mt-1">
+        当前筛选：{{ currentFilterSummary }} / 当前有效实体数：{{ resultPayload.metrics.effectiveEntityTotal }}
+      </p>
+      <div class="mt-3 gap-3 grid md:grid-cols-2 xl:grid-cols-4">
+        <div
+          v-for="card in summaryMetricCards"
+          :key="card.key"
+          class="px-3 py-3 border border-slate-200 rounded bg-slate-50"
+        >
+          <p class="text-[11px] text-slate-500 m-0">
+            {{ card.label }}
+          </p>
+          <p class="text-[18px] font-semibold m-0 mt-1" :class="card.tone">
+            {{ card.value }}
+          </p>
+          <p class="text-[10px] text-slate-500 m-0 mt-1">
+            {{ card.helper }}
+          </p>
+        </div>
+      </div>
+      <p v-if="resultPayload.rawMetricNotice" class="text-[11px] mb-0 mt-3" :class="showRawMetrics ? 'text-slate-500' : 'text-amber-700'">
+        {{ resultPayload.rawMetricNotice }}
       </p>
     </SectionCard>
 
@@ -377,7 +447,7 @@ watch(() => route.fullPath, () => {
     <SectionCard v-else>
       <div
         v-if="!errorText && resultPayload.items.length === 0"
-        class="mb-4 p-4 border border-amber-200 rounded bg-amber-50 text-[12px] text-amber-900 space-y-3"
+        class="text-[12px] text-amber-900 mb-4 p-4 border border-amber-200 rounded bg-amber-50 space-y-3"
       >
         <div class="flex flex-wrap gap-3 items-start justify-between">
           <div>

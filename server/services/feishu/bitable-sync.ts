@@ -28,6 +28,7 @@ import type {
   FeishuMappedPreviewRow,
   FeishuPreviewIssueCounts,
   FeishuSyncRunMode,
+  FeishuSyncRunSampleType,
   PolicyLibraryItemSnapshot,
   ResourceAvailability,
   ResourceCategory,
@@ -61,6 +62,7 @@ import {
   getFeishuBitableSyncItemById,
   listFeishuExternalRefExternalIdsBySyncItemId,
   readFeishuIntegrationConfig,
+  replaceFeishuBitableSyncRunSamples,
   upsertFeishuExternalRef,
   upsertFeishuSyncIssue,
 } from '~~/server/utils/feishu-integration-store'
@@ -91,6 +93,15 @@ interface SyncSummary {
   writebackErrorCount: number
   errors: Array<{ recordId: string, message: string }>
   diagnostics: FeishuBitableSyncRunDiagnostics
+  runSamples: SyncRunSampleDraft[]
+}
+
+interface SyncRunSampleDraft {
+  sampleType: FeishuSyncRunSampleType
+  recordId: string
+  externalId?: string | null
+  reasonCode?: string | null
+  payload: Record<string, unknown>
 }
 
 interface NormalizedMapping {
@@ -1210,7 +1221,7 @@ function incrementRecordCount(target: Record<string, number>, key: string, amoun
   target[normalized] = Math.max(0, Math.trunc(Number(target[normalized]) || 0)) + Math.max(0, Math.trunc(Number(amount) || 0))
 }
 
-const SYNC_RUN_DIAGNOSTIC_SAMPLE_LIMIT = 12
+const SYNC_RUN_DIAGNOSTIC_PREVIEW_LIMIT = 12
 
 function resolveAutoSyncMismatchReason(completed: boolean, pending: boolean): 'record_status' | 'sync_status' | 'record_status_and_sync_status' {
   if (!completed && !pending)
@@ -1221,11 +1232,15 @@ function resolveAutoSyncMismatchReason(completed: boolean, pending: boolean): 'r
 function collectAutoSyncRunDiagnostics(
   sourceRecords: FeishuBitableRecord[],
   autoSync?: NormalizedAutoSync | null,
-): FeishuBitableSyncRunDiagnostics['autoSync'] {
+): {
+  diagnostics: FeishuBitableSyncRunDiagnostics['autoSync']
+  runSamples: SyncRunSampleDraft[]
+} {
   const normalizedAutoSync = autoSync || normalizeAutoSyncConfig(null)
   const recordStatusValueCounts: Record<string, number> = {}
   const syncStatusValueCounts: Record<string, number> = {}
   const filteredSamples: NonNullable<FeishuBitableSyncRunDiagnostics['autoSync']['filteredSamples']> = []
+  const runSamples: SyncRunSampleDraft[] = []
   let completedCount = 0
   let pendingCount = 0
   let matchedCount = 0
@@ -1245,32 +1260,52 @@ function collectAutoSyncRunDiagnostics(
       if (completed && pending) {
         matchedCount += 1
       }
-      else if (filteredSamples.length < SYNC_RUN_DIAGNOSTIC_SAMPLE_LIMIT) {
-        filteredSamples.push({
+      else {
+        const reason = resolveAutoSyncMismatchReason(completed, pending)
+        const previewSample = {
           recordId: record.recordId,
           recordStatus: recordStatus || '空值',
           syncStatus: syncStatus || '空值',
           recordStatusMatched: completed,
           syncStatusMatched: pending,
-          reason: resolveAutoSyncMismatchReason(completed, pending),
+          reason,
+        } satisfies NonNullable<FeishuBitableSyncRunDiagnostics['autoSync']['filteredSamples']>[number]
+        runSamples.push({
+          sampleType: 'auto_sync_filtered',
+          recordId: record.recordId,
+          reasonCode: reason,
+          payload: {
+            recordStatus: previewSample.recordStatus,
+            syncStatus: previewSample.syncStatus,
+            recordStatusMatched: previewSample.recordStatusMatched,
+            syncStatusMatched: previewSample.syncStatusMatched,
+            reason: previewSample.reason,
+            recordStatusField: normalizedAutoSync.recordStatusField,
+            syncStatusField: normalizedAutoSync.syncStatusField,
+          },
         })
+        if (filteredSamples.length < SYNC_RUN_DIAGNOSTIC_PREVIEW_LIMIT)
+          filteredSamples.push(previewSample)
       }
     }
   }
 
   return {
-    enabled: normalizedAutoSync.enabled,
-    recordStatusField: normalizedAutoSync.recordStatusField,
-    syncStatusField: normalizedAutoSync.syncStatusField,
-    completedValues: [...normalizedAutoSync.completedValues],
-    pendingValues: [...normalizedAutoSync.pendingValues],
-    syncedValues: [...normalizedAutoSync.syncedValues],
-    recordStatusValueCounts,
-    syncStatusValueCounts,
-    completedCount,
-    pendingCount,
-    matchedCount,
-    filteredSamples,
+    diagnostics: {
+      enabled: normalizedAutoSync.enabled,
+      recordStatusField: normalizedAutoSync.recordStatusField,
+      syncStatusField: normalizedAutoSync.syncStatusField,
+      completedValues: [...normalizedAutoSync.completedValues],
+      pendingValues: [...normalizedAutoSync.pendingValues],
+      syncedValues: [...normalizedAutoSync.syncedValues],
+      recordStatusValueCounts,
+      syncStatusValueCounts,
+      completedCount,
+      pendingCount,
+      matchedCount,
+      filteredSamples,
+    },
+    runSamples,
   }
 }
 
@@ -1279,7 +1314,10 @@ function buildRunDiagnostics(input: {
   sourceRecords?: FeishuBitableRecord[]
   sourceRecordCount?: number
   autoSync?: NormalizedAutoSync | null
-}): FeishuBitableSyncRunDiagnostics {
+}): {
+  diagnostics: FeishuBitableSyncRunDiagnostics
+  runSamples: SyncRunSampleDraft[]
+} {
   const processedCount = Math.max(0, Math.trunc(Number(input.records.length) || 0))
   const sourceFetchedCount = Math.max(
     processedCount,
@@ -1287,16 +1325,20 @@ function buildRunDiagnostics(input: {
   )
   const sourceRecords = input.sourceRecords || input.records
   const autoSync = input.autoSync || normalizeAutoSyncConfig(null)
+  const autoSyncDiagnostics = collectAutoSyncRunDiagnostics(sourceRecords, autoSync)
 
   return {
-    sourceFetchedCount,
-    processedCount,
-    autoSyncFilteredCount: autoSync.enabled ? Math.max(0, sourceFetchedCount - processedCount) : 0,
-    businessSkippedCount: 0,
-    skipReasonCounts: {},
-    missingRequiredFieldCounts: {},
-    autoSync: collectAutoSyncRunDiagnostics(sourceRecords, autoSync),
-    businessSkipSamples: [],
+    diagnostics: {
+      sourceFetchedCount,
+      processedCount,
+      autoSyncFilteredCount: autoSync.enabled ? Math.max(0, sourceFetchedCount - processedCount) : 0,
+      businessSkippedCount: 0,
+      skipReasonCounts: {},
+      missingRequiredFieldCounts: {},
+      autoSync: autoSyncDiagnostics.diagnostics,
+      businessSkipSamples: [],
+    },
+    runSamples: autoSyncDiagnostics.runSamples,
   }
 }
 
@@ -1309,6 +1351,7 @@ function buildSummaryBase(input: {
   const records = input.records
   const processedCount = Math.max(0, Math.trunc(Number(records.length) || 0))
   const fetchedCount = Math.max(processedCount, Math.trunc(Number(input.sourceRecords?.length ?? input.sourceRecordCount) || 0))
+  const runDiagnostics = buildRunDiagnostics(input)
   return {
     fetchedCount,
     createdCount: 0,
@@ -1318,7 +1361,8 @@ function buildSummaryBase(input: {
     writebackSuccessCount: 0,
     writebackErrorCount: 0,
     errors: [],
-    diagnostics: buildRunDiagnostics(input),
+    diagnostics: runDiagnostics.diagnostics,
+    runSamples: [...runDiagnostics.runSamples],
   }
 }
 
@@ -1361,7 +1405,7 @@ function recordBusinessSkipDiagnostics(
 
   const missingFields = collectMissingRequiredFields(result)
   const samples = diagnostics.businessSkipSamples || []
-  if (samples.length < SYNC_RUN_DIAGNOSTIC_SAMPLE_LIMIT) {
+  if (samples.length < SYNC_RUN_DIAGNOSTIC_PREVIEW_LIMIT) {
     samples.push({
       recordId: record.recordId,
       externalId: toText(result.externalId) || record.recordId,
@@ -1378,6 +1422,26 @@ function recordBusinessSkipDiagnostics(
 
   for (const fieldKey of missingFields)
     incrementRecordCount(diagnostics.missingRequiredFieldCounts, fieldKey, normalizedSkippedCount)
+}
+
+function buildBusinessSkipRunSample(
+  record: FeishuBitableRecord,
+  result: ApplyRecordResult,
+  skippedCount: number,
+): SyncRunSampleDraft {
+  const normalizedSkippedCount = Math.max(1, Math.trunc(Number(skippedCount) || 0))
+  return {
+    sampleType: 'business_skipped',
+    recordId: record.recordId,
+    externalId: toText(result.externalId) || null,
+    reasonCode: toText(result.reasonCode) || null,
+    payload: {
+      message: toText(result.message) || '记录未通过同步校验。',
+      skippedCount: normalizedSkippedCount,
+      missingFields: collectMissingRequiredFields(result),
+      resultPayload: parseJsonObject(result.payload),
+    },
+  }
 }
 
 function createEmptyPreviewIssueCounts(): FeishuPreviewIssueCounts {
@@ -2649,6 +2713,7 @@ async function executeRecords(
 
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
         recordBusinessSkipDiagnostics(summary.diagnostics, record, result, resultSkippedCount)
+        summary.runSamples.push(buildBusinessSkipRunSample(record, result, resultSkippedCount))
         await upsertFeishuSyncIssue(db, {
           syncItemId: input.syncItemId,
           entityType: input.entityType,
@@ -3601,7 +3666,7 @@ async function runFeishuBitableSyncItemById(
       ? ((summary.createdCount > 0 || summary.updatedCount > 0) ? 'partial_success' : 'failed')
       : 'success'
 
-    await withClient(event, async (db) => {
+    await withTransaction(event, async (db) => {
       await completeFeishuBitableSyncItemRun(db, {
         runId,
         syncItemId: task.id,
@@ -3613,6 +3678,18 @@ async function runFeishuBitableSyncItemById(
         errorCount: summary.errorCount,
         errorMessage: summary.errors.slice(0, 5).map(item => `${item.recordId}: ${item.message}`).join('；'),
         diagnostics: summary.diagnostics,
+      })
+      await replaceFeishuBitableSyncRunSamples(db, {
+        runId,
+        syncItemId: task.id,
+        samples: summary.runSamples.map((sample, index) => ({
+          sampleType: sample.sampleType,
+          sampleIndex: index + 1,
+          recordId: sample.recordId,
+          externalId: sample.externalId || null,
+          reasonCode: sample.reasonCode || null,
+          payload: sample.payload,
+        })),
       })
     })
 

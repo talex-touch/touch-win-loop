@@ -27,6 +27,7 @@ import type {
   FeishuPostSyncTask,
   FeishuPostSyncTaskStatus,
   FeishuPostSyncTaskType,
+  FeishuSyncedDataMetrics,
   FeishuSyncedDataQuery,
   FeishuSyncedDataRecord,
   FeishuSyncedDataRecordStatus,
@@ -36,6 +37,9 @@ import type {
   FeishuSyncIssueResolution,
   FeishuSyncIssueStatus,
   FeishuSyncRunMode,
+  FeishuSyncRunSamplePage,
+  FeishuSyncRunSampleRecord,
+  FeishuSyncRunSampleType,
   FeishuTaskIssueStats,
   FeishuTaskLatestRunSummary,
   FeishuTaskScheduleConfig,
@@ -196,6 +200,26 @@ interface FeishuSyncedDataRow {
   created_at: string
   updated_at: string
   total_count: number | string
+}
+
+interface FeishuSyncedDataMetricsRow {
+  latest_run_source_row_total: number | string | null
+  latest_run_auto_filtered_total: number | string | null
+  latest_run_business_skipped_total: number | string | null
+}
+
+interface FeishuSyncRunSampleRow {
+  id: string
+  run_id: string
+  sync_item_id: string
+  sample_type: FeishuSyncRunSampleType
+  sample_index: number | string
+  record_id: string
+  external_id: string | null
+  reason_code: string | null
+  payload_json: unknown
+  created_at: string
+  total_count?: number | string
 }
 
 const FEISHU_VECTOR_MODE_KEY = Symbol.for('winloop.feishu.vector.mode.v1')
@@ -675,6 +699,44 @@ function toSyncedDataRecord(row: FeishuSyncedDataRow): FeishuSyncedDataRecord {
     keywords: toStringArray(row.keywords),
     metadata: parseJsonObject(row.metadata),
     updatedAt: toText(row.updated_at),
+  }
+}
+
+function createDefaultFeishuSyncedDataMetrics(effectiveEntityTotal = 0): FeishuSyncedDataMetrics {
+  return {
+    effectiveEntityTotal: Math.max(0, Math.trunc(Number(effectiveEntityTotal) || 0)),
+    latestRunSourceRowTotal: 0,
+    latestRunAutoFilteredTotal: 0,
+    latestRunBusinessSkippedTotal: 0,
+    rawCountBasis: 'latest_run_per_sync_item',
+  }
+}
+
+function toFeishuSyncedDataMetrics(
+  row: FeishuSyncedDataMetricsRow | undefined,
+  effectiveEntityTotal: number,
+): FeishuSyncedDataMetrics {
+  return {
+    effectiveEntityTotal: Math.max(0, Math.trunc(Number(effectiveEntityTotal) || 0)),
+    latestRunSourceRowTotal: Math.max(0, Math.trunc(Number(row?.latest_run_source_row_total || 0) || 0)),
+    latestRunAutoFilteredTotal: Math.max(0, Math.trunc(Number(row?.latest_run_auto_filtered_total || 0) || 0)),
+    latestRunBusinessSkippedTotal: Math.max(0, Math.trunc(Number(row?.latest_run_business_skipped_total || 0) || 0)),
+    rawCountBasis: 'latest_run_per_sync_item',
+  }
+}
+
+function toFeishuSyncRunSampleRecord(row: FeishuSyncRunSampleRow): FeishuSyncRunSampleRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    syncItemId: row.sync_item_id,
+    sampleType: row.sample_type,
+    sampleIndex: Math.max(1, Math.trunc(Number(row.sample_index) || 1)),
+    recordId: toText(row.record_id),
+    externalId: toText(row.external_id) || null,
+    reasonCode: toText(row.reason_code) || null,
+    payload: parseJsonObject(row.payload_json),
+    createdAt: row.created_at,
   }
 }
 
@@ -2313,6 +2375,151 @@ export async function completeFeishuBitableSyncItemRun(
   )
 }
 
+export async function replaceFeishuBitableSyncRunSamples(
+  db: Queryable,
+  input: {
+    runId: string
+    syncItemId: string
+    samples: Array<{
+      sampleType: FeishuSyncRunSampleType
+      sampleIndex: number
+      recordId: string
+      externalId?: string | null
+      reasonCode?: string | null
+      payload?: Record<string, unknown>
+    }>
+  },
+): Promise<void> {
+  const runId = toText(input.runId)
+  const syncItemId = toText(input.syncItemId)
+  if (!runId || !syncItemId)
+    return
+
+  await db.query(
+    `DELETE FROM feishu_bitable_sync_run_samples
+     WHERE run_id = $1`,
+    [runId],
+  )
+
+  const samples = input.samples
+    .map(sample => ({
+      sampleType: sample.sampleType,
+      sampleIndex: Math.max(1, Math.trunc(Number(sample.sampleIndex) || 1)),
+      recordId: toText(sample.recordId),
+      externalId: toText(sample.externalId) || null,
+      reasonCode: toText(sample.reasonCode) || null,
+      payload: parseJsonObject(sample.payload),
+    }))
+    .filter(sample => Boolean(sample.recordId))
+
+  if (!samples.length)
+    return
+
+  const values: unknown[] = []
+  const placeholders: string[] = []
+  for (const sample of samples) {
+    const index = values.length
+    placeholders.push(`($${index + 1}, $${index + 2}, $${index + 3}, $${index + 4}, $${index + 5}, $${index + 6}, $${index + 7}, $${index + 8}, $${index + 9}, NOW())`)
+    values.push(
+      randomUUID(),
+      runId,
+      syncItemId,
+      sample.sampleType,
+      sample.sampleIndex,
+      sample.recordId,
+      sample.externalId,
+      sample.reasonCode,
+      JSON.stringify(sample.payload),
+    )
+  }
+
+  await db.query(
+    `INSERT INTO feishu_bitable_sync_run_samples (
+      id,
+      run_id,
+      sync_item_id,
+      sample_type,
+      sample_index,
+      record_id,
+      external_id,
+      reason_code,
+      payload_json,
+      created_at
+    ) VALUES ${placeholders.join(', ')}`,
+    values,
+  )
+}
+
+export async function listFeishuBitableSyncRunSamples(
+  db: Queryable,
+  input: {
+    syncId: string
+    syncItemId: string
+    runId: string
+    type: FeishuSyncRunSampleType
+    page?: number
+    pageSize?: number
+    includeArchived?: boolean
+  },
+): Promise<FeishuSyncRunSamplePage | null> {
+  const syncId = toText(input.syncId)
+  const syncItemId = toText(input.syncItemId)
+  const runId = toText(input.runId)
+  if (!syncId || !syncItemId || !runId)
+    return null
+
+  const item = await getFeishuBitableSyncItemById(db, syncItemId, {
+    includeArchived: input.includeArchived,
+  })
+  if (!item || item.syncId !== syncId)
+    return null
+
+  const runResult = await db.query<{ id: string }>(
+    `SELECT id
+     FROM feishu_bitable_sync_item_runs
+     WHERE id = $1
+       AND sync_item_id = $2
+     LIMIT 1`,
+    [runId, syncItemId],
+  )
+  if (!runResult.rows[0]?.id)
+    return null
+
+  const page = Math.max(1, Number(input.page || 1) || 1)
+  const pageSize = Math.max(1, Math.min(100, Number(input.pageSize || 12) || 12))
+  const offset = (page - 1) * pageSize
+
+  const result = await db.query<FeishuSyncRunSampleRow>(
+    `SELECT
+      id,
+      run_id,
+      sync_item_id,
+      sample_type,
+      sample_index,
+      record_id,
+      external_id,
+      reason_code,
+      payload_json,
+      created_at::TEXT,
+      COUNT(*) OVER()::INTEGER AS total_count
+     FROM feishu_bitable_sync_run_samples
+     WHERE run_id = $1
+       AND sync_item_id = $2
+       AND sample_type = $3
+     ORDER BY sample_index ASC, created_at ASC, id ASC
+     LIMIT $4
+     OFFSET $5`,
+    [runId, syncItemId, input.type, pageSize, offset],
+  )
+
+  return {
+    items: result.rows.map(toFeishuSyncRunSampleRecord),
+    total: Math.max(0, Number(result.rows[0]?.total_count || 0) || 0),
+    page,
+    pageSize,
+  }
+}
+
 export async function listFeishuBitableSyncItemRuns(
   db: Queryable,
   input: {
@@ -2795,6 +3002,7 @@ export async function searchFeishuSyncedData(
   const externalId = toText(input.externalId)
   const recordId = toText(input.recordId)
   const keyword = toText(input.keyword)
+  const rawMetricAvailable = !keyword && !externalId && !recordId
   const where: string[] = []
   const values: unknown[] = []
 
@@ -3207,11 +3415,86 @@ export async function searchFeishuSyncedData(
     values,
   )
 
+  const total = Math.max(0, Number(result.rows[0]?.total_count || 0) || 0)
+  let metrics = createDefaultFeishuSyncedDataMetrics(total)
+  if (rawMetricAvailable) {
+    const rawMetricWhere: string[] = []
+    const rawMetricValues: unknown[] = []
+    if (syncId) {
+      rawMetricValues.push(syncId)
+      rawMetricWhere.push(`item.sync_id = $${rawMetricValues.length}`)
+    }
+    if (syncItemId) {
+      rawMetricValues.push(syncItemId)
+      rawMetricWhere.push(`item.id = $${rawMetricValues.length}`)
+    }
+    if (scope) {
+      rawMetricValues.push(scope)
+      rawMetricWhere.push(`item.entity_type = $${rawMetricValues.length}`)
+    }
+
+    const metricResult = await db.query<FeishuSyncedDataMetricsRow>(
+      `WITH ranked_runs AS (
+        SELECT
+          run.sync_item_id,
+          run.fetched_count,
+          run.diagnostics_json,
+          ROW_NUMBER() OVER (
+            PARTITION BY run.sync_item_id
+            ORDER BY run.started_at DESC, run.created_at DESC, run.id DESC
+          ) AS row_number
+        FROM feishu_bitable_sync_item_runs run
+        JOIN feishu_bitable_sync_items item ON item.id = run.sync_item_id
+        ${rawMetricWhere.length ? `WHERE ${rawMetricWhere.join(' AND ')}` : ''}
+      ),
+      latest_runs AS (
+        SELECT
+          sync_item_id,
+          fetched_count,
+          diagnostics_json
+        FROM ranked_runs
+        WHERE row_number = 1
+      )
+      SELECT
+        COALESCE(SUM(
+          CASE
+            WHEN COALESCE(latest_runs.diagnostics_json ->> 'sourceFetchedCount', '') ~ '^[0-9]+$'
+              THEN (latest_runs.diagnostics_json ->> 'sourceFetchedCount')::INTEGER
+            ELSE COALESCE(latest_runs.fetched_count, 0)
+          END
+        ), 0)::INTEGER AS latest_run_source_row_total,
+        COALESCE(SUM(
+          CASE
+            WHEN COALESCE(latest_runs.diagnostics_json ->> 'autoSyncFilteredCount', '') ~ '^[0-9]+$'
+              THEN (latest_runs.diagnostics_json ->> 'autoSyncFilteredCount')::INTEGER
+            ELSE 0
+          END
+        ), 0)::INTEGER AS latest_run_auto_filtered_total,
+        COALESCE(SUM(
+          CASE
+            WHEN COALESCE(latest_runs.diagnostics_json ->> 'businessSkippedCount', '') ~ '^[0-9]+$'
+              THEN (latest_runs.diagnostics_json ->> 'businessSkippedCount')::INTEGER
+            ELSE 0
+          END
+        ), 0)::INTEGER AS latest_run_business_skipped_total
+      FROM latest_runs`,
+      rawMetricValues,
+    )
+    metrics = toFeishuSyncedDataMetrics(metricResult.rows[0], total)
+  }
+
+  const rawMetricNotice = rawMetricAvailable
+    ? '下方列表展示的是当前仍然可见的有效落库结果；最近运行源行数按“各同步项最近一次运行”聚合，规则过滤和业务跳过不会进入该列表。'
+    : '当前列表仍按精确筛选结果展示，但“最近运行源行数”只支持按 syncId / syncItemId / scope 这类同步级筛选聚合；检测到关键词、externalId 或 recordId 细粒度筛选，已隐藏该指标。'
+
   return {
     items: result.rows.map(toSyncedDataRecord),
-    total: Math.max(0, Number(result.rows[0]?.total_count || 0) || 0),
+    total,
     page,
     pageSize,
+    metrics,
+    rawMetricAvailable,
+    rawMetricNotice,
   }
 }
 

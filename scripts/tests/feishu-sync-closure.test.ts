@@ -28,6 +28,22 @@ function createQueryRecorder(rows: Record<string, unknown>[] = []) {
   }
 }
 
+function createQueuedQueryRecorder(resultSets: Record<string, unknown>[][]) {
+  const calls: Array<{ text: string, values: unknown[] }> = []
+  let index = 0
+  return {
+    calls,
+    db: {
+      async query(text: string, values: unknown[] = []) {
+        const rows = resultSets[Math.min(index, resultSets.length - 1)] || []
+        index += 1
+        calls.push({ text, values })
+        return { rows }
+      },
+    },
+  }
+}
+
 describe('feishu sync issue closure', () => {
   it('自动解决同一同步项、记录和 externalId 的 open issue', async () => {
     const recorder = createQueryRecorder([{ resolved_count: '1' }])
@@ -155,5 +171,70 @@ describe('feishu synced data release draft rows', () => {
 
     assert.match(pageSource, /status === 'release_draft'/)
     assert.match(pageSource, /草稿\/待审数据/)
+  })
+})
+
+describe('feishu synced data metrics', () => {
+  it('无细粒度筛选时返回双口径指标', async () => {
+    const recorder = createQueuedQueryRecorder([
+      [{
+        status: 'indexed',
+        scope: 'contest',
+        sync_id: 'sync_1',
+        sync_name: '菁同步',
+        sync_item_id: 'sync_item_1',
+        sync_item_name: '竞赛库',
+        title: '测试竞赛',
+        summary: '摘要',
+        body: '',
+        external_id: 'contest_1',
+        entity_id: 'contest_entity_1',
+        record_id: 'record_1',
+        run_id: 'run_1',
+        keywords: ['AI'],
+        metadata: { recordId: 'record_1' },
+        created_at: '2026-04-20T09:00:00.000Z',
+        updated_at: '2026-04-20T10:00:00.000Z',
+        total_count: 1,
+      }],
+      [{
+        latest_run_source_row_total: 48,
+        latest_run_auto_filtered_total: 21,
+        latest_run_business_skipped_total: 5,
+      }],
+    ])
+
+    const result = await searchFeishuSyncedData(recorder.db, {
+      syncId: 'sync_1',
+      page: 1,
+      pageSize: 20,
+    })
+
+    assert.equal(result.metrics.effectiveEntityTotal, 1)
+    assert.equal(result.metrics.latestRunSourceRowTotal, 48)
+    assert.equal(result.metrics.latestRunAutoFilteredTotal, 21)
+    assert.equal(result.metrics.latestRunBusinessSkippedTotal, 5)
+    assert.equal(result.metrics.rawCountBasis, 'latest_run_per_sync_item')
+    assert.equal(result.rawMetricAvailable, true)
+    assert.match(result.rawMetricNotice, /最近一次运行/)
+    assert.equal(recorder.calls.length, 2)
+    assert.match(recorder.calls[1].text, /latest_run_source_row_total/)
+    assert.match(recorder.calls[1].text, /item\.sync_id = \$1/)
+  })
+
+  it('关键词或精确记录筛选时隐藏原始导入口径', async () => {
+    const recorder = createQueuedQueryRecorder([[]])
+
+    const result = await searchFeishuSyncedData(recorder.db, {
+      keyword: '智能体',
+      page: 1,
+      pageSize: 20,
+    })
+
+    assert.equal(result.rawMetricAvailable, false)
+    assert.equal(result.metrics.effectiveEntityTotal, 0)
+    assert.equal(result.metrics.latestRunSourceRowTotal, 0)
+    assert.match(result.rawMetricNotice, /关键词、externalId 或 recordId/)
+    assert.equal(recorder.calls.length, 1)
   })
 })

@@ -480,6 +480,20 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_sync_item_runs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS feishu_bitable_sync_run_samples (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES feishu_bitable_sync_item_runs(id) ON DELETE CASCADE,
+  sync_item_id TEXT NOT NULL REFERENCES feishu_bitable_sync_items(id) ON DELETE CASCADE,
+  sample_type TEXT NOT NULL CHECK (sample_type IN ('auto_sync_filtered', 'business_skipped')),
+  sample_index INTEGER NOT NULL,
+  record_id TEXT NOT NULL DEFAULT '',
+  external_id TEXT,
+  reason_code TEXT,
+  payload_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(run_id, sample_type, sample_index)
+);
+
 CREATE TABLE IF NOT EXISTS feishu_external_refs (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL CHECK (provider IN ('feishu_bitable')),
@@ -2886,6 +2900,10 @@ CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_items_schedule_lock
   ON feishu_bitable_sync_items(schedule_locked_at);
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_item_runs_sync_item_started ON feishu_bitable_sync_item_runs(sync_item_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_item_runs_sync_item_mode_started ON feishu_bitable_sync_item_runs(sync_item_id, mode, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_run_samples_run_type_index
+  ON feishu_bitable_sync_run_samples(run_id, sample_type, sample_index ASC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_run_samples_sync_item_run
+  ON feishu_bitable_sync_run_samples(sync_item_id, run_id, sample_index ASC);
 CREATE INDEX IF NOT EXISTS idx_feishu_external_refs_entity ON feishu_external_refs(scope, entity_id);
 CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_sync_item_status ON feishu_sync_issues(sync_item_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_sync_item_record ON feishu_sync_issues(sync_item_id, record_id, external_id);

@@ -11,17 +11,21 @@ import type {
   FeishuBitableSyncItem,
   FeishuBitableSyncItemDetail,
   FeishuBitableSyncItemEntityType,
-  FeishuBitableSyncItemRun,
   FeishuBitableSyncItemPreviewRequest,
   FeishuBitableSyncItemPreviewResult,
+  FeishuBitableSyncItemRun,
   FeishuBitableTableMeta,
   FeishuBitableViewMeta,
   FeishuFieldDiagnosticItem,
   FeishuFieldInspectionItem,
   FeishuSyncIssue,
+  FeishuSyncRunSamplePage,
+  FeishuSyncRunSampleRecord,
+  FeishuSyncRunSampleType,
   FeishuTaskLatestRunSummary,
   FeishuTaskScheduleMode,
 } from '~~/shared/types/domain'
+import { guessFeishuBitableFieldName } from '~~/shared/utils/feishu-bitable-field-guess'
 import {
   buildDefaultSyncItemConfig,
   buildSuggestedSyncItemName,
@@ -29,7 +33,6 @@ import {
   listRequiredSyncItemFieldGroups,
   suggestSyncItemEntityType,
 } from '~~/shared/utils/feishu-bitable-sync-config'
-import { guessFeishuBitableFieldName } from '~~/shared/utils/feishu-bitable-field-guess'
 
 interface MappingOption {
   key: string
@@ -88,6 +91,11 @@ type SaveCurrentItemContext = 'main' | 'mapping' | 'writeback' | 'autoSync'
 type SyncIssueCategoryKey = 'mapping' | 'relation' | 'writeback' | 'source'
 type AutoSyncFilteredSample = NonNullable<NonNullable<FeishuBitableSyncItemRun['diagnostics']>['autoSync']['filteredSamples']>[number]
 type BusinessSkipSample = NonNullable<NonNullable<FeishuBitableSyncItemRun['diagnostics']>['businessSkipSamples']>[number]
+interface CurrentItemLogRunSampleState {
+  loading: boolean
+  errorText: string
+  pageData: FeishuSyncRunSamplePage
+}
 
 const props = withDefaults(defineProps<{
   syncId: string
@@ -152,6 +160,23 @@ async function requestApi<T>(
   if (!response.ok || !payload || payload.code !== 0)
     throw createApiRequestError(String(payload?.message || fallbackMessage))
   return payload.data
+}
+
+function createEmptyRunSamplePage(page = 1, pageSize = RUN_SAMPLE_PAGE_SIZE): FeishuSyncRunSamplePage {
+  return {
+    items: [],
+    total: 0,
+    page,
+    pageSize,
+  }
+}
+
+function createEmptyRunSampleState(): CurrentItemLogRunSampleState {
+  return {
+    loading: false,
+    errorText: '',
+    pageData: createEmptyRunSamplePage(),
+  }
 }
 
 const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> = {
@@ -354,6 +379,10 @@ const SYNC_ISSUE_FIELD_HINT_SET = new Set([
   'triggerSource',
 ])
 
+const SIMULATE_SOURCE_FIELD_PAGE_SIZE = 12
+const RUN_SAMPLE_PAGE_SIZE = 12
+const RUN_SAMPLE_TYPE_LIST: FeishuSyncRunSampleType[] = ['auto_sync_filtered', 'business_skipped']
+
 const savingItem = ref(false)
 const savingSync = ref(false)
 const runningItem = ref(false)
@@ -398,6 +427,11 @@ const currentItemLogLoading = ref(false)
 const currentItemLogErrorText = ref('')
 const currentItemLogItemDetail = ref<FeishuBitableSyncItemDetail | null>(null)
 const currentItemLogSelectedRunId = ref('')
+const simulateSourceFieldPage = ref(1)
+const currentItemLogRunSamples = reactive<Record<FeishuSyncRunSampleType, CurrentItemLogRunSampleState>>({
+  auto_sync_filtered: createEmptyRunSampleState(),
+  business_skipped: createEmptyRunSampleState(),
+})
 const availableTables = ref<FeishuBitableTableMeta[]>([])
 const availableViews = ref<FeishuBitableViewMeta[]>([])
 const newItemViews = ref<FeishuBitableViewMeta[]>([])
@@ -565,6 +599,12 @@ const currentItemLogSelectedRun = computed(() => {
     return null
   return detail.recentRuns.find(run => run.id === currentItemLogSelectedRunId.value) || detail.recentRuns[0] || null
 })
+const simulateSourceFieldsPageData = computed(() => {
+  const fields = simulateResult.value?.sourceFields || []
+  const start = (simulateSourceFieldPage.value - 1) * SIMULATE_SOURCE_FIELD_PAGE_SIZE
+  return fields.slice(start, start + SIMULATE_SOURCE_FIELD_PAGE_SIZE)
+})
+const simulateSourceFieldsTotal = computed(() => simulateResult.value?.sourceFields.length || 0)
 const syncEnvironmentLabel = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.label || '未标记')
 const syncEnvironmentTagColor = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.tagColor || 'gray')
 const selectPopupContainer = computed(() => editorRootRef.value)
@@ -927,6 +967,47 @@ function syncRunAutoSyncFilteredSamples(run?: FeishuBitableSyncItemRun | null): 
 function syncRunBusinessSkipSamples(run?: FeishuBitableSyncItemRun | null): BusinessSkipSample[] {
   const samples = run?.diagnostics?.businessSkipSamples
   return Array.isArray(samples) ? samples : []
+}
+
+function currentItemLogRunSampleState(type: FeishuSyncRunSampleType): CurrentItemLogRunSampleState {
+  return currentItemLogRunSamples[type]
+}
+
+function currentItemLogRunSampleRecords(type: FeishuSyncRunSampleType): FeishuSyncRunSampleRecord[] {
+  return currentItemLogRunSamples[type].pageData.items
+}
+
+function currentItemLogRunSampleHasFallback(type: FeishuSyncRunSampleType, run?: FeishuBitableSyncItemRun | null): boolean {
+  if (currentItemLogRunSamples[type].pageData.total > 0)
+    return false
+  return type === 'auto_sync_filtered'
+    ? syncRunAutoSyncFilteredSamples(run).length > 0
+    : syncRunBusinessSkipSamples(run).length > 0
+}
+
+function currentItemLogRunSamplePayload(sample?: FeishuSyncRunSampleRecord | null): Record<string, unknown> {
+  return sample?.payload && typeof sample.payload === 'object' && !Array.isArray(sample.payload)
+    ? sample.payload
+    : {}
+}
+
+function currentItemLogRunSamplePayloadText(sample: FeishuSyncRunSampleRecord, key: string, fallback = '-'): string {
+  return toText(currentItemLogRunSamplePayload(sample)[key]) || fallback
+}
+
+function currentItemLogRunSamplePayloadBoolean(sample: FeishuSyncRunSampleRecord, key: string): boolean {
+  return currentItemLogRunSamplePayload(sample)[key] === true
+}
+
+function currentItemLogRunSampleMissingFieldsText(sample: FeishuSyncRunSampleRecord): string {
+  const missingFields = currentItemLogRunSamplePayload(sample).missingFields
+  return Array.isArray(missingFields)
+    ? missingFields.map(item => toText(item)).filter(Boolean).join(' / ') || '-'
+    : '-'
+}
+
+function currentItemLogRunSampleResultPayloadText(sample: FeishuSyncRunSampleRecord): string {
+  return JSON.stringify(currentItemLogRunSamplePayload(sample).resultPayload || {}, null, 2)
 }
 
 function syncRunAutoSyncReasonLabel(reason: AutoSyncFilteredSample['reason']): string {
@@ -1364,12 +1445,21 @@ function closeWritebackDrawer() {
   writebackDrawerVisible.value = false
 }
 
+function resetCurrentItemLogRunSamples() {
+  for (const type of RUN_SAMPLE_TYPE_LIST) {
+    currentItemLogRunSamples[type].loading = false
+    currentItemLogRunSamples[type].errorText = ''
+    currentItemLogRunSamples[type].pageData = createEmptyRunSamplePage()
+  }
+}
+
 function resetCurrentItemLogState() {
   currentItemLogVisible.value = false
   currentItemLogLoading.value = false
   currentItemLogErrorText.value = ''
   currentItemLogItemDetail.value = null
   currentItemLogSelectedRunId.value = ''
+  resetCurrentItemLogRunSamples()
 }
 
 function resetCurrentItemState() {
@@ -1378,6 +1468,7 @@ function resetCurrentItemState() {
   currentItem.value = null
   previewResult.value = null
   simulateResult.value = null
+  simulateSourceFieldPage.value = 1
   simulateErrorText.value = ''
   simulateForm.locatorType = 'auto'
   simulateForm.locatorValue = ''
@@ -1391,6 +1482,7 @@ async function loadCurrentItemLogDetail(itemId: string, preferredRunId = '') {
     return
   currentItemLogLoading.value = true
   currentItemLogErrorText.value = ''
+  resetCurrentItemLogRunSamples()
   try {
     const query = new URLSearchParams({
       runLimit: '20',
@@ -1405,6 +1497,7 @@ async function loadCurrentItemLogDetail(itemId: string, preferredRunId = '') {
     )
     currentItemLogItemDetail.value = data
     currentItemLogSelectedRunId.value = preferredRunId || data.recentRuns[0]?.id || ''
+    await loadCurrentItemLogRunSamples()
   }
   catch (error: any) {
     currentItemLogErrorText.value = String(error?.data?.message || '子表同步项执行日志加载失败。')
@@ -1412,6 +1505,53 @@ async function loadCurrentItemLogDetail(itemId: string, preferredRunId = '') {
   finally {
     currentItemLogLoading.value = false
   }
+}
+
+async function loadCurrentItemLogRunSamplePage(type: FeishuSyncRunSampleType, page = 1) {
+  const runId = toText(currentItemLogSelectedRun.value?.id)
+  const itemId = toText(currentItemLogItemDetail.value?.id || currentItem.value?.id)
+  if (!normalizedSyncId.value || !itemId || !runId) {
+    currentItemLogRunSamples[type].pageData = createEmptyRunSamplePage(page)
+    currentItemLogRunSamples[type].errorText = ''
+    currentItemLogRunSamples[type].loading = false
+    return
+  }
+
+  currentItemLogRunSamples[type].loading = true
+  currentItemLogRunSamples[type].errorText = ''
+  try {
+    const query = new URLSearchParams({
+      type,
+      page: String(page),
+      pageSize: String(currentItemLogRunSamples[type].pageData.pageSize || RUN_SAMPLE_PAGE_SIZE),
+    })
+    if (props.includeArchived)
+      query.set('includeArchived', 'true')
+    const data = await requestApi<FeishuSyncRunSamplePage>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(itemId)}/runs/${encodeURIComponent(runId)}/samples?${query.toString()}`),
+      {},
+      '同步运行样本加载失败。',
+    )
+    if (toText(currentItemLogSelectedRun.value?.id) !== runId)
+      return
+    currentItemLogRunSamples[type].pageData = data
+  }
+  catch (error: any) {
+    currentItemLogRunSamples[type].pageData = createEmptyRunSamplePage(page)
+    currentItemLogRunSamples[type].errorText = String(error?.data?.message || '同步运行样本加载失败。')
+  }
+  finally {
+    if (toText(currentItemLogSelectedRun.value?.id) === runId)
+      currentItemLogRunSamples[type].loading = false
+  }
+}
+
+async function loadCurrentItemLogRunSamples() {
+  resetCurrentItemLogRunSamples()
+  const runId = toText(currentItemLogSelectedRun.value?.id)
+  if (!runId)
+    return
+  await Promise.all(RUN_SAMPLE_TYPE_LIST.map(type => loadCurrentItemLogRunSamplePage(type, 1)))
 }
 
 async function openCurrentItemLogDrawer(preferredRunId = '') {
@@ -1467,6 +1607,11 @@ async function handleSyncIssueAction(issue: FeishuSyncIssue, action: 'resolve' |
 
 function selectCurrentItemLogRun(runId: string) {
   currentItemLogSelectedRunId.value = toText(runId)
+  void loadCurrentItemLogRunSamples()
+}
+
+async function handleCurrentItemLogRunSamplePageChange(type: FeishuSyncRunSampleType, page: number) {
+  await loadCurrentItemLogRunSamplePage(type, page)
 }
 
 function applyContestAutoSyncPreset() {
@@ -2419,7 +2564,7 @@ async function simulateCurrentItemRecord() {
     const draft: FeishuBitableSimulateRecordRequest = {
       ...buildCurrentItemDraft(),
       locatorType: simulateForm.locatorType,
-      locatorValue: locatorValue,
+      locatorValue,
     }
     const data = await requestApi<FeishuBitableSimulateRecordResult>(
       endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/simulate-record`),
@@ -2429,6 +2574,7 @@ async function simulateCurrentItemRecord() {
       },
       '模拟执行失败。',
     )
+    simulateSourceFieldPage.value = 1
     simulateResult.value = data
     setSuccess('单行模拟完成。')
   }
@@ -2675,6 +2821,10 @@ watch(() => itemForm.entityType, (value, previousValue) => {
   catch (error) {
     setError(error instanceof Error ? error.message : '推荐模板更新失败。')
   }
+})
+
+watch(() => simulateResult.value?.locator.recordId || '', () => {
+  simulateSourceFieldPage.value = 1
 })
 
 watch(() => props.syncId, () => {
@@ -3482,7 +3632,7 @@ watch(() => props.selectedItemId, (value) => {
                 </div>
 
                 <div class="gap-3 grid xl:grid-cols-3">
-                  <div class="p-3 border border-slate-200 rounded bg-slate-50 text-[11px] space-y-2">
+                  <div class="text-[11px] p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
                     <div class="flex items-center justify-between">
                       <p class="text-slate-900 font-medium m-0">
                         规则命中
@@ -3511,7 +3661,7 @@ watch(() => props.selectedItemId, (value) => {
                     </p>
                   </div>
 
-                  <div class="p-3 border border-slate-200 rounded bg-slate-50 text-[11px] space-y-2">
+                  <div class="text-[11px] p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
                     <div class="flex items-center justify-between">
                       <p class="text-slate-900 font-medium m-0">
                         业务结果
@@ -3534,14 +3684,14 @@ watch(() => props.selectedItemId, (value) => {
                     </p>
                   </div>
 
-                  <div class="p-3 border border-slate-200 rounded bg-slate-50 text-[11px] space-y-2">
+                  <div class="text-[11px] p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
                     <p class="text-slate-900 font-medium m-0">
                       回填预览
                     </p>
                     <p class="text-slate-500 m-0">
                       {{ simulateResult.writebackPreview.enabled ? '如果真实执行到业务阶段，会按下面字段回填。' : '当前未启用回填。' }}
                     </p>
-                    <pre class="text-[10px] text-slate-700 m-0 p-2 rounded bg-white border border-slate-200 overflow-x-auto">{{ simulateWritebackJsonText(simulateResult) }}</pre>
+                    <pre class="text-[10px] text-slate-700 m-0 p-2 border border-slate-200 rounded bg-white overflow-x-auto">{{ simulateWritebackJsonText(simulateResult) }}</pre>
                   </div>
                 </div>
 
@@ -3605,9 +3755,12 @@ watch(() => props.selectedItemId, (value) => {
                   <p class="text-[11px] text-slate-900 font-medium m-0">
                     源字段原值
                   </p>
+                  <p class="text-[10px] text-slate-500 m-0">
+                    共 {{ simulateSourceFieldsTotal }} 个源字段，按页查看当前记录原值。
+                  </p>
                   <div class="gap-2 grid md:grid-cols-2 xl:grid-cols-3">
                     <div
-                      v-for="field in simulateResult.sourceFields.slice(0, 12)"
+                      v-for="field in simulateSourceFieldsPageData"
                       :key="`simulate-source-${field.fieldName}`"
                       class="text-[10px] p-2 border border-slate-200 rounded bg-slate-50"
                     >
@@ -3619,9 +3772,16 @@ watch(() => props.selectedItemId, (value) => {
                       </p>
                     </div>
                   </div>
-                  <p v-if="simulateResult.sourceFields.length > 12" class="text-[10px] text-slate-400 m-0">
-                    仅展示前 12 个源字段；完整原值可用 recordId 在飞书侧定位。
-                  </p>
+                  <div v-if="simulateSourceFieldsTotal > SIMULATE_SOURCE_FIELD_PAGE_SIZE" class="flex justify-end">
+                    <a-pagination
+                      :current="simulateSourceFieldPage"
+                      :page-size="SIMULATE_SOURCE_FIELD_PAGE_SIZE"
+                      :show-total="true"
+                      :total="simulateSourceFieldsTotal"
+                      size="small"
+                      @change="(value: number) => simulateSourceFieldPage = value"
+                    />
+                  </div>
                 </div>
               </template>
             </section>
@@ -4006,76 +4166,192 @@ watch(() => props.selectedItemId, (value) => {
                 </p>
                 <div
                   v-if="currentItemLogSelectedRun.diagnostics?.sourceFetchedCount !== undefined"
-                  class="border border-slate-200 bg-slate-50 p-3 space-y-3"
+                  class="p-3 border border-slate-200 bg-slate-50 space-y-3"
                 >
-                  <div class="flex items-center justify-between gap-2">
+                  <div class="flex gap-2 items-center justify-between">
                     <p class="text-[11px] text-slate-800 font-semibold m-0">
                       详细诊断
                     </p>
-                    <a-tag size="small">
-                      样本最多 12 条
+                    <a-tag size="small" color="arcoblue">
+                      新运行支持完整分页样本
                     </a-tag>
                   </div>
                   <p v-if="syncRunAutoSyncMatchText(currentItemLogSelectedRun)" class="text-[10px] text-slate-600 m-0">
                     {{ syncRunAutoSyncMatchText(currentItemLogSelectedRun) }}
                   </p>
-                  <div v-if="syncRunAutoSyncFilteredSamples(currentItemLogSelectedRun).length" class="space-y-2">
-                    <p class="text-[10px] text-slate-700 font-medium m-0">
-                      规则过滤样本
-                    </p>
-                    <div
-                      v-for="sample in syncRunAutoSyncFilteredSamples(currentItemLogSelectedRun)"
-                      :key="`auto-sync-filtered-${sample.recordId}`"
-                      class="border border-amber-100 bg-white p-2 space-y-1"
-                    >
-                      <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
-                        {{ sample.recordId }}
+                  <div
+                    v-if="(currentItemLogSelectedRun.diagnostics.autoSyncFilteredCount || 0) > 0 || currentItemLogRunSampleState('auto_sync_filtered').loading || currentItemLogRunSampleState('auto_sync_filtered').errorText || currentItemLogRunSampleHasFallback('auto_sync_filtered', currentItemLogSelectedRun)"
+                    class="space-y-2"
+                  >
+                    <div class="flex gap-2 items-center justify-between">
+                      <p class="text-[10px] text-slate-700 font-medium m-0">
+                        规则过滤样本
                       </p>
-                      <p class="text-[10px] text-slate-700 m-0">
-                        {{ currentItemLogSelectedRun.diagnostics.autoSync.recordStatusField || '记录状态' }}：{{ sample.recordStatus || '空值' }}
-                        <span :class="sample.recordStatusMatched ? 'text-emerald-600' : 'text-amber-600'">
-                          {{ sample.recordStatusMatched ? '命中' : '未命中' }}
-                        </span>
-                      </p>
-                      <p class="text-[10px] text-slate-700 m-0">
-                        {{ currentItemLogSelectedRun.diagnostics.autoSync.syncStatusField || '同步信息' }}：{{ sample.syncStatus || '空值' }}
-                        <span :class="sample.syncStatusMatched ? 'text-emerald-600' : 'text-amber-600'">
-                          {{ sample.syncStatusMatched ? '命中' : '未命中' }}
-                        </span>
-                      </p>
-                      <p class="text-[10px] text-amber-600 m-0">
-                        {{ syncRunAutoSyncReasonLabel(sample.reason) }}
-                      </p>
+                      <a-tag v-if="currentItemLogRunSampleHasFallback('auto_sync_filtered', currentItemLogSelectedRun)" size="small" color="gold">
+                        旧运行仅保留预览
+                      </a-tag>
                     </div>
+                    <a-skeleton v-if="currentItemLogRunSampleState('auto_sync_filtered').loading" :animation="true">
+                      <a-skeleton-line :rows="3" />
+                    </a-skeleton>
+                    <p v-else-if="currentItemLogRunSampleState('auto_sync_filtered').errorText" class="text-[10px] text-rose-600 m-0">
+                      {{ currentItemLogRunSampleState('auto_sync_filtered').errorText }}
+                    </p>
+                    <template v-else-if="currentItemLogRunSampleRecords('auto_sync_filtered').length">
+                      <div
+                        v-for="sample in currentItemLogRunSampleRecords('auto_sync_filtered')"
+                        :key="sample.id"
+                        class="p-2 border border-amber-100 bg-white space-y-1"
+                      >
+                        <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
+                          {{ sample.recordId }}
+                        </p>
+                        <p class="text-[10px] text-slate-700 m-0">
+                          {{ currentItemLogRunSamplePayloadText(sample, 'recordStatusField', currentItemLogSelectedRun.diagnostics.autoSync.recordStatusField || '记录状态') }}：{{ currentItemLogRunSamplePayloadText(sample, 'recordStatus', '空值') }}
+                          <span :class="currentItemLogRunSamplePayloadBoolean(sample, 'recordStatusMatched') ? 'text-emerald-600' : 'text-amber-600'">
+                            {{ currentItemLogRunSamplePayloadBoolean(sample, 'recordStatusMatched') ? '命中' : '未命中' }}
+                          </span>
+                        </p>
+                        <p class="text-[10px] text-slate-700 m-0">
+                          {{ currentItemLogRunSamplePayloadText(sample, 'syncStatusField', currentItemLogSelectedRun.diagnostics.autoSync.syncStatusField || '同步信息') }}：{{ currentItemLogRunSamplePayloadText(sample, 'syncStatus', '空值') }}
+                          <span :class="currentItemLogRunSamplePayloadBoolean(sample, 'syncStatusMatched') ? 'text-emerald-600' : 'text-amber-600'">
+                            {{ currentItemLogRunSamplePayloadBoolean(sample, 'syncStatusMatched') ? '命中' : '未命中' }}
+                          </span>
+                        </p>
+                        <p class="text-[10px] text-amber-600 m-0">
+                          {{ syncRunAutoSyncReasonLabel(currentItemLogRunSamplePayloadText(sample, 'reason') as AutoSyncFilteredSample['reason']) }}
+                        </p>
+                      </div>
+                      <div v-if="currentItemLogRunSampleState('auto_sync_filtered').pageData.total > currentItemLogRunSampleState('auto_sync_filtered').pageData.pageSize" class="flex justify-end">
+                        <a-pagination
+                          :current="currentItemLogRunSampleState('auto_sync_filtered').pageData.page"
+                          :page-size="currentItemLogRunSampleState('auto_sync_filtered').pageData.pageSize"
+                          :show-total="true"
+                          :total="currentItemLogRunSampleState('auto_sync_filtered').pageData.total"
+                          size="small"
+                          @change="(value: number) => handleCurrentItemLogRunSamplePageChange('auto_sync_filtered', value)"
+                        />
+                      </div>
+                    </template>
+                    <template v-else-if="currentItemLogRunSampleHasFallback('auto_sync_filtered', currentItemLogSelectedRun)">
+                      <p class="text-[10px] text-amber-700 m-0">
+                        旧运行仅保留最多 12 条预览样本，新运行才支持完整分页查看。
+                      </p>
+                      <div
+                        v-for="sample in syncRunAutoSyncFilteredSamples(currentItemLogSelectedRun)"
+                        :key="`auto-sync-filtered-${sample.recordId}`"
+                        class="p-2 border border-amber-100 bg-white space-y-1"
+                      >
+                        <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
+                          {{ sample.recordId }}
+                        </p>
+                        <p class="text-[10px] text-slate-700 m-0">
+                          {{ currentItemLogSelectedRun.diagnostics.autoSync.recordStatusField || '记录状态' }}：{{ sample.recordStatus || '空值' }}
+                          <span :class="sample.recordStatusMatched ? 'text-emerald-600' : 'text-amber-600'">
+                            {{ sample.recordStatusMatched ? '命中' : '未命中' }}
+                          </span>
+                        </p>
+                        <p class="text-[10px] text-slate-700 m-0">
+                          {{ currentItemLogSelectedRun.diagnostics.autoSync.syncStatusField || '同步信息' }}：{{ sample.syncStatus || '空值' }}
+                          <span :class="sample.syncStatusMatched ? 'text-emerald-600' : 'text-amber-600'">
+                            {{ sample.syncStatusMatched ? '命中' : '未命中' }}
+                          </span>
+                        </p>
+                        <p class="text-[10px] text-amber-600 m-0">
+                          {{ syncRunAutoSyncReasonLabel(sample.reason) }}
+                        </p>
+                      </div>
+                    </template>
+                    <p v-else class="text-[10px] text-slate-500 m-0">
+                      当前没有可展示的规则过滤样本。
+                    </p>
                   </div>
-                  <div v-if="syncRunBusinessSkipSamples(currentItemLogSelectedRun).length" class="space-y-2">
-                    <p class="text-[10px] text-slate-700 font-medium m-0">
-                      业务跳过样本
-                    </p>
-                    <div
-                      v-for="sample in syncRunBusinessSkipSamples(currentItemLogSelectedRun)"
-                      :key="`business-skip-${sample.recordId}-${sample.reasonCode}`"
-                      class="border border-orange-100 bg-white p-2 space-y-1"
-                    >
-                      <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
-                        {{ sample.recordId }}
+                  <div
+                    v-if="(currentItemLogSelectedRun.diagnostics.businessSkippedCount || 0) > 0 || currentItemLogRunSampleState('business_skipped').loading || currentItemLogRunSampleState('business_skipped').errorText || currentItemLogRunSampleHasFallback('business_skipped', currentItemLogSelectedRun)"
+                    class="space-y-2"
+                  >
+                    <div class="flex gap-2 items-center justify-between">
+                      <p class="text-[10px] text-slate-700 font-medium m-0">
+                        业务跳过样本
                       </p>
-                      <p class="text-[10px] text-slate-700 m-0">
-                        原因：{{ sample.reasonCode || '-' }}；外部 ID：{{ sample.externalId || '-' }}；跳过 {{ sample.skippedCount || 1 }}
-                      </p>
-                      <p class="text-[10px] text-slate-700 m-0">
-                        缺失字段：{{ syncRunMissingFieldsText(sample) }}
-                      </p>
-                      <p class="text-[10px] text-orange-600 m-0">
-                        {{ sample.message || '记录未通过同步校验。' }}
-                      </p>
+                      <a-tag v-if="currentItemLogRunSampleHasFallback('business_skipped', currentItemLogSelectedRun)" size="small" color="gold">
+                        旧运行仅保留预览
+                      </a-tag>
                     </div>
+                    <a-skeleton v-if="currentItemLogRunSampleState('business_skipped').loading" :animation="true">
+                      <a-skeleton-line :rows="3" />
+                    </a-skeleton>
+                    <p v-else-if="currentItemLogRunSampleState('business_skipped').errorText" class="text-[10px] text-rose-600 m-0">
+                      {{ currentItemLogRunSampleState('business_skipped').errorText }}
+                    </p>
+                    <template v-else-if="currentItemLogRunSampleRecords('business_skipped').length">
+                      <div
+                        v-for="sample in currentItemLogRunSampleRecords('business_skipped')"
+                        :key="sample.id"
+                        class="p-2 border border-orange-100 bg-white space-y-1"
+                      >
+                        <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
+                          {{ sample.recordId }}
+                        </p>
+                        <p class="text-[10px] text-slate-700 m-0">
+                          原因：{{ sample.reasonCode || '-' }}；外部 ID：{{ sample.externalId || '-' }}；跳过 {{ currentItemLogRunSamplePayloadText(sample, 'skippedCount', '1') }}
+                        </p>
+                        <p class="text-[10px] text-slate-700 m-0">
+                          缺失字段：{{ currentItemLogRunSampleMissingFieldsText(sample) }}
+                        </p>
+                        <p class="text-[10px] text-orange-600 m-0">
+                          {{ currentItemLogRunSamplePayloadText(sample, 'message', '记录未通过同步校验。') }}
+                        </p>
+                        <details class="text-[10px] text-slate-600">
+                          <summary class="text-slate-700 cursor-pointer">
+                            查看业务 payload
+                          </summary>
+                          <pre class="mt-2 p-2 border border-slate-200 bg-slate-50 max-h-48 whitespace-pre-wrap break-all overflow-auto">{{ currentItemLogRunSampleResultPayloadText(sample) }}</pre>
+                        </details>
+                      </div>
+                      <div v-if="currentItemLogRunSampleState('business_skipped').pageData.total > currentItemLogRunSampleState('business_skipped').pageData.pageSize" class="flex justify-end">
+                        <a-pagination
+                          :current="currentItemLogRunSampleState('business_skipped').pageData.page"
+                          :page-size="currentItemLogRunSampleState('business_skipped').pageData.pageSize"
+                          :show-total="true"
+                          :total="currentItemLogRunSampleState('business_skipped').pageData.total"
+                          size="small"
+                          @change="(value: number) => handleCurrentItemLogRunSamplePageChange('business_skipped', value)"
+                        />
+                      </div>
+                    </template>
+                    <template v-else-if="currentItemLogRunSampleHasFallback('business_skipped', currentItemLogSelectedRun)">
+                      <p class="text-[10px] text-amber-700 m-0">
+                        旧运行仅保留最多 12 条预览样本，新运行才支持完整分页查看。
+                      </p>
+                      <div
+                        v-for="sample in syncRunBusinessSkipSamples(currentItemLogSelectedRun)"
+                        :key="`business-skip-${sample.recordId}-${sample.reasonCode}`"
+                        class="p-2 border border-orange-100 bg-white space-y-1"
+                      >
+                        <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
+                          {{ sample.recordId }}
+                        </p>
+                        <p class="text-[10px] text-slate-700 m-0">
+                          原因：{{ sample.reasonCode || '-' }}；外部 ID：{{ sample.externalId || '-' }}；跳过 {{ sample.skippedCount || 1 }}
+                        </p>
+                        <p class="text-[10px] text-slate-700 m-0">
+                          缺失字段：{{ syncRunMissingFieldsText(sample) }}
+                        </p>
+                        <p class="text-[10px] text-orange-600 m-0">
+                          {{ sample.message || '记录未通过同步校验。' }}
+                        </p>
+                      </div>
+                    </template>
+                    <p v-else class="text-[10px] text-slate-500 m-0">
+                      当前没有可展示的业务跳过样本。
+                    </p>
                   </div>
                   <details class="text-[10px] text-slate-600">
-                    <summary class="cursor-pointer text-slate-700">
+                    <summary class="text-slate-700 cursor-pointer">
                       查看诊断 JSON
                     </summary>
-                    <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all bg-white border border-slate-200 p-2">{{ syncRunDiagnosticsJsonText(currentItemLogSelectedRun) }}</pre>
+                    <pre class="mt-2 p-2 border border-slate-200 bg-white max-h-72 whitespace-pre-wrap break-all overflow-auto">{{ syncRunDiagnosticsJsonText(currentItemLogSelectedRun) }}</pre>
                   </details>
                 </div>
                 <p v-if="currentItemLogSelectedRun.deltaRecordCount !== undefined" class="text-[10px] text-slate-500 m-0">
@@ -4390,7 +4666,7 @@ watch(() => props.selectedItemId, (value) => {
                   {{ fieldName }}
                 </a-option>
               </a-select>
-              <p v-if="field.helper" class="text-[10px] text-slate-400 m-0 mt-1 font-normal">
+              <p v-if="field.helper" class="text-[10px] text-slate-400 font-normal m-0 mt-1">
                 {{ field.helper }}
               </p>
             </label>
