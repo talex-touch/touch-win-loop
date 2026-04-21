@@ -16,6 +16,25 @@ const props = withDefaults(defineProps<{
   tone: 'brand',
   animated: false,
 })
+
+function resolveTraceStyle(index: number, group: 'mark' | 'wordmark'): Record<string, string> {
+  const baseDelay = group === 'mark' ? 0 : 780
+  const step = group === 'mark' ? 140 : 110
+  const duration = group === 'mark' ? 860 : 720
+
+  return {
+    '--winloop-brand-trace-delay': `${baseDelay + (index * step)}ms`,
+    '--winloop-brand-trace-duration': `${duration}ms`,
+    '--winloop-brand-dash-length': group === 'mark' ? '520' : '260',
+  }
+}
+
+function resolveFillStyle(group: 'mark' | 'wordmark'): Record<string, string> {
+  return {
+    '--winloop-brand-fill-delay': group === 'mark' ? '700ms' : '1680ms',
+    '--winloop-brand-fill-duration': group === 'mark' ? '260ms' : '320ms',
+  }
+}
 </script>
 
 <template>
@@ -39,7 +58,19 @@ const props = withDefaults(defineProps<{
           v-for="path in WINLOOP_BRAND_MARK_PATHS"
           :key="`mark-${path.d}`"
           :d="path.d"
+          class="winloop-brand__fill-path"
           :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
+          :style="props.animated ? resolveFillStyle('mark') : undefined"
+        />
+        <path
+          v-if="props.animated"
+          v-for="(path, index) in WINLOOP_BRAND_MARK_PATHS"
+          :key="`mark-trace-${path.d}`"
+          :d="path.d"
+          class="winloop-brand__trace-path"
+          :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
+          :stroke="resolveWinLoopBrandColor(props.tone, path.tone)"
+          :style="resolveTraceStyle(index, 'mark')"
         />
       </g>
     </svg>
@@ -57,7 +88,19 @@ const props = withDefaults(defineProps<{
           v-for="path in WINLOOP_BRAND_MARK_PATHS"
           :key="`lockup-mark-${path.d}`"
           :d="path.d"
+          class="winloop-brand__fill-path"
           :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
+          :style="props.animated ? resolveFillStyle('mark') : undefined"
+        />
+        <path
+          v-if="props.animated"
+          v-for="(path, index) in WINLOOP_BRAND_MARK_PATHS"
+          :key="`lockup-mark-trace-${path.d}`"
+          :d="path.d"
+          class="winloop-brand__trace-path"
+          :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
+          :stroke="resolveWinLoopBrandColor(props.tone, path.tone)"
+          :style="resolveTraceStyle(index, 'mark')"
         />
       </g>
       <g class="winloop-brand__wordmark-group">
@@ -65,7 +108,19 @@ const props = withDefaults(defineProps<{
           v-for="path in WINLOOP_BRAND_WORDMARK_PATHS"
           :key="`lockup-wordmark-${path.d}`"
           :d="path.d"
+          class="winloop-brand__fill-path"
           :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
+          :style="props.animated ? resolveFillStyle('wordmark') : undefined"
+        />
+        <path
+          v-if="props.animated"
+          v-for="(path, index) in WINLOOP_BRAND_WORDMARK_PATHS"
+          :key="`lockup-wordmark-trace-${path.d}`"
+          :d="path.d"
+          class="winloop-brand__trace-path winloop-brand__trace-path--wordmark"
+          :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
+          :stroke="resolveWinLoopBrandColor(props.tone, path.tone)"
+          :style="resolveTraceStyle(index, 'wordmark')"
         />
       </g>
     </svg>
@@ -100,22 +155,62 @@ const props = withDefaults(defineProps<{
   transform-origin: 50% 50%;
 }
 
-.winloop-brand[data-animated='true'] .winloop-brand__mark-group {
-  animation: winloop-brand-breathe 4.8s ease-in-out infinite;
+.winloop-brand__fill-path {
+  opacity: 1;
 }
 
-@keyframes winloop-brand-breathe {
-  0%,
+.winloop-brand[data-animated='true'] .winloop-brand__fill-path {
+  opacity: 0;
+  animation: winloop-brand-fill-reveal var(--winloop-brand-fill-duration) ease-out infinite;
+  animation-delay: var(--winloop-brand-fill-delay);
+}
+
+.winloop-brand__trace-path {
+  fill-opacity: 0.08;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: var(--winloop-brand-dash-length);
+  stroke-dashoffset: var(--winloop-brand-dash-length);
+  animation: winloop-brand-trace-draw var(--winloop-brand-trace-duration) ease-out infinite;
+  animation-delay: var(--winloop-brand-trace-delay);
+}
+
+.winloop-brand__trace-path--wordmark {
+  stroke-width: 0.85;
+  fill-opacity: 0.02;
+}
+
+@keyframes winloop-brand-trace-draw {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: var(--winloop-brand-dash-length);
+  }
+
+  8% {
+    opacity: 0.96;
+  }
+
+  68% {
+    opacity: 0.96;
+    stroke-dashoffset: 0;
+  }
+
   100% {
-    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+    opacity: 0;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes winloop-brand-fill-reveal {
+  0%,
+  8% {
+    opacity: 0;
   }
 
-  35% {
-    transform: translate3d(0, -1px, 0) scale(1.018) rotate(-1deg);
-  }
-
-  65% {
-    transform: translate3d(0, 1px, 0) scale(0.988) rotate(1deg);
+  100% {
+    opacity: 1;
   }
 }
 </style>
