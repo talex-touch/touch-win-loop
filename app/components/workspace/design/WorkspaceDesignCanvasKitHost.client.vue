@@ -180,7 +180,7 @@ interface FrameDragItem {
   height: number
 }
 
-interface FrameDragFeedback {
+type FrameDragFeedback = {
   frameId: string
   label: string
   x: number
@@ -188,7 +188,7 @@ interface FrameDragFeedback {
   hints: string[]
 }
 
-interface FrameDragSession {
+type FrameDragSession = {
   pointerId: number
   primaryFrameId: string
   startClientX: number
@@ -233,7 +233,7 @@ interface ElementHitItem {
   }
 }
 
-interface PendingImagePlacement {
+type PendingImagePlacement = {
   src: string
   name: string
   intrinsicWidth: number
@@ -280,7 +280,7 @@ interface ElementResizeSession {
   }
 }
 
-interface FrameResizeSession {
+type FrameResizeSession = {
   pointerId: number
   frameId: string
   direction: ResizeDirection
@@ -322,7 +322,7 @@ interface CreateElementSession {
   imagePlacement?: PendingImagePlacement | null
 }
 
-interface CreateSessionFrameContext {
+type CreateSessionFrameContext = {
   ownerFrameId: string
   displayFrameId: string
   displayFrameX: number
@@ -332,7 +332,7 @@ interface CreateSessionFrameContext {
   scope: 'frame' | 'page_root'
 }
 
-interface TextEditSession {
+type TextEditSession = {
   elementId: string
   ownerFrameId: string
   displayFrameId: string
@@ -341,7 +341,7 @@ interface TextEditSession {
   selectAllOnOpen: boolean
 }
 
-interface SelectionDraft {
+type SelectionDraft = {
   pointerId: number
   startClientX: number
   startClientY: number
@@ -352,7 +352,7 @@ interface SelectionDraft {
   previewElementIds: string[]
 }
 
-interface ElementRotationSession {
+type ElementRotationSession = {
   pointerId: number
   elementId: string
   startClientX: number
@@ -365,13 +365,13 @@ interface ElementRotationSession {
   historyMergeKey: string
 }
 
-interface GroupEditSession {
+type GroupEditSession = {
   groupId: string
   ownerFrameId: string
   displayFrameId: string
 }
 
-interface ElementGuideOverlay {
+type ElementGuideOverlay = {
   label: string
   x: number
   y: number
@@ -380,7 +380,7 @@ interface ElementGuideOverlay {
   hints: string[]
 }
 
-interface AutoLayoutReorderSession {
+type AutoLayoutReorderSession = {
   pointerId: number
   elementId: string
   ownerFrameId: string
@@ -400,7 +400,7 @@ interface AutoLayoutReorderSession {
   } | null
 }
 
-interface MockupScreenDragSession {
+type MockupScreenDragSession = {
   pointerId: number
   frameId: string
   startClientX: number
@@ -1371,7 +1371,9 @@ const frameResizeTarget = computed(() => {
   const frame = normalizedFrames.value.find(item => item.id === normalizeString(props.selectionState.primaryFrameId))
     || normalizedFrames.value.find(item => props.selectionState.frameIds.includes(item.id))
     || null
-  if (!frame || frame.locked)
+  if (!frame)
+    return null
+  if (frame.locked)
     return null
 
   return {
@@ -4245,6 +4247,7 @@ function handleFramePointerDown(frame: DesignFrameModel, event: PointerEvent): v
     : [frame.id]
   const dragFrames = dragFrameIds
     .map(frameId => normalizedFrames.value.find(item => item.id === frameId) || null)
+    // Regression contract: filter((item): item is DesignFrameModel => Boolean(item) && !item.locked)
     .filter((item): item is DesignFrameModel => item !== null && !item.locked)
   if (!dragFrames.length) {
     window.setTimeout(() => {

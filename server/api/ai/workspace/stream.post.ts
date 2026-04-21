@@ -581,7 +581,11 @@ export default defineEventHandler(async (event) => {
           projectSettingsSummary: summarizeProjectSettings(projectSettings),
           projectOutlineSummary: summarizeOutline(projectOutline),
           resourceSummary: knowledgeContext.summaryText,
-          knowledge: knowledgeContext,
+          knowledge: {
+            citations: knowledgeContext.citations,
+            warning: knowledgeContext.warning,
+            usedFallback: knowledgeContext.usedFallback,
+          },
         }
       })
       throwIfAborted(abortController.signal)

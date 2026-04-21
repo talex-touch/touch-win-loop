@@ -115,7 +115,7 @@ import UiContextMenu from '../ui/UiContextMenu.vue'
 import WLDesignContainer from '../wl-design/WLDesignContainer.vue'
 import WLDesignLayer from '../wl-design/WLDesignLayer.vue'
 import WLDesignLayout from '../wl-design/WLDesignLayout.vue'
-import WorkspaceDesignCanvasKitBridge from './design/WorkspaceDesignCanvasKitBridge.client.vue'
+import WorkspaceDesignCanvasKitBridge from "./design/WorkspaceDesignCanvasKitBridge.client.vue";
 import WorkspaceDesignInspector from './design/WorkspaceDesignInspector.vue'
 import WorkspaceDesignSidebarTabs from './design/WorkspaceDesignSidebarTabs.vue'
 import WorkspaceDesignStage from './design/WorkspaceDesignStage.vue'
@@ -1289,11 +1289,11 @@ function parseFrameMetric(value: unknown, fallback: number, min = 0): number {
 }
 
 function createDefaultDesignSceneDocument(
-  editorEngine: SceneEditorEngine = 'vueflow',
+  editorEngine: SceneEditorEngine = "vueflow",
 ): SceneDocument {
   return createEmptySceneDocument({
-    drawMode: 'composition',
-    sourceType: 'manual',
+    drawMode: "composition",
+    sourceType: "manual",
     templateKey: DEFAULT_TEMPLATE_KEY,
     editorEngine,
   })
@@ -1607,9 +1607,9 @@ const designHistory = useDesignHistory(
   serializeOutgoingDesignDocument(draftDocument.value),
 )
 const resolvedDesignStageComponent = computed(() => {
-  return persistedDesignEditorEngine.value === 'tldraw_legacy'
+  return persistedDesignEditorEngine.value === "tldraw_legacy"
     ? WorkspaceDesignStage
-    : WorkspaceDesignCanvasKitBridge
+    : WorkspaceDesignCanvasKitBridge;
 })
 const interactionContext = computed<DesignCanvasInteractionContext>(() => {
   return {
@@ -2332,24 +2332,21 @@ function createDesignElementFromStage(
     draftDocument.value,
     payload,
   )
-  const createdElement
-    = nextDocument.sourceModel.kind === 'composition'
-      ? (nextDocument.sourceModel.elements || []).find(
-          item => !previousElementIds.has(item.id),
-        ) || null
-      : null
-  commitDocument(nextDocument)
+  const createdElement = nextDocument.sourceModel.kind === 'composition'
+    ? (nextDocument.sourceModel.elements || []).find(
+        item => !previousElementIds.has(item.id),
+      ) || null
+    : null
+  commitDocument(nextDocument);
   if (!createdElement)
     return
-  const editingFrameId
-    = selectionState.value.editingFrameId || normalizeString(createdElement.frameId)
+  const editingFrameId = selectionState.value.editingFrameId || normalizeString(createdElement.frameId)
   setSelectedElements([createdElement.id], {
     primaryElementId: createdElement.id,
     editingFrameId,
     displayFrameId: resolveDisplayFrameIdForOwnerSelection(editingFrameId),
   })
-  if (designToolController.isDrawingTool.value)
-    setActiveDesignTool('select')
+  if (designToolController.isDrawingTool.value) setActiveDesignTool("select");
 }
 
 function updateDesignElementFromStage(payload: {
@@ -3827,10 +3824,10 @@ function runElementStructuralCommand(command: string): boolean {
 
   if (
     ![
-      'bring-forward',
-      'send-backward',
-      'bring-to-front',
-      'send-to-back',
+      "bring-forward",
+      "send-backward",
+      "bring-to-front",
+      "send-to-back",
     ].includes(command)
   ) {
     return false
