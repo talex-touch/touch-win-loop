@@ -7161,6 +7161,21 @@ async function createCollabResource(
   const designMode = typeof resourceInput === 'string'
     ? 'blank'
     : (resourceInput.designMode || 'blank')
+  const designCreationPayload = designMode === 'device_arrangement'
+    ? {
+        title: '设备排布',
+        drawMode: 'composition',
+        sceneSourceType: 'image_mockup',
+        templateKey: 'device-showcase',
+        editorEngine: 'canvaskit_wasm',
+      }
+    : {
+        title: '设计稿',
+        drawMode: 'composition',
+        sceneSourceType: 'image_mockup',
+        templateKey: 'device-showcase',
+        editorEngine: 'canvaskit_wasm',
+      }
   if (!projectId)
     return
 
@@ -7174,11 +7189,8 @@ async function createCollabResource(
         purpose,
         ...(purpose === 'design'
           ? {
-              title: requestedTitle || (designMode === 'device_arrangement' ? '设备排布' : '设计稿'),
-              drawMode: 'composition',
-              sceneSourceType: 'image_mockup',
-              templateKey: 'device-showcase',
-              editorEngine: 'canvaskit_wasm',
+              ...designCreationPayload,
+              title: requestedTitle || designCreationPayload.title,
             }
           : {}),
         parentResourceId: parentResourceId || undefined,

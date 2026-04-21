@@ -200,9 +200,9 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
-  'activateResource': [resourceId: string]
-  'openResource': [resourceId: string]
+  updateCollabCursor: [value: { cursorX?: number, cursorY?: number }]
+  activateResource: [resourceId: string]
+  openResource: [resourceId: string]
 }>()
 
 const templateOptions = SYSTEM_SCENE_TEMPLATES.filter(
@@ -279,7 +279,7 @@ const diagramSourceFormat = ref<
   'mermaid' | 'markdown_outline' | 'ddl' | 'architecture'
 >('mermaid')
 const diagramSourceText = ref('')
-const canvasAiPrompt = ref('')
+const canvasAiPrompt = ref("");
 const canvasAiRunning = ref(false)
 const canvasAiPreviewPending = ref(false)
 const canvasAiPreviewSceneDocument = ref<SceneDocument | null>(null)
@@ -292,7 +292,7 @@ const canvasAiMessages = ref<ChatMessage[]>([])
 const canvasAiRuntimeLoading = ref(false)
 const canvasAiRuntimeLoaded = ref(false)
 const canvasAiRuntimeError = ref('')
-const canvasAiRuntimeStatus = ref<Record<'canvasGenerate' | 'canvasComplete' | 'canvasRefine', {
+const canvasAiRuntimeStatus = ref<Record<"canvasGenerate" | "canvasComplete" | "canvasRefine", {
   configured: boolean
   provider: string
   model: string
@@ -2655,8 +2655,35 @@ function mutateCompositionDocument(
   })
 }
 
+function applyIncomingDesignBinding(
+  nextModelValue: string,
+  nextIsBound: boolean,
+): void {
+  const resolved = resolveIncomingDesignDocument(
+    nextIsBound ? nextModelValue : '',
+  )
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value)
+  syncingFromModel.value = true
+  persistedDesignEditorEngine.value = resolved.persistedEditorEngine
+  persistedDesignStorageFormat.value = resolved.persistedStorageFormat
+  setDraftDocument(resolved.document)
+  replaceSelectionState(selectionSnapshot)
+  lastAppliedSceneJson.value = serializeOutgoingDesignDocument(
+    resolved.document,
+  )
+  designHistory.reset(lastAppliedSceneJson.value)
+  syncingFromModel.value = false
+
+  if (nextIsBound && resolved.shouldPersistNormalized) {
+    lastAppliedSceneJson.value = serializeOutgoingDesignDocument(
+      resolved.document,
+    )
+    emit('update:modelValue', lastAppliedSceneJson.value)
+  }
+}
+
 watch(
-  [() => props.modelValue, isBoundToDesignResource, () => props.designEditorEngine],
+  [() => props.modelValue, isBoundToDesignResource],
   ([nextModelValue, nextIsBound]) => {
     const resolved = resolveIncomingDesignDocument(
       nextIsBound ? nextModelValue : '',
@@ -2681,6 +2708,16 @@ watch(
     }
   },
   { immediate: true },
+)
+
+watch(
+  () => props.designEditorEngine,
+  () => {
+    applyIncomingDesignBinding(
+      normalizeString(props.modelValue),
+      isBoundToDesignResource.value,
+    )
+  },
 )
 
 watch(
@@ -4770,7 +4807,7 @@ async function publishCurrentDesignToCanvasLibrary(
   canvasLibraryActioningId.value = publish ? 'publish' : 'draft'
   try {
     await requestCanvasLibraryApi(
-      '/admin/canvas-library/from-design',
+      "/admin/canvas-library/from-design",
       {
         method: 'POST',
         headers: {
@@ -5185,7 +5222,7 @@ async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
       },
     }
 
-    const response = await fetch(endpoint('/ai/canvas/stream'), {
+    const response = await fetch(endpoint("/ai/canvas/stream"), {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -5257,7 +5294,7 @@ async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
           previewCanvasAssistSource(nextSourceText, nextSourceFormat)
           diagramSourceFormat.value = nextSourceFormat
           diagramSourceText.value = nextSourceText
-          canvasAiPreviewPending.value = true
+          canvasAiPreviewPending.value = true;
           canvasAiMessages.value = [
             ...nextMessages,
             {
@@ -7589,7 +7626,7 @@ async function downloadDefaultPng(): Promise<void> {
           class="workspace-design-inspector-host flex h-full min-h-0 w-full items-stretch justify-end overflow-hidden"
         >
           <WLDesignContainer
-            class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-inspector-panel h-full max-h-full min-h-0 w-full"
+            class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-inspector-panel h-full min-h-0 max-h-full w-full"
             :data-collapsed="inspectorCollapsed ? 'true' : 'false'"
             :scrollable="!inspectorCollapsed"
             title=""

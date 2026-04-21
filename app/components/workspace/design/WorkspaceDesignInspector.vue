@@ -2761,7 +2761,7 @@ function updateElementConstraints(
                 v-if="isDeviceMockup"
                 class="workspace-design-inspector__field"
               >
-                <span class="workspace-design-inspector__label">联动源画板</span>
+                <span class="workspace-design-inspector__label">内容来源</span>
                 <select
                   :value="frameDeviceMetadata.mockupSourceFrameId || ''"
                   class="workspace-design-inspector__input"

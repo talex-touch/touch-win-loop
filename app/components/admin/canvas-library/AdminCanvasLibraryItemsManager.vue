@@ -256,7 +256,7 @@ async function createLibraryItem(): Promise<void> {
       const payload = parseJsonText(createForm.payloadText, '模板 payload')
       const payloadType: CanvasLibraryItemPayloadType
         = createForm.templateTarget === 'scene' ? 'scene_document' : 'design_fragment'
-      await apiRequest<CanvasLibraryDetail>('/admin/canvas-library/items', {
+      await apiRequest<CanvasLibraryDetail>("/admin/canvas-library/items", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -293,12 +293,12 @@ async function createLibraryItem(): Promise<void> {
       const uploaded = await apiRequest<{
         assetKind: CanvasLibraryAssetKind
         payload: Record<string, unknown>
-      }>('/admin/canvas-library/assets/upload', {
+      }>("/admin/canvas-library/assets/upload", {
         method: 'POST',
         body: formData,
       })
 
-      await apiRequest<CanvasLibraryDetail>('/admin/canvas-library/items', {
+      await apiRequest<CanvasLibraryDetail>("/admin/canvas-library/items", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

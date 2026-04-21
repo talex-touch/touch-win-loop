@@ -155,7 +155,7 @@ const localPointerScreen = ref<{ x: number, y: number } | null>(null)
 const shortcutButtonRef = ref<HTMLButtonElement | null>(null)
 const shortcutDialogRef = ref<HTMLElement | null>(null)
 const floatingChromeTarget = ref<HTMLElement | null>(null)
-const activeFrameDragIds = ref<string[]>([])
+const activeFrameDragIds = ref<string[]>([]);
 let zoomControlRestingTimer: ReturnType<typeof setTimeout> | null = null
 let zoomControlDormantTimer: ReturnType<typeof setTimeout> | null = null
 let rootResizeObserver: ResizeObserver | null = null
@@ -421,9 +421,24 @@ function emitFrameSelection(frameIds: string[], primaryFrameId = ''): void {
   emit('update-selection', {
     scope: nextFrameIds.length > 0 ? 'frame' : 'none',
     editingFrameId: '',
-    displayFrameId: '',
+    displayFrameId: "",
     frameIds: nextFrameIds,
     primaryFrameId: normalizeString(primaryFrameId) || nextFrameIds[0] || '',
+    elementIds: [],
+    primaryElementId: '',
+  })
+}
+
+function emitFrameEditing(frameId: string): void {
+  const normalizedFrameId = normalizeString(frameId)
+  if (!normalizedFrameId)
+    return
+  emit('update-selection', {
+    scope: 'frame',
+    editingFrameId: normalizeString(frameId),
+    displayFrameId: normalizeString(frameId),
+    frameIds: [normalizedFrameId],
+    primaryFrameId: normalizedFrameId,
     elementIds: [],
     primaryElementId: '',
   })
@@ -723,7 +738,7 @@ function flushPresenceCursor(): void {
   clearPresenceCursorTimer()
 
   if (!pendingPresencePoint) {
-    emit('updateCollabCursor', {})
+    emit("updateCollabCursor", {})
     return
   }
 
@@ -733,11 +748,11 @@ function flushPresenceCursor(): void {
   )
   pendingPresencePoint = null
   if (!flowPoint) {
-    emit('updateCollabCursor', {})
+    emit("updateCollabCursor", {})
     return
   }
 
-  emit('updateCollabCursor', {
+  emit("updateCollabCursor", {
     cursorX: Number(flowPoint.x.toFixed(2)),
     cursorY: Number(flowPoint.y.toFixed(2)),
   })
@@ -747,7 +762,7 @@ function clearPresenceCursor(shouldEmit = true): void {
   pendingPresencePoint = null
   clearPresenceCursorTimer()
   if (shouldEmit)
-    emit('updateCollabCursor', {})
+    emit("updateCollabCursor", {})
 }
 
 function handlePresencePointerMove(event: PointerEvent): void {
@@ -790,12 +805,7 @@ function clearZoomControlTimers(): void {
   }
 }
 
-function revealZoomControl(options?: {
-  collapseAfterIdle?: boolean
-  delay?: number
-  deepDelay?: number
-  ignoreHover?: boolean
-}): void {
+function revealZoomControl(options?: { collapseAfterIdle?: boolean; delay?: number; deepDelay?: number; ignoreHover?: boolean; }): void {
   zoomControlState.value = 'expanded'
   clearZoomControlTimers()
   if (!options?.collapseAfterIdle)
@@ -1209,6 +1219,7 @@ function handleNodeDoubleClick(payload: NodeMouseEvent): void {
   const frame
     = (props.frames || []).find(item => item.id === frameId) || null
   if (frame?.kind === 'diagram') {
+    emitFrameEditing(frameId)
     emit('open-frame', frameId)
     return
   }
@@ -1216,10 +1227,10 @@ function handleNodeDoubleClick(payload: NodeMouseEvent): void {
     return
   if (frame.kind !== 'device_mockup' && !canDesignFrameCreateElements(frame))
     return
-  const pointer = resolvePointerClientPosition(payload.event)
+  const pointer = resolvePointerClientPosition(payload.event);
   if (!pointer)
     return
-  emit('node-double-click', {
+  emit("node-double-click", {
     frameId,
     clientX: pointer.clientX,
     clientY: pointer.clientY,
@@ -1262,7 +1273,7 @@ function handleNodeDragStop(payload: {
     return
   if ((payload?.nodes || []).length > 1) {
     clearDragFeedback()
-    scheduleFrameDragSessionCleanup()
+    scheduleFrameDragSessionCleanup();
     return
   }
 
@@ -1276,7 +1287,7 @@ function handleNodeDragStop(payload: {
     emitFrameSelection([frameId], frameId)
   revealZoomControl({ collapseAfterIdle: true })
   clearDragFeedback()
-  scheduleFrameDragSessionCleanup()
+  scheduleFrameDragSessionCleanup();
 }
 
 function handleSelectionDragStop(payload: {
@@ -1303,7 +1314,7 @@ function handleSelectionDragStop(payload: {
     emit('update-frame-positions', { positions: nextPositions })
   revealZoomControl({ collapseAfterIdle: true })
   clearDragFeedback()
-  scheduleFrameDragSessionCleanup()
+  scheduleFrameDragSessionCleanup();
 }
 
 function handleNodesChange(
