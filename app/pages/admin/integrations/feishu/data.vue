@@ -91,16 +91,16 @@ const showRawMetrics = computed(() => resultPayload.value.rawMetricAvailable)
 const summaryMetricCards = computed(() => {
   const cards = [{
     key: 'effective',
-    label: '当前有效实体数',
+    label: '当前有效实体数（当前仍可见）',
     value: resultPayload.value.metrics.effectiveEntityTotal,
     tone: 'text-slate-900',
-    helper: '当前筛选条件下仍然可见的落库结果。',
+    helper: '当前筛选条件下仍然可见的业务实体去重结果。',
   }]
   if (showRawMetrics.value) {
     cards.push(
       {
         key: 'source',
-        label: '最近运行源行数',
+        label: '最近运行源行数（最近一次运行抓取）',
         value: resultPayload.value.metrics.latestRunSourceRowTotal,
         tone: 'text-blue-700',
         helper: '按各同步项最近一次运行聚合。',
@@ -412,6 +412,9 @@ watch(() => route.fullPath, () => {
       </p>
       <p class="text-[11px] text-slate-500 mb-0 mt-1">
         同一业务实体的历史更新会在这里折叠为当前结果；`track / resource` 等会先合并进草稿快照再展开，规则过滤和业务跳过不会进入下方列表。
+      </p>
+      <p class="text-[11px] text-slate-500 mb-0 mt-1">
+        “当前有效实体数（当前仍可见）”代表业务实体视角的去重结果，不等于最近一次抓取的源行数；已发布版本会保留，但不会再和当前草稿/索引重复计数。
       </p>
       <p class="text-[11px] text-slate-500 mb-0 mt-1">
         当前筛选：{{ currentFilterSummary }} / 当前有效实体数：{{ resultPayload.metrics.effectiveEntityTotal }}

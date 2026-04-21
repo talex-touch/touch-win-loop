@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type {
   ApiResponse,
+  FeishuBitableSyncCleanupPreview,
+  FeishuBitableSyncCleanupResult,
   FeishuBitableRecordLocatorType,
   FeishuBitableSimulateBusinessStatus,
   FeishuBitableSimulateRecordRequest,
@@ -417,6 +419,12 @@ const writebackDraftText = ref(JSON.stringify(buildDefaultSyncItemConfig('contes
 
 const syncDetail = ref<FeishuBitableSyncDetail | null>(null)
 const currentItem = ref<FeishuBitableSyncItemDetail | null>(null)
+const cleanupPreviewVisible = ref(false)
+const cleanupPreviewLoading = ref(false)
+const cleaningCurrentItem = ref(false)
+const cleanupPreviewResult = ref<FeishuBitableSyncCleanupPreview | null>(null)
+const cleanupPreviewErrorText = ref('')
+const cleanupConfirmText = ref('')
 const previewResult = ref<FeishuBitableSyncItemPreviewResult | null>(null)
 const simulateResult = ref<FeishuBitableSimulateRecordResult | null>(null)
 const simulateErrorText = ref('')
@@ -522,6 +530,7 @@ const normalizedDraftViewId = computed(() => toText(props.draftViewId))
 const archivedReadonly = computed(() => Boolean(props.includeArchived || syncDetail.value?.archivedAt))
 const syncExecutionDisabled = computed(() => Boolean(syncDetail.value) && !syncDetail.value?.enabled)
 const currentItemRunDisabled = computed(() => archivedReadonly.value || syncExecutionDisabled.value || !currentItem.value?.isEnabled)
+const cleanupConfirmMatched = computed(() => cleanupConfirmText.value.trim() === toText(cleanupPreviewResult.value?.confirmationToken))
 const activeMappingOptions = computed(() => MAPPING_OPTIONS[itemForm.entityType] || [])
 const syncItems = computed(() => syncDetail.value?.items || [])
 const activeOptionFieldGroups = computed(() => optionFieldGroups(itemForm.entityType))
@@ -2619,6 +2628,84 @@ async function runCurrentItem() {
   }
 }
 
+async function loadCleanupPreview() {
+  if (!normalizedSyncId.value || !currentItem.value)
+    return
+  cleanupPreviewLoading.value = true
+  cleanupPreviewErrorText.value = ''
+  try {
+    cleanupPreviewResult.value = await requestApi<FeishuBitableSyncCleanupPreview>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/cleanup-preview`),
+      {
+        method: 'POST',
+      },
+      '清理预览加载失败。',
+    )
+  }
+  catch (error: any) {
+    cleanupPreviewPreviewResultReset()
+    cleanupPreviewErrorText.value = String(error?.data?.message || error?.message || '清理预览加载失败。')
+  }
+  finally {
+    cleanupPreviewLoading.value = false
+  }
+}
+
+function cleanupPreviewPreviewResultReset() {
+  cleanupPreviewResult.value = null
+}
+
+async function openCleanupDialog() {
+  if (archivedReadonly.value) {
+    setError('当前同步信息已归档，只允许查看，不允许执行同步清理。')
+    return
+  }
+  if (!normalizedSyncId.value || !currentItem.value)
+    return
+  cleanupPreviewVisible.value = true
+  cleanupPreviewErrorText.value = ''
+  cleanupConfirmText.value = ''
+  cleanupPreviewPreviewResultReset()
+  await loadCleanupPreview()
+}
+
+async function confirmCleanupCurrentItem() {
+  if (!normalizedSyncId.value || !currentItem.value || !cleanupConfirmMatched.value) {
+    cleanupPreviewErrorText.value = `请输入确认词“${toText(cleanupPreviewResult.value?.confirmationToken) || '清理同步数据'}”后再执行。`
+    return
+  }
+  cleaningCurrentItem.value = true
+  cleanupPreviewErrorText.value = ''
+  clearFeedback()
+  try {
+    await requestApi<FeishuBitableSyncCleanupResult>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/cleanup`),
+      {
+        method: 'POST',
+        body: {
+          confirmationToken: cleanupConfirmText.value.trim(),
+        },
+      },
+      '同步清理失败。',
+    )
+    await loadSyncDetail()
+    if (activeItemId.value)
+      await loadItemDetail(activeItemId.value)
+    if (currentItemLogVisible.value)
+      await refreshCurrentItemLogDrawer()
+    emit('updated')
+    cleanupPreviewVisible.value = false
+    cleanupConfirmText.value = ''
+    setSuccess('同步清理完成。')
+  }
+  catch (error: any) {
+    cleanupPreviewErrorText.value = String(error?.data?.message || error?.message || '同步清理失败。')
+  }
+  finally {
+    cleaningCurrentItem.value = false
+  }
+}
+
 async function openAddItemDrawer() {
   if (archivedReadonly.value) {
     setError('当前同步信息已归档，只允许查看，不允许新增子表同步项。')
@@ -3183,6 +3270,80 @@ watch(() => props.selectedItemId, (value) => {
       </div>
     </a-modal>
 
+    <a-modal
+      v-model:visible="cleanupPreviewVisible"
+      title="清理同步数据"
+      width="720px"
+      :ok-button-props="{ status: 'danger', disabled: !cleanupConfirmMatched }"
+      :confirm-loading="cleaningCurrentItem"
+      ok-text="确认清理"
+      cancel-text="取消"
+      @ok="confirmCleanupCurrentItem"
+    >
+      <div class="space-y-4">
+        <div class="p-3 border border-rose-200 bg-rose-50 rounded space-y-2">
+          <p class="text-[12px] text-rose-700 font-semibold m-0">
+            该操作只清理当前同步项托管的数据，不会删除已发布的赛事/政策正式数据。
+          </p>
+          <p class="text-[11px] text-rose-700 m-0">
+            会删除 external refs、搜索索引、分析结果、向量、运行样本、问题单、人设预设，以及当前同步项在未发布 release 草稿中的内容；已发布的赛事/政策正式数据会保留。
+          </p>
+        </div>
+
+        <a-skeleton v-if="cleanupPreviewLoading" :animation="true">
+          <a-skeleton-line :rows="6" />
+        </a-skeleton>
+
+        <template v-else-if="cleanupPreviewResult">
+          <section class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+            <p class="text-[12px] text-slate-900 font-semibold m-0">
+              即将清理的同步托管数据
+            </p>
+            <div class="gap-2 grid md:grid-cols-2">
+              <p class="text-[11px] text-slate-600 m-0">external refs：{{ cleanupPreviewResult.managedDataCounts.externalRefs }}</p>
+              <p class="text-[11px] text-slate-600 m-0">搜索索引：{{ cleanupPreviewResult.managedDataCounts.searchIndex }}</p>
+              <p class="text-[11px] text-slate-600 m-0">分析结果：{{ cleanupPreviewResult.managedDataCounts.entityAnalysis }}</p>
+              <p class="text-[11px] text-slate-600 m-0">向量：{{ cleanupPreviewResult.managedDataCounts.vectors }}</p>
+              <p class="text-[11px] text-slate-600 m-0">后处理任务：{{ cleanupPreviewResult.managedDataCounts.postSyncTasks }}</p>
+              <p class="text-[11px] text-slate-600 m-0">运行样本：{{ cleanupPreviewResult.managedDataCounts.runSamples }}</p>
+              <p class="text-[11px] text-slate-600 m-0">问题单：{{ cleanupPreviewResult.managedDataCounts.issues }}</p>
+              <p class="text-[11px] text-slate-600 m-0">人设预设：{{ cleanupPreviewResult.managedDataCounts.personaPresets }}</p>
+              <p class="text-[11px] text-slate-600 m-0">未发布 release 草稿：{{ cleanupPreviewResult.managedDataCounts.unpublishedReleaseDrafts }}</p>
+              <p class="text-[11px] text-slate-600 m-0">冲突/重复被拦截：{{ cleanupPreviewResult.blockedConflictCount }}</p>
+            </div>
+          </section>
+
+          <section class="p-3 border border-slate-200 rounded bg-white space-y-2">
+            <p class="text-[12px] text-slate-900 font-semibold m-0">
+              Legacy 快照强制清空
+            </p>
+            <div class="gap-2 grid md:grid-cols-2">
+              <p class="text-[11px] text-slate-600 m-0">contest：{{ cleanupPreviewResult.legacyReleaseCleanup.contest }}</p>
+              <p class="text-[11px] text-slate-600 m-0">track：{{ cleanupPreviewResult.legacyReleaseCleanup.track }}</p>
+              <p class="text-[11px] text-slate-600 m-0">trackTimeline：{{ cleanupPreviewResult.legacyReleaseCleanup.trackTimeline }}</p>
+              <p class="text-[11px] text-slate-600 m-0">resource：{{ cleanupPreviewResult.legacyReleaseCleanup.resource }}</p>
+              <p class="text-[11px] text-slate-600 m-0">policy：{{ cleanupPreviewResult.legacyReleaseCleanup.policy }}</p>
+              <p class="text-[11px] text-slate-600 m-0">合计：{{ cleanupPreviewResult.legacyReleaseCleanup.total }}</p>
+            </div>
+            <p class="text-[11px] text-slate-500 m-0">
+              已发布 contest / policy 正式数据会保留：赛事 {{ cleanupPreviewResult.publishedContestDataCount }} 条，政策 {{ cleanupPreviewResult.publishedPolicyDataCount }} 条。
+            </p>
+          </section>
+
+          <section class="space-y-2">
+            <p class="text-[11px] text-slate-600 m-0">
+              请输入确认词 <span class="font-mono text-rose-700">{{ cleanupPreviewResult.confirmationToken }}</span> 后再执行危险清理。
+            </p>
+            <a-input v-model="cleanupConfirmText" size="small" placeholder="请输入确认词" />
+          </section>
+        </template>
+
+        <p v-if="cleanupPreviewErrorText" class="text-[11px] text-rose-600 m-0">
+          {{ cleanupPreviewErrorText }}
+        </p>
+      </div>
+    </a-modal>
+
     <a-drawer
       v-model:visible="itemDrawerVisible"
       :title="currentItem ? `配置同步项：${currentItem.name}` : '配置同步项'"
@@ -3251,6 +3412,9 @@ watch(() => props.selectedItemId, (value) => {
                 <div class="flex gap-2">
                   <a-button size="small" :loading="previewingItem" :disabled="archivedReadonly" @click="previewCurrentItem">
                     预检
+                  </a-button>
+                  <a-button size="small" status="danger" :disabled="archivedReadonly" @click="openCleanupDialog">
+                    清理同步数据
                   </a-button>
                   <a-button size="small" type="primary" :loading="runningItem" :disabled="currentItemRunDisabled" @click="runCurrentItem">
                     手动执行

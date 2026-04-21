@@ -7,6 +7,8 @@ import type {
   ContestReleaseTimelineSnapshot,
   ContestReleaseTrackSnapshot,
   ContestReleaseTrackTimelineSnapshot,
+  FeishuBitableSyncCleanupLegacySummary,
+  FeishuBitableSyncItemEntityType,
   PolicyLibraryItemSnapshot,
   PolicyLibraryItemStatus,
   PolicyLibraryReleaseSnapshot,
@@ -14,6 +16,7 @@ import type {
   ReleaseReviewAction,
   ReleaseReviewLog,
   ReleaseScopeKind,
+  ReleaseSyncSource,
   ReleaseVersion,
   ReleaseVersionDetail,
   ReleaseVersionStatus,
@@ -96,6 +99,13 @@ interface FeishuExternalRefRow {
   metadata: unknown
 }
 
+interface ReleaseSnapshotOwnerRow {
+  release_version_id: string
+  release_status: ReleaseVersionStatus
+  scope_id: string
+  owner_sync_item_id: string | null
+}
+
 const MANAGED_NOTE_PREFIX = '[飞书同步:'
 const LEGACY_CONTEST_TIMELINE_PREFIX = 'legacy:contest:'
 const DERIVED_CONTEST_TIMELINE_PREFIX = 'derived:contest:'
@@ -124,6 +134,44 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     return {}
   return value as Record<string, unknown>
+}
+
+function normalizeReleaseSyncSource(value: unknown): ReleaseSyncSource | undefined {
+  const source = parseJsonObject(value)
+  const syncItemId = normalizeText(source.syncItemId)
+  if (!syncItemId)
+    return undefined
+  return {
+    syncItemId,
+    syncRunId: normalizeText(source.syncRunId) || null,
+    recordId: normalizeText(source.recordId) || null,
+  }
+}
+
+function buildReleaseSyncSource(input: {
+  syncItemId: string
+  syncRunId?: string | null
+  recordId?: string | null
+}): ReleaseSyncSource {
+  return {
+    syncItemId: normalizeText(input.syncItemId),
+    syncRunId: normalizeText(input.syncRunId) || null,
+    recordId: normalizeText(input.recordId) || null,
+  }
+}
+
+function attachReleaseSyncSource<T extends { syncSource?: ReleaseSyncSource }>(
+  item: T,
+  input: {
+    syncItemId: string
+    syncRunId?: string | null
+    recordId?: string | null
+  },
+): T {
+  return {
+    ...item,
+    syncSource: buildReleaseSyncSource(input),
+  }
 }
 
 function normalizeReleaseDiffSummary(value: unknown): ReleaseDiffSummary {
@@ -1143,6 +1191,7 @@ export async function upsertContestReleaseDraft(
     actorUserId: string
     syncItemId: string
     syncRunId: string
+    recordId?: string
     contestExternalId: string
     scopeTitle?: string
     entityType: 'contest' | 'track' | 'track_timeline' | 'resource'
@@ -1170,10 +1219,17 @@ export async function upsertContestReleaseDraft(
 
   let existed = false
   let nextScopeTitle = normalizeText(version.scopeTitle) || scopeId
+  const syncSource = {
+    syncItemId: input.syncItemId,
+    syncRunId: input.syncRunId,
+    recordId: input.recordId,
+  }
 
   if (input.entityType === 'contest') {
     existed = Boolean(current.contest)
-    current.contest = input.contest || null
+    current.contest = input.contest
+      ? attachReleaseSyncSource(input.contest, syncSource)
+      : null
     current.timelines = [
       ...current.timelines.filter(item =>
         !item.externalId.startsWith(buildContestDerivedTimelinePrefix(scopeId))
@@ -1186,7 +1242,7 @@ export async function upsertContestReleaseDraft(
   }
 
   if (input.entityType === 'track' && input.track) {
-    const trackResult = upsertSnapshotItem(current.tracks, input.track)
+    const trackResult = upsertSnapshotItem(current.tracks, attachReleaseSyncSource(input.track, syncSource))
     current.tracks = trackResult.items
     existed = trackResult.existed
     current.trackTimelines = [
@@ -1197,18 +1253,21 @@ export async function upsertContestReleaseDraft(
           && !item.externalId.startsWith(buildTrackLegacyTimelinePrefix(input.track!.externalId))
         ),
       ),
-      ...(input.trackTimelines || []),
+      ...(input.trackTimelines || []).map(item => attachReleaseSyncSource(item, syncSource)),
     ]
   }
 
   if (input.entityType === 'track_timeline' && input.trackTimelines?.[0]) {
-    const timelineResult = upsertSnapshotItem(current.trackTimelines, input.trackTimelines[0])
+    const timelineResult = upsertSnapshotItem(current.trackTimelines, attachReleaseSyncSource(input.trackTimelines[0], syncSource))
     current.trackTimelines = timelineResult.items
     existed = timelineResult.existed
   }
 
   if (input.entityType === 'resource' && input.resource) {
-    const resourceResult = upsertSnapshotItem(current.resources, sanitizeContestReleaseResourceSnapshot(input.resource))
+    const resourceResult = upsertSnapshotItem(
+      current.resources,
+      sanitizeContestReleaseResourceSnapshot(attachReleaseSyncSource(input.resource, syncSource)),
+    )
     current.resources = resourceResult.items
     existed = resourceResult.existed
   }
@@ -1250,6 +1309,7 @@ export async function upsertPolicyLibraryReleaseDraft(
     actorUserId: string
     syncItemId: string
     syncRunId: string
+    recordId?: string
     scopeTitle?: string
     item: PolicyLibraryItemSnapshot
   },
@@ -1268,7 +1328,11 @@ export async function upsertPolicyLibraryReleaseDraft(
     scopeId,
   })).policySnapshot || createEmptyPolicySnapshot()
   const current = toPolicySnapshot(version.snapshot)
-  const merged = upsertSnapshotItem(current.items, input.item)
+  const merged = upsertSnapshotItem(current.items, attachReleaseSyncSource(input.item, {
+    syncItemId: input.syncItemId,
+    syncRunId: input.syncRunId,
+    recordId: input.recordId,
+  }))
   current.items = merged.items
   const diffSummary = computePolicyDiffSummary(base, current)
 
@@ -1296,6 +1360,521 @@ export async function upsertPolicyLibraryReleaseDraft(
   return {
     version: (await getReleaseVersionById(db, version.id))!,
     existed: merged.existed,
+  }
+}
+
+function createEmptyLegacyReleaseSummary(): FeishuBitableSyncCleanupLegacySummary {
+  return {
+    total: 0,
+    contest: 0,
+    track: 0,
+    trackTimeline: 0,
+    resource: 0,
+    policy: 0,
+  }
+}
+
+function finalizeLegacyReleaseSummary(
+  summary: FeishuBitableSyncCleanupLegacySummary,
+): FeishuBitableSyncCleanupLegacySummary {
+  summary.total = summary.contest + summary.track + summary.trackTimeline + summary.resource + summary.policy
+  return summary
+}
+
+function publishedReleaseScopeKind(
+  entityType: FeishuBitableSyncItemEntityType,
+): ReleaseScopeKind | null {
+  if (entityType === 'contest' || entityType === 'track' || entityType === 'track_timeline' || entityType === 'resource')
+    return 'contest'
+  if (entityType === 'policy')
+    return 'policy_library'
+  return null
+}
+
+async function listManagedReleaseDraftVersions(
+  db: Queryable,
+  entityType: FeishuBitableSyncItemEntityType,
+): Promise<ReleaseVersion[]> {
+  const scopeKind = publishedReleaseScopeKind(entityType)
+  if (!scopeKind)
+    return []
+  return listReleaseScopedVersions(db, {
+    scopeKind,
+    statuses: ['pending_first_review', 'pending_second_review', 'approved', 'rejected'],
+    limit: 200,
+  })
+}
+
+async function countPublishedManagedReleaseEntities(
+  db: Queryable,
+  entityType: FeishuBitableSyncItemEntityType,
+): Promise<number> {
+  if (entityType === 'contest') {
+    const result = await db.query<{ item_count: string }>(
+      `SELECT COUNT(*)::TEXT AS item_count
+       FROM release_versions
+       WHERE scope_kind = 'contest'
+         AND status = 'published'
+         AND snapshot_json -> 'contest' IS NOT NULL
+         AND snapshot_json -> 'contest' <> 'null'::JSONB`,
+    )
+    return Math.max(0, Number(result.rows[0]?.item_count || 0) || 0)
+  }
+  if (entityType === 'track') {
+    const result = await db.query<{ item_count: string }>(
+      `SELECT COALESCE(SUM(jsonb_array_length(
+        CASE
+          WHEN jsonb_typeof(snapshot_json -> 'tracks') = 'array'
+            THEN snapshot_json -> 'tracks'
+          ELSE '[]'::JSONB
+        END
+      )), 0)::TEXT AS item_count
+       FROM release_versions
+       WHERE scope_kind = 'contest'
+         AND status = 'published'`,
+    )
+    return Math.max(0, Number(result.rows[0]?.item_count || 0) || 0)
+  }
+  if (entityType === 'track_timeline') {
+    const result = await db.query<{ item_count: string }>(
+      `SELECT COALESCE(SUM(jsonb_array_length(
+        CASE
+          WHEN jsonb_typeof(snapshot_json -> 'trackTimelines') = 'array'
+            THEN snapshot_json -> 'trackTimelines'
+          ELSE '[]'::JSONB
+        END
+      )), 0)::TEXT AS item_count
+       FROM release_versions
+       WHERE scope_kind = 'contest'
+         AND status = 'published'`,
+    )
+    return Math.max(0, Number(result.rows[0]?.item_count || 0) || 0)
+  }
+  if (entityType === 'resource') {
+    const result = await db.query<{ item_count: string }>(
+      `SELECT COALESCE(SUM(jsonb_array_length(
+        CASE
+          WHEN jsonb_typeof(snapshot_json -> 'resources') = 'array'
+            THEN snapshot_json -> 'resources'
+          ELSE '[]'::JSONB
+        END
+      )), 0)::TEXT AS item_count
+       FROM release_versions
+       WHERE scope_kind = 'contest'
+         AND status = 'published'`,
+    )
+    return Math.max(0, Number(result.rows[0]?.item_count || 0) || 0)
+  }
+  if (entityType === 'policy') {
+    const result = await db.query<{ item_count: string }>(
+      `SELECT COALESCE(SUM(jsonb_array_length(
+        CASE
+          WHEN jsonb_typeof(snapshot_json -> 'items') = 'array'
+            THEN snapshot_json -> 'items'
+          ELSE '[]'::JSONB
+        END
+      )), 0)::TEXT AS item_count
+       FROM release_versions
+       WHERE scope_kind = 'policy_library'
+         AND status = 'published'`,
+    )
+    return Math.max(0, Number(result.rows[0]?.item_count || 0) || 0)
+  }
+  return 0
+}
+
+export async function findReleaseSnapshotOwnerByExternalId(
+  db: Queryable,
+  input: {
+    entityType: 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy'
+    externalId: string
+  },
+): Promise<{
+  releaseVersionId: string
+  releaseStatus: ReleaseVersionStatus
+  scopeId: string
+  syncItemId: string
+} | null> {
+  const externalId = normalizeText(input.externalId)
+  if (!externalId)
+    return null
+
+  let query = ''
+  if (input.entityType === 'contest') {
+    query = `SELECT
+      rv.id AS release_version_id,
+      rv.status AS release_status,
+      rv.scope_id,
+      NULLIF(rv.snapshot_json -> 'contest' -> 'syncSource' ->> 'syncItemId', '') AS owner_sync_item_id
+    FROM release_versions rv
+    WHERE rv.scope_kind = 'contest'
+      AND rv.status NOT IN ('published', 'superseded', 'rejected')
+      AND rv.snapshot_json -> 'contest' ->> 'externalId' = $1
+    ORDER BY rv.updated_at DESC, rv.created_at DESC
+    LIMIT 1`
+  }
+  else if (input.entityType === 'track') {
+    query = `SELECT
+      rv.id AS release_version_id,
+      rv.status AS release_status,
+      rv.scope_id,
+      NULLIF(track_item.item -> 'syncSource' ->> 'syncItemId', '') AS owner_sync_item_id
+    FROM release_versions rv
+    JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(rv.snapshot_json -> 'tracks') = 'array'
+          THEN rv.snapshot_json -> 'tracks'
+        ELSE '[]'::JSONB
+      END
+    ) AS track_item(item) ON TRUE
+    WHERE rv.scope_kind = 'contest'
+      AND rv.status NOT IN ('published', 'superseded', 'rejected')
+      AND track_item.item ->> 'externalId' = $1
+    ORDER BY rv.updated_at DESC, rv.created_at DESC
+    LIMIT 1`
+  }
+  else if (input.entityType === 'track_timeline') {
+    query = `SELECT
+      rv.id AS release_version_id,
+      rv.status AS release_status,
+      rv.scope_id,
+      NULLIF(timeline_item.item -> 'syncSource' ->> 'syncItemId', '') AS owner_sync_item_id
+    FROM release_versions rv
+    JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(rv.snapshot_json -> 'trackTimelines') = 'array'
+          THEN rv.snapshot_json -> 'trackTimelines'
+        ELSE '[]'::JSONB
+      END
+    ) AS timeline_item(item) ON TRUE
+    WHERE rv.scope_kind = 'contest'
+      AND rv.status NOT IN ('published', 'superseded', 'rejected')
+      AND timeline_item.item ->> 'externalId' = $1
+    ORDER BY rv.updated_at DESC, rv.created_at DESC
+    LIMIT 1`
+  }
+  else if (input.entityType === 'resource') {
+    query = `SELECT
+      rv.id AS release_version_id,
+      rv.status AS release_status,
+      rv.scope_id,
+      NULLIF(resource_item.item -> 'syncSource' ->> 'syncItemId', '') AS owner_sync_item_id
+    FROM release_versions rv
+    JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(rv.snapshot_json -> 'resources') = 'array'
+          THEN rv.snapshot_json -> 'resources'
+        ELSE '[]'::JSONB
+      END
+    ) AS resource_item(item) ON TRUE
+    WHERE rv.scope_kind = 'contest'
+      AND rv.status NOT IN ('published', 'superseded', 'rejected')
+      AND resource_item.item ->> 'externalId' = $1
+    ORDER BY rv.updated_at DESC, rv.created_at DESC
+    LIMIT 1`
+  }
+  else {
+    query = `SELECT
+      rv.id AS release_version_id,
+      rv.status AS release_status,
+      rv.scope_id,
+      NULLIF(policy_item.item -> 'syncSource' ->> 'syncItemId', '') AS owner_sync_item_id
+    FROM release_versions rv
+    JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(rv.snapshot_json -> 'items') = 'array'
+          THEN rv.snapshot_json -> 'items'
+        ELSE '[]'::JSONB
+      END
+    ) AS policy_item(item) ON TRUE
+    WHERE rv.scope_kind = 'policy_library'
+      AND rv.status NOT IN ('published', 'superseded', 'rejected')
+      AND policy_item.item ->> 'externalId' = $1
+    ORDER BY rv.updated_at DESC, rv.created_at DESC
+    LIMIT 1`
+  }
+
+  const result = await db.query<ReleaseSnapshotOwnerRow>(query, [externalId])
+  const row = result.rows[0]
+  if (!row?.owner_sync_item_id)
+    return null
+
+  return {
+    releaseVersionId: row.release_version_id,
+    releaseStatus: row.release_status,
+    scopeId: row.scope_id,
+    syncItemId: row.owner_sync_item_id,
+  }
+}
+
+export async function previewFeishuManagedReleaseDraftCleanup(
+  db: Queryable,
+  input: {
+    syncItemId: string
+    entityType: FeishuBitableSyncItemEntityType
+  },
+): Promise<{
+  unpublishedReleaseDrafts: number
+  legacyReleaseCleanup: FeishuBitableSyncCleanupLegacySummary
+  publishedContestDataCount: number
+  publishedPolicyDataCount: number
+}> {
+  const syncItemId = normalizeText(input.syncItemId)
+  const legacyReleaseCleanup = createEmptyLegacyReleaseSummary()
+  if (!syncItemId || input.entityType === 'persona') {
+    return {
+      unpublishedReleaseDrafts: 0,
+      legacyReleaseCleanup,
+      publishedContestDataCount: 0,
+      publishedPolicyDataCount: 0,
+    }
+  }
+
+  let unpublishedReleaseDrafts = 0
+  const versions = await listManagedReleaseDraftVersions(db, input.entityType)
+  for (const version of versions) {
+    if (version.scopeKind === 'contest') {
+      const snapshot = toContestSnapshot(version.snapshot, version.scopeId)
+      if (input.entityType === 'contest') {
+        const owner = normalizeReleaseSyncSource(snapshot.contest?.syncSource)
+        if (snapshot.contest && owner?.syncItemId === syncItemId)
+          unpublishedReleaseDrafts += 1
+        else if (snapshot.contest && !owner)
+          legacyReleaseCleanup.contest += 1
+        continue
+      }
+      if (input.entityType === 'track') {
+        for (const item of snapshot.tracks) {
+          const owner = normalizeReleaseSyncSource(item.syncSource)
+          if (owner?.syncItemId === syncItemId)
+            unpublishedReleaseDrafts += 1
+          else if (!owner)
+            legacyReleaseCleanup.track += 1
+        }
+        continue
+      }
+      if (input.entityType === 'track_timeline') {
+        for (const item of snapshot.trackTimelines) {
+          const owner = normalizeReleaseSyncSource(item.syncSource)
+          if (owner?.syncItemId === syncItemId)
+            unpublishedReleaseDrafts += 1
+          else if (!owner)
+            legacyReleaseCleanup.trackTimeline += 1
+        }
+        continue
+      }
+      if (input.entityType === 'resource') {
+        for (const item of snapshot.resources) {
+          const owner = normalizeReleaseSyncSource(item.syncSource)
+          if (owner?.syncItemId === syncItemId)
+            unpublishedReleaseDrafts += 1
+          else if (!owner)
+            legacyReleaseCleanup.resource += 1
+        }
+      }
+      continue
+    }
+
+    if (input.entityType !== 'policy')
+      continue
+    const snapshot = toPolicySnapshot(version.snapshot)
+    for (const item of snapshot.items) {
+      const owner = normalizeReleaseSyncSource(item.syncSource)
+      if (owner?.syncItemId === syncItemId)
+        unpublishedReleaseDrafts += 1
+      else if (!owner)
+        legacyReleaseCleanup.policy += 1
+    }
+  }
+
+  finalizeLegacyReleaseSummary(legacyReleaseCleanup)
+
+  return {
+    unpublishedReleaseDrafts: unpublishedReleaseDrafts + legacyReleaseCleanup.total,
+    legacyReleaseCleanup,
+    publishedContestDataCount: await countPublishedManagedReleaseEntities(db, 'contest'),
+    publishedPolicyDataCount: await countPublishedManagedReleaseEntities(db, 'policy'),
+  }
+}
+
+export async function cleanupFeishuManagedReleaseDrafts(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    entityType: FeishuBitableSyncItemEntityType
+    preserveExternalIds?: string[]
+  },
+): Promise<{
+  unpublishedReleaseDrafts: number
+  legacyReleaseCleanup: FeishuBitableSyncCleanupLegacySummary
+  publishedContestDataCount: number
+  publishedPolicyDataCount: number
+  legacyForceCleared: boolean
+}> {
+  const syncItemId = normalizeText(input.syncItemId)
+  const preserveExternalIds = new Set((input.preserveExternalIds || []).map(item => normalizeText(item)).filter(Boolean))
+  const legacyReleaseCleanup = createEmptyLegacyReleaseSummary()
+  if (!syncItemId || input.entityType === 'persona') {
+    return {
+      unpublishedReleaseDrafts: 0,
+      legacyReleaseCleanup,
+      publishedContestDataCount: 0,
+      publishedPolicyDataCount: 0,
+      legacyForceCleared: false,
+    }
+  }
+
+  let unpublishedReleaseDrafts = 0
+  const versions = await listManagedReleaseDraftVersions(db, input.entityType)
+  for (const version of versions) {
+    let changed = false
+
+    if (version.scopeKind === 'contest') {
+      const current = toContestSnapshot(version.snapshot, version.scopeId)
+      if (input.entityType === 'contest') {
+        const contestExternalId = normalizeText(current.contest?.externalId)
+        const owner = normalizeReleaseSyncSource(current.contest?.syncSource)
+        const removeManaged = Boolean(current.contest && owner?.syncItemId === syncItemId && !preserveExternalIds.has(contestExternalId))
+        const removeLegacy = Boolean(current.contest && !owner)
+        if (removeManaged || removeLegacy) {
+          if (removeLegacy)
+            legacyReleaseCleanup.contest += 1
+          unpublishedReleaseDrafts += 1
+          current.contest = null
+          current.timelines = current.timelines.filter(item =>
+            !item.externalId.startsWith(buildContestDerivedTimelinePrefix(current.contestExternalId))
+            && !item.externalId.startsWith(buildContestLegacyTimelinePrefix(current.contestExternalId)),
+          )
+          changed = true
+        }
+      }
+      else if (input.entityType === 'track') {
+        const removedTrackExternalIds = new Set<string>()
+        current.tracks = current.tracks.filter((item) => {
+          const owner = normalizeReleaseSyncSource(item.syncSource)
+          const removeManaged = owner?.syncItemId === syncItemId && !preserveExternalIds.has(item.externalId)
+          const removeLegacy = !owner
+          if (!removeManaged && !removeLegacy)
+            return true
+          if (removeLegacy)
+            legacyReleaseCleanup.track += 1
+          unpublishedReleaseDrafts += 1
+          removedTrackExternalIds.add(item.externalId)
+          changed = true
+          return false
+        })
+        if (removedTrackExternalIds.size > 0) {
+          current.trackTimelines = current.trackTimelines.filter((item) => {
+            if (!removedTrackExternalIds.has(item.trackExternalId))
+              return true
+            return !item.externalId.startsWith(buildTrackDerivedTimelinePrefix(item.trackExternalId))
+              && !item.externalId.startsWith(buildTrackLegacyTimelinePrefix(item.trackExternalId))
+          })
+        }
+      }
+      else if (input.entityType === 'track_timeline') {
+        current.trackTimelines = current.trackTimelines.filter((item) => {
+          const owner = normalizeReleaseSyncSource(item.syncSource)
+          const removeManaged = owner?.syncItemId === syncItemId && !preserveExternalIds.has(item.externalId)
+          const removeLegacy = !owner
+          if (!removeManaged && !removeLegacy)
+            return true
+          if (removeLegacy)
+            legacyReleaseCleanup.trackTimeline += 1
+          unpublishedReleaseDrafts += 1
+          changed = true
+          return false
+        })
+      }
+      else if (input.entityType === 'resource') {
+        current.resources = current.resources.filter((item) => {
+          const owner = normalizeReleaseSyncSource(item.syncSource)
+          const removeManaged = owner?.syncItemId === syncItemId && !preserveExternalIds.has(item.externalId)
+          const removeLegacy = !owner
+          if (!removeManaged && !removeLegacy)
+            return true
+          if (removeLegacy)
+            legacyReleaseCleanup.resource += 1
+          unpublishedReleaseDrafts += 1
+          changed = true
+          return false
+        })
+      }
+
+      if (changed) {
+        const sanitizedCurrent = sanitizeContestReleaseSnapshot(current)
+        const base = (await loadBaseSnapshot(db, {
+          scopeKind: 'contest',
+          scopeId: version.scopeId,
+        })).contestSnapshot || createEmptyContestSnapshot(version.scopeId)
+        const diffSummary = computeContestDiffSummary(base, sanitizedCurrent)
+        await db.query(
+          `UPDATE release_versions
+           SET snapshot_json = $2::JSONB,
+               diff_summary_json = $3::JSONB,
+               updated_by_user_id = $4,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [
+            version.id,
+            JSON.stringify(sanitizedCurrent),
+            JSON.stringify(diffSummary),
+            input.actorUserId,
+          ],
+        )
+      }
+      continue
+    }
+
+    if (input.entityType !== 'policy')
+      continue
+    const current = toPolicySnapshot(version.snapshot)
+    current.items = current.items.filter((item) => {
+      const owner = normalizeReleaseSyncSource(item.syncSource)
+      const removeManaged = owner?.syncItemId === syncItemId && !preserveExternalIds.has(item.externalId)
+      const removeLegacy = !owner
+      if (!removeManaged && !removeLegacy)
+        return true
+      if (removeLegacy)
+        legacyReleaseCleanup.policy += 1
+      unpublishedReleaseDrafts += 1
+      changed = true
+      return false
+    })
+
+    if (!changed)
+      continue
+
+    const base = (await loadBaseSnapshot(db, {
+      scopeKind: 'policy_library',
+      scopeId: version.scopeId,
+    })).policySnapshot || createEmptyPolicySnapshot()
+    const diffSummary = computePolicyDiffSummary(base, current)
+    await db.query(
+      `UPDATE release_versions
+       SET snapshot_json = $2::JSONB,
+           diff_summary_json = $3::JSONB,
+           updated_by_user_id = $4,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        version.id,
+        JSON.stringify(current),
+        JSON.stringify(diffSummary),
+        input.actorUserId,
+      ],
+    )
+  }
+
+  finalizeLegacyReleaseSummary(legacyReleaseCleanup)
+
+  return {
+    unpublishedReleaseDrafts,
+    legacyReleaseCleanup,
+    publishedContestDataCount: await countPublishedManagedReleaseEntities(db, 'contest'),
+    publishedPolicyDataCount: await countPublishedManagedReleaseEntities(db, 'policy'),
+    legacyForceCleared: legacyReleaseCleanup.total > 0,
   }
 }
 

@@ -174,6 +174,39 @@ describe('feishu synced data release draft rows', () => {
   })
 })
 
+describe('feishu synced data dedupe and sync ownership', () => {
+  it('查询会按业务键折叠当前可见实体，并优先保留草稿/索引结果', async () => {
+    const storeSource = await readFile(
+      resolve(process.cwd(), 'server/utils/feishu-integration-store.ts'),
+      'utf8',
+    )
+
+    assert.match(storeSource, /business_key/, '查询 SQL 未声明业务去重键')
+    assert.match(storeSource, /COALESCE\(NULLIF\(rows\.external_id, ''\), NULLIF\(rows\.entity_id, ''\), rows\.entity_id\)/, '查询 SQL 未按 externalId \/ entityId 构造业务键')
+    assert.match(storeSource, /CASE[\s\S]*WHEN rows\.status = 'release_draft' THEN 0[\s\S]*WHEN rows\.status = 'indexed' THEN 1[\s\S]*ELSE 2/, '查询 SQL 未声明 release_draft > indexed > ref_only 的折叠优先级')
+    assert.match(storeSource, /PARTITION BY rows\.scope, rows\.business_key/, '查询 SQL 未按业务键分组折叠')
+    assert.match(storeSource, /ORDER BY rows\.status_rank ASC, rows\.updated_at DESC, rows\.created_at DESC/, '查询 SQL 未按优先级和更新时间选择当前行')
+    assert.match(storeSource, /当前仍然可见的有效业务实体/, '查询台原始口径说明未更新为业务实体视角')
+  })
+
+  it('同步服务会拦截被其他同步项占用的业务实体并记录问题单', async () => {
+    const serviceSource = await readFile(
+      resolve(process.cwd(), 'server/services/feishu/bitable-sync.ts'),
+      'utf8',
+    )
+    const releaseStoreSource = await readFile(
+      resolve(process.cwd(), 'server/utils/release-store.ts'),
+      'utf8',
+    )
+
+    assert.match(serviceSource, /OWNED_BY_OTHER_SYNC_ITEM/, '同步服务未声明跨同步项所有权冲突原因码')
+    assert.match(serviceSource, /findFeishuExternalRefOwnerByExternalId|assertFeishuEntityOwnership/, '同步服务未接入业务实体所有权检查')
+    assert.match(serviceSource, /完整同步|authoritative prune|authoritativePrune/, '同步服务未区分完整同步与增量同步的权威回收策略')
+    assert.match(releaseStoreSource, /syncSource/, 'release-store 未使用 syncSource 管理快照归属')
+    assert.match(releaseStoreSource, /legacy/i, 'release-store 未处理 legacy 快照强制清空')
+  })
+})
+
 describe('feishu synced data metrics', () => {
   it('无细粒度筛选时返回双口径指标', async () => {
     const recorder = createQueuedQueryRecorder([

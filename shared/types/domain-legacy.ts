@@ -594,17 +594,37 @@ export interface ProjectKnowledgeIndexVisuals {
   clusterMetrics: ProjectKnowledgeClusterMetric
 }
 
+export type ProjectKnowledgeCitationSourceScope
+  = 'project_resource'
+    | 'contest_resource'
+    | 'platform_resource'
+    | 'meeting_artifact'
+    | 'canvas_resource'
+
+export interface ProjectKnowledgeCitationLocator {
+  page?: number
+  section?: string
+  anchorId?: string
+  nodeId?: string
+  utteranceRange?: string
+  label?: string
+}
+
 export interface ProjectKnowledgeCitation {
   sourceId: string
   sourceResourceId?: string | null
   chunkId: string
   resourceTitle: string
   label: string
+  sourceScope: ProjectKnowledgeCitationSourceScope
   sourceStatus?: ProjectKnowledgeSourceStatus
   modality?: ProjectKnowledgeModality
   projectionType?: ProjectKnowledgeProjectionType
   page?: number
   section?: string
+  anchorId?: string
+  nodeId?: string
+  locator?: ProjectKnowledgeCitationLocator | null
   quote?: string
 }
 
@@ -1755,9 +1775,16 @@ export type ReleaseReviewAction
     | 'rejected'
     | 'published'
 
+export interface ReleaseSyncSource {
+  syncItemId: string
+  syncRunId?: string | null
+  recordId?: string | null
+}
+
 export interface ContestReleaseContestSnapshot {
   liveId?: string | null
   externalId: string
+  syncSource?: ReleaseSyncSource
   name: string
   level: ContestLevel
   organizer?: string
@@ -1780,6 +1807,7 @@ export interface ContestReleaseContestSnapshot {
 export interface ContestReleaseTrackSnapshot {
   liveId?: string | null
   externalId: string
+  syncSource?: ReleaseSyncSource
   contestExternalId: string
   name: string
   summary?: string
@@ -1810,6 +1838,7 @@ export interface ContestReleaseTimelineSnapshot {
 
 export interface ContestReleaseTrackTimelineSnapshot {
   externalId: string
+  syncSource?: ReleaseSyncSource
   trackExternalId: string
   trackLiveId?: string | null
   year: number
@@ -1823,6 +1852,7 @@ export interface ContestReleaseTrackTimelineSnapshot {
 export interface ContestReleaseResourceSnapshot {
   liveId?: string | null
   externalId: string
+  syncSource?: ReleaseSyncSource
   contestExternalId: string
   trackExternalId?: string
   trackLiveId?: string | null
@@ -1850,6 +1880,7 @@ export interface ContestReleaseSnapshot {
 export interface PolicyLibraryItemSnapshot {
   liveId?: string | null
   externalId: string
+  syncSource?: ReleaseSyncSource
   meetingName: string
   summary?: string
   conferenceDate?: string
@@ -3771,12 +3802,23 @@ export interface AiCanvasAssistRequest {
   aiOptions?: Partial<AiAssistantOptions>
 }
 
+export type AiCanvasAssistImportTarget = 'scene_document' | 'design_document'
+
+export interface AiCanvasAssistImportPreview {
+  target: AiCanvasAssistImportTarget
+  summary: string
+  sceneDocument?: SceneDocument | null
+  designDocument?: string | null
+}
+
 export interface AiCanvasAssistResult {
   assistantReply: string
   action: AiCanvasAssistAction
   template: AiCanvasAssistTemplate
   sourceFormat: AiCanvasAssistSourceFormat
   sourceText: string
+  importPreview?: AiCanvasAssistImportPreview | null
+  previewSummary?: string
   knowledge?: ProjectKnowledgeMessagePayload | null
 }
 
@@ -3834,6 +3876,51 @@ export interface AdminAgentRunResult {
   artifacts: AdminAgentArtifact[]
   missingFields: string[]
   webSearchEnabled: boolean
+}
+
+export type ProjectExportArtifactKind
+  = 'bundle'
+    | 'pdf_report'
+    | 'knowledge_summary'
+    | 'meeting_summary'
+    | 'design_export'
+    | 'project_bundle_manifest'
+
+export interface ProjectExportProfile {
+  id: string
+  title: string
+  contestId?: string | null
+  summary: string
+  sections: string[]
+  artifactKinds: ProjectExportArtifactKind[]
+}
+
+export interface ProjectExportArtifact {
+  id: string
+  kind: ProjectExportArtifactKind
+  title: string
+  fileName: string
+  mimeType: string
+  size: number
+  resourceId?: string | null
+  objectKey?: string | null
+  downloadPath?: string | null
+}
+
+export interface ProjectExportPdfReportPayload {
+  title: string
+  summary: string
+  sections: Array<{ title: string, body: string }>
+}
+
+export interface ProjectExportBundleManifest {
+  id: string
+  projectId: string
+  contestId?: string | null
+  profile: ProjectExportProfile
+  generatedAt: string
+  artifacts: ProjectExportArtifact[]
+  knowledgeSummary: string
 }
 
 export type AdminAgentStreamEventType = 'progress' | 'tool' | 'delta' | 'artifact' | 'done' | 'error'
@@ -4178,6 +4265,7 @@ export interface FeishuFieldDiagnosticItem {
     | 'mapping_missing'
     | 'external_id_missing'
     | 'missing_required_field'
+    | 'owned_by_other_sync_item'
     | 'persona_slots_empty'
     | 'source_field_missing'
     | 'transform_error'
@@ -4748,6 +4836,51 @@ export interface FeishuPostSyncTask {
   finishedAt: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface FeishuBitableSyncCleanupManagedDataCounts {
+  externalRefs: number
+  searchIndex: number
+  entityAnalysis: number
+  vectors: number
+  postSyncTasks: number
+  runSamples: number
+  issues: number
+  personaPresets: number
+  unpublishedReleaseDrafts: number
+}
+
+export interface FeishuBitableSyncCleanupLegacySummary {
+  total: number
+  contest: number
+  track: number
+  trackTimeline: number
+  resource: number
+  policy: number
+}
+
+export interface FeishuBitableSyncCleanupPreview {
+  syncId: string
+  syncItemId: string
+  entityType: FeishuBitableSyncItemEntityType
+  confirmationToken: string
+  managedDataCounts: FeishuBitableSyncCleanupManagedDataCounts
+  legacyReleaseCleanup: FeishuBitableSyncCleanupLegacySummary
+  publishedDataRetained: boolean
+  publishedContestDataCount: number
+  publishedPolicyDataCount: number
+  blockedConflictCount: number
+}
+
+export interface FeishuBitableSyncCleanupResult {
+  syncId: string
+  syncItemId: string
+  entityType: FeishuBitableSyncItemEntityType
+  managedDataCounts: FeishuBitableSyncCleanupManagedDataCounts
+  legacyReleaseCleanup: FeishuBitableSyncCleanupLegacySummary
+  legacyForceCleared: boolean
+  publishedDataSkipped: boolean
+  blockedConflictCount: number
 }
 
 export type FeishuSyncedDataRecordStatus = 'indexed' | 'ref_only' | 'release_draft'

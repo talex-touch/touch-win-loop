@@ -2,6 +2,8 @@ export type {
   ApiResponse,
   ApiResponseMeta,
   ContestDetailPayload,
+  FeishuBitableSyncCleanupPreview,
+  FeishuBitableSyncCleanupResult,
   FeishuSyncedDataMetrics,
   FeishuSyncedDataQuery,
   FeishuSyncedDataRecord,

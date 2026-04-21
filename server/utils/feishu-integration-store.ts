@@ -2964,6 +2964,65 @@ export async function getFeishuExternalRefByEntityId(
   }
 }
 
+export async function findFeishuExternalRefOwnerByExternalId(
+  db: Queryable,
+  input: {
+    scope: FeishuBitableSyncItemEntityType
+    externalId: string
+  },
+): Promise<{
+  syncItemId: string
+  syncItemName: string
+  syncId: string
+  syncName: string
+  entityId: string
+  metadata: Record<string, unknown>
+} | null> {
+  const scope = toText(input.scope)
+  const externalId = toText(input.externalId)
+  if (!scope || !externalId)
+    return null
+
+  const result = await db.query<{
+    sync_item_id: string | null
+    sync_item_name: string | null
+    sync_id: string | null
+    sync_name: string | null
+    entity_id: string
+    metadata: unknown
+  }>(
+    `SELECT
+      ref.sync_item_id,
+      item.name AS sync_item_name,
+      sync.id AS sync_id,
+      sync.name AS sync_name,
+      ref.entity_id,
+      ref.metadata
+     FROM feishu_external_refs ref
+     LEFT JOIN feishu_bitable_sync_items item ON item.id = ref.sync_item_id
+     LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+     WHERE ref.provider = 'feishu_bitable'
+       AND ref.scope = $1
+       AND ref.external_id = $2
+     LIMIT 1`,
+    [scope, externalId],
+  )
+
+  const row = result.rows[0]
+  const syncItemId = toText(row?.sync_item_id)
+  if (!row || !syncItemId)
+    return null
+
+  return {
+    syncItemId,
+    syncItemName: toText(row.sync_item_name),
+    syncId: toText(row.sync_id),
+    syncName: toText(row.sync_name),
+    entityId: row.entity_id,
+    metadata: parseJsonObject(row.metadata),
+  }
+}
+
 export async function listFeishuExternalRefExternalIdsBySyncItemId(
   db: Queryable,
   input: {
@@ -3387,6 +3446,27 @@ export async function searchFeishuSyncedData(
         SELECT * FROM release_resource_rows
         UNION ALL
         SELECT * FROM release_policy_rows
+      ),
+      filtered_rows AS (
+        SELECT
+          rows.*,
+          COALESCE(NULLIF(rows.external_id, ''), NULLIF(rows.entity_id, ''), rows.entity_id) AS business_key,
+          CASE
+            WHEN rows.status = 'release_draft' THEN 0
+            WHEN rows.status = 'indexed' THEN 1
+            ELSE 2
+          END AS status_rank
+        FROM all_rows rows
+        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ),
+      ranked_rows AS (
+        SELECT
+          rows.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY rows.scope, rows.business_key
+            ORDER BY rows.status_rank ASC, rows.updated_at DESC, rows.created_at DESC, rows.entity_id DESC
+          ) AS row_number
+        FROM filtered_rows rows
       )
     SELECT
       rows.status,
@@ -3407,8 +3487,8 @@ export async function searchFeishuSyncedData(
       rows.created_at::TEXT,
       rows.updated_at::TEXT,
       COUNT(*) OVER()::INTEGER AS total_count
-    FROM all_rows rows
-    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    FROM ranked_rows rows
+    WHERE rows.row_number = 1
     ORDER BY rows.updated_at DESC, rows.created_at DESC
     LIMIT $${limitParam}
     OFFSET $${offsetParam}`,
@@ -3484,7 +3564,7 @@ export async function searchFeishuSyncedData(
   }
 
   const rawMetricNotice = rawMetricAvailable
-    ? '下方列表展示的是当前仍然可见的有效落库结果；最近运行源行数按“各同步项最近一次运行”聚合，规则过滤和业务跳过不会进入该列表。'
+    ? '下方列表展示的是当前仍然可见的有效业务实体；最近运行源行数按“各同步项最近一次运行”聚合，规则过滤和业务跳过不会进入该列表。已发布版本会保留，但不会再和当前草稿/索引重复计数。'
     : '当前列表仍按精确筛选结果展示，但“最近运行源行数”只支持按 syncId / syncItemId / scope 这类同步级筛选聚合；检测到关键词、externalId 或 recordId 细粒度筛选，已隐藏该指标。'
 
   return {

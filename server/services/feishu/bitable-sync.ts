@@ -58,6 +58,7 @@ import {
   completeFeishuBitableSyncItemRun,
   createFeishuBitableSyncItemRun,
   deleteFeishuExternalRefsByExternalIds,
+  findFeishuExternalRefOwnerByExternalId,
   getFeishuBitableSyncById,
   getFeishuBitableSyncItemById,
   listFeishuExternalRefExternalIdsBySyncItemId,
@@ -69,6 +70,8 @@ import {
 import {
   buildContestDerivedTimelineExternalId,
   buildTrackDerivedTimelineExternalId,
+  cleanupFeishuManagedReleaseDrafts,
+  findReleaseSnapshotOwnerByExternalId,
   listReleaseVersions,
   upsertContestReleaseDraft,
   upsertPolicyLibraryReleaseDraft,
@@ -157,6 +160,77 @@ interface ApplyRecordResult {
   payload?: Record<string, unknown>
 }
 
+function buildOwnershipConflictResult(input: {
+  externalId: string
+  ownerSyncItemId: string
+  ownerSyncItemName?: string
+  ownerSyncId?: string
+  ownerSyncName?: string
+  ownerReleaseVersionId?: string
+}): ApplyRecordResult {
+  const ownerLabel = toText(input.ownerSyncItemName)
+    || toText(input.ownerSyncName)
+    || toText(input.ownerSyncItemId)
+    || '其他同步项'
+  return {
+    status: 'skipped',
+    externalId: input.externalId,
+    reasonCode: 'OWNED_BY_OTHER_SYNC_ITEM',
+    message: `业务 externalId 已被“${ownerLabel}”占用，当前记录已跳过以防重复导入。`,
+    payload: {
+      ownerSyncItemId: toText(input.ownerSyncItemId),
+      ownerSyncItemName: toText(input.ownerSyncItemName),
+      ownerSyncId: toText(input.ownerSyncId),
+      ownerSyncName: toText(input.ownerSyncName),
+      ownerReleaseVersionId: toText(input.ownerReleaseVersionId),
+    },
+  }
+}
+
+async function assertFeishuEntityOwnership(
+  db: Queryable,
+  input: {
+    syncItemId: string
+    entityType: 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy' | 'persona'
+    externalId: string
+  },
+): Promise<ApplyRecordResult | null> {
+  const externalId = toText(input.externalId)
+  if (!externalId)
+    return null
+
+  const externalRefOwner = await findFeishuExternalRefOwnerByExternalId(db, {
+    scope: input.entityType,
+    externalId,
+  })
+  if (externalRefOwner?.syncItemId && externalRefOwner.syncItemId !== input.syncItemId) {
+    return buildOwnershipConflictResult({
+      externalId,
+      ownerSyncItemId: externalRefOwner.syncItemId,
+      ownerSyncItemName: externalRefOwner.syncItemName,
+      ownerSyncId: externalRefOwner.syncId,
+      ownerSyncName: externalRefOwner.syncName,
+    })
+  }
+
+  if (input.entityType === 'persona')
+    return null
+
+  const releaseOwner = await findReleaseSnapshotOwnerByExternalId(db, {
+    entityType: input.entityType,
+    externalId,
+  })
+  if (releaseOwner?.syncItemId && releaseOwner.syncItemId !== input.syncItemId) {
+    return buildOwnershipConflictResult({
+      externalId,
+      ownerSyncItemId: releaseOwner.syncItemId,
+      ownerReleaseVersionId: releaseOwner.releaseVersionId,
+    })
+  }
+
+  return null
+}
+
 interface NormalizedWriteback {
   enabled: boolean
   fields: {
@@ -194,7 +268,8 @@ const FIELD_INSPECTION_PREVIEW_LIMIT = 120
 const MAPPED_PREVIEW_SAMPLE_LIMIT = 20
 const FIELD_DIAGNOSTIC_LIMIT = 200
 const TRANSFORM_ERROR_LIMIT = 100
-
+const SYNC_RUN_DIAGNOSTIC_SAMPLE_LIMIT = 12
+const SYNC_RUN_DIAGNOSTIC_PREVIEW_LIMIT = SYNC_RUN_DIAGNOSTIC_SAMPLE_LIMIT
 const FEISHU_EMBED_ALLOWED_HOSTS = ['feishu.cn']
 
 const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> = {
@@ -1221,8 +1296,6 @@ function incrementRecordCount(target: Record<string, number>, key: string, amoun
   target[normalized] = Math.max(0, Math.trunc(Number(target[normalized]) || 0)) + Math.max(0, Math.trunc(Number(amount) || 0))
 }
 
-const SYNC_RUN_DIAGNOSTIC_PREVIEW_LIMIT = 12
-
 function resolveAutoSyncMismatchReason(completed: boolean, pending: boolean): 'record_status' | 'sync_status' | 'record_status_and_sync_status' {
   if (!completed && !pending)
     return 'record_status_and_sync_status'
@@ -1590,6 +1663,16 @@ function buildReasonDiagnostic(
     }
   }
 
+  if (result.reasonCode === 'OWNED_BY_OTHER_SYNC_ITEM') {
+    return {
+      kind: 'owned_by_other_sync_item',
+      level: 'error',
+      message: result.message || '业务实体已被其他同步项占用。',
+      recordId,
+      externalId: result.externalId,
+    }
+  }
+
   if (result.reasonCode === 'CONTEST_REF_NOT_FOUND') {
     return {
       kind: 'contest_ref_not_found',
@@ -1806,6 +1889,14 @@ async function applyContestRecord(
     dryRun: boolean
   },
 ): Promise<ApplyRecordResult> {
+  const ownershipConflict = await assertFeishuEntityOwnership(db, {
+    syncItemId: input.syncItemId,
+    entityType: 'contest',
+    externalId: input.externalId,
+  })
+  if (ownershipConflict)
+    return ownershipConflict
+
   const [
     name,
     officialUrl,
@@ -1869,6 +1960,7 @@ async function applyContestRecord(
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
       syncRunId: input.runId,
+      recordId: input.record.recordId,
       contestExternalId: input.externalId,
       scopeTitle: name,
       entityType: 'contest',
@@ -1907,6 +1999,14 @@ async function applyTrackRecord(
     dryRun: boolean
   },
 ): Promise<ApplyRecordResult> {
+  const ownershipConflict = await assertFeishuEntityOwnership(db, {
+    syncItemId: input.syncItemId,
+    entityType: 'track',
+    externalId: input.externalId,
+  })
+  if (ownershipConflict)
+    return ownershipConflict
+
   const contestLink = await resolveContestIdByExternal(db, {
     options: input.options,
     resolver: input.resolver,
@@ -1992,6 +2092,7 @@ async function applyTrackRecord(
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
       syncRunId: input.runId,
+      recordId: input.record.recordId,
       contestExternalId: contestLink.contestExternalId,
       scopeTitle: contestLink.scopeTitle || contestLink.contestExternalId,
       entityType: 'track',
@@ -2034,6 +2135,14 @@ async function applyTrackTimelineRecord(
     dryRun: boolean
   },
 ): Promise<ApplyRecordResult> {
+  const ownershipConflict = await assertFeishuEntityOwnership(db, {
+    syncItemId: input.syncItemId,
+    entityType: 'track_timeline',
+    externalId: input.externalId,
+  })
+  if (ownershipConflict)
+    return ownershipConflict
+
   const contestLink = await resolveContestIdByExternal(db, {
     options: input.options,
     resolver: input.resolver,
@@ -2100,6 +2209,7 @@ async function applyTrackTimelineRecord(
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
       syncRunId: input.runId,
+      recordId: input.record.recordId,
       contestExternalId: contestLink.contestExternalId,
       scopeTitle: contestLink.scopeTitle || contestLink.contestExternalId,
       entityType: 'track_timeline',
@@ -2132,6 +2242,14 @@ async function applyResourceRecord(
     dryRun: boolean
   },
 ): Promise<ApplyRecordResult> {
+  const ownershipConflict = await assertFeishuEntityOwnership(db, {
+    syncItemId: input.syncItemId,
+    entityType: 'resource',
+    externalId: input.externalId,
+  })
+  if (ownershipConflict)
+    return ownershipConflict
+
   const contestLink = await resolveContestIdByExternal(db, {
     options: input.options,
     resolver: input.resolver,
@@ -2202,6 +2320,7 @@ async function applyResourceRecord(
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
       syncRunId: input.runId,
+      recordId: input.record.recordId,
       contestExternalId: contestLink.contestExternalId,
       scopeTitle: contestLink.scopeTitle || contestLink.contestExternalId,
       entityType: 'resource',
@@ -2234,6 +2353,14 @@ async function applyPolicyRecord(
     dryRun: boolean
   },
 ): Promise<ApplyRecordResult> {
+  const ownershipConflict = await assertFeishuEntityOwnership(db, {
+    syncItemId: input.syncItemId,
+    entityType: 'policy',
+    externalId: input.externalId,
+  })
+  if (ownershipConflict)
+    return ownershipConflict
+
   const explicitExternalId = await input.resolver.getSpecialText('externalId')
   const [
     meetingName,
@@ -2308,6 +2435,7 @@ async function applyPolicyRecord(
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
       syncRunId: input.runId,
+      recordId: input.record.recordId,
       scopeTitle: '政策库',
       item: policyItem,
     })
@@ -2397,6 +2525,30 @@ async function applyPersonaRecord(
         candidateSlotCount: 0,
         missingFields: ['persona1~5'],
       },
+    }
+  }
+
+  for (const draft of drafts) {
+    const ownershipConflict = await assertFeishuEntityOwnership(db, {
+      syncItemId: input.syncItemId,
+      entityType: 'persona',
+      externalId: draft.externalId,
+    })
+    if (ownershipConflict) {
+      return {
+        ...ownershipConflict,
+        summaryCounts: {
+          createdCount: 0,
+          updatedCount: 0,
+          skippedCount: drafts.length,
+        },
+        activeExternalIds: [],
+        payload: {
+          ...(ownershipConflict.payload || {}),
+          sourceExternalId: explicitExternalId,
+          blockedExternalIds: drafts.map(item => item.externalId),
+        },
+      }
     }
   }
 
@@ -2664,6 +2816,7 @@ async function executeRecords(
     sourceRecords?: FeishuBitableRecord[]
     sourceRecordCount?: number
     autoSync?: NormalizedAutoSync
+    authoritativePrune?: boolean
     dryRun: boolean
   },
 ): Promise<SyncSummary> {
@@ -2675,6 +2828,7 @@ async function executeRecords(
   })
   const writebackRecords: Array<{ recordId: string, fields: Record<string, unknown> }> = []
   const activePersonaExternalIds = new Set<string>()
+  const seenBusinessExternalIds = new Set<string>()
 
   for (const [recordIndex, record] of input.records.entries()) {
     try {
@@ -2710,6 +2864,9 @@ async function executeRecords(
 
       for (const externalId of result.activeExternalIds || [])
         activePersonaExternalIds.add(externalId)
+
+      if (input.entityType !== 'persona' && result.reasonCode !== 'EXTERNAL_ID_MISSING' && toText(result.externalId))
+        seenBusinessExternalIds.add(toText(result.externalId))
 
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
         recordBusinessSkipDiagnostics(summary.diagnostics, record, result, resultSkippedCount)
@@ -2772,6 +2929,20 @@ async function executeRecords(
         message: error instanceof Error ? error.message : String(error || 'UNKNOWN_ERROR'),
       })
     }
+  }
+
+  const authoritativePrune = !input.dryRun
+    && Boolean(input.authoritativePrune)
+    && input.entityType !== 'persona'
+    && summary.errorCount === 0
+
+  if (authoritativePrune) {
+    await cleanupFeishuManagedReleaseDrafts(db, {
+      actorUserId: input.actorUserId,
+      syncItemId: input.syncItemId,
+      entityType: input.entityType,
+      preserveExternalIds: [...seenBusinessExternalIds],
+    })
   }
 
   const shouldCleanupPersonaStaleData = !input.dryRun
@@ -3638,6 +3809,7 @@ async function runFeishuBitableSyncItemById(
       const mapping = normalizeMapping(task.mapping, task.options, entityType)
       const options = normalizeOptions(task.options, mapping.defaults)
       const autoSync = normalizeAutoSyncConfig(task.autoSync)
+      const authoritativePrune = mode === 'full' && deltaRecordIds.length === 0
       ensureAutoSyncConfigReady(autoSync)
       validateAutoSyncFields(autoSync, records)
       const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback, autoSync)
@@ -3658,6 +3830,7 @@ async function runFeishuBitableSyncItemById(
         sourceRecords: records,
         sourceRecordCount: records.length,
         autoSync,
+        authoritativePrune,
         dryRun: false,
       })
     })
