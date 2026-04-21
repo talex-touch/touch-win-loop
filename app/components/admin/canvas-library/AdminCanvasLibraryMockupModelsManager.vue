@@ -172,6 +172,8 @@ const selectedDetail = ref<MockupModelDetail | null>(null)
 const variantPreviewUploading = reactive<Record<string, boolean>>({})
 const variantShellUploading = reactive<Record<string, boolean>>({})
 const variantTitleDrafts = reactive<Record<string, string>>({})
+const variantCreateVisible = ref(false)
+const variantCreateDraft = ref('')
 
 const pendingVariantShellUpload = reactive<PendingVariantShellUpload>({
   slotKey: '',
@@ -344,6 +346,10 @@ function formatVariantSlotLabel(slotKey: MockupVariantSlotKey): string {
   if (matchedNumber)
     return `变体 ${matchedNumber}`
   return normalized || '-'
+}
+
+function normalizeVariantTitleInput(value: unknown, fallback = ''): string {
+  return normalizeString(value) || normalizeString(fallback)
 }
 
 function resolveFormPresetSourceLabel(form: MockupFormState): string {
@@ -1305,8 +1311,9 @@ async function saveVariantTitle(slotKey: MockupVariantSlotKey): Promise<void> {
   if (!variant)
     return
   const fallbackTitle = normalizeString(variant.title) || formatVariantSlotLabel(slotKey)
-  const nextTitle = normalizeString(variantTitleDrafts[slotKey])
-  if (!nextTitle) {
+  const rawTitle = normalizeString(variantTitleDrafts[slotKey])
+  const nextTitle = normalizeVariantTitleInput(rawTitle)
+  if (!rawTitle) {
     variantTitleDrafts[slotKey] = fallbackTitle
     return
   }
@@ -1324,12 +1331,26 @@ async function saveVariantTitle(slotKey: MockupVariantSlotKey): Promise<void> {
     variantTitleDrafts[slotKey] = fallbackTitle
 }
 
+function startAddVariant(): void {
+  variantCreateDraft.value = ''
+  variantCreateVisible.value = true
+}
+
+function cancelAddVariant(): void {
+  variantCreateDraft.value = ''
+  variantCreateVisible.value = false
+}
+
 async function addVariant(): Promise<void> {
-  const nextIndex = selectedVariants.value.length + 1
-  await patchVariant(
+  const nextTitle = normalizeVariantTitleInput(variantCreateDraft.value)
+  if (!nextTitle) {
+    notifyError('请先输入展示变体标题。')
+    return
+  }
+  const saved = await patchVariant(
     createNextVariantSlotKey(),
     {
-      title: `展示变体 ${nextIndex}`,
+      title: nextTitle,
       sortOrder: selectedVariants.value.length,
       enabled: false,
     },
@@ -1337,6 +1358,8 @@ async function addVariant(): Promise<void> {
       successMessage: '展示变体已新增。',
     },
   )
+  if (saved)
+    cancelAddVariant()
 }
 
 async function deleteVariant(slotKey: MockupVariantSlotKey): Promise<void> {
@@ -1446,6 +1469,8 @@ watch(
 watch(
   () => variantsDialogVisible.value,
   (visible) => {
+    if (!visible)
+      cancelAddVariant()
     if (!visible && shellUploadConfirmVisible.value)
       cancelPendingVariantShellUpload()
   },
@@ -1997,9 +2022,24 @@ onMounted(() => {
       </div>
       <div v-else-if="selectedDetail" class="space-y-4">
         <div class="flex gap-3 items-center justify-between">
-          <a-button type="primary" size="small" :loading="mutating" @click="void addVariant()">
+          <a-button v-if="!variantCreateVisible" type="primary" size="small" :loading="mutating" @click="startAddVariant()">
             新增变体
           </a-button>
+          <div v-else class="flex flex-wrap gap-2 items-center">
+            <a-input
+              v-model="variantCreateDraft"
+              allow-clear
+              :disabled="mutating"
+              :placeholder="`展示变体 ${selectedVariants.length + 1}`"
+              @press-enter="void addVariant()"
+            />
+            <a-button type="primary" size="small" :loading="mutating" @click="void addVariant()">
+              确认新增
+            </a-button>
+            <a-button size="small" :disabled="mutating" @click="cancelAddVariant()">
+              取消
+            </a-button>
+          </div>
         </div>
 
         <a-table
