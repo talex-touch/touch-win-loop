@@ -31,11 +31,11 @@ export function defaultAiModelCatalog(): AiModelCatalog {
     groups: [
       {
         key: 'auto',
-        label: 'Auto',
+        label: '跟随场景',
         options: [
           {
             id: 'auto',
-            label: 'Auto',
+            label: '跟随场景',
           },
         ],
       },

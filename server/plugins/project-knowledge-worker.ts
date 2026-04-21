@@ -18,6 +18,7 @@ import { createKnowledgeEmbedding } from '~~/server/services/knowledge-ai'
 import { analyzeKnowledgeVisualProjection } from '~~/server/services/knowledge-vision'
 import { getDocumentStorage } from '~~/server/storage/document-storage'
 import { withClient, withTransaction } from '~~/server/utils/db'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { scheduleProjectKnowledgeAnalyticsRefresh } from '~~/server/utils/project-knowledge-analytics-store'
 import {
@@ -124,7 +125,8 @@ function isVideoMimeType(value: string): boolean {
 }
 
 function isBailianMultimodalEmbeddingEnabled(runtime: RuntimeSettings): boolean {
-  return normalizeString(runtime.ai.embeddingApiStyle) === 'bailian-multimodal'
+  const resolved = resolveAiRuntimeForChannel(runtime, 'knowledge_visual_embedding')
+  return normalizeString(resolved.candidates[0]?.modelConfig?.embeddingApiStyle) === 'bailian-multimodal'
 }
 
 function toImageDataUrl(buffer: Buffer, mimeType: string): string {

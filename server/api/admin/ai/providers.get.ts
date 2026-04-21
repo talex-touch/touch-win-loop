@@ -19,8 +19,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权查看 AI 配置。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40395)
@@ -48,7 +46,6 @@ export default defineEventHandler(async (event) => {
       visionModel: provider.visionModel || '',
       models: provider.models,
     })),
-    defaults: registry.defaults,
     scenes: {
       items: registry.channels,
       definitions: getPlatformAiChannelDefinitions(),
@@ -82,8 +79,6 @@ export default defineEventHandler(async (event) => {
 
   return ok(payload, {
     startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
     fallbackUsed: false,
     attempts: 1,
   })

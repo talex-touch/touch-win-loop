@@ -441,14 +441,12 @@ export async function readEffectiveRuntimeSettings(
 
 export function getPlatformAiOverrideState(overrides: PlatformAiRuntimeOverrides): {
   aiApiKeyOverridden: boolean
-  docAiApiKeyOverridden: boolean
   adminTavilyApiKeyOverridden: boolean
   updatedAt: string
   updatedByUserId: string
 } {
   return {
     aiApiKeyOverridden: Boolean(overrides.ai && Object.prototype.hasOwnProperty.call(overrides.ai, 'apiKey')),
-    docAiApiKeyOverridden: Boolean(overrides.docAi && Object.prototype.hasOwnProperty.call(overrides.docAi, 'apiKey')),
     adminTavilyApiKeyOverridden: Boolean(overrides.adminAi && Object.prototype.hasOwnProperty.call(overrides.adminAi, 'tavilyApiKey')),
     updatedAt: String(overrides.updatedAt || ''),
     updatedByUserId: String(overrides.updatedByUserId || ''),

@@ -3,12 +3,10 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { getLatestDocumentTaskByDocumentId, getResourceDocumentById } from '~~/server/utils/document-store'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const documentId = getRouterParam(event, 'documentId') || ''
 
@@ -16,8 +14,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少 documentId。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40095)
@@ -28,8 +24,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权查看解析结果。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40395)
@@ -63,8 +57,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 404)
     return fail('document not found', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40495)
@@ -72,8 +64,6 @@ export default defineEventHandler(async (event) => {
 
   return ok(payload, {
     startedAt,
-    provider: runtime.docAi.provider,
-    model: runtime.docAi.model,
     fallbackUsed: false,
     attempts: 1,
   })

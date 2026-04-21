@@ -13,6 +13,7 @@ import {
   updateResourceDocumentFileAsset,
 } from '~~/server/utils/document-store'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { resolvePlatformAiDocumentRuntime } from '~~/server/utils/platform-ai-channels'
 import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
 import { captureServerException } from '~~/server/utils/sentry'
 
@@ -49,6 +50,7 @@ function toErrorMessage(error: unknown): string {
 
 async function processSingleTask(): Promise<boolean> {
   const runtime = readRuntimeSettings()
+  const documentRuntime = resolvePlatformAiDocumentRuntime(runtime)
   const storage = getDocumentStorage()
 
   const context = await withTransaction(undefined, async (db) => {
@@ -125,8 +127,8 @@ async function processSingleTask(): Promise<boolean> {
       await finishDocumentTaskSuccess(db, {
         taskId: context.task.id,
         documentId: context.document.id,
-        parserProvider: runtime.docAi.provider,
-        parserModel: runtime.docAi.model,
+        parserProvider: documentRuntime.provider,
+        parserModel: documentRuntime.model,
         analysisJson: parsed.analysis,
         resultPayload: {
           source: parsed.analysis.source,

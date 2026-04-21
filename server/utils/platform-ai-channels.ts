@@ -37,6 +37,7 @@ export type PlatformAiChannelKey
     | 'admin_publish_assistant'
     | 'knowledge_embedding'
     | 'knowledge_visual_embedding'
+    | 'knowledge_visual_projection'
     | 'document_analysis'
 
 export interface PlatformAiProviderModelConfig {
@@ -79,13 +80,6 @@ export interface PlatformAiProviderConfig {
   models: PlatformAiProviderModelConfig[]
 }
 
-export interface PlatformAiSharedDefaults {
-  defaultModel: string
-  embeddingModel: string
-  visionModel: string
-  documentModel: string
-}
-
 export interface PlatformAiChannelConfig {
   key: PlatformAiChannelKey
   label: string
@@ -108,7 +102,6 @@ export interface PlatformAiChannelDefinition {
 export interface PlatformAiResolvedRegistry {
   providers: PlatformAiProviderConfig[]
   channels: PlatformAiChannelConfig[]
-  defaults: PlatformAiSharedDefaults
 }
 
 export interface PlatformAiResolvedChannelCandidate {
@@ -126,7 +119,6 @@ export interface PlatformAiResolvedChannelRuntime {
   prompt: string
   usedFallback: boolean
   candidates: PlatformAiResolvedChannelCandidate[]
-  defaults: PlatformAiSharedDefaults
 }
 
 export interface PlatformAiResolvedCapabilityRuntime {
@@ -196,6 +188,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
   { key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议' },
   { key: 'knowledge_embedding', label: '知识库文本 Embedding', description: '知识库文本向量与检索索引' },
   { key: 'knowledge_visual_embedding', label: '知识库视觉 Embedding', description: '图片、视频、多图与图文融合向量' },
+  { key: 'knowledge_visual_projection', label: '知识库视觉投影', description: '图片、截图、OCR 与视觉摘要提取' },
   { key: 'document_analysis', label: '文档分析', description: '文档解析、预览与重解析' },
 ]
 
@@ -212,10 +205,6 @@ const DOCUMENT_ASSIST_CHANNEL_KEYS: PlatformAiChannelKey[] = [
 const SEARCH_PROVIDER_TYPES = new Set<PlatformAiProviderType>(['searchxng', 'tavily'])
 const LEGACY_ROUND_ROBIN_POINTERS = new Map<string, number>()
 const MODEL_CAPABILITY_ORDER: PlatformAiModelCapability[] = ['chat', 'vision', 'embedding', 'image-gen', 'video-gen']
-
-function isDocumentAssistChannelKey(key: PlatformAiChannelKey): boolean {
-  return DOCUMENT_ASSIST_CHANNEL_KEYS.includes(key)
-}
 
 function toText(value: unknown): string {
   return String(value || '').trim()
@@ -760,38 +749,6 @@ function normalizeProvider(
   }
 }
 
-function buildSharedDefaults(
-  runtime: RuntimeSettings,
-  providers: PlatformAiProviderConfig[],
-  raw?: Record<string, unknown> | null,
-): PlatformAiSharedDefaults {
-  const llmProviders = providers.filter(provider => provider.capability === 'llm')
-  const allModels = llmProviders.flatMap(provider => provider.models)
-  const firstChatModel = allModels.find(item => item.enabled && platformAiModelHasCapability(item, 'chat'))?.model
-    || allModels.find(item => platformAiModelHasCapability(item, 'chat'))?.model
-    || allModels.find(item => item.enabled)?.model
-    || allModels[0]?.model
-    || ''
-  const firstEmbeddingModel = allModels.find(item => item.enabled && platformAiModelHasCapability(item, 'embedding'))?.model
-    || allModels.find(item => platformAiModelHasCapability(item, 'embedding'))?.model
-    || ''
-  const firstVisionModel = allModels.find(item => item.enabled && platformAiModelHasCapability(item, 'vision'))?.model
-    || allModels.find(item => platformAiModelHasCapability(item, 'vision'))?.model
-    || ''
-
-  const defaultModel = toText(raw?.defaultModel || raw?.chatModel || raw?.primaryModel || runtime.ai.model) || firstChatModel
-  const embeddingModel = toText(raw?.embeddingModel || runtime.ai.embeddingModel) || firstEmbeddingModel || defaultModel || firstChatModel
-  const visionModel = toText(raw?.visionModel || runtime.ai.visionModel) || firstVisionModel
-  const documentModel = toText(raw?.documentModel || raw?.docModel || runtime.docAi.model) || defaultModel || firstChatModel
-
-  return {
-    defaultModel,
-    embeddingModel,
-    visionModel,
-    documentModel,
-  }
-}
-
 function parseLegacyProvidersState(raw: unknown, runtime: RuntimeSettings): PlatformAiResolvedRegistry {
   const parsed = parseJsonObject(raw)
   const source = Array.isArray(parsed)
@@ -808,12 +765,10 @@ function parseLegacyProvidersState(raw: unknown, runtime: RuntimeSettings): Plat
     .filter((item): item is PlatformAiProviderConfig => Boolean(item))
 
   const normalizedProviders = providers.length > 0 ? providers : [buildDefaultProvider(runtime)]
-  const defaults = buildSharedDefaults(runtime, normalizedProviders)
 
   return {
     providers: normalizedProviders,
     channels: [],
-    defaults,
   }
 }
 
@@ -841,15 +796,9 @@ function parseStructuredLegacyProviderState(raw: Record<string, unknown>, runtim
     fallbackApiKey: runtime.ai.apiKey,
   }) || buildDefaultProvider(runtime)
 
-  const defaultsSource = raw.defaults && typeof raw.defaults === 'object' && !Array.isArray(raw.defaults)
-    ? raw.defaults as Record<string, unknown>
-    : raw
-  const defaults = buildSharedDefaults(runtime, [provider], defaultsSource)
-
   return {
     providers: [provider],
     channels: [],
-    defaults,
   }
 }
 
@@ -864,15 +813,10 @@ function parseStructuredProviderState(raw: Record<string, unknown>, runtime: Run
     .filter((item): item is PlatformAiProviderConfig => Boolean(item))
 
   const normalizedProviders = providers.length > 0 ? providers : [buildDefaultProvider(runtime)]
-  const defaultsSource = raw.defaults && typeof raw.defaults === 'object' && !Array.isArray(raw.defaults)
-    ? raw.defaults as Record<string, unknown>
-    : raw
-  const defaults = buildSharedDefaults(runtime, normalizedProviders, defaultsSource)
 
   return {
     providers: normalizedProviders,
     channels: [],
-    defaults,
   }
 }
 
@@ -948,40 +892,43 @@ function normalizeChannelModelsAndFallback(
   key: PlatformAiChannelKey,
   providers: PlatformAiProviderConfig[],
   providerIds: string[],
-  defaults: PlatformAiSharedDefaults,
   input: {
     models: string[]
     modelFallback: string[]
   },
+  options?: {
+    preserveEmpty?: boolean
+  },
 ): {
-    models: string[]
-    modelFallback: string[]
-  } {
+  models: string[]
+  modelFallback: string[]
+} {
   const providerIdSet = new Set(providerIds)
   const eligibleProviders = providers.filter(provider => provider.capability === 'llm' && (providerIdSet.size === 0 || providerIdSet.has(provider.id)))
-  const defaultModels = resolveDefaultModelsForChannel(key, defaults, eligibleProviders)
   const explicitModels = dedupeStrings(input.models)
   const explicitFallback = dedupeStrings(input.modelFallback)
   const modelSeed = explicitModels.length > 0
     ? explicitModels
     : explicitFallback.length > 0
       ? explicitFallback
-      : defaultModels
+      : []
   const models = modelSeed.filter(model => eligibleProviders.some(provider => resolveProviderModelForChannel(provider, model, key)))
   const normalizedModels = models.length > 0
     ? models
-    : (explicitModels.length === 0 && explicitFallback.length === 0 ? defaultModels : [])
+    : []
+  const fallbackSeed = explicitFallback.length > 0
+    ? explicitFallback
+    : (options?.preserveEmpty ? [] : normalizedModels)
   const modelSet = new Set(normalizedModels)
 
   return {
     models: normalizedModels,
-    modelFallback: explicitFallback.filter(model => modelSet.has(model)),
+    modelFallback: fallbackSeed.filter(model => modelSet.has(model)),
   }
 }
 
 function expandLegacyChannelConfig(
   raw: Record<string, unknown>,
-  defaults: PlatformAiSharedDefaults,
   providers: PlatformAiProviderConfig[],
   defaultProviderIds: string[],
 ): PlatformAiChannelConfig[] {
@@ -995,7 +942,6 @@ function expandLegacyChannelConfig(
       key,
       providers,
       normalizedProviderIds,
-      defaults,
       {
         models: Array.isArray(raw.models)
           ? dedupeStrings((raw.models as unknown[]).map(item => toText(item)))
@@ -1022,7 +968,6 @@ function expandLegacyChannelConfig(
 
 function normalizeChannel(
   raw: unknown,
-  defaults: PlatformAiSharedDefaults,
   providers: PlatformAiProviderConfig[],
   defaultProviderIds: string[],
 ): PlatformAiChannelConfig | null {
@@ -1039,18 +984,21 @@ function normalizeChannel(
 
   const definition = resolveChannelDefinition(key)
   const explicitProviderIds = extractProviderIds(source.providerIds || source.providers)
+  const hasExplicitProviderBinding = Array.isArray(source.providerIds) || Array.isArray(source.providers)
+  const hasExplicitRoutingConfig = Array.isArray(source.models) || Array.isArray(source.modelFallback) || source.model !== undefined
   const sanitizedProviderIds = explicitProviderIds.filter((providerId) => {
     const provider = providers.find(item => item.id === providerId)
     return provider?.capability === 'llm'
   })
-  const providerIds = explicitProviderIds.length > 0
+  const providerIds = hasExplicitProviderBinding
     ? sanitizedProviderIds
-    : [...defaultProviderIds]
+    : explicitProviderIds.length > 0
+      ? sanitizedProviderIds
+      : (hasExplicitRoutingConfig ? [...defaultProviderIds] : [])
   const normalizedModels = normalizeChannelModelsAndFallback(
     key,
     providers,
     providerIds,
-    defaults,
     {
       models: Array.isArray(source.models)
         ? dedupeStrings((source.models as unknown[]).map(item => toText(item)))
@@ -1060,6 +1008,9 @@ function normalizeChannel(
         : Array.isArray(source.models)
           ? dedupeStrings((source.models as unknown[]).map(item => toText(item)))
           : dedupeStrings([toText(source.model)]),
+    },
+    {
+      preserveEmpty: hasExplicitProviderBinding || hasExplicitRoutingConfig,
     },
   )
 
@@ -1080,7 +1031,6 @@ function normalizeChannel(
 function parseChannelsFromJson(
   raw: unknown,
   providers: PlatformAiProviderConfig[],
-  defaults: PlatformAiSharedDefaults,
 ): PlatformAiChannelConfig[] {
   const parsed = parseJsonObject(raw)
   const source = Array.isArray(parsed)
@@ -1096,9 +1046,9 @@ function parseChannelsFromJson(
 
     const record = item as Record<string, unknown>
     if (toText(record.key || record.channel || record.scene) === LEGACY_DOCUMENT_ASSIST_KEY)
-      return expandLegacyChannelConfig(record, defaults, providers, defaultProviderIds)
+      return expandLegacyChannelConfig(record, providers, defaultProviderIds)
 
-    const normalizedItem = normalizeChannel(item, defaults, providers, defaultProviderIds)
+    const normalizedItem = normalizeChannel(item, providers, defaultProviderIds)
     return normalizedItem ? [normalizedItem] : []
   })
 
@@ -1109,16 +1059,15 @@ function parseChannelsFromJson(
   for (const definition of CHANNEL_DEFINITIONS) {
     if (map.has(definition.key))
       continue
-    const models = resolveDefaultModelsForChannel(definition.key, defaults, providers)
     map.set(definition.key, {
       key: definition.key,
       label: definition.label,
       description: definition.description,
       enabled: true,
-      providerIds: [...defaultProviderIds],
+      providerIds: [],
       loadBalanceStrategy: 'round_robin',
-      models,
-      modelFallback: models,
+      models: [],
+      modelFallback: [],
       failoverStrategy: 'model_then_provider',
       prompt: '',
     })
@@ -1130,14 +1079,14 @@ function parseChannelsFromJson(
 }
 
 function buildFallbackAi(runtime: RuntimeSettings): AiRuntimeConfig {
-  const provider = toText(runtime.ai.provider)
-  const type = resolvePlatformAiProviderType(provider, provider)
-  const adapter = resolveAdapter('', provider, type)
-  const format: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
   return {
     ...runtime.ai,
+    provider: '',
+    baseURL: '',
+    apiKey: '',
+    model: '',
     clientType: normalizePlatformAiClientType(runtime.ai.clientType),
-    format,
+    format: 'openai-compatible',
   }
 }
 
@@ -1172,17 +1121,11 @@ function buildAiRuntimeFromModel(
   }
 }
 
-function defaultModelForCapability(defaults: PlatformAiSharedDefaults, capability: PlatformAiModelCapability): string {
-  if (capability === 'embedding')
-    return defaults.embeddingModel
-  if (capability === 'vision')
-    return defaults.visionModel
-  return defaults.defaultModel
-}
-
 export function resolvePlatformAiChannelModelCapability(key: PlatformAiChannelKey): PlatformAiModelCapability {
   if (key === 'knowledge_embedding' || key === 'knowledge_visual_embedding')
     return 'embedding'
+  if (key === 'knowledge_visual_projection')
+    return 'vision'
   return 'chat'
 }
 
@@ -1220,33 +1163,13 @@ function resolveProviderModelForChannel(
   return modelConfig
 }
 
-function resolveDefaultModelsForChannel(
-  key: PlatformAiChannelKey,
-  defaults: PlatformAiSharedDefaults,
-  providers: PlatformAiProviderConfig[],
-): string[] {
-  const capability = resolvePlatformAiChannelModelCapability(key)
-  const preferred = capability === 'embedding'
-    ? defaults.embeddingModel
-    : key === 'document_analysis' || isDocumentAssistChannelKey(key)
-      ? defaults.documentModel
-      : defaults.defaultModel
-  const firstAvailable = providers
-    .filter(provider => provider.capability === 'llm')
-    .flatMap(provider => provider.models)
-    .find(item => item.enabled && platformAiModelMatchesChannel(item, key))
-    ?.model || ''
-  const preferredAvailable = Boolean(preferred && providers.some(provider => resolveProviderModelForChannel(provider, preferred, key)))
-  return dedupeStrings([preferredAvailable ? preferred : '', firstAvailable])
-}
-
 export function resolvePlatformAiRuntimeByCapability(
   runtime: RuntimeSettings,
   capability: PlatformAiModelCapability,
   preferredModel?: string,
 ): PlatformAiResolvedCapabilityRuntime | null {
   const registry = resolvePlatformAiRegistry(runtime)
-  const preferred = toText(preferredModel) || defaultModelForCapability(registry.defaults, capability)
+  const preferred = toText(preferredModel)
   const enabledProviders = registry.providers.filter(provider => provider.capability === 'llm' && provider.enabled)
   const providers = enabledProviders.length > 0
     ? enabledProviders
@@ -1296,7 +1219,8 @@ function resolveEligibleChannelProviders(
   providers: PlatformAiProviderConfig[],
 ): PlatformAiProviderConfig[] {
   const providerMap = new Map(providers.map(provider => [provider.id, provider]))
-  return channel.providerIds
+  const requestedProviderIds = channel.providerIds
+  return requestedProviderIds
     .map(providerId => providerMap.get(providerId) || null)
     .filter((provider): provider is PlatformAiProviderConfig => Boolean(provider && provider.capability === 'llm' && provider.enabled))
 }
@@ -1305,7 +1229,6 @@ function resolveChannelCandidates(
   runtime: RuntimeSettings,
   channel: PlatformAiChannelConfig,
   providers: PlatformAiProviderConfig[],
-  defaults: PlatformAiSharedDefaults,
 ): { candidates: PlatformAiResolvedChannelCandidate[], usedFallback: boolean } {
   const fallbackAi = buildFallbackAi(runtime)
   const eligibleProviders = resolveEligibleChannelProviders(channel, providers)
@@ -1322,13 +1245,8 @@ function resolveChannelCandidates(
   }
 
   const requestedModels = dedupeStrings(channel.modelFallback.length > 0 ? channel.modelFallback : channel.models)
-  let modelOrder = requestedModels.filter(model => eligibleProviders.some(provider => resolveProviderModelForChannel(provider, model, channel.key)))
+  const modelOrder = requestedModels.filter(model => eligibleProviders.some(provider => resolveProviderModelForChannel(provider, model, channel.key)))
   const usedFallback = modelOrder.length === 0
-
-  if (modelOrder.length === 0) {
-    modelOrder = resolveDefaultModelsForChannel(channel.key, defaults, eligibleProviders)
-      .filter(model => eligibleProviders.some(provider => resolveProviderModelForChannel(provider, model, channel.key)))
-  }
 
   const candidates: PlatformAiResolvedChannelCandidate[] = []
   let candidateIndex = 0
@@ -1448,12 +1366,11 @@ export function getPlatformAiChannelDefinitions(): PlatformAiChannelDefinition[]
 
 export function resolvePlatformAiRegistry(runtime: RuntimeSettings): PlatformAiResolvedRegistry {
   const providerState = parseProviderState(runtime.ai.providersJson, runtime)
-  const channels = parseChannelsFromJson(runtime.ai.channelsJson, providerState.providers, providerState.defaults)
+  const channels = parseChannelsFromJson(runtime.ai.channelsJson, providerState.providers)
 
   return {
     providers: providerState.providers.map(item => toSerializableProvider(item)),
     channels,
-    defaults: providerState.defaults,
   }
 }
 
@@ -1489,7 +1406,6 @@ export function buildPlatformAiRegistryJson(runtime: RuntimeSettings, raw: unkno
   const structured = parseProviderState(JSON.stringify({
     version: PLATFORM_AI_REGISTRY_VERSION,
     providers,
-    defaults: parsed.defaults || parsed,
   }), runtime)
 
   return JSON.stringify({
@@ -1498,7 +1414,6 @@ export function buildPlatformAiRegistryJson(runtime: RuntimeSettings, raw: unkno
       ...provider,
       models: provider.models.map(item => serializeProviderModel(item)),
     })),
-    defaults: structured.defaults,
   }, null, 2)
 }
 
@@ -1522,11 +1437,11 @@ export function buildPlatformAiChannelsJson(
         return []
       const record = item as Record<string, unknown>
       if (toText(record.key || record.channel || record.scene) === LEGACY_DOCUMENT_ASSIST_KEY)
-        return expandLegacyChannelConfig(record, registry.defaults, sourceProviders, defaultProviderIds)
-      const normalizedItem = normalizeChannel(item, registry.defaults, sourceProviders, defaultProviderIds)
+        return expandLegacyChannelConfig(record, sourceProviders, defaultProviderIds)
+      const normalizedItem = normalizeChannel(item, sourceProviders, defaultProviderIds)
       return normalizedItem ? [normalizedItem] : []
     })
-  const merged = parseChannelsFromJson(JSON.stringify({ items: channels }), sourceProviders, registry.defaults)
+  const merged = parseChannelsFromJson(JSON.stringify({ items: channels }), sourceProviders)
 
   return JSON.stringify({
     version: PLATFORM_AI_REGISTRY_VERSION,
@@ -1555,20 +1470,19 @@ export function resolveAiRuntimeForChannel(
 ): PlatformAiResolvedChannelRuntime {
   const registry = resolvePlatformAiRegistry(runtime)
   const fallbackAi = buildFallbackAi(runtime)
-  const defaultProviderIds = resolveDefaultProviderIds(registry.providers)
   const channel = registry.channels.find(item => item.key === key) || {
     key,
     label: key,
     description: '',
     enabled: true,
-    providerIds: defaultProviderIds,
+    providerIds: [],
     loadBalanceStrategy: 'round_robin' as const,
-    models: resolveDefaultModelsForChannel(key, registry.defaults, registry.providers),
-    modelFallback: resolveDefaultModelsForChannel(key, registry.defaults, registry.providers),
+    models: [],
+    modelFallback: [],
     failoverStrategy: 'model_then_provider' as const,
     prompt: '',
   }
-  const resolved = resolveChannelCandidates(runtime, channel, registry.providers, registry.defaults)
+  const resolved = resolveChannelCandidates(runtime, channel, registry.providers)
   const selectedCandidate = resolved.candidates[0]
 
   return {
@@ -1586,7 +1500,6 @@ export function resolveAiRuntimeForChannel(
           modelConfig: null,
           ai: fallbackAi,
         }],
-    defaults: registry.defaults,
   }
 }
 

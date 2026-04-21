@@ -40,6 +40,7 @@ type PlatformAiChannelKey
     | 'admin_publish_assistant'
     | 'knowledge_embedding'
     | 'knowledge_visual_embedding'
+    | 'knowledge_visual_projection'
     | 'document_analysis'
 
 interface ProviderModelItem {
@@ -87,13 +88,6 @@ interface ProviderDraftItem extends ProviderItem {
   apiKey: string
 }
 
-interface DefaultsPayload {
-  defaultModel: string
-  embeddingModel: string
-  visionModel: string
-  documentModel: string
-}
-
 interface SceneDefinition {
   key: PlatformAiChannelKey
   label: string
@@ -115,7 +109,6 @@ interface SceneItem {
 
 interface ProvidersPayload {
   providers: ProviderItem[]
-  defaults: DefaultsPayload
   scenes: {
     items: SceneItem[]
     definitions: SceneDefinition[]
@@ -135,7 +128,6 @@ interface ProvidersPayload {
   }
   overrideState?: {
     aiApiKeyOverridden?: boolean
-    docAiApiKeyOverridden?: boolean
     adminTavilyApiKeyOverridden?: boolean
     updatedAt?: string
     updatedByUserId?: string
@@ -275,7 +267,7 @@ const providerTypeGuides: Record<ProviderType, ProviderTypeGuide> = {
     apiKeyPlaceholder: 'sk-...',
     apiKeyHint: '填写即替换并持久化；留空则保持已保存密钥不变。',
     clientTypeHint: '聊天接入类型使用 LangChain，底层为 @langchain/openai 的 ChatOpenAI。',
-    embeddingHint: 'Embedding 通常选择 OpenAI 兼容文本，并在默认 Embedding 模型中填对应模型名。',
+    embeddingHint: 'Embedding 通常选择 OpenAI 兼容文本，并在对应场景里绑定所需向量模型。',
   },
   'openai-compatible': {
     title: 'OpenAI Compatible',
@@ -366,12 +358,6 @@ const logFilters = reactive({
 
 const configMasterKeyReady = ref(true)
 const providers = ref<ProviderDraftItem[]>([])
-const defaultsForm = reactive<DefaultsPayload>({
-  defaultModel: '',
-  embeddingModel: '',
-  visionModel: '',
-  documentModel: '',
-})
 const sceneItems = ref<SceneItem[]>([])
 const sceneDefinitions = ref<SceneDefinition[]>([])
 
@@ -966,6 +952,8 @@ const pulledEmbeddingCandidateCount = computed(() => pulledProviderModels.value.
 function sceneRequiredCapability(key: PlatformAiChannelKey): ModelCapability {
   if (key === 'knowledge_embedding' || key === 'knowledge_visual_embedding')
     return 'embedding'
+  if (key === 'knowledge_visual_projection')
+    return 'vision'
   return 'chat'
 }
 
@@ -1093,26 +1081,6 @@ const sceneBatchFallbackOptions = computed(() => {
   return sceneBatchModelPoolOptions.value.filter(item => modelSet.has(item.model))
 })
 
-function resolveDefaultModelOptions(capability: ModelCapability): Array<{ model: string, label: string, providerName: string }> {
-  const map = new Map<string, { model: string, label: string, providerName: string }>()
-  for (const provider of providers.value.filter(item => item.capability === 'llm')) {
-    for (const model of provider.models.filter(item => item.enabled && modelHasCapability(item, capability))) {
-      if (!map.has(model.model)) {
-        map.set(model.model, {
-          model: model.model,
-          label: model.label,
-          providerName: provider.name,
-        })
-      }
-    }
-  }
-  return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
-}
-
-const defaultChatModelOptions = computed(() => resolveDefaultModelOptions('chat'))
-const defaultEmbeddingModelOptions = computed(() => resolveDefaultModelOptions('embedding'))
-const defaultVisionModelOptions = computed(() => resolveDefaultModelOptions('vision'))
-
 function normalizeSceneProviderIds(providerIds: string[]): string[] {
   const llmProviderIdSet = new Set(providers.value.filter(item => item.capability === 'llm').map(item => item.id))
   return dedupeStrings(providerIds).filter(item => llmProviderIdSet.has(item))
@@ -1138,20 +1106,23 @@ function sceneProvidersPreview(scene: SceneItem): string {
   if (scene.providerIds.length === 0)
     return '未绑定 Provider'
   return scene.providerIds
-    .map(id => providerIdMap.value.get(id)?.name || id)
+    .map((id) => {
+      const providerName = providerIdMap.value.get(id)?.name || id
+      return `${providerName} #${id}`
+    })
     .join(' / ')
 }
 
 function sceneModelPoolPreview(scene: SceneItem): string {
   if (scene.models.length === 0)
-    return '未配置，运行时将回退默认模型池'
+    return '未配置'
   return scene.models.join(' / ')
 }
 
 function sceneFallbackPreview(scene: SceneItem): string {
   if (scene.modelFallback.length === 0) {
     if (scene.models.length === 0)
-      return '未配置，运行时将回退默认模型'
+      return '未配置'
     return `未单独配置，将按模型池顺序：${scene.models.join(' -> ')}`
   }
   return scene.modelFallback.join(' -> ')
@@ -1165,20 +1136,22 @@ function sceneFailoverStrategyLabel(scene: Pick<SceneItem, 'failoverStrategy'>):
 
 function sceneUsageHint(scene: SceneItem): string {
   if (scene.key === 'project_chat')
-    return '默认对话入口'
+    return '项目对话场景'
   if (scene.key === 'document_analysis')
-    return '默认文档分析入口'
+    return '文档分析场景'
   if (scene.key === 'knowledge_embedding')
     return '文本向量入口'
   if (scene.key === 'knowledge_visual_embedding')
     return '视觉向量入口'
+  if (scene.key === 'knowledge_visual_projection')
+    return '视觉投影入口'
   return ''
 }
 
 function sceneUsageHintColor(scene: SceneItem): 'arcoblue' | 'green' | 'gray' {
   if (scene.key === 'project_chat')
     return 'arcoblue'
-  if (scene.key === 'document_analysis' || scene.key === 'knowledge_embedding' || scene.key === 'knowledge_visual_embedding')
+  if (scene.key === 'document_analysis' || scene.key === 'knowledge_embedding' || scene.key === 'knowledge_visual_embedding' || scene.key === 'knowledge_visual_projection')
     return 'green'
   return 'gray'
 }
@@ -1201,10 +1174,6 @@ function applyConsolePayload(payload: ProvidersPayload): void {
     })
     return draft
   })
-  defaultsForm.defaultModel = payload.defaults?.defaultModel || ''
-  defaultsForm.embeddingModel = payload.defaults?.embeddingModel || ''
-  defaultsForm.visionModel = payload.defaults?.visionModel || ''
-  defaultsForm.documentModel = payload.defaults?.documentModel || ''
   sceneDefinitions.value = payload.scenes?.definitions || []
   sceneItems.value = (payload.scenes?.items || []).map((item) => {
     const providerIds = normalizeSceneProviderIds(item.providerIds || [])
@@ -1278,12 +1247,6 @@ async function saveConsole() {
       method: 'PATCH',
       body: {
         providers: providers.value.map(item => buildProviderPayload(item)),
-        defaults: {
-          defaultModel: defaultsForm.defaultModel,
-          embeddingModel: defaultsForm.embeddingModel,
-          visionModel: defaultsForm.visionModel,
-          documentModel: defaultsForm.documentModel,
-        },
         scenes: {
           items: sceneItems.value.map((item) => {
             const providerIds = normalizeSceneProviderIds(item.providerIds)
@@ -1979,40 +1942,6 @@ onMounted(async () => {
             </div>
           </template>
 
-          <div class="mb-4 px-4 py-4 border border-slate-200 rounded-lg bg-slate-50">
-            <div class="mb-3">
-              <div class="text-sm text-slate-900 font-medium">
-                默认能力模型
-              </div>
-              <div class="text-xs text-slate-500">
-                默认聊天、Embedding、视觉分别从模型池中按能力选择；接入细节在具体模型里配置。
-              </div>
-            </div>
-            <div class="gap-3 grid md:grid-cols-3">
-              <a-form-item label="默认聊天模型">
-                <a-select v-model="defaultsForm.defaultModel" allow-search allow-clear placeholder="选择 chat 模型">
-                  <a-option v-for="item in defaultChatModelOptions" :key="`default-chat-${item.model}`" :value="item.model">
-                    {{ item.model }} <span class="text-xs text-slate-400">({{ item.providerName }})</span>
-                  </a-option>
-                </a-select>
-              </a-form-item>
-              <a-form-item label="默认 Embedding 模型">
-                <a-select v-model="defaultsForm.embeddingModel" allow-search allow-clear placeholder="选择 embedding 模型">
-                  <a-option v-for="item in defaultEmbeddingModelOptions" :key="`default-embedding-${item.model}`" :value="item.model">
-                    {{ item.model }} <span class="text-xs text-slate-400">({{ item.providerName }})</span>
-                  </a-option>
-                </a-select>
-              </a-form-item>
-              <a-form-item label="默认视觉模型">
-                <a-select v-model="defaultsForm.visionModel" allow-search allow-clear placeholder="选择 vision 模型">
-                  <a-option v-for="item in defaultVisionModelOptions" :key="`default-vision-${item.model}`" :value="item.model">
-                    {{ item.model }} <span class="text-xs text-slate-400">({{ item.providerName }})</span>
-                  </a-option>
-                </a-select>
-              </a-form-item>
-            </div>
-          </div>
-
           <a-table :data="providerRows" :pagination="false" row-key="id">
             <template #columns>
               <a-table-column title="Provider" data-index="name" :width="260">
@@ -2080,7 +2009,7 @@ onMounted(async () => {
       </a-alert>
 
       <a-alert type="info" :show-icon="true">
-        默认对话走「项目聊天」场景，默认文档分析走「文档分析」场景；Embedding 与视觉模型从模型池能力配置中解析。
+        每个场景都只看自身绑定的 Provider、模型池和回退顺序；留空就表示该场景未接通，不再共享兜底。
       </a-alert>
 
       <a-card :bordered="false" class="rounded-3xl shadow-sm">
@@ -2091,7 +2020,7 @@ onMounted(async () => {
                 场景路由
               </div>
               <div class="text-xs text-slate-500">
-                每个场景独立维护 Provider 绑定、模型池、回退顺序和故障转移策略；当前默认按模型顺序切换，同模型内轮询 Provider。
+                每个场景独立维护 Provider 绑定、模型池、回退顺序和故障转移策略；只有显式绑定的模型才会参与运行。
               </div>
             </div>
             <div class="flex flex-wrap gap-2">
@@ -2114,6 +2043,9 @@ onMounted(async () => {
                     <div class="text-slate-900 font-medium">
                       {{ scope.record.label }}
                     </div>
+                    <a-tag size="small" color="gray">
+                      ID: {{ scope.record.key }}
+                    </a-tag>
                     <a-tag v-if="sceneUsageHint(scope.record)" :color="sceneUsageHintColor(scope.record)">
                       {{ sceneUsageHint(scope.record) }}
                     </a-tag>
@@ -2950,10 +2882,10 @@ onMounted(async () => {
             当前 Provider：{{ sceneEditorForm.providerIds.length > 0 ? sceneProvidersPreview({ ...sceneEditorForm, providerIds: sceneEditorForm.providerIds, models: [], modelFallback: [], enabled: true, key: sceneEditorForm.key, label: '', description: '', loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy, failoverStrategy: sceneEditorForm.failoverStrategy, prompt: '' }) : '未绑定 Provider' }}
           </div>
           <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
-            当前模型池：{{ sceneEditorForm.models.length > 0 ? sceneEditorForm.models.join(' / ') : '未配置，运行时将回退默认模型池' }}
+            当前模型池：{{ sceneEditorForm.models.length > 0 ? sceneEditorForm.models.join(' / ') : '未配置' }}
           </div>
           <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
-            当前模型回退顺序：{{ sceneEditorForm.modelFallback.length > 0 ? sceneEditorForm.modelFallback.join(' -> ') : (sceneEditorForm.models.length > 0 ? `未单独配置，将按模型池顺序：${sceneEditorForm.models.join(' -> ')}` : '未配置，运行时将回退默认模型') }}
+            当前模型回退顺序：{{ sceneEditorForm.modelFallback.length > 0 ? sceneEditorForm.modelFallback.join(' -> ') : (sceneEditorForm.models.length > 0 ? `未单独配置，将按模型池顺序：${sceneEditorForm.models.join(' -> ')}` : '未配置') }}
           </div>
           <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
             当前故障转移：{{ sceneFailoverStrategyLabel(sceneEditorForm) }}

@@ -1,10 +1,10 @@
 import type { H3Event } from 'h3'
+import type { RuntimeSettings } from '~~/server/utils/env'
 import type {
   EmbeddingSignature,
   ProjectKnowledgeEmbeddingApiStyle,
   ProjectKnowledgeEmbeddingInputType,
 } from '~~/shared/types/domain'
-import type { RuntimeSettings } from '~~/server/utils/env'
 import { createHash } from 'node:crypto'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
@@ -15,7 +15,10 @@ import {
   resolveDashScopeNativeBaseURL,
   resolvePlatformAiRequestBaseURL,
 } from '~~/server/utils/platform-ai-base-url'
-import { resolveAiRuntimeForChannel, resolvePlatformAiRuntimeByCapability } from '~~/server/utils/platform-ai-channels'
+import {
+  resolveAiRuntimeForChannel,
+  resolvePlatformAiChannelEmbeddingApiStyle,
+} from '~~/server/utils/platform-ai-channels'
 import {
   normalizePlatformAiClientType,
   normalizeProjectKnowledgeEmbeddingApiStyle,
@@ -772,15 +775,18 @@ export async function resolveKnowledgeEmbeddingRuntimeProfile(input: {
         modelConfig: channelCandidate.modelConfig,
         ai: channelCandidate.ai,
       }
-    : resolvePlatformAiRuntimeByCapability(runtime, 'embedding', runtime.ai.embeddingModel)
-  const embeddingAi = modelRuntime?.ai || runtime.ai
+    : null
+  const embeddingAi = modelRuntime?.ai || channelRuntime.ai
   const provider = normalizeAiRuntimeProvider(embeddingAi.provider)
-  const apiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(modelRuntime?.modelConfig.embeddingApiStyle, runtime.ai.embeddingApiStyle)
-  const model = normalizeEmbeddingModel(modelRuntime?.modelConfig.model || runtime.ai.embeddingModel || runtime.ai.model || (apiStyle === 'bailian-multimodal' ? 'qwen3-vl-embedding' : ''))
+  const apiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(
+    modelRuntime?.modelConfig.embeddingApiStyle,
+    resolvePlatformAiChannelEmbeddingApiStyle(embeddingChannelKey),
+  )
+  const model = normalizeEmbeddingModel(modelRuntime?.modelConfig.model || embeddingAi.model || '')
   const dimensions = resolveKnowledgeEmbeddingDimensions({
     apiStyle,
     model,
-    configured: modelRuntime?.modelConfig.embeddingDimensions || runtime.ai.embeddingDimensions,
+    configured: modelRuntime?.modelConfig.embeddingDimensions || 0,
   })
   const normalizedApiKey = normalizePlatformAiApiKey(embeddingAi.apiKey)
   const timeoutMs = Math.max(3_000, Math.min(120_000, Number(embeddingAi.timeoutMs || 15_000)))
@@ -844,12 +850,13 @@ export async function analyzeKnowledgeEntity(input: {
   systemPrompt?: string
 }): Promise<KnowledgeEntityAnalysisResult> {
   const { runtime } = await readEffectiveRuntimeSettings(input.event)
-  const provider = normalizeAiRuntimeProvider(runtime.ai.provider)
-  const model = toKnowledgeText(runtime.ai.model)
+  const resolved = resolveAiRuntimeForChannel(runtime, 'admin_general')
+  const provider = normalizeAiRuntimeProvider(resolved.ai.provider)
+  const model = toKnowledgeText(resolved.ai.model)
   const normalizedText = toKnowledgeText(input.text).slice(0, 12_000)
   const fallback = buildAnalysisFallback(normalizedText)
 
-  if (!normalizedText || !isAiRuntimeConfigured(runtime.ai)) {
+  if (!normalizedText || !isAiRuntimeConfigured(resolved.ai)) {
     return {
       ...fallback,
       provider,
@@ -861,18 +868,18 @@ export async function analyzeKnowledgeEntity(input: {
 
   const chatModel = createChatModel({
     provider,
-    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
-    baseURL: runtime.ai.baseURL,
-    apiKey: runtime.ai.apiKey,
+    clientType: normalizePlatformAiClientType(resolved.ai.clientType),
+    baseURL: resolved.ai.baseURL,
+    apiKey: resolved.ai.apiKey,
     model,
-    format: provider === 'response' ? 'response' : 'openai-compatible',
+    format: resolved.ai.format || (provider === 'response' ? 'response' : 'openai-compatible'),
     temperature: 0.1,
-    topP: runtime.ai.topP,
-    maxTokens: runtime.ai.maxTokens,
-    presencePenalty: runtime.ai.presencePenalty,
-    frequencyPenalty: runtime.ai.frequencyPenalty,
-    timeoutMs: runtime.ai.timeoutMs,
-    maxRetries: runtime.ai.maxRetries,
+    topP: resolved.ai.topP,
+    maxTokens: resolved.ai.maxTokens,
+    presencePenalty: resolved.ai.presencePenalty,
+    frequencyPenalty: resolved.ai.frequencyPenalty,
+    timeoutMs: resolved.ai.timeoutMs,
+    maxRetries: resolved.ai.maxRetries,
   })
   const structuredModel = chatModel.withStructuredOutput(analysisSchema, {
     name: 'KnowledgeEntityAnalysis',
@@ -885,7 +892,7 @@ export async function analyzeKnowledgeEntity(input: {
   ])
 
   const result = await runWithRetry<z.infer<typeof analysisSchema>>({
-    maxRetries: Math.max(0, Math.min(6, Number(runtime.ai.maxRetries || 0))),
+    maxRetries: Math.max(0, Math.min(6, Number(resolved.ai.maxRetries || 0))),
     run: async () => {
       const promptValue = await prompt.invoke({
         scope: input.scope,

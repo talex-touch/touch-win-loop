@@ -37,13 +37,14 @@ it('provider 类型固定包含 LLM 与 search-only 首批枚举', async () => {
   assert.match(source, /value:\s*'tavily'[\s\S]*capability:\s*'search'/, '缺少 Tavily search-only 类型')
 })
 
-it('默认模型与联网能力不再单独占据渠道和模型页', async () => {
+it('渠道和模型页不再暴露默认模型入口与联网能力卡片', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.match(source, /默认能力模型/, '缺少按能力拆分的默认模型配置')
-  assert.match(source, /默认聊天模型/, '缺少默认聊天模型')
-  assert.match(source, /默认 Embedding 模型/, '缺少默认 Embedding 模型')
-  assert.match(source, /默认视觉模型/, '缺少默认视觉模型')
+  assert.doesNotMatch(source, /<div class="text-sm text-slate-900 font-medium">\s*默认能力模型\s*<\/div>/, '不应继续展示默认能力模型卡片')
+  assert.doesNotMatch(source, /<a-form-item label="默认聊天模型">/, '不应继续展示默认聊天模型入口')
+  assert.doesNotMatch(source, /<a-form-item label="默认 Embedding 模型">/, '不应继续展示默认 Embedding 模型入口')
+  assert.doesNotMatch(source, /<a-form-item label="默认视觉模型">/, '不应继续展示默认视觉模型入口')
+  assert.doesNotMatch(source, /defaultsForm/, '页面不应再维护默认模型表单状态')
   assert.doesNotMatch(source, /<div class="text-base font-semibold">\s*联网能力\s*<\/div>/, '联网能力卡片应已移出当前页')
   assert.match(source, /每个 Provider 独立维护类型、密钥、模型池，以及搜索或 LLM 能力配置。/, 'Provider 列表说明应体现搜索能力归属 Provider')
   assert.doesNotMatch(source, /价格优先级固定为 手工覆盖 > NewAPI 导入 > none。/, '旧统一模型池说明不应继续存在')
@@ -76,6 +77,8 @@ it('search-only Provider 不参与 LLM 场景模型路由', async () => {
 it('场景抽屉支持 Provider 绑定、模型池、回退顺序和故障转移策略', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
+  assert.match(source, /ID:\s*\{\{\s*scope\.record\.key\s*\}\}/, '场景列表未展示稳定的场景 ID 代号')
+  assert.match(source, /return `\$\{providerName\} #\$\{id\}`/, '场景列表里的 Provider 预览未展示“名称 #id”格式')
   assert.match(source, /v-model:visible="sceneEditorVisible"/, '缺少场景编辑抽屉')
   assert.match(source, /绑定 Provider/, '缺少场景 Provider 绑定项')
   assert.match(source, /负载均衡策略/, '缺少负载均衡策略项')
@@ -85,6 +88,7 @@ it('场景抽屉支持 Provider 绑定、模型池、回退顺序和故障转移
   assert.match(source, /failoverStrategy: 'model_then_provider'/, '场景表单未声明默认故障转移策略')
   assert.match(source, /knowledge_embedding/, '缺少专用 Embedding 场景')
   assert.match(source, /knowledge_visual_embedding/, '缺少专用视觉 Embedding 场景')
+  assert.match(source, /knowledge_visual_projection/, '缺少专用视觉投影场景')
   assert.match(source, /sceneRequiredCapability/, '场景模型选择应按能力过滤')
   assert.match(source, /sceneEmbeddingApiStyleFilter/, 'Embedding 场景模型选择应按接入类型过滤')
   assert.match(source, /Embedding 场景只配置向量模型路由/, 'Embedding 场景不应执行对话测试')
@@ -102,6 +106,9 @@ it('知识库 Embedding 场景只使用 embedding 模型并禁用对话测试', 
   assert.match(source, /modelFallback: normalizeSceneModels\(/, '场景回退顺序未按模型池裁剪')
   assert.match(source, /if \(!sceneCanRunChatTest\(scene\)\)[\s\S]*无需执行对话测试/, 'Embedding 场景测试入口未拦截对话测试')
   assert.match(source, /:disabled="!sceneCanRunChatTest\(scope\.record\)"[\s\S]*无需测试/, 'Embedding 场景测试按钮未禁用并提示无需测试')
+  assert.match(source, /key === 'knowledge_visual_projection'[\s\S]*return 'vision'/, '视觉投影场景未声明 vision 能力')
+  assert.doesNotMatch(source, /回退默认模型池/, '场景页不应再出现默认模型池兜底文案')
+  assert.doesNotMatch(source, /回退默认模型/, '场景页不应再出现默认模型兜底文案')
 })
 
 it('模型编辑与导入弹窗支持能力配置和 embedding 搜索', async () => {

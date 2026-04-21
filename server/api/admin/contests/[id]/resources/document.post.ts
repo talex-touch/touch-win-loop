@@ -14,7 +14,6 @@ import {
   createResourceDocumentWithTask,
   updateResourceSourceLinkByDocument,
 } from '~~/server/utils/document-store'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
 
@@ -103,7 +102,6 @@ function toMimeType(kind: DocumentKind, fallbackMimeType: string): string {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const contestId = String(getRouterParam(event, 'id') || '').trim()
 
@@ -111,8 +109,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少 contestId。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40090)
@@ -123,8 +119,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权上传资料。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40390)
@@ -135,8 +129,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('请求体为空，请使用 multipart/form-data 上传文档。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40091)
@@ -147,8 +139,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少文件字段 file。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40092)
@@ -159,8 +149,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('仅支持上传 PDF/DOC/DOCX 文件。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40093)
@@ -244,8 +232,6 @@ export default defineEventHandler(async (event) => {
 
     return ok(result, {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     })

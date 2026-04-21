@@ -19,7 +19,6 @@ import {
   resolvePlatformAiModelCatalogJson,
   resolvePlatformAiModelPricingJson,
   resolvePlatformAiRegistry,
-  resolvePlatformAiRuntimeByCapability,
 } from '~~/server/utils/platform-ai-channels'
 import {
   normalizePlatformAiClientType,
@@ -57,12 +56,6 @@ interface ProviderDraftBody {
 
 interface ProvidersPatchBody {
   providers?: ProviderDraftBody[]
-  defaults?: {
-    defaultModel?: string
-    embeddingModel?: string
-    visionModel?: string
-    documentModel?: string
-  }
   scenes?: {
     items?: unknown[]
   } | unknown[]
@@ -114,8 +107,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权修改 AI 配置。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40390)
@@ -124,7 +115,6 @@ export default defineEventHandler(async (event) => {
   const hasProvidersUpdate = Array.isArray(body.providers)
   const scenesItems = normalizeSceneItems(body.scenes)
   const hasScenesUpdate = scenesItems.length > 0 || Boolean(body.scenes)
-  const defaultsBody = body.defaults && typeof body.defaults === 'object' ? body.defaults : undefined
   const adminAiBody = body.adminAi && typeof body.adminAi === 'object' ? body.adminAi as Record<string, unknown> : null
   const masterKeyReady = hasConfigMasterKey(event)
   const ignoredProviderApiKeyIds: string[] = []
@@ -135,13 +125,6 @@ export default defineEventHandler(async (event) => {
     const currentRuntime = applyPlatformAiRuntimeOverrides(runtime, existing)
     const currentRegistry = resolvePlatformAiRegistry(currentRuntime)
     const currentProvidersById = new Map(currentRegistry.providers.map(item => [item.id, item]))
-
-    const defaultsSeed = {
-      defaultModel: toText(defaultsBody?.defaultModel) || currentRegistry.defaults.defaultModel,
-      embeddingModel: toText(defaultsBody?.embeddingModel) || currentRegistry.defaults.embeddingModel,
-      visionModel: toText(defaultsBody?.visionModel) || currentRegistry.defaults.visionModel,
-      documentModel: toText(defaultsBody?.documentModel) || currentRegistry.defaults.documentModel,
-    }
 
     const providerDrafts = hasProvidersUpdate ? body.providers || [] : currentRegistry.providers
     const providerSeeds = providerDrafts.map((rawProvider, index) => {
@@ -201,11 +184,9 @@ export default defineEventHandler(async (event) => {
     })
 
     const ai = ensureSection(next.ai)
-    const docAi = ensureSection(next.docAi)
 
     ai.providersJson = buildPlatformAiRegistryJson(currentRuntime, {
       providers: providerSeeds,
-      defaults: defaultsSeed,
     })
 
     const providerPreviewRuntime = {
@@ -231,63 +212,29 @@ export default defineEventHandler(async (event) => {
         channelsJson: ai.channelsJson,
       },
     }
-    const finalRegistry = resolvePlatformAiRegistry(finalPreviewRuntime)
-    const chatRuntime = resolvePlatformAiRuntimeByCapability(finalPreviewRuntime, 'chat', finalRegistry.defaults.defaultModel)
-    const embeddingRuntime = resolvePlatformAiRuntimeByCapability(finalPreviewRuntime, 'embedding', finalRegistry.defaults.embeddingModel)
-    const visionRuntime = resolvePlatformAiRuntimeByCapability(finalPreviewRuntime, 'vision', finalRegistry.defaults.visionModel)
-    const primaryProvider = chatRuntime?.provider
-      || finalRegistry.providers.find(item => item.capability === 'llm' && item.enabled)
-      || finalRegistry.providers.find(item => item.capability === 'llm')
-      || null
-
-    ai.provider = chatRuntime?.ai.provider || primaryProvider?.provider || ''
-    ai.clientType = chatRuntime?.ai.clientType || currentRuntime.ai.clientType
-    ai.baseURL = chatRuntime?.ai.baseURL || primaryProvider?.baseURL || ''
-    ai.apiKey = chatRuntime?.ai.apiKey || primaryProvider?.apiKey || ''
-    ai.model = chatRuntime?.ai.model || finalRegistry.defaults.defaultModel || ''
-    ai.embeddingModel = embeddingRuntime?.modelConfig.model || finalRegistry.defaults.embeddingModel || ''
-    ai.embeddingApiStyle = embeddingRuntime?.modelConfig.embeddingApiStyle || primaryProvider?.embeddingApiStyle || currentRuntime.ai.embeddingApiStyle
-    ai.embeddingDimensions = Number(embeddingRuntime?.modelConfig.embeddingDimensions || primaryProvider?.embeddingDimensions || currentRuntime.ai.embeddingDimensions || 0)
-    ai.visionModel = visionRuntime?.modelConfig.model || finalRegistry.defaults.visionModel || ''
-    ai.timeoutMs = chatRuntime?.ai.timeoutMs || primaryProvider?.timeoutMs || currentRuntime.ai.timeoutMs
-    ai.maxRetries = chatRuntime?.ai.maxRetries || primaryProvider?.maxRetries || currentRuntime.ai.maxRetries
+    delete ai.provider
+    delete ai.baseURL
+    delete ai.apiKey
+    delete ai.model
+    delete ai.embeddingModel
+    delete ai.embeddingApiStyle
+    delete ai.embeddingDimensions
+    delete ai.visionModel
 
     const runtimeForCatalog = {
       ...finalPreviewRuntime,
       ai: {
         ...finalPreviewRuntime.ai,
-        provider: ai.provider,
-        clientType: ai.clientType,
-        baseURL: ai.baseURL,
-        apiKey: ai.apiKey,
-        model: ai.model,
-        embeddingModel: ai.embeddingModel,
-        embeddingApiStyle: ai.embeddingApiStyle,
-        embeddingDimensions: ai.embeddingDimensions,
-        visionModel: ai.visionModel,
-        timeoutMs: ai.timeoutMs,
-        maxRetries: ai.maxRetries,
         providersJson: ai.providersJson,
         channelsJson: ai.channelsJson,
-      },
-      docAi: {
-        ...finalPreviewRuntime.docAi,
       },
     }
 
     ai.modelCatalogJson = resolvePlatformAiModelCatalogJson(runtimeForCatalog)
     ai.modelPricingJson = resolvePlatformAiModelPricingJson(runtimeForCatalog)
 
-    docAi.provider = ai.provider
-    docAi.baseURL = ai.baseURL
-    docAi.apiKey = ai.apiKey
-    docAi.model = finalRegistry.defaults.documentModel || ''
-    docAi.timeoutMs = ai.timeoutMs
-    docAi.maxRetries = ai.maxRetries
-    docAi.modelPricingJson = ai.modelPricingJson
-
     next.ai = ai
-    next.docAi = docAi
+    delete next.docAi
 
     if (adminAiBody) {
       const adminAi = ensureSection(next.adminAi)
@@ -350,7 +297,6 @@ export default defineEventHandler(async (event) => {
       visionModel: provider.visionModel || '',
       models: provider.models,
     })),
-    defaults: registry.defaults,
     scenes: {
       items: registry.channels,
       definitions: getPlatformAiChannelDefinitions(),
@@ -376,8 +322,6 @@ export default defineEventHandler(async (event) => {
 
   return ok(payload, {
     startedAt,
-    provider: effectiveRuntime.ai.provider,
-    model: effectiveRuntime.ai.model,
     fallbackUsed: false,
     attempts: 1,
   })

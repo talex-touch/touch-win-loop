@@ -32,6 +32,7 @@ import type {
 import { createHash, randomUUID } from 'node:crypto'
 import { resolveKnowledgeEmbeddingRuntimeProfile } from '~~/server/services/knowledge-ai'
 import { isAiRuntimeConfigured, normalizeAiRuntimeProvider } from '~~/server/utils/ai-runtime'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import {
   normalizePlatformAiClientType,
   normalizeProjectKnowledgeEmbeddingApiStyle,
@@ -390,12 +391,23 @@ function normalizeEmbeddingApiStyle(value: unknown): 'openai-compatible-text' | 
 }
 
 function buildProjectKnowledgeEmbeddingConfigSignature(runtime: RuntimeSettings): Record<string, unknown> {
+  const textRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_embedding')
+  const visualRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_visual_embedding')
+  const projectionRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_visual_projection')
+  const textModelConfig = textRuntime.candidates[0]?.modelConfig || null
+  const visualModelConfig = visualRuntime.candidates[0]?.modelConfig || null
   return {
-    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
-    embeddingApiStyle: normalizeEmbeddingApiStyle(runtime.ai.embeddingApiStyle),
-    embeddingProvider: normalizeAiRuntimeProvider(runtime.ai.provider),
-    embeddingModel: normalizeString(runtime.ai.embeddingModel || runtime.ai.model),
-    embeddingDimensions: Math.max(0, normalizeNumber(runtime.ai.embeddingDimensions, 0)),
+    clientType: normalizePlatformAiClientType(textRuntime.ai.clientType),
+    embeddingApiStyle: normalizeEmbeddingApiStyle(textModelConfig?.embeddingApiStyle),
+    embeddingProvider: normalizeAiRuntimeProvider(textRuntime.ai.provider),
+    embeddingModel: normalizeString(textRuntime.ai.model),
+    embeddingDimensions: Math.max(0, normalizeNumber(textModelConfig?.embeddingDimensions, 0)),
+    visualEmbeddingProvider: normalizeAiRuntimeProvider(visualRuntime.ai.provider),
+    visualEmbeddingModel: normalizeString(visualRuntime.ai.model),
+    visualEmbeddingApiStyle: normalizeEmbeddingApiStyle(visualModelConfig?.embeddingApiStyle),
+    visualEmbeddingDimensions: Math.max(0, normalizeNumber(visualModelConfig?.embeddingDimensions, 0)),
+    visualProjectionProvider: normalizeAiRuntimeProvider(projectionRuntime.ai.provider),
+    visualProjectionModel: normalizeString(projectionRuntime.ai.model),
   }
 }
 
@@ -595,22 +607,24 @@ function buildEmptyProjectKnowledgeAnalyticsFreshness(): ProjectKnowledgeAnalyti
 
 async function buildProjectKnowledgeRuntimeStatus(): Promise<ProjectKnowledgeIndexRuntimeStatus> {
   const { runtime } = await readEffectiveRuntimeSettings()
-  const embeddingModel = normalizeString(runtime.ai.embeddingModel || runtime.ai.model)
-  const embeddingApiStyle = normalizeEmbeddingApiStyle(runtime.ai.embeddingApiStyle)
+  const embeddingRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_embedding')
+  const embeddingModelConfig = embeddingRuntime.candidates[0]?.modelConfig || null
+  const embeddingModel = normalizeString(embeddingRuntime.ai.model)
+  const embeddingApiStyle = normalizeEmbeddingApiStyle(embeddingModelConfig?.embeddingApiStyle)
   return {
-    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
+    clientType: normalizePlatformAiClientType(embeddingRuntime.ai.clientType),
     embeddingConfigured: Boolean(embeddingModel)
       && isAiRuntimeConfigured({
-        provider: runtime.ai.provider,
-        baseURL: runtime.ai.baseURL,
-        apiKey: runtime.ai.apiKey,
+        provider: embeddingRuntime.ai.provider,
+        baseURL: embeddingRuntime.ai.baseURL,
+        apiKey: embeddingRuntime.ai.apiKey,
         model: embeddingModel,
       }),
     embeddingClientType: embeddingApiStyle === 'bailian-multimodal' ? 'bailian-native' : 'openai-compatible',
     embeddingApiStyle,
-    embeddingProvider: normalizeAiRuntimeProvider(runtime.ai.provider),
+    embeddingProvider: normalizeAiRuntimeProvider(embeddingRuntime.ai.provider),
     embeddingModel,
-    embeddingDimensions: Math.max(0, normalizeNumber(runtime.ai.embeddingDimensions, 0)),
+    embeddingDimensions: Math.max(0, normalizeNumber(embeddingModelConfig?.embeddingDimensions, 0)),
   }
 }
 
@@ -2322,7 +2336,7 @@ export async function buildProjectKnowledgeIndexDashboard(
       || backfillRunningCount > 0
       || signatureMismatchSourceCount > 0
       || chunkStats.fallbackEmbeddedChunkCount > 0
-      || chunkStats.unknownEmbeddedChunkCount > 0
+      || chunkStats.unknownEmbeddedChunkCount > 0,
     ),
     signatureMismatchSourceCount,
     backfillPendingCount,

@@ -1,12 +1,11 @@
 import type { RuntimeSettings } from '~~/server/utils/env'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { resolveDefenseRealtimeQwenApiKey } from '~~/server/utils/defense-realtime'
 import {
   buildPlatformAiChannelsJson,
   buildPlatformAiRegistryJson,
   inferPlatformAiModelCapabilities,
   resolveAiRuntimeForChannel,
-  resolvePlatformAiChannelEmbeddingApiStyle,
-  resolvePlatformAiChannelModelCapability,
   resolvePlatformAiRegistry,
   resolvePlatformAiRuntimeByCapability,
   runWithPlatformAiChannelFallback,
@@ -96,6 +95,50 @@ function createRuntime(): RuntimeSettings {
       batchSize: 10,
       lockTtlMs: 1000,
     },
+    projectResource: {
+      accessUrlTtlSeconds: 600,
+    },
+    meeting: {
+      rtc: {
+        provider: '',
+        serverUrl: '',
+        apiKey: '',
+        apiSecret: '',
+        embedBaseUrl: '',
+        webhookSecret: '',
+        roomPrefix: '',
+      },
+      asr: {
+        provider: '',
+        serviceUrl: '',
+        apiKey: '',
+        webhookSecret: '',
+      },
+      worker: {
+        enabled: false,
+        intervalMs: 1000,
+        batchSize: 1,
+        maxAttempts: 1,
+      },
+    },
+    defenseRealtime: {
+      qwen: {
+        baseWsUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+        apiKey: '',
+        workspaceId: '',
+        appId: '',
+        voice: '',
+        frameIntervalMs: 1000,
+      },
+      coze: {
+        baseUrl: 'https://api.coze.cn',
+        botId: '',
+        connectorId: '',
+        voiceId: '',
+        authMode: 'pat',
+        patOrOauthSecret: '',
+      },
+    },
   } as RuntimeSettings
 }
 
@@ -105,17 +148,87 @@ describe('platform-ai-channels', () => {
     vi.restoreAllMocks()
   })
 
-  it('旧单 Provider 运行时会自动迁移为首个 Provider', () => {
+  it('旧单 Provider 运行时只迁移 Provider，不再自动补全场景路由', () => {
     const runtime = createRuntime()
     const registry = resolvePlatformAiRegistry(runtime)
+    const projectChat = registry.channels.find(item => item.key === 'project_chat')
 
     expect(registry.providers).toHaveLength(1)
     expect(registry.providers[0]?.provider).toBe('newapi')
     expect(registry.providers[0]?.models.map(item => item.model)).toEqual(['gpt-4.1-mini'])
-    expect(registry.defaults.defaultModel).toBe('gpt-4.1-mini')
-    expect(registry.defaults.embeddingModel).toBe('text-embedding-3-small')
-    expect(registry.defaults.visionModel).toBe('')
-    expect(registry.defaults.documentModel).toBe('gpt-4.1')
+    expect(projectChat?.providerIds).toEqual([])
+    expect(projectChat?.models).toEqual([])
+    expect(projectChat?.modelFallback).toEqual([])
+
+    const resolved = resolveAiRuntimeForChannel(runtime, 'project_chat')
+    expect(resolved.provider).toBeNull()
+    expect(resolved.ai.provider).toBe('')
+    expect(resolved.ai.model).toBe('')
+    expect(resolved.usedFallback).toBe(true)
+  })
+
+  it('答辩 qwen key 只会从 defense 场景绑定的百炼 Provider 派生', () => {
+    const runtime = createRuntime()
+
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'shared',
+          name: 'Shared NewAPI',
+          type: 'newapi',
+          provider: 'newapi',
+          baseURL: 'https://newapi.example',
+          apiKey: 'newapi-provider-key',
+          models: [
+            { model: 'qwen-plus', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+      ],
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'defense',
+          providerIds: ['shared'],
+          models: ['qwen-plus'],
+          modelFallback: ['qwen-plus'],
+          failoverStrategy: 'model_then_provider',
+          enabled: true,
+        },
+      ],
+    })
+
+    expect(resolveDefenseRealtimeQwenApiKey(runtime)).toBe('')
+
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'dashscope',
+          name: 'DashScope',
+          type: 'dashscope-bailian',
+          provider: 'dashscope',
+          baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          apiKey: 'dashscope-native-key',
+          models: [
+            { model: 'qwen-plus', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+      ],
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'defense',
+          providerIds: ['dashscope'],
+          models: ['qwen-plus'],
+          modelFallback: ['qwen-plus'],
+          failoverStrategy: 'model_then_provider',
+          enabled: true,
+        },
+      ],
+    })
+
+    expect(resolveDefenseRealtimeQwenApiKey(runtime)).toBe('dashscope-native-key')
   })
 
   it('模型名会启发式识别能力', () => {
@@ -127,9 +240,9 @@ describe('platform-ai-channels', () => {
     expect(inferPlatformAiModelCapabilities({ model: 'wanx2.1-t2i-turbo' })).toEqual(['image-gen'])
   })
 
-  it('默认模型不会再自动写回 Provider 模型池', () => {
+  it('保存 Provider registry 时不再持久化 defaults，也不会把旧默认模型写回模型池', () => {
     const runtime = createRuntime()
-    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+    const registryJson = buildPlatformAiRegistryJson(runtime, {
       providers: [
         {
           id: 'provider_1',
@@ -149,13 +262,16 @@ describe('platform-ai-channels', () => {
       },
     })
 
+    expect(registryJson).not.toMatch(/"defaults"/)
+
+    runtime.ai.providersJson = registryJson
     const registry = resolvePlatformAiRegistry(runtime)
     expect(registry.providers[0]?.models.map(item => item.model)).toEqual(['gpt-4.1-mini'])
     expect(registry.providers[0]?.models.some(item => item.model === 'text-embedding-3-small')).toBe(false)
     expect(registry.providers[0]?.models.some(item => item.model === 'gpt-4.1')).toBe(false)
   })
 
-  it('旧场景模型链会自动迁移为模型池、回退顺序与首个 Provider 绑定', () => {
+  it('旧场景模型链在存在路由配置时会迁移到首个 Provider', () => {
     const runtime = createRuntime()
     runtime.ai.channelsJson = JSON.stringify({
       items: [
@@ -169,11 +285,36 @@ describe('platform-ai-channels', () => {
 
     const registry = resolvePlatformAiRegistry(runtime)
     const projectChat = registry.channels.find(item => item.key === 'project_chat')
-
     expect(projectChat?.providerIds).toEqual(['provider_1'])
     expect(projectChat?.models).toEqual(['gpt-4.1-mini'])
     expect(projectChat?.modelFallback).toEqual(['gpt-4.1-mini'])
-    expect(projectChat?.failoverStrategy).toBe('model_then_provider')
+  })
+
+  it('场景显式留空时保持未配置状态，不再共享兜底', () => {
+    const runtime = createRuntime()
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'project_chat',
+          providerIds: [],
+          models: [],
+          modelFallback: [],
+          failoverStrategy: 'model_then_provider',
+          enabled: true,
+        },
+      ],
+    })
+
+    const registry = resolvePlatformAiRegistry(runtime)
+    const projectChat = registry.channels.find(item => item.key === 'project_chat')
+    expect(projectChat?.providerIds).toEqual([])
+    expect(projectChat?.models).toEqual([])
+    expect(projectChat?.modelFallback).toEqual([])
+
+    const resolved = resolveAiRuntimeForChannel(runtime, 'project_chat')
+    expect(resolved.provider).toBeNull()
+    expect(resolved.ai.model).toBe('')
+    expect(resolved.usedFallback).toBe(true)
   })
 
   it('多 Provider 场景会先按模型链，再在同模型下展开 Provider 候选', () => {
@@ -203,11 +344,6 @@ describe('platform-ai-channels', () => {
           ],
         },
       ],
-      defaults: {
-        defaultModel: 'gpt-4.1-mini',
-        embeddingModel: 'text-embedding-3-small',
-        documentModel: 'gpt-4.1',
-      },
     })
     runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
       items: [
@@ -238,83 +374,7 @@ describe('platform-ai-channels', () => {
     ])
   })
 
-  it('聊天场景只会选择 chat 能力模型，并使用模型级 clientType', () => {
-    const runtime = createRuntime()
-    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
-      providers: [
-        {
-          id: 'provider_a',
-          name: 'Provider A',
-          type: 'newapi',
-          provider: 'newapi',
-          clientType: 'bailian-native',
-          baseURL: 'https://newapi-a.example',
-          models: [
-            { model: 'text-embedding-v4', enabled: true, format: 'openai-compatible', capabilities: ['embedding'] },
-            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible', capabilities: ['chat'], clientType: 'langchain' },
-          ],
-        },
-      ],
-      defaults: {
-        defaultModel: 'text-embedding-v4',
-        embeddingModel: 'text-embedding-v4',
-        visionModel: '',
-        documentModel: 'gpt-4.1-mini',
-      },
-    })
-
-    const resolved = resolveAiRuntimeForChannel(runtime, 'project_chat')
-    expect(resolved.ai.model).toBe('gpt-4.1-mini')
-    expect(resolved.ai.clientType).toBe('langchain')
-  })
-
-  it('知识库 Embedding 场景只会选择 embedding 能力模型', () => {
-    const runtime = createRuntime()
-    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
-      providers: [
-        {
-          id: 'provider_a',
-          name: 'Provider A',
-          type: 'dashscope-bailian',
-          provider: 'dashscope',
-          baseURL: 'https://dashscope.aliyuncs.com',
-          models: [
-            { model: 'qwen-plus', enabled: true, format: 'openai-compatible', capabilities: ['chat'] },
-            { model: 'text-embedding-v4', enabled: true, format: 'openai-compatible', capabilities: ['embedding'] },
-          ],
-        },
-      ],
-      defaults: {
-        defaultModel: 'qwen-plus',
-        embeddingModel: 'text-embedding-v4',
-        visionModel: '',
-        documentModel: 'qwen-plus',
-      },
-    })
-    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
-      items: [
-        {
-          key: 'knowledge_embedding',
-          providerIds: ['provider_a'],
-          models: ['qwen-plus', 'text-embedding-v4'],
-          modelFallback: ['qwen-plus', 'text-embedding-v4'],
-          failoverStrategy: 'model_then_provider',
-          enabled: true,
-        },
-      ],
-    })
-
-    expect(resolvePlatformAiChannelModelCapability('knowledge_embedding')).toBe('embedding')
-    expect(resolvePlatformAiChannelModelCapability('project_chat')).toBe('chat')
-
-    const resolved = resolveAiRuntimeForChannel(runtime, 'knowledge_embedding')
-    expect(resolved.ai.model).toBe('text-embedding-v4')
-    expect(resolved.provider?.id).toBe('provider_a')
-    expect(resolved.candidates[0]?.modelConfig?.model).toBe('text-embedding-v4')
-    expect(resolved.candidates.map(item => item.ai.model)).toEqual(['text-embedding-v4'])
-  })
-
-  it('默认 embedding 模型只能从 embedding 能力模型解析', () => {
+  it('显式场景只会选择匹配能力的模型，视觉投影走独立 vision 场景', () => {
     const runtime = createRuntime()
     runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
       providers: [
@@ -325,43 +385,62 @@ describe('platform-ai-channels', () => {
           provider: 'dashscope',
           baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
           models: [
-            { model: 'qwen-plus', enabled: true, format: 'response', capabilities: ['chat'] },
+            { model: 'qwen-plus', enabled: true, format: 'openai-compatible', capabilities: ['chat'] },
             { model: 'text-embedding-v4', enabled: true, format: 'openai-compatible', capabilities: ['embedding'], embeddingApiStyle: 'openai-compatible-text', embeddingDimensions: 1024 },
-            { model: 'tongyi-embedding-vision-plus', enabled: true, format: 'openai-compatible', capabilities: ['embedding'], embeddingDimensions: 1024 },
+            { model: 'tongyi-embedding-vision-plus', enabled: true, format: 'openai-compatible', capabilities: ['embedding'], embeddingApiStyle: 'bailian-multimodal', embeddingDimensions: 1024 },
+            { model: 'qwen-vl-max', enabled: true, format: 'openai-compatible', capabilities: ['chat', 'vision'] },
           ],
         },
       ],
-      defaults: {
-        defaultModel: 'qwen-plus',
-        embeddingModel: 'text-embedding-v4',
-        visionModel: '',
-        documentModel: 'qwen-plus',
-      },
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'project_chat',
+          providerIds: ['provider_a'],
+          models: ['qwen-plus'],
+          modelFallback: ['qwen-plus'],
+          failoverStrategy: 'model_then_provider',
+          enabled: true,
+        },
+        {
+          key: 'knowledge_embedding',
+          providerIds: ['provider_a'],
+          models: ['text-embedding-v4'],
+          modelFallback: ['text-embedding-v4'],
+          failoverStrategy: 'model_then_provider',
+          enabled: true,
+        },
+        {
+          key: 'knowledge_visual_embedding',
+          providerIds: ['provider_a'],
+          models: ['tongyi-embedding-vision-plus'],
+          modelFallback: ['tongyi-embedding-vision-plus'],
+          failoverStrategy: 'model_then_provider',
+          enabled: true,
+        },
+        {
+          key: 'knowledge_visual_projection',
+          providerIds: ['provider_a'],
+          models: ['qwen-vl-max'],
+          modelFallback: ['qwen-vl-max'],
+          failoverStrategy: 'model_then_provider',
+          enabled: true,
+        },
+      ],
     })
 
-    const registry = resolvePlatformAiRegistry(runtime)
-    expect(registry.providers[0]?.models.find(item => item.model === 'qwen-plus')?.format).toBe('openai-compatible')
-    const embeddingRuntime = resolvePlatformAiRuntimeByCapability(runtime, 'embedding')
-    expect(embeddingRuntime?.modelConfig.model).toBe('text-embedding-v4')
-    expect(embeddingRuntime?.modelConfig.embeddingApiStyle).toBe('openai-compatible-text')
-    expect(resolvePlatformAiChannelModelCapability('knowledge_embedding')).toBe('embedding')
-    expect(resolvePlatformAiChannelEmbeddingApiStyle('knowledge_embedding')).toBe('openai-compatible-text')
-    expect(resolvePlatformAiChannelEmbeddingApiStyle('knowledge_visual_embedding')).toBe('bailian-multimodal')
+    expect(resolveAiRuntimeForChannel(runtime, 'project_chat').ai.model).toBe('qwen-plus')
+    expect(resolveAiRuntimeForChannel(runtime, 'knowledge_embedding').ai.model).toBe('text-embedding-v4')
+    expect(resolveAiRuntimeForChannel(runtime, 'knowledge_visual_embedding').ai.model).toBe('tongyi-embedding-vision-plus')
+    expect(resolveAiRuntimeForChannel(runtime, 'knowledge_visual_projection').ai.model).toBe('qwen-vl-max')
 
-    const embeddingScene = registry.channels.find(item => item.key === 'knowledge_embedding')
-    expect(embeddingScene?.models).toEqual(['text-embedding-v4'])
-    expect(embeddingScene?.modelFallback).toEqual(['text-embedding-v4'])
-    const embeddingSceneRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_embedding')
-    expect(embeddingSceneRuntime.ai.model).toBe('text-embedding-v4')
-
-    const visualEmbeddingScene = registry.channels.find(item => item.key === 'knowledge_visual_embedding')
-    expect(visualEmbeddingScene?.models).toEqual(['tongyi-embedding-vision-plus'])
-    expect(visualEmbeddingScene?.modelFallback).toEqual(['tongyi-embedding-vision-plus'])
-    const visualEmbeddingSceneRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_visual_embedding')
-    expect(visualEmbeddingSceneRuntime.ai.model).toBe('tongyi-embedding-vision-plus')
+    const capabilityRuntime = resolvePlatformAiRuntimeByCapability(runtime, 'embedding', 'text-embedding-v4')
+    expect(capabilityRuntime?.modelConfig.model).toBe('text-embedding-v4')
+    expect(capabilityRuntime?.modelConfig.embeddingApiStyle).toBe('openai-compatible-text')
   })
 
-  it('只绑定 search-only Provider 时会回退到未配置运行时', () => {
+  it('只绑定 search-only Provider 时会返回未配置运行时', () => {
     const runtime = createRuntime()
     runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
       providers: [
@@ -373,11 +452,6 @@ describe('platform-ai-channels', () => {
           baseURL: 'https://api.tavily.com',
         },
       ],
-      defaults: {
-        defaultModel: 'gpt-4.1-mini',
-        embeddingModel: 'text-embedding-3-small',
-        documentModel: 'gpt-4.1',
-      },
     })
     runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
       items: [
@@ -394,6 +468,7 @@ describe('platform-ai-channels', () => {
 
     const resolved = resolveAiRuntimeForChannel(runtime, 'project_chat')
     expect(resolved.provider).toBeNull()
+    expect(resolved.ai.model).toBe('')
     expect(resolved.usedFallback).toBe(true)
   })
 
@@ -424,11 +499,6 @@ describe('platform-ai-channels', () => {
           ],
         },
       ],
-      defaults: {
-        defaultModel: 'gpt-4.1-mini',
-        embeddingModel: 'text-embedding-3-small',
-        documentModel: 'gpt-4.1',
-      },
     })
     runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
       items: [
@@ -479,45 +549,5 @@ describe('platform-ai-channels', () => {
     ])
     expect(warnSpy).toHaveBeenCalled()
     expect(errorSpy).not.toHaveBeenCalled()
-  })
-
-  it('未配置回退顺序时会按模型池顺序生成候选链', () => {
-    const runtime = createRuntime()
-    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
-      providers: [
-        {
-          id: 'provider_a',
-          name: 'Provider A',
-          type: 'newapi',
-          provider: 'newapi',
-          baseURL: 'https://newapi-a.example',
-          models: [
-            { model: 'gpt-4.1', enabled: true, format: 'openai-compatible' },
-            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
-          ],
-        },
-      ],
-      defaults: {
-        defaultModel: 'gpt-4.1-mini',
-        embeddingModel: 'text-embedding-3-small',
-        documentModel: 'gpt-4.1',
-      },
-    })
-    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
-      items: [
-        {
-          key: 'project_chat',
-          providerIds: ['provider_a'],
-          models: ['gpt-4.1', 'gpt-4.1-mini'],
-          modelFallback: [],
-          failoverStrategy: 'model_then_provider',
-          enabled: true,
-        },
-      ],
-    })
-
-    const resolved = resolveAiRuntimeForChannel(runtime, 'project_chat')
-    expect(resolved.candidates.map(item => item.ai.model)).toEqual(['gpt-4.1', 'gpt-4.1-mini'])
-    expect(resolved.channel.failoverStrategy).toBe('model_then_provider')
   })
 })
