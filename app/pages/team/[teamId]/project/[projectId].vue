@@ -11979,6 +11979,8 @@ watch(
     rightSidebarUserCollapsed,
   ],
   () => {
+    if (workspaceSidebarResizeState.active)
+      return
     if (!shouldPersistWorkspaceViewState({
       activeProjectId: activeProjectId.value,
       projectWorkspaceViewHydrating: projectWorkspaceViewHydrating.value,
