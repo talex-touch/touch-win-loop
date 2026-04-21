@@ -331,7 +331,7 @@ const taskTrendFailedPolyline = computed(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div class="loopy-health space-y-5">
     <div class="loopy-health__hero">
       <div class="loopy-health__hero-copy">
         <span :class="healthBadgeClass">
@@ -732,9 +732,30 @@ const taskTrendFailedPolyline = computed(() => {
 </template>
 
 <style scoped>
+.loopy-health {
+  --loopy-health-gap-1: var(--wl-wb-gap-1, 6px);
+  --loopy-health-gap-2: var(--wl-wb-gap-2, 8px);
+  --loopy-health-gap-3: var(--wl-wb-gap-3, 10px);
+  --loopy-health-gap-4: var(--wl-wb-gap-4, 12px);
+  --loopy-health-gap-5: var(--wl-wb-gap-5, 14px);
+  --loopy-health-panel-padding: var(--wl-wb-panel-padding, 12px);
+  --loopy-health-card-padding: var(--wl-wb-card-padding, 10px);
+  --loopy-health-shell-radius: var(--wl-wb-shell-radius, 18px);
+  --loopy-health-panel-radius: var(--wl-wb-panel-radius, 15px);
+  --loopy-health-card-radius: var(--wl-wb-card-radius, 12px);
+  --loopy-health-control-height: var(--wl-wb-control-height, 34px);
+  --loopy-health-control-padding-x: var(--wl-wb-control-padding-x, 14px);
+  --loopy-health-chip-height: var(--wl-wb-chip-height, 28px);
+  --loopy-health-caption-size: var(--wl-wb-caption-size, 11px);
+  --loopy-health-label-size: var(--wl-wb-label-size, 12px);
+  --loopy-health-body-size: var(--wl-wb-body-size, 13px);
+  --loopy-health-title-size: var(--wl-wb-title-size, 28px);
+  --loopy-health-panel-title-size: var(--wl-wb-panel-title-size, 16px);
+}
+
 .loopy-health__hero {
   display: grid;
-  gap: 16px;
+  gap: var(--loopy-health-gap-4);
   grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.82fr);
 }
 
@@ -744,20 +765,20 @@ const taskTrendFailedPolyline = computed(() => {
 .loopy-health__summary-card,
 .loopy-health__message {
   border: 1px solid #dbe7f3;
-  border-radius: 24px;
+  border-radius: var(--loopy-health-panel-radius);
   background: #fff;
-  box-shadow: 0 12px 30px rgba(36, 73, 125, 0.05);
+  box-shadow: none;
 }
 
 .loopy-health__hero-copy {
-  padding: 26px;
+  padding: calc(var(--loopy-health-panel-padding) + var(--loopy-health-gap-4));
   background:
     radial-gradient(circle at top left, rgba(73, 164, 255, 0.13), transparent 32%),
     linear-gradient(150deg, #ffffff 0%, #f7fbff 52%, #f4f9ff 100%);
 }
 
 .loopy-health__hero-panel {
-  padding: 20px;
+  padding: calc(var(--loopy-health-panel-padding) + var(--loopy-health-gap-2));
   background:
     radial-gradient(circle at top right, rgba(19, 171, 182, 0.12), transparent 28%),
     linear-gradient(160deg, #fdfefe 0%, #f6fbff 100%);
@@ -766,10 +787,10 @@ const taskTrendFailedPolyline = computed(() => {
 .loopy-health__badge {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 12px;
+  min-height: var(--loopy-health-chip-height);
+  padding: 0 var(--loopy-health-gap-4);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--loopy-health-caption-size);
   font-weight: 800;
 }
 
@@ -791,19 +812,19 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__title {
-  margin: 16px 0 0;
+  margin: calc(var(--loopy-health-gap-4) + var(--loopy-health-gap-1)) 0 0;
   color: #13253d;
-  font-size: 30px;
+  font-size: calc(var(--loopy-health-title-size) + 2px);
   line-height: 1.12;
   font-weight: 800;
   letter-spacing: -0.02em;
 }
 
 .loopy-health__subtitle {
-  margin: 12px 0 0;
+  margin: var(--loopy-health-gap-4) 0 0;
   color: #5e7396;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--loopy-health-body-size);
+  line-height: 1.6;
 }
 
 .loopy-health__pill-row,
@@ -811,37 +832,37 @@ const taskTrendFailedPolyline = computed(() => {
 .loopy-health__progress-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--loopy-health-gap-3);
 }
 
 .loopy-health__pill {
   display: inline-flex;
   align-items: center;
-  min-height: 32px;
-  padding: 0 12px;
+  min-height: var(--loopy-health-control-height);
+  padding: 0 var(--loopy-health-gap-4);
   border: 1px solid #dbe7f3;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.86);
   color: #365072;
-  font-size: 12px;
+  font-size: var(--loopy-health-label-size);
   font-weight: 600;
 }
 
 .loopy-health__pill-row {
-  margin-top: 18px;
+  margin-top: calc(var(--loopy-health-gap-5) + var(--loopy-health-gap-1));
 }
 .loopy-health__actions {
-  margin-top: 20px;
+  margin-top: calc(var(--loopy-health-gap-5) + var(--loopy-health-gap-2));
 }
 
 .loopy-health__action {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: var(--loopy-health-control-height);
+  padding: 0 var(--loopy-health-control-padding-x);
   border: 1px solid #d6e4f3;
   border-radius: 999px;
   background: #fff;
   color: #355274;
-  font-size: 12px;
+  font-size: var(--loopy-health-label-size);
   font-weight: 700;
 }
 
@@ -864,14 +885,14 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__progress-head {
-  font-size: 12px;
+  font-size: var(--loopy-health-label-size);
   font-weight: 700;
   color: #203655;
 }
 
 .loopy-health__progress-track {
   height: 10px;
-  margin-top: 10px;
+  margin-top: var(--loopy-health-gap-3);
   border-radius: 999px;
   background: #dfebf8;
   overflow: hidden;
@@ -884,21 +905,21 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__progress-meta {
-  margin-top: 12px;
+  margin-top: var(--loopy-health-gap-4);
   color: #567092;
-  font-size: 12px;
+  font-size: var(--loopy-health-label-size);
 }
 
 .loopy-health__freshness-grid {
   display: grid;
-  gap: 10px;
-  margin-top: 18px;
+  gap: var(--loopy-health-gap-3);
+  margin-top: calc(var(--loopy-health-gap-5) + var(--loopy-health-gap-1));
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .loopy-health__freshness-card {
-  padding: 12px;
-  border-radius: 16px;
+  padding: var(--loopy-health-card-padding);
+  border-radius: var(--loopy-health-card-radius);
   border: 1px solid #dce8f5;
   background: rgba(255, 255, 255, 0.82);
 }
@@ -921,7 +942,7 @@ const taskTrendFailedPolyline = computed(() => {
 .loopy-health__empty,
 .loopy-health__message {
   color: #6c83a3;
-  font-size: 12px;
+  font-size: var(--loopy-health-label-size);
 }
 
 .loopy-health__freshness-value,
@@ -932,15 +953,15 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__summary-card {
-  padding: 16px;
+  padding: calc(var(--loopy-health-card-padding) + var(--loopy-health-gap-2));
 }
 .loopy-health__summary-value {
-  margin-top: 8px;
-  font-size: 22px;
+  margin-top: var(--loopy-health-gap-2);
+  font-size: calc(var(--loopy-health-title-size) - 6px);
   letter-spacing: -0.02em;
 }
 .loopy-health__message {
-  padding: 18px 20px;
+  padding: calc(var(--loopy-health-panel-padding) + var(--loopy-health-gap-2));
 }
 .loopy-health__message--error {
   background: #fff6f6;
@@ -951,10 +972,10 @@ const taskTrendFailedPolyline = computed(() => {
 .loopy-health__issue {
   display: flex;
   align-items: center;
-  gap: 10px;
-  border-radius: 18px;
-  padding: 12px 14px;
-  font-size: 12px;
+  gap: var(--loopy-health-gap-3);
+  border-radius: var(--loopy-health-card-radius);
+  padding: var(--loopy-health-card-padding) var(--loopy-health-gap-5);
+  font-size: var(--loopy-health-label-size);
   font-weight: 600;
 }
 
@@ -973,19 +994,19 @@ const taskTrendFailedPolyline = computed(() => {
 
 .loopy-health__grid {
   display: grid;
-  gap: 16px;
+  gap: var(--loopy-health-gap-4);
 }
 .loopy-health__grid--3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .loopy-health__card {
-  padding: 18px;
+  padding: calc(var(--loopy-health-panel-padding) + var(--loopy-health-gap-2));
 }
 
 .loopy-health__card-head h3 {
   margin: 0;
   color: #182c48;
-  font-size: 13px;
+  font-size: var(--loopy-health-body-size);
   font-weight: 800;
 }
 

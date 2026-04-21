@@ -31,6 +31,7 @@ body.wl-scroll-lock #__nuxt {
 .wl-workspace-font-scope {
   --wl-ws-font-scale: 1;
   --wl-ws-space-scale: 1;
+  --wl-wb-density-scale: 1;
   --wl-ws-font-2xs: calc(10px * var(--wl-ws-font-scale));
   --wl-ws-font-xs: calc(11px * var(--wl-ws-font-scale));
   --wl-ws-font-sm: calc(12px * var(--wl-ws-font-scale));
@@ -50,6 +51,44 @@ body.wl-scroll-lock #__nuxt {
   --wl-ws-space-4: calc(16px * var(--wl-ws-space-scale));
   --wl-ws-space-5: calc(20px * var(--wl-ws-space-scale));
   --wl-ws-space-6: calc(24px * var(--wl-ws-space-scale));
+  --wl-wb-gap-1: calc(6px * var(--wl-wb-density-scale));
+  --wl-wb-gap-2: calc(8px * var(--wl-wb-density-scale));
+  --wl-wb-gap-3: calc(10px * var(--wl-wb-density-scale));
+  --wl-wb-gap-4: calc(12px * var(--wl-wb-density-scale));
+  --wl-wb-gap-5: calc(14px * var(--wl-wb-density-scale));
+  --wl-wb-gap-6: calc(18px * var(--wl-wb-density-scale));
+  --wl-wb-shell-padding: calc(14px * var(--wl-wb-density-scale));
+  --wl-wb-panel-padding: calc(12px * var(--wl-wb-density-scale));
+  --wl-wb-card-padding: calc(10px * var(--wl-wb-density-scale));
+  --wl-wb-shell-radius: calc(18px * var(--wl-wb-density-scale));
+  --wl-wb-panel-radius: calc(15px * var(--wl-wb-density-scale));
+  --wl-wb-card-radius: calc(12px * var(--wl-wb-density-scale));
+  --wl-wb-control-height: calc(34px * var(--wl-wb-density-scale));
+  --wl-wb-control-padding-x: calc(14px * var(--wl-wb-density-scale));
+  --wl-wb-chip-height: calc(28px * var(--wl-wb-density-scale));
+  --wl-wb-progress-size: calc(98px * var(--wl-wb-density-scale));
+  --wl-wb-progress-inner-inset: calc(10px * var(--wl-wb-density-scale));
+  --wl-wb-caption-size: var(--wl-ws-font-xs);
+  --wl-wb-label-size: var(--wl-ws-font-sm);
+  --wl-wb-body-size: var(--wl-ws-font-md);
+  --wl-wb-title-size: calc(28px * var(--wl-ws-font-scale));
+  --wl-wb-metric-value-size: calc(19px * var(--wl-ws-font-scale));
+  --wl-wb-panel-title-size: calc(16px * var(--wl-ws-font-scale));
+  --wl-wb-shell-border: rgba(214, 228, 244, 0.94);
+  --wl-wb-panel-border: rgba(221, 232, 246, 0.98);
+  --wl-wb-card-border: rgba(227, 236, 247, 0.96);
+  --wl-wb-shell-bg:
+    radial-gradient(circle at 14% 14%, rgba(96, 169, 255, 0.11), transparent 24%),
+    radial-gradient(circle at 58% 24%, rgba(133, 193, 255, 0.14), transparent 18%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.98) 42%, rgba(243, 248, 255, 0.99));
+  --wl-wb-panel-bg: rgba(255, 255, 255, 0.94);
+  --wl-wb-card-bg: rgba(255, 255, 255, 0.9);
+  --wl-wb-muted-bg: rgba(246, 250, 255, 0.94);
+  --wl-wb-stage-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(244, 248, 255, 0.96));
+  --wl-wb-shadow-none: none;
+  --wl-wb-shell-shadow: var(--wl-wb-shadow-none);
+  --wl-wb-panel-shadow: var(--wl-wb-shadow-none);
+  --wl-wb-card-shadow: var(--wl-wb-shadow-none);
 }
 
 .wl-workspace-font-scope[data-workspace-font-size='xs'] {
@@ -74,22 +113,27 @@ body.wl-scroll-lock #__nuxt {
 
 .wl-workspace-font-scope[data-workspace-spacing='ultra_compact'] {
   --wl-ws-space-scale: 0.84;
+  --wl-wb-density-scale: 0.78;
 }
 
 .wl-workspace-font-scope[data-workspace-spacing='compact'] {
   --wl-ws-space-scale: 0.92;
+  --wl-wb-density-scale: 0.86;
 }
 
 .wl-workspace-font-scope[data-workspace-spacing='default'] {
   --wl-ws-space-scale: 1;
+  --wl-wb-density-scale: 0.94;
 }
 
 .wl-workspace-font-scope[data-workspace-spacing='relaxed'] {
   --wl-ws-space-scale: 1.08;
+  --wl-wb-density-scale: 1;
 }
 
 .wl-workspace-font-scope[data-workspace-spacing='spacious'] {
   --wl-ws-space-scale: 1.16;
+  --wl-wb-density-scale: 1.08;
 }
 
 .wl-workspace-font-scope :is(.text-\[10px\]):not(.material-symbols-outlined) {

@@ -3,6 +3,7 @@ import type { Project, ProjectKnowledgeIndexDashboard } from '~~/shared/types/do
 import {
   buildLoopyOverviewContract,
   clampPercent,
+  formatCompactNumber,
   formatPercent,
   resolveHealthLabel,
   resolveHealthTone,
@@ -44,54 +45,208 @@ const healthLabel = computed(() => resolveHealthLabel(props.dashboard?.diagnosti
 const healthTone = computed(() => resolveHealthTone(props.dashboard?.diagnostics.healthState))
 const progressPercent = computed(() => clampPercent(props.dashboard?.summary.overallProgressPercent))
 
-const summaryMeta = computed(() => {
-  if (!props.dashboard)
-    return []
+function resolveQueueTone(status: string | null | undefined, stale: boolean): 'ready' | 'processing' | 'waiting' {
+  const normalized = String(status || '').trim()
+  if (normalized === 'processing')
+    return 'processing'
+  if (normalized === 'succeeded' && !stale)
+    return 'ready'
+  return 'waiting'
+}
+
+function resolveQueueStatusLabel(status: string | null | undefined, stale: boolean): string {
+  const normalized = String(status || '').trim()
+  if (normalized === 'processing')
+    return '进行中'
+  if (normalized === 'succeeded' && !stale)
+    return '已就绪'
+  if (normalized === 'failed')
+    return '失败'
+  if (normalized === 'cancelled')
+    return '已取消'
+  return stale ? '待刷新' : '等待中'
+}
+
+const heroMetrics = computed(() => {
+  if (!props.dashboard) {
+    return [
+      { id: 'sources', label: '数据源', value: '-', note: '等待 dashboard', tone: 'neutral' },
+      { id: 'chunks', label: '数据总量', value: '-', note: '等待 dashboard', tone: 'primary' },
+      { id: 'embeddings', label: '向量数量', value: '-', note: '等待 dashboard', tone: 'primary' },
+      { id: 'dimensions', label: '维度', value: '-', note: '等待 dashboard', tone: 'neutral' },
+      { id: 'ready', label: '命中率', value: '-', note: '等待 dashboard', tone: 'warning' },
+      { id: 'health', label: '健康状态', value: healthLabel.value, note: '等待健康诊断', tone: healthTone.value },
+    ]
+  }
+
+  const dashboard = props.dashboard
+  const embeddedPointCount = Math.max(
+    0,
+    (
+      Number(dashboard.diagnostics.realEmbeddedChunkCount || 0)
+      + Number(dashboard.diagnostics.fallbackEmbeddedChunkCount || 0)
+      + Number(dashboard.diagnostics.unknownEmbeddedChunkCount || 0)
+    ),
+  )
+  const readyRate = dashboard.summary.indexableResources > 0
+    ? (dashboard.summary.readyCount / Math.max(1, dashboard.summary.indexableResources)) * 100
+    : 0
 
   return [
     {
-      label: '总进度',
-      value: formatPercent(progressPercent.value),
+      id: 'sources',
+      label: '数据源',
+      value: formatCompactNumber(dashboard.diagnostics.candidateResourceCount || dashboard.summary.totalResources),
+      note: `${formatCompactNumber(dashboard.summary.indexableResources)} 可索引`,
+      tone: 'neutral',
     },
+    {
+      id: 'chunks',
+      label: '数据总量',
+      value: formatCompactNumber(dashboard.diagnostics.chunkCount),
+      note: `${formatCompactNumber(dashboard.diagnostics.multimodalIndexedCount)} 多模态`,
+      tone: 'primary',
+    },
+    {
+      id: 'embeddings',
+      label: '向量数量',
+      value: formatCompactNumber(embeddedPointCount),
+      note: `${formatCompactNumber(dashboard.diagnostics.realEmbeddedChunkCount)} 真实`,
+      tone: embeddedPointCount > 0 ? 'primary' : 'warning',
+    },
+    {
+      id: 'dimensions',
+      label: '维度',
+      value: dashboard.runtime.embeddingDimensions > 0 ? String(dashboard.runtime.embeddingDimensions) : '-',
+      note: dashboard.runtime.embeddingModel || '待配置模型',
+      tone: 'neutral',
+    },
+    {
+      id: 'ready',
+      label: '命中率',
+      value: formatPercent(readyRate),
+      note: `${formatCompactNumber(dashboard.summary.readyCount)}/${formatCompactNumber(dashboard.summary.indexableResources)} 已就绪`,
+      tone: readyRate >= 80 ? 'success' : readyRate >= 45 ? 'warning' : 'danger',
+    },
+    {
+      id: 'health',
+      label: '健康状态',
+      value: healthLabel.value,
+      note: dashboard.diagnostics.embeddingHealthReason || dashboard.diagnostics.healthMessage || '等待诊断',
+      tone: healthTone.value,
+    },
+  ]
+})
+
+const progressDetails = computed(() => {
+  if (!props.dashboard) {
+    return [
+      { label: '预计剩余', value: '-' },
+      { label: '已处理', value: '-' },
+      { label: '预计完成', value: '-' },
+      { label: '最近更新', value: '-' },
+    ]
+  }
+
+  return [
     {
       label: '预计剩余',
       value: formatEtaSeconds(Number(props.dashboard.summary.etaSeconds || 0)),
     },
     {
-      label: '最近刷新',
+      label: '已处理',
+      value: `${formatCompactNumber(props.dashboard.summary.readyCount || 0)}/${formatCompactNumber(props.dashboard.summary.indexableResources || 0)}`,
+    },
+    {
+      label: '预计完成',
+      value: formatDateTime(String(props.dashboard.summary.estimatedFinishedAt || '')),
+    },
+    {
+      label: '最近更新',
       value: formatDateTime(String(props.dashboard.summary.lastRefreshedAt || '')),
     },
   ]
 })
 
-const topFreshness = computed(() => {
-  if (!props.dashboard)
-    return []
+const heroQueueItems = computed(() => {
+  if (!props.dashboard) {
+    return [
+      { label: '关系刷新', meta: '等待运行', tone: 'waiting', status: '等待中' },
+      { label: '快照采集', meta: '暂无快照', tone: 'waiting', status: '等待中' },
+      { label: '语义布局', meta: '等待布局', tone: 'waiting', status: '等待中' },
+      { label: 'Analytics 就绪', meta: '等待刷新', tone: 'waiting', status: '待刷新' },
+    ]
+  }
+
+  const snapshotType = props.dashboard.analytics.latestSnapshotType === 'manual'
+    ? '手动'
+    : props.dashboard.analytics.latestSnapshotType === 'hourly'
+      ? '小时'
+      : '未生成'
 
   return [
     {
-      label: 'Relations',
-      value: props.dashboard.analytics.relationsUpdatedAt
-        ? formatDateTime(String(props.dashboard.analytics.relationsUpdatedAt))
-        : '待生成',
-      stale: props.dashboard.analytics.staleKinds.includes('relations'),
+      label: '关系刷新',
+      meta: props.dashboard.analytics.relationsUpdatedAt
+        ? `最近 ${formatDateTime(String(props.dashboard.analytics.relationsUpdatedAt))}`
+        : '等待运行',
+      tone: resolveQueueTone(
+        props.dashboard.analytics.relationsJobStatus,
+        props.dashboard.analytics.staleKinds.includes('relations'),
+      ),
+      status: resolveQueueStatusLabel(
+        props.dashboard.analytics.relationsJobStatus,
+        props.dashboard.analytics.staleKinds.includes('relations'),
+      ),
     },
     {
-      label: 'Snapshot',
-      value: props.dashboard.analytics.snapshotUpdatedAt
-        ? formatDateTime(String(props.dashboard.analytics.snapshotUpdatedAt))
-        : '待生成',
-      stale: props.dashboard.analytics.staleKinds.includes('snapshot'),
+      label: '快照采集',
+      meta: snapshotType === '未生成' ? '暂无快照' : `${snapshotType} 快照`,
+      tone: resolveQueueTone(
+        props.dashboard.analytics.snapshotJobStatus,
+        props.dashboard.analytics.staleKinds.includes('snapshot'),
+      ),
+      status: resolveQueueStatusLabel(
+        props.dashboard.analytics.snapshotJobStatus,
+        props.dashboard.analytics.staleKinds.includes('snapshot'),
+      ),
     },
     {
-      label: 'Semantic',
-      value: props.dashboard.analytics.semanticLayoutUpdatedAt
-        ? formatDateTime(String(props.dashboard.analytics.semanticLayoutUpdatedAt))
-        : '待生成',
-      stale: props.dashboard.analytics.staleKinds.includes('semantic_layout'),
+      label: '语义布局',
+      meta: props.dashboard.analytics.semanticLayoutUpdatedAt
+        ? `最近 ${formatDateTime(String(props.dashboard.analytics.semanticLayoutUpdatedAt))}`
+        : '等待布局',
+      tone: resolveQueueTone(
+        props.dashboard.analytics.semanticLayoutJobStatus,
+        props.dashboard.analytics.staleKinds.includes('semantic_layout'),
+      ),
+      status: resolveQueueStatusLabel(
+        props.dashboard.analytics.semanticLayoutJobStatus,
+        props.dashboard.analytics.staleKinds.includes('semantic_layout'),
+      ),
+    },
+    {
+      label: 'Analytics 就绪',
+      meta: Number(props.dashboard.summary.processingCount || 0) > 0
+        ? `${formatCompactNumber(props.dashboard.summary.processingCount || 0)} 项处理中`
+        : '等待刷新',
+      tone: props.dashboard.analytics.allReady
+        ? 'ready'
+        : Number(props.dashboard.summary.processingCount || 0) > 0
+          ? 'processing'
+          : 'waiting',
+      status: props.dashboard.analytics.allReady
+        ? '已就绪'
+        : Number(props.dashboard.summary.processingCount || 0) > 0
+          ? '进行中'
+          : '待刷新',
     },
   ]
 })
+
+const progressRingStyle = computed(() => ({
+  '--loopy-progress-value': String(progressPercent.value),
+}))
 
 const stateBlock = computed(() => {
   if (!hasActiveProject.value) {
@@ -142,51 +297,144 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
 <template>
   <section class="loopy-center">
-    <header class="loopy-center__header">
-      <div class="loopy-center__header-main">
-        <div class="loopy-center__kicker-row">
-          <span class="loopy-center__kicker">Data Center</span>
-          <span class="loopy-center__project-chip">{{ projectTitle }}</span>
-          <span class="loopy-center__health-chip" :data-tone="healthTone">
-            {{ healthLabel }}
-          </span>
+    <div class="loopy-center__hero">
+      <div class="loopy-center__hero-main">
+        <div class="loopy-center__hero-copy">
+          <div class="loopy-center__kicker-row">
+            <span class="loopy-center__kicker">LOOPY 数据</span>
+            <span class="loopy-center__project-chip">{{ projectTitle }}</span>
+            <span class="loopy-center__health-chip" :data-tone="healthTone">
+              {{ healthLabel }}
+            </span>
+          </div>
+
+          <WinLoopTextLogo class="loopy-center__wordmark" />
+
+          <div class="loopy-center__title-wrap">
+            <h2 class="loopy-center__title">
+              连接数据，洞察语义，驱动智能
+            </h2>
+            <p class="loopy-center__subtitle">
+              WinLoop 将多模态 embeddings、关系分析与索引健康收束在同一条知识链路里，让数据工作台直接承接后续语义与行动。
+            </p>
+          </div>
+
+          <div class="loopy-center__hero-metric-grid">
+            <article
+              v-for="metric in heroMetrics"
+              :key="metric.id"
+              class="loopy-center__hero-metric-card"
+              :data-tone="metric.tone"
+            >
+              <span>{{ metric.label }}</span>
+              <strong>{{ metric.value }}</strong>
+              <p>{{ metric.note }}</p>
+            </article>
+          </div>
+
+          <div class="loopy-center__actions">
+            <button
+              class="loopy-center__action loopy-center__action--primary"
+              type="button"
+              :disabled="!hasActiveProject || props.loading || Boolean(props.reindexingTarget)"
+              @click="emit('reindexProjectKnowledge', 'all')"
+            >
+              {{ props.reindexingTarget === 'all' ? '重建中...' : '全量重建' }}
+            </button>
+            <button
+              class="loopy-center__action"
+              type="button"
+              :disabled="!hasActiveProject || props.loading || Boolean(props.reindexingTarget)"
+              @click="emit('reindexProjectKnowledge', 'stale')"
+            >
+              {{ props.reindexingTarget === 'stale' ? '重建中...' : '重建 stale' }}
+            </button>
+            <button
+              class="loopy-center__action"
+              type="button"
+              :disabled="!hasActiveProject || props.loading || Boolean(props.reindexingTarget)"
+              @click="emit('reindexProjectKnowledge', 'failed')"
+            >
+              {{ props.reindexingTarget === 'failed' ? '重建中...' : '重建 failed' }}
+            </button>
+            <button class="loopy-center__action" type="button" :disabled="props.loading" @click="emit('reload')">
+              刷新诊断
+            </button>
+          </div>
         </div>
 
-        <div class="loopy-center__title-wrap">
-          <h2 class="loopy-center__title">
-            数据中心主视图
-          </h2>
-          <p class="loopy-center__subtitle">
-            参考最新工作台结构收口成真实可接数版本，主区直接复用 dashboard / source / analytics 字段，不再依赖单张静态参考图。
-          </p>
+        <div class="loopy-center__visual">
+          <div class="loopy-center__visual-stage">
+            <img class="loopy-center__visual-image" src="/loopy-hero-placeholder.svg" alt="">
+
+            <div class="loopy-center__video-slot" aria-hidden="true">
+              <video
+                class="loopy-center__video-slot-media"
+                src="/winloop-hero-video.mp4"
+                poster="/winloop-hero-video-poster.png"
+                autoplay
+                muted
+                loop
+                playsinline
+                preload="metadata"
+              />
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="loopy-center__header-side">
-        <div class="loopy-center__summary-strip">
-          <article
-            v-for="item in summaryMeta"
-            :key="item.label"
-            class="loopy-center__summary-item"
-          >
-            <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
-          </article>
-        </div>
+      <aside class="loopy-center__hero-rail">
+        <section class="loopy-center__hero-panel">
+          <div class="loopy-center__hero-panel-head">
+            <h3>整体进度</h3>
+          </div>
+          <div class="loopy-center__progress-layout">
+            <div class="loopy-center__progress-ring" :style="progressRingStyle">
+              <div class="loopy-center__progress-ring-inner">
+                <strong>{{ formatPercent(progressPercent) }}</strong>
+              </div>
+            </div>
 
-        <div class="loopy-center__freshness">
-          <article
-            v-for="item in topFreshness"
-            :key="item.label"
-            class="loopy-center__freshness-item"
-            :data-stale="item.stale"
-          >
-            <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
-          </article>
-        </div>
-      </div>
-    </header>
+            <dl class="loopy-center__progress-meta">
+              <div
+                v-for="item in progressDetails"
+                :key="item.label"
+                class="loopy-center__progress-item"
+              >
+                <dt>{{ item.label }}</dt>
+                <dd>{{ item.value }}</dd>
+              </div>
+            </dl>
+          </div>
+        </section>
+
+        <section class="loopy-center__hero-panel">
+          <div class="loopy-center__hero-panel-head">
+            <h3>任务队列</h3>
+          </div>
+          <div class="loopy-center__queue">
+            <article
+              v-for="item in heroQueueItems"
+              :key="item.label"
+              class="loopy-center__queue-item"
+              :data-tone="item.tone"
+            >
+              <div class="loopy-center__queue-item-main">
+                <div class="loopy-center__queue-item-top">
+                  <span class="loopy-center__queue-item-dot" />
+                  <strong>{{ item.label }}</strong>
+                </div>
+                <p>{{ item.meta }}</p>
+              </div>
+              <div class="loopy-center__queue-item-side">
+                <span>{{ item.status }}</span>
+                <span class="material-symbols-outlined">chevron_right</span>
+              </div>
+            </article>
+          </div>
+        </section>
+      </aside>
+    </div>
 
     <div class="loopy-center__grid">
       <SectionCard
@@ -496,11 +744,34 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
 <style scoped>
 .loopy-center {
-  --dc-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 255, 0.98));
-  --dc-surface: rgba(255, 255, 255, 0.88);
-  --dc-surface-soft: rgba(244, 248, 255, 0.92);
-  --dc-border: rgba(210, 223, 242, 0.92);
-  --dc-border-strong: rgba(181, 201, 232, 0.98);
+  --dc-gap-1: var(--wl-wb-gap-1, 6px);
+  --dc-gap-2: var(--wl-wb-gap-2, 8px);
+  --dc-gap-3: var(--wl-wb-gap-3, 10px);
+  --dc-gap-4: var(--wl-wb-gap-4, 12px);
+  --dc-gap-5: var(--wl-wb-gap-5, 14px);
+  --dc-gap-6: var(--wl-wb-gap-6, 18px);
+  --dc-shell-padding: var(--wl-wb-shell-padding, 14px);
+  --dc-panel-padding: var(--wl-wb-panel-padding, 12px);
+  --dc-card-padding: var(--wl-wb-card-padding, 10px);
+  --dc-shell-radius: var(--wl-wb-shell-radius, 18px);
+  --dc-panel-radius: var(--wl-wb-panel-radius, 15px);
+  --dc-card-radius: var(--wl-wb-card-radius, 12px);
+  --dc-control-height: var(--wl-wb-control-height, 34px);
+  --dc-control-padding-x: var(--wl-wb-control-padding-x, 14px);
+  --dc-chip-height: var(--wl-wb-chip-height, 28px);
+  --dc-progress-size: var(--wl-wb-progress-size, 98px);
+  --dc-progress-inset: var(--wl-wb-progress-inner-inset, 10px);
+  --dc-caption-size: var(--wl-wb-caption-size, 11px);
+  --dc-label-size: var(--wl-wb-label-size, 12px);
+  --dc-body-size: var(--wl-wb-body-size, 13px);
+  --dc-title-size: var(--wl-wb-title-size, 28px);
+  --dc-metric-size: var(--wl-wb-metric-value-size, 19px);
+  --dc-panel-title-size: var(--wl-wb-panel-title-size, 16px);
+  --dc-bg: var(--wl-wb-shell-bg);
+  --dc-surface: var(--wl-wb-panel-bg, rgba(255, 255, 255, 0.94));
+  --dc-surface-soft: var(--wl-wb-card-bg, rgba(244, 248, 255, 0.92));
+  --dc-border: var(--wl-wb-shell-border, rgba(210, 223, 242, 0.92));
+  --dc-border-strong: var(--wl-wb-panel-border, rgba(181, 201, 232, 0.98));
   --dc-text: #17253b;
   --dc-text-soft: #5b7193;
   --dc-text-faint: #8295b1;
@@ -512,45 +783,77 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   --dc-warning-soft: rgba(183, 121, 31, 0.12);
   --dc-danger: #d14b66;
   --dc-danger-soft: rgba(209, 75, 102, 0.12);
+  --dc-shadow: var(--wl-wb-shell-shadow, none);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 18px;
+  gap: var(--dc-gap-5);
+  padding: var(--dc-shell-padding);
   border: 1px solid var(--dc-border);
-  border-radius: 24px;
+  border-radius: var(--dc-shell-radius);
   background: var(--dc-bg);
-  box-shadow: 0 24px 54px rgba(23, 37, 61, 0.08);
+  box-shadow: var(--dc-shadow);
 }
 
-.loopy-center__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+.loopy-center :deep(.wl-section-card) {
+  padding: var(--dc-panel-padding);
+  border-radius: var(--dc-panel-radius);
+  border-color: var(--dc-border);
+  background: var(--dc-surface);
+  box-shadow: none;
 }
 
-.loopy-center__header-main,
-.loopy-center__header-side {
+.loopy-center :deep(.wl-section-card__head) {
+  gap: var(--dc-gap-3);
+  margin-bottom: var(--dc-gap-4);
+}
+
+.loopy-center :deep(.wl-section-card__title) {
+  font-size: var(--dc-panel-title-size);
+  font-weight: 800;
+}
+
+.loopy-center :deep(.wl-section-card__description) {
+  font-size: var(--dc-caption-size);
+}
+
+.loopy-center__hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(292px, 312px);
+  gap: var(--dc-gap-4);
+}
+
+.loopy-center__hero-main {
+  display: grid;
+  grid-template-columns: minmax(520px, 1.08fr) minmax(300px, 0.92fr);
+  gap: var(--dc-gap-4);
   min-width: 0;
 }
 
-.loopy-center__header-main {
-  flex: 1;
+.loopy-center__hero-copy,
+.loopy-center__visual,
+.loopy-center__hero-rail,
+.loopy-center__hero-panel {
+  position: relative;
+  min-width: 0;
+}
+
+.loopy-center__hero-copy {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  justify-content: center;
+  gap: var(--dc-gap-4);
 }
 
 .loopy-center__kicker-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--dc-gap-3);
   flex-wrap: wrap;
 }
 
 .loopy-center__kicker {
   color: var(--dc-text-faint);
-  font-size: 12px;
+  font-size: var(--dc-body-size);
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -560,13 +863,13 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 .loopy-center__health-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 12px;
+  min-height: var(--dc-chip-height);
+  padding: 0 var(--dc-gap-4);
   border: 1px solid var(--dc-border);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.72);
   color: var(--dc-text-soft);
-  font-size: 12px;
+  font-size: var(--dc-caption-size);
   font-weight: 700;
 }
 
@@ -588,71 +891,306 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   color: var(--dc-danger);
 }
 
+.loopy-center__wordmark {
+  --winloop-text-logo-width: clamp(146px, 11vw, 186px);
+}
+
 .loopy-center__title {
   margin: 0;
   color: var(--dc-text);
-  font-size: clamp(26px, 2vw, 34px);
+  font-size: clamp(24px, 1.8vw, var(--dc-title-size));
   font-weight: 900;
-  line-height: 1.06;
+  line-height: 1.04;
   letter-spacing: -0.04em;
 }
 
 .loopy-center__subtitle {
-  max-width: 760px;
-  margin: 8px 0 0;
+  max-width: 540px;
+  margin: var(--dc-gap-2) 0 0;
   color: var(--dc-text-soft);
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.loopy-center__header-side {
-  width: min(100%, 380px);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.loopy-center__summary-strip,
-.loopy-center__freshness {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.loopy-center__summary-item,
-.loopy-center__freshness-item {
-  padding: 12px;
-  border: 1px solid var(--dc-border);
-  border-radius: 16px;
-  background: var(--dc-surface);
-}
-
-.loopy-center__summary-item span,
-.loopy-center__freshness-item span {
-  display: block;
-  color: var(--dc-text-faint);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.loopy-center__summary-item strong,
-.loopy-center__freshness-item strong {
-  display: block;
-  margin-top: 8px;
-  color: var(--dc-text);
-  font-size: 12px;
+  font-size: var(--dc-body-size);
   line-height: 1.5;
 }
 
-.loopy-center__freshness-item[data-stale='true'] {
-  border-color: rgba(183, 121, 31, 0.3);
-  background: var(--dc-warning-soft);
+.loopy-center__hero-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--dc-gap-2);
+}
+
+.loopy-center__hero-metric-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--dc-gap-1);
+  min-height: 68px;
+  padding: var(--dc-card-padding);
+  border: 1px solid var(--dc-border-strong);
+  border-radius: var(--dc-card-radius);
+  background: var(--dc-surface);
+}
+
+.loopy-center__hero-metric-card span {
+  display: block;
+  color: var(--dc-text-faint);
+  font-size: var(--dc-caption-size);
+  font-weight: 700;
+}
+
+.loopy-center__hero-metric-card strong {
+  display: block;
+  color: var(--dc-text);
+  font-size: clamp(17px, 1.3vw, var(--dc-metric-size));
+  font-weight: 900;
+  line-height: 1;
+}
+
+.loopy-center__hero-metric-card p {
+  margin: 0;
+  color: var(--dc-text-soft);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.loopy-center__hero-metric-card[data-tone='success'] {
+  background: rgba(15, 159, 98, 0.08);
+  border-color: rgba(15, 159, 98, 0.24);
+}
+
+.loopy-center__hero-metric-card[data-tone='warning'] {
+  background: rgba(183, 121, 31, 0.08);
+  border-color: rgba(183, 121, 31, 0.24);
+}
+
+.loopy-center__hero-metric-card[data-tone='danger'] {
+  background: rgba(209, 75, 102, 0.08);
+  border-color: rgba(209, 75, 102, 0.24);
+}
+
+.loopy-center__hero-metric-card[data-tone='primary'] {
+  background: rgba(36, 92, 255, 0.08);
+  border-color: rgba(36, 92, 255, 0.22);
+}
+
+.loopy-center__visual {
+  min-height: 236px;
+  display: flex;
+  align-items: stretch;
+}
+
+.loopy-center__visual-stage {
+  position: relative;
+  width: 100%;
+  min-height: 236px;
+  border: 1px solid var(--dc-border-strong);
+  border-radius: var(--dc-panel-radius);
+  overflow: hidden;
+  background: var(--wl-wb-stage-bg);
+}
+
+.loopy-center__visual-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+}
+
+.loopy-center__video-slot {
+  position: absolute;
+  right: var(--dc-gap-5);
+  bottom: var(--dc-gap-5);
+  width: min(43%, 228px);
+  aspect-ratio: 1;
+  padding: var(--dc-gap-2);
+  border: 1px solid rgba(150, 190, 248, 0.44);
+  border-radius: calc(var(--dc-panel-radius) + 6px);
+  background: rgba(245, 250, 255, 0.82);
+  backdrop-filter: blur(12px);
+}
+
+.loopy-center__video-slot-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: calc(var(--dc-panel-radius) + 2px);
+}
+
+.loopy-center__hero-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dc-gap-3);
+}
+
+.loopy-center__hero-panel {
+  padding: var(--dc-panel-padding);
+  border: 1px solid var(--dc-border-strong);
+  border-radius: var(--dc-panel-radius);
+  background: var(--dc-surface);
+}
+
+.loopy-center__hero-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--dc-gap-4);
+}
+
+.loopy-center__hero-panel-head h3 {
+  margin: 0;
+  color: var(--dc-text);
+  font-size: var(--dc-panel-title-size);
+  font-weight: 900;
+}
+
+.loopy-center__progress-layout {
+  display: grid;
+  grid-template-columns: var(--dc-progress-size) minmax(0, 1fr);
+  gap: var(--dc-gap-4);
+  align-items: center;
+}
+
+.loopy-center__progress-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: var(--dc-progress-size);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.94) 56%, transparent 57%),
+    conic-gradient(
+      #3f76ff 0 calc(var(--loopy-progress-value) * 1%),
+      rgba(216, 226, 240, 0.9) calc(var(--loopy-progress-value) * 1%) 100%
+    );
+}
+
+.loopy-center__progress-ring::after {
+  content: '';
+  position: absolute;
+  inset: var(--dc-progress-inset);
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(223, 232, 243, 0.88);
+}
+
+.loopy-center__progress-ring-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: calc(var(--dc-progress-size) - (var(--dc-progress-inset) * 4));
+  height: calc(var(--dc-progress-size) - (var(--dc-progress-inset) * 4));
+  border-radius: 999px;
+}
+
+.loopy-center__progress-ring-inner strong {
+  color: var(--dc-text);
+  font-size: calc(var(--dc-title-size) - 8px);
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
+.loopy-center__progress-meta {
+  display: grid;
+  gap: var(--dc-gap-2);
+  margin: 0;
+}
+
+.loopy-center__progress-item {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: var(--dc-gap-3);
+  align-items: start;
+}
+
+.loopy-center__progress-item dt {
+  color: var(--dc-text-faint);
+  font-size: var(--dc-caption-size);
+  font-weight: 700;
+}
+
+.loopy-center__progress-item dd {
+  margin: 0;
+  color: var(--dc-text-soft);
+  font-size: var(--dc-caption-size);
+  font-weight: 700;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.loopy-center__queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dc-gap-1);
+}
+
+.loopy-center__queue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dc-gap-4);
+  min-height: 44px;
+  padding: var(--dc-gap-2) 0;
+  border-bottom: 1px solid rgba(230, 236, 245, 0.92);
+}
+
+.loopy-center__queue-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.loopy-center__queue-item-main {
+  min-width: 0;
+}
+
+.loopy-center__queue-item-top {
+  display: flex;
+  align-items: center;
+  gap: var(--dc-gap-2);
+  color: var(--dc-text);
+  font-size: var(--dc-body-size);
+}
+
+.loopy-center__queue-item-main p {
+  margin: 2px 0 0;
+  color: var(--dc-text-soft);
+  font-size: var(--dc-caption-size);
+  line-height: 1.45;
+}
+
+.loopy-center__queue-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(198, 210, 229, 0.92);
+}
+
+.loopy-center__queue-item[data-tone='ready'] .loopy-center__queue-item-dot {
+  background: #4a7cff;
+  box-shadow: 0 0 0 3px rgba(74, 124, 255, 0.12);
+}
+
+.loopy-center__queue-item[data-tone='processing'] .loopy-center__queue-item-dot {
+  background: #50c7f1;
+  box-shadow: 0 0 0 3px rgba(80, 199, 241, 0.12);
+}
+
+.loopy-center__queue-item-side {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dc-gap-1);
+  color: var(--dc-text-faint);
+  font-size: var(--dc-caption-size);
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .loopy-center__grid {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 320px;
-  gap: 14px;
+  gap: var(--dc-gap-5);
 }
 
 .loopy-center__entry,
@@ -666,30 +1204,30 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 .loopy-center__main {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--dc-gap-5);
   min-width: 0;
 }
 
 .loopy-center__rail {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--dc-gap-5);
 }
 
 .loopy-center__entry-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--dc-gap-5);
 }
 
 .loopy-center__entry-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 12px;
+  gap: var(--dc-gap-2);
+  min-height: var(--dc-control-height);
+  padding: 0 var(--dc-gap-4);
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--dc-label-size);
   font-weight: 800;
   width: fit-content;
   border: 1px solid var(--dc-border);
@@ -724,65 +1262,65 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
 .loopy-center__entry-grid {
   display: grid;
-  gap: 10px;
+  gap: var(--dc-gap-3);
 }
 
 .loopy-center__entry-field {
-  padding: 10px 12px;
+  padding: var(--dc-card-padding);
   border: 1px solid var(--dc-border);
-  border-radius: 14px;
+  border-radius: var(--dc-card-radius);
   background: var(--dc-surface-soft);
 }
 
 .loopy-center__entry-field dt {
   color: var(--dc-text-faint);
-  font-size: 11px;
+  font-size: var(--dc-caption-size);
   font-weight: 700;
 }
 
 .loopy-center__entry-field dd {
-  margin: 6px 0 0;
+  margin: var(--dc-gap-1) 0 0;
   color: var(--dc-text);
-  font-size: 13px;
+  font-size: var(--dc-body-size);
   font-weight: 700;
   line-height: 1.5;
 }
 
 .loopy-center__entry-notice,
 .loopy-center__inline-empty {
-  padding: 12px 14px;
+  padding: var(--dc-card-padding) var(--dc-gap-5);
   border: 1px dashed var(--dc-border-strong);
-  border-radius: 14px;
+  border-radius: var(--dc-card-radius);
   background: rgba(255, 255, 255, 0.52);
   color: var(--dc-text-soft);
-  font-size: 12px;
-  line-height: 1.7;
+  font-size: var(--dc-label-size);
+  line-height: 1.6;
 }
 
 .loopy-center__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--dc-gap-2);
 }
 
 .loopy-center__action {
-  min-height: 38px;
-  padding: 0 14px;
+  min-height: var(--dc-control-height);
+  padding: 0 var(--dc-control-padding-x);
   border: 1px solid var(--dc-border);
-  border-radius: 12px;
+  border-radius: calc(var(--dc-card-radius) - 1px);
   background: rgba(255, 255, 255, 0.8);
   color: var(--dc-text-soft);
-  font-size: 12px;
+  font-size: var(--dc-label-size);
   font-weight: 800;
   transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease,
-    border-color 0.18s ease;
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
 }
 
 .loopy-center__action:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 24px rgba(23, 37, 61, 0.08);
+  border-color: rgba(127, 155, 207, 0.82);
+  background: rgba(248, 251, 255, 0.98);
 }
 
 .loopy-center__action:disabled {
@@ -800,20 +1338,20 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--dc-gap-2);
 }
 
 .loopy-center__main-pill,
 .loopy-center__status-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: var(--dc-chip-height);
+  padding: 0 var(--dc-gap-3);
   border-radius: 999px;
   border: 1px solid var(--dc-border);
   background: rgba(255, 255, 255, 0.72);
   color: var(--dc-text-soft);
-  font-size: 11px;
+  font-size: var(--dc-caption-size);
   font-weight: 800;
 }
 
@@ -847,15 +1385,15 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
 .loopy-center__metric-grid {
   display: grid;
-  gap: 10px;
+  gap: var(--dc-gap-3);
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .loopy-center__metric-card,
 .loopy-center__cluster-card {
-  padding: 12px;
+  padding: var(--dc-card-padding);
   border: 1px solid var(--dc-border);
-  border-radius: 16px;
+  border-radius: var(--dc-card-radius);
   background: var(--dc-surface-soft);
 }
 
@@ -863,25 +1401,25 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 .loopy-center__cluster-card span {
   display: block;
   color: var(--dc-text-faint);
-  font-size: 11px;
+  font-size: var(--dc-caption-size);
   font-weight: 700;
 }
 
 .loopy-center__metric-card strong,
 .loopy-center__cluster-card strong {
   display: block;
-  margin-top: 10px;
+  margin-top: var(--dc-gap-3);
   color: var(--dc-text);
-  font-size: 18px;
+  font-size: var(--dc-metric-size);
   font-weight: 900;
   line-height: 1;
 }
 
 .loopy-center__metric-card p,
 .loopy-center__cluster-card p {
-  margin: 8px 0 0;
+  margin: var(--dc-gap-2) 0 0;
   color: var(--dc-text-soft);
-  font-size: 11px;
+  font-size: var(--dc-caption-size);
   line-height: 1.55;
 }
 
@@ -909,9 +1447,9 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 }
 
 .loopy-center__surface {
-  margin-top: 14px;
+  margin-top: var(--dc-gap-5);
   border: 1px solid var(--dc-border);
-  border-radius: 18px;
+  border-radius: var(--dc-panel-radius);
   overflow: hidden;
 }
 
@@ -922,16 +1460,16 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 }
 
 .loopy-center__surface-head {
-  padding: 12px 14px;
+  padding: var(--dc-card-padding) var(--dc-gap-5);
   background: rgba(244, 248, 255, 0.84);
   color: var(--dc-text-faint);
-  font-size: 11px;
+  font-size: var(--dc-caption-size);
   font-weight: 800;
   letter-spacing: 0.03em;
 }
 
 .loopy-center__surface-row {
-  padding: 14px;
+  padding: var(--dc-gap-5);
   align-items: center;
   border-top: 1px solid var(--dc-border);
   background: rgba(255, 255, 255, 0.62);
@@ -941,7 +1479,7 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 .loopy-center__progress strong {
   display: block;
   color: var(--dc-text);
-  font-size: 13px;
+  font-size: var(--dc-body-size);
   font-weight: 800;
 }
 
@@ -951,9 +1489,9 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 .loopy-center__status-block p,
 .loopy-center__issue-block p {
   display: block;
-  margin-top: 6px;
+  margin-top: var(--dc-gap-1);
   color: var(--dc-text-soft);
-  font-size: 11px;
+  font-size: var(--dc-caption-size);
   line-height: 1.55;
 }
 
@@ -961,7 +1499,7 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   overflow: hidden;
   width: 100%;
   height: 7px;
-  margin-bottom: 8px;
+  margin-bottom: var(--dc-gap-2);
   border-radius: 999px;
   background: rgba(197, 211, 232, 0.58);
 }
@@ -980,7 +1518,7 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
 .loopy-center__lower {
   display: grid;
-  gap: 14px;
+  gap: var(--dc-gap-5);
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -989,22 +1527,22 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 .loopy-center__contract-sections {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--dc-gap-4);
 }
 
 .loopy-center__insight-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--dc-gap-2);
 }
 
 .loopy-center__insight-item,
 .loopy-center__recommendation,
 .loopy-center__contract-item,
 .loopy-center__legend-item {
-  padding: 12px;
+  padding: var(--dc-card-padding);
   border: 1px solid var(--dc-border);
-  border-radius: 14px;
+  border-radius: var(--dc-card-radius);
   background: var(--dc-surface-soft);
 }
 
@@ -1012,7 +1550,7 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--dc-gap-3);
 }
 
 .loopy-center__insight-item strong,
@@ -1021,7 +1559,7 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 .loopy-center__legend-item strong {
   display: block;
   color: var(--dc-text);
-  font-size: 12px;
+  font-size: var(--dc-label-size);
   font-weight: 800;
 }
 
@@ -1030,15 +1568,15 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 .loopy-center__contract-item p,
 .loopy-center__legend-item p {
   display: block;
-  margin-top: 6px;
+  margin-top: var(--dc-gap-1);
   color: var(--dc-text-soft);
-  font-size: 11px;
+  font-size: var(--dc-caption-size);
   line-height: 1.6;
 }
 
 .loopy-center__insight-item b {
   color: var(--dc-text);
-  font-size: 14px;
+  font-size: var(--dc-body-size);
   font-weight: 900;
   white-space: nowrap;
 }
@@ -1071,22 +1609,22 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
 .loopy-center__cluster-grid {
   display: grid;
-  gap: 8px;
+  gap: var(--dc-gap-2);
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .loopy-center__contract-section h3 {
-  margin: 0 0 10px;
+  margin: 0 0 var(--dc-gap-3);
   color: var(--dc-text);
-  font-size: 13px;
+  font-size: var(--dc-body-size);
   font-weight: 900;
 }
 
 .loopy-center__contract-item code {
   display: block;
-  margin-top: 8px;
-  padding: 8px 10px;
-  border-radius: 12px;
+  margin-top: var(--dc-gap-2);
+  padding: var(--dc-gap-2) var(--dc-gap-3);
+  border-radius: var(--dc-card-radius);
   background: rgba(21, 32, 49, 0.06);
   color: var(--dc-text);
   font-family: var(--wl-font-mono);
@@ -1097,7 +1635,7 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
 .loopy-center__legend-list {
   display: grid;
-  gap: 8px;
+  gap: var(--dc-gap-2);
 }
 
 .loopy-center__legend-item[data-tone='loading'] {
@@ -1105,6 +1643,10 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 }
 
 @media (max-width: 1520px) {
+  .loopy-center__hero {
+    grid-template-columns: 1fr;
+  }
+
   .loopy-center__grid {
     grid-template-columns: 300px minmax(0, 1fr);
   }
@@ -1117,12 +1659,8 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 }
 
 @media (max-width: 1240px) {
-  .loopy-center__header {
-    flex-direction: column;
-  }
-
-  .loopy-center__header-side {
-    width: 100%;
+  .loopy-center__hero-main {
+    grid-template-columns: 1fr;
   }
 
   .loopy-center__grid {
@@ -1134,6 +1672,7 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   }
 
   .loopy-center__metric-grid,
+  .loopy-center__hero-metric-grid,
   .loopy-center__lower,
   .loopy-center__cluster-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1149,17 +1688,36 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 }
 
 @media (max-width: 900px) {
-  .loopy-center {
-    padding: 14px;
-    border-radius: 20px;
+  .loopy-center__progress-layout {
+    grid-template-columns: 1fr;
+    justify-items: flex-start;
   }
 
-  .loopy-center__summary-strip,
-  .loopy-center__freshness,
+  .loopy-center__visual {
+    min-height: 220px;
+  }
+
+  .loopy-center__video-slot {
+    width: min(46%, 214px);
+  }
+
+  .loopy-center__hero-metric-grid,
   .loopy-center__metric-grid,
   .loopy-center__lower,
   .loopy-center__cluster-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .loopy-center__video-slot {
+    right: var(--dc-gap-3);
+    bottom: var(--dc-gap-3);
+    width: min(52%, 192px);
+  }
+
+  .loopy-center__queue-item {
+    align-items: flex-start;
   }
 }
 
@@ -1172,7 +1730,7 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   --dc-text: #eef5ff;
   --dc-text-soft: #b4c3da;
   --dc-text-faint: #8da2c0;
-  box-shadow: 0 24px 54px rgba(3, 6, 11, 0.42);
+  box-shadow: none;
 }
 
 :global(html.dark) .loopy-center__project-chip,

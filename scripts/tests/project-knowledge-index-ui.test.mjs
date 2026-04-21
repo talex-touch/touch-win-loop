@@ -51,6 +51,8 @@ describe('project knowledge index ui', () => {
     assert.match(loopyOverviewSource, /数据契约/, 'WorkspaceLoopyDataOverviewView 缺少数据契约区块')
     assert.match(loopyOverviewSource, /状态图例/, 'WorkspaceLoopyDataOverviewView 缺少状态图例区块')
     assert.match(loopyOverviewSource, /运行建议/, 'WorkspaceLoopyDataOverviewView 缺少运行建议区块')
+    assert.match(loopyOverviewSource, /winloop-hero-video\.mp4/, 'WorkspaceLoopyDataOverviewView 未接入 WinLoop 主视觉视频')
+    assert.match(loopyOverviewSource, /var\(--wl-wb-shell-padding/, 'WorkspaceLoopyDataOverviewView 未消费工作台全局 token')
     assert.match(loopyDataSource, /WorkspaceLoopyDataHealthView/, 'WorkspaceLoopyDataTab 未挂载健康视图')
     assert.match(loopyDataSource, /WorkspaceLoopyDataRelationsView/, 'WorkspaceLoopyDataTab 未挂载关系视图')
     assert.match(loopyDataSource, /WorkspaceLoopyDataSemanticSpace/, 'WorkspaceLoopyDataTab 未挂载语义空间视图')

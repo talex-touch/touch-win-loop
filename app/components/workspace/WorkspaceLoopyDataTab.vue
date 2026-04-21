@@ -137,14 +137,14 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, des
 .loopy-workbench {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--wl-wb-gap-5, 14px);
 }
 
 .loopy-workbench__toolbar {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--wl-wb-gap-4, 12px);
 }
 
 .loopy-workbench__toolbar-copy {
@@ -154,56 +154,56 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, des
 .loopy-workbench__eyebrow {
   display: inline-block;
   color: #7a8faa;
-  font-size: 11px;
+  font-size: var(--wl-wb-caption-size, 11px);
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .loopy-workbench__title {
-  margin: 8px 0 0;
+  margin: var(--wl-wb-gap-2, 8px) 0 0;
   color: #14253a;
-  font-size: 20px;
+  font-size: var(--wl-wb-panel-title-size, 16px);
   font-weight: 900;
 }
 
 .loopy-workbench__subtitle {
   max-width: 620px;
-  margin: 8px 0 0;
+  margin: var(--wl-wb-gap-2, 8px) 0 0;
   color: #607694;
-  font-size: 12px;
-  line-height: 1.7;
+  font-size: var(--wl-wb-caption-size, 11px);
+  line-height: 1.55;
 }
 
 .loopy-workbench__switcher {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--wl-wb-gap-2, 8px);
 }
 
 .loopy-workbench__switch {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-height: 54px;
-  min-width: 150px;
-  padding: 10px 14px;
+  gap: var(--wl-wb-gap-3, 10px);
+  min-height: calc(var(--wl-wb-control-height, 34px) + 12px);
+  min-width: 142px;
+  padding: var(--wl-wb-gap-3, 10px) var(--wl-wb-control-padding-x, 14px);
   border: 1px solid #d9e5f3;
-  border-radius: 16px;
+  border-radius: var(--wl-wb-card-radius, 12px);
   background: rgba(255, 255, 255, 0.82);
   color: #4f6788;
   text-align: left;
+  box-shadow: none;
   transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease,
     border-color 0.18s ease,
-    background-color 0.18s ease;
+    background-color 0.18s ease,
+    color 0.18s ease;
 }
 
 .loopy-workbench__switch:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 24px rgba(23, 37, 61, 0.08);
+  border-color: rgba(127, 155, 207, 0.82);
+  background: rgba(248, 251, 255, 0.96);
 }
 
 .loopy-workbench__switch[data-active='true'] {
@@ -213,7 +213,7 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, des
 }
 
 .loopy-workbench__switch-icon {
-  font-size: 19px;
+  font-size: 18px;
 }
 
 .loopy-workbench__switch-copy {
@@ -223,7 +223,7 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, des
 }
 
 .loopy-workbench__switch-copy strong {
-  font-size: 13px;
+  font-size: var(--wl-wb-body-size, 13px);
   font-weight: 800;
 }
 
