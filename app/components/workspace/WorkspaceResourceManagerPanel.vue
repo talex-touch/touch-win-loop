@@ -11,7 +11,7 @@ import type {
   Resource,
   ResourceCategory,
 } from '~~/shared/types/domain'
-import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
+import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type { ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 import type { WorkspaceOutlineNode, WorkspaceOutlineRow, WorkspaceOutlineSection } from '~/utils/workspace-outline'

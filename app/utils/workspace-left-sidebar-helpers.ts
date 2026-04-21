@@ -19,6 +19,7 @@ import {
   resolveProjectUploadTaskStatusText,
   resolveProjectUploadTaskTone,
 } from '~/utils/project-upload'
+import { formatWorkspaceDateTime } from '~/utils/workspace-main-panel-formatters'
 
 export interface OutlineItem {
   id: string
@@ -345,18 +346,6 @@ function resolveResourceUploadedAt(resource: Resource): string {
   return String(resource.createdAt || '').trim()
 }
 
-export function formatDateTime(value: string): string {
-  const normalized = String(value || '').trim()
-  if (!normalized)
-    return '-'
-
-  const date = new Date(normalized)
-  if (!Number.isFinite(date.getTime()))
-    return normalized
-
-  return date.toLocaleString('zh-CN', { hour12: false })
-}
-
 function findProjectMemberName(userId: string, projectMembers: ProjectMemberSummary[]): string {
   const normalizedUserId = String(userId || '').trim()
   if (!normalizedUserId)
@@ -459,15 +448,15 @@ export function resolveResourceDetailRows(
     },
     {
       label: '上传时间',
-      value: formatDateTime(uploadedAt),
+      value: formatWorkspaceDateTime(uploadedAt),
     },
     {
       label: '创建时间',
-      value: formatDateTime(createdAt),
+      value: formatWorkspaceDateTime(createdAt),
     },
     {
       label: '更新时间',
-      value: formatDateTime(updatedAt),
+      value: formatWorkspaceDateTime(updatedAt),
     },
     {
       label: '文件名',

@@ -13,7 +13,7 @@ import type {
   WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
-import type { ContextMenuRequest } from '~/components/ui/context-menu'
+import type { ContextMenuRequest } from '~/types/ui-context-menu'
 import type { ProjectUploadActivityItem, ProjectUploadSummary, ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 import type { WorkspaceOutlineNode, WorkspaceOutlineSection } from '~/utils/workspace-outline'

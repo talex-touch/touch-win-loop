@@ -35,7 +35,7 @@ import type {
   WorkspaceTabSpacingPreset,
   WorkspaceType,
 } from '~~/shared/types/domain'
-import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
+import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
 import type {
   NullableWorkspaceFontSizePreset,
@@ -44,9 +44,9 @@ import type {
 } from '~/composables/useWorkspaceDisplayPreferences'
 import type {
   WorkspaceMainTab,
-  WorkspaceMainTabId,
-  WorkspacePreviewMode,
 } from '~/composables/useWorkspaceMainTabs'
+import type { WorkspacePreviewMode } from '~/composables/useWorkspaceProjectResources'
+import type { WorkspaceMainTabId } from '~/composables/useWorkspaceProjectShell'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -84,8 +84,8 @@ import {
   resolveCollabResourceLabel,
 } from '~/utils/workspace-left-sidebar-helpers'
 import {
-  formatDateTime,
   formatEtaSeconds,
+  formatWorkspaceDateTime as formatDateTime,
   getShareStatus,
   previewErrorMessage,
   previewStatusLabel,

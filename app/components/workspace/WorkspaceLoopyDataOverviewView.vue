@@ -7,7 +7,7 @@ import {
   resolveHealthLabel,
   resolveHealthTone,
 } from '~/utils/loopy-data-center'
-import { formatDateTime, formatEtaSeconds } from '~/utils/workspace-main-panel-formatters'
+import { formatEtaSeconds, formatWorkspaceDateTime as formatDateTime } from '~/utils/workspace-main-panel-formatters'
 
 type ProjectKnowledgeReindexTarget = 'all' | 'stale' | 'failed'
 

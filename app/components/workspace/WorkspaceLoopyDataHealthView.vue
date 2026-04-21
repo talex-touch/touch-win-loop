@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Project, ProjectKnowledgeIndexDashboard, ProjectKnowledgeIndexSourceStatus } from '~~/shared/types/domain'
-import { formatDateTime, formatEtaSeconds } from '~/utils/workspace-main-panel-formatters'
+import { formatEtaSeconds, formatWorkspaceDateTime as formatDateTime } from '~/utils/workspace-main-panel-formatters'
 
 type ProjectKnowledgeReindexTarget = 'all' | 'stale' | 'failed'
 

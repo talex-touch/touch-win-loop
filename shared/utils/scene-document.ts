@@ -49,7 +49,7 @@ import type {
   SchemaIndexModel,
   SchemaModel,
   SchemaTableModel,
-} from '../types/domain-legacy'
+} from '../types/domain'
 import YAML from 'yaml'
 import { parseMockupDevicePresetKey } from './mockup-device-catalog'
 

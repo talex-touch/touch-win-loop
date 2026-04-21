@@ -826,7 +826,7 @@ export async function resolveKnowledgeEmbeddingRuntimeProfile(input: {
     baseURL: resolveDashScopeNativeBaseURL(embeddingAi.baseURL, provider),
     timeoutMs,
     maxRetries,
-  })
+  }
 }
 
 const analysisSchema = z.object({

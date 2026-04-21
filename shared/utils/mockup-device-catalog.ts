@@ -6,7 +6,7 @@ import type {
   MockupDeviceVariant,
   MockupProjectCatalogCategory,
   MockupVariantSlotKey,
-} from '../types/domain-legacy'
+} from '../types/domain'
 
 export const DEFAULT_MOCKUP_VARIANT_SLOT_KEY: MockupVariantSlotKey = 'variant_1'
 

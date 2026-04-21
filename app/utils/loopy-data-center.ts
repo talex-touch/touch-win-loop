@@ -6,7 +6,7 @@ import type {
   ProjectKnowledgeNodeDetail,
   ProjectKnowledgeRelationsPayload,
 } from '~~/shared/types/domain'
-import { formatDateTime } from '~/utils/workspace-main-panel-formatters'
+import { formatWorkspaceDateTime as formatDateTime } from '~/utils/workspace-main-panel-formatters'
 
 export type LoopyContractTone = 'neutral' | 'primary' | 'success' | 'warning' | 'danger' | 'muted'
 export type LoopyViewStateTone = 'default' | 'loading' | 'success' | 'warning' | 'error'
@@ -109,9 +109,9 @@ export interface LoopyNodeDetailContract {
   metrics: Array<{ label: string, value: string }>
 }
 
-function normalizeText(value: unknown, fallback = '-'): string {
+function normalizeText(value: unknown, fallback: string | null | undefined = '-'): string {
   const normalized = String(value || '').trim()
-  return normalized || fallback
+  return normalized || String(fallback || '')
 }
 
 export function formatCompactNumber(value: number | string | null | undefined): string {

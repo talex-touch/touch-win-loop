@@ -36,7 +36,7 @@ import type {
   WorkspaceFontSizePreset,
   WorkspaceTabSpacingPreset,
 } from '~~/shared/types/domain'
-import type { ContextMenuItem } from '~/components/ui/context-menu'
+import type { ContextMenuItem } from '~/types/ui-context-menu'
 import type { WorkspaceCollabCursorUser } from '~/components/workspace/collab/presence'
 import type { WorkspaceOutlineNode } from '~/utils/workspace-outline'
 import {

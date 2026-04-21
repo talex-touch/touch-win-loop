@@ -11,7 +11,7 @@ import type {
   ProjectKnowledgeSourceStatus,
   Resource,
 } from '~~/shared/types/domain'
-import type { ProjectKnowledgeMessagePayload } from '~~/shared/types/domain-legacy'
+import type { ProjectKnowledgeMessagePayload } from '~~/shared/types/domain'
 import { buildProjectResourceLocalContext } from '~~/server/services/ai/project-resource-context'
 import {
   createKnowledgeEmbedding,

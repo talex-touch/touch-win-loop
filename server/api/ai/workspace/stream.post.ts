@@ -63,6 +63,7 @@ const DOCUMENT_ASSIST_CHANNEL_KEYS: PlatformAiChannelKey[] = [
   'workspace_document_restructure',
 ]
 const SCENE_SOURCE_FORMATS: AiCanvasAssistSourceFormat[] = ['mermaid', 'markdown_outline', 'ddl', 'architecture']
+type WorkspaceRequestContext = NonNullable<AiWorkspaceRequest['context']>
 
 function toText(value: unknown): string {
   return String(value || '').trim()
@@ -213,8 +214,8 @@ function buildSessionContextSnapshot(request: AiWorkspaceRequest) {
     selectionText: toText(request.context?.selectionText),
     selectionRange: request.context?.selectionRange || null,
     activeTabId: toText(request.context?.activeTabId),
-    resourcePurpose: toText(request.context?.resourcePurpose) as typeof request.context.resourcePurpose,
-    requestedAgentAction: toText(request.context?.requestedAgentAction) as typeof request.context.requestedAgentAction,
+    resourcePurpose: toText(request.context?.resourcePurpose) as WorkspaceRequestContext['resourcePurpose'],
+    requestedAgentAction: toText(request.context?.requestedAgentAction) as WorkspaceRequestContext['requestedAgentAction'],
     workflowSnapshot: request.context?.workflowSnapshot || null,
     sceneHash: toText(request.context?.sceneHash),
     sceneSourceFormat: request.context?.sceneSourceFormat,

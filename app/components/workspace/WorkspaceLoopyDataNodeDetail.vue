@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ProjectKnowledgeNodeDetail } from '~~/shared/types/domain'
-import { formatDateTime } from '~/utils/workspace-main-panel-formatters'
+import { formatWorkspaceDateTime as formatDateTime } from '~/utils/workspace-main-panel-formatters'
 
 const props = withDefaults(defineProps<{
   detail?: ProjectKnowledgeNodeDetail | null

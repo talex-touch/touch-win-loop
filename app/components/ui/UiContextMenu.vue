@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ComputePositionReturn, VirtualElement } from '@floating-ui/dom'
 import type { WorkspaceFontSizePreset, WorkspaceTabSpacingPreset } from '~~/shared/types/domain'
-import type { ContextMenuAnchorPoint, ContextMenuItem } from './context-menu'
+import type { ContextMenuAnchorPoint, ContextMenuItem } from '~/types/ui-context-menu'
 import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom'
 
 const props = withDefaults(defineProps<{

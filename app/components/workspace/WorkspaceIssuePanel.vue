@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import type { ProjectIssue, ProjectIssueReport } from '~~/shared/types/domain'
 import {
-  formatDateTime,
   issueSeverityClass,
   issueSeverityLabel,
   latestIssueReport,
   visibleIssues,
 } from '~/utils/workspace-left-sidebar-helpers'
+import { formatWorkspaceDateTime as formatDateTime } from '~/utils/workspace-main-panel-formatters'
 
 const props = withDefaults(defineProps<{
   issueReports?: ProjectIssueReport[]

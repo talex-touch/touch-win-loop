@@ -1,11 +1,10 @@
 import type {
   WorkspaceFixedTabId,
-  WorkspaceOpenTabState,
 } from '~~/shared/types/domain'
+import type { WorkspacePreviewMode } from '~/composables/useWorkspaceProjectResources'
+import type { WorkspaceMainTabId } from '~/composables/useWorkspaceProjectShell'
+import { normalizeWorkspaceMainTabIds } from '~/composables/useWorkspaceProjectShell'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-
-export type WorkspaceMainTabId = WorkspaceOpenTabState
-export type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 
 export interface WorkspaceMainTab {
   id: WorkspaceMainTabId
@@ -32,15 +31,7 @@ interface UseWorkspaceMainTabsOptions {
   emitUpdateActiveTabId: (tabId: WorkspaceMainTabId | '') => void
 }
 
-export function normalizeWorkspaceMainTabIds(
-  tabIds: WorkspaceMainTabId[],
-  options: { allowEmpty?: boolean } = {},
-): WorkspaceMainTabId[] {
-  const normalized = [...new Set(tabIds)].filter(Boolean) as WorkspaceMainTabId[]
-  return normalized.length > 0 || options.allowEmpty ? normalized : ['dashboard']
-}
-
-export function areWorkspaceMainTabIdListsEqual(
+function areWorkspaceMainTabIdListsEqual(
   left: readonly WorkspaceMainTabId[],
   right: readonly WorkspaceMainTabId[],
 ): boolean {

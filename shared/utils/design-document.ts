@@ -7,7 +7,7 @@ import type {
   DesignFrameModel,
   DesignPageModel,
   SceneDocument,
-} from '../types/domain-legacy'
+} from '../types/domain'
 import {
   createEmptySceneDocument,
   sceneDocumentFromUnknown,

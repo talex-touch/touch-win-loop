@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { FeishuAuthAuditItem } from '~~/shared/types/domain-legacy'
+import type { FeishuAuthAuditItem } from '~~/shared/types/domain'
 
 const props = withDefaults(defineProps<{
   feishuAudits?: FeishuAuthAuditItem[]

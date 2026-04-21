@@ -6,7 +6,7 @@ import type {
   FeishuAuthUnbindResult,
   FeishuIntegrationConfig,
   OAuthAuthBindStatus,
-} from '~~/shared/types/domain-legacy'
+} from '~~/shared/types/domain'
 
 const DEFAULT_OAUTH_DISPLAY_NAME = '第三方 OAuth'
 

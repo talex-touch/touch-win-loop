@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { CasdoorAuthBindStatus, FeishuAuthBindStatus } from '~~/shared/types/domain-legacy'
+import type { CasdoorAuthBindStatus, FeishuAuthBindStatus } from '~~/shared/types/domain'
 
 const props = withDefaults(defineProps<{
   feishuBindStatus?: FeishuAuthBindStatus | null

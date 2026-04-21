@@ -21,10 +21,12 @@ import type {
   WorkspaceFormState,
   WorkspaceTopicBoardDraft,
 } from '~/types/workspace'
+import type {
+  WorkspacePrimaryAiMode,
+  WorkspaceWorkbenchMode,
+} from '~/composables/useWorkspaceProjectShell'
 import { reactive, ref } from 'vue'
 
-export type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
-export type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 export type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
 export type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
 

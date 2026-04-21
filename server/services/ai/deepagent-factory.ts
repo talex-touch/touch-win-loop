@@ -1,11 +1,20 @@
 import type { RunnableConfig } from '@langchain/core/runnables'
-import type { Checkpoint, CheckpointListOptions, CheckpointTuple } from '@langchain/langgraph-checkpoint'
-import type { CheckpointMetadata, PendingWrite } from '@langchain/langgraph-checkpoint'
-import type { BaseStore, Item, Operation, SearchItem } from '@langchain/langgraph-checkpoint/dist/store/base.js'
+import type {
+  BaseStore,
+  Checkpoint,
+  CheckpointPendingWrite,
+  CheckpointListOptions,
+  CheckpointMetadata,
+  CheckpointTuple,
+  Item,
+  Operation,
+  OperationResults,
+  PendingWrite,
+  SearchItem,
+} from '@langchain/langgraph-checkpoint'
 import type { RuntimeSettings } from '~~/server/utils/env'
 import { createDeepAgent } from 'deepagents'
-import { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint'
-import { BaseStore as BaseStoreClass } from '@langchain/langgraph-checkpoint/dist/store/base.js'
+import { BaseCheckpointSaver, BaseStore as BaseStoreClass } from '@langchain/langgraph-checkpoint'
 import { getPool } from '~~/server/utils/db'
 
 const NAMESPACE_SEPARATOR = '\u001F'
@@ -17,7 +26,7 @@ interface DeepAgentCheckpointRow {
   parent_checkpoint_id: string
   checkpoint_json: Checkpoint
   metadata_json: CheckpointMetadata
-  pending_writes_json: Array<[string, ...PendingWrite[]]>
+  pending_writes_json: unknown
 }
 
 interface DeepAgentStoreItemRow {
@@ -37,6 +46,15 @@ function normalizeRecord(value: unknown): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     return {}
   return value as Record<string, any>
+}
+
+function normalizeCheckpointPendingWrites(value: unknown): CheckpointPendingWrite[] {
+  if (!Array.isArray(value))
+    return []
+
+  return value.filter((entry): entry is CheckpointPendingWrite => {
+    return Array.isArray(entry) && entry.length === 3 && typeof entry[0] === 'string' && typeof entry[1] === 'string'
+  })
 }
 
 function encodeNamespacePath(namespace: string[]): string {
@@ -111,7 +129,7 @@ function parseThreadConfig(config: RunnableConfig): {
 }
 
 class PostgresCheckpointSaver extends BaseCheckpointSaver {
-  async getTuple(config: RunnableConfig): Promise<CheckpointTuple | undefined> {
+  override async getTuple(config: RunnableConfig): Promise<CheckpointTuple | undefined> {
     const { threadId, checkpointNs, checkpointId } = parseThreadConfig(config)
     if (!threadId)
       return undefined
@@ -159,13 +177,11 @@ class PostgresCheckpointSaver extends BaseCheckpointSaver {
             checkpointId: row.parent_checkpoint_id,
           })
         : undefined,
-      pendingWrites: Array.isArray(row.pending_writes_json)
-        ? row.pending_writes_json as CheckpointTuple['pendingWrites']
-        : [],
+      pendingWrites: normalizeCheckpointPendingWrites(row.pending_writes_json),
     }
   }
 
-  async *list(config: RunnableConfig, options?: CheckpointListOptions): AsyncGenerator<CheckpointTuple> {
+  override async *list(config: RunnableConfig, options?: CheckpointListOptions): AsyncGenerator<CheckpointTuple> {
     const { threadId, checkpointNs } = parseThreadConfig(config)
     if (!threadId)
       return
@@ -212,14 +228,12 @@ class PostgresCheckpointSaver extends BaseCheckpointSaver {
               checkpointId: row.parent_checkpoint_id,
             })
           : undefined,
-        pendingWrites: Array.isArray(row.pending_writes_json)
-          ? row.pending_writes_json as CheckpointTuple['pendingWrites']
-          : [],
+        pendingWrites: normalizeCheckpointPendingWrites(row.pending_writes_json),
       }
     }
   }
 
-  async put(
+  override async put(
     config: RunnableConfig,
     checkpoint: Checkpoint,
     metadata: CheckpointMetadata,
@@ -266,14 +280,14 @@ class PostgresCheckpointSaver extends BaseCheckpointSaver {
     })
   }
 
-  async putWrites(config: RunnableConfig, writes: PendingWrite[], taskId: string): Promise<void> {
+  override async putWrites(config: RunnableConfig, writes: PendingWrite[], taskId: string): Promise<void> {
     const { threadId, checkpointNs, checkpointId } = parseThreadConfig(config)
     if (!threadId || !checkpointId || writes.length === 0)
       return
 
-    const existing = await this.getTuple(config)
-    const pendingWrites = existing?.pendingWrites || []
-    pendingWrites.push([taskId, ...writes])
+    const pendingWrites = [...((await this.getTuple(config))?.pendingWrites || [])]
+    const nextPendingWrites: CheckpointPendingWrite[] = writes.map(([channel, value]) => [taskId, channel, value])
+    pendingWrites.push(...nextPendingWrites)
 
     const pool = await getPool()
     await pool.query(
@@ -292,7 +306,7 @@ class PostgresCheckpointSaver extends BaseCheckpointSaver {
     )
   }
 
-  async deleteThread(threadId: string): Promise<void> {
+  override async deleteThread(threadId: string): Promise<void> {
     const normalizedThreadId = toText(threadId)
     if (!normalizedThreadId)
       return
@@ -306,7 +320,7 @@ class PostgresCheckpointSaver extends BaseCheckpointSaver {
 }
 
 class PostgresStore extends BaseStoreClass {
-  async batch<Op extends Operation[]>(operations: Op): Promise<any> {
+  override async batch<Op extends Operation[]>(operations: Op): Promise<OperationResults<Op>> {
     const results: unknown[] = []
     for (const operation of operations) {
       if ('namespace' in operation && 'key' in operation && 'value' in operation) {
@@ -340,10 +354,10 @@ class PostgresStore extends BaseStoreClass {
         offset: operation.offset,
       }))
     }
-    return results
+    return results as OperationResults<Op>
   }
 
-  async get(namespace: string[], key: string): Promise<Item | null> {
+  override async get(namespace: string[], key: string): Promise<Item | null> {
     const pool = await getPool()
     const namespacePath = encodeNamespacePath(namespace)
     const result = await pool.query<DeepAgentStoreItemRow>(
@@ -372,7 +386,7 @@ class PostgresStore extends BaseStoreClass {
     }
   }
 
-  async search(namespacePrefix: string[], options?: {
+  override async search(namespacePrefix: string[], options?: {
     filter?: Record<string, any>
     limit?: number
     offset?: number
@@ -421,7 +435,7 @@ class PostgresStore extends BaseStoreClass {
     return filtered.slice(offset, offset + limit)
   }
 
-  async put(namespace: string[], key: string, value: Record<string, any>, index?: false | string[]): Promise<void> {
+  override async put(namespace: string[], key: string, value: Record<string, any>, index?: false | string[]): Promise<void> {
     const pool = await getPool()
     const normalizedNamespace = namespace.map(item => toText(item)).filter(Boolean)
     await pool.query(
@@ -451,7 +465,7 @@ class PostgresStore extends BaseStoreClass {
     )
   }
 
-  async delete(namespace: string[], key: string): Promise<void> {
+  override async delete(namespace: string[], key: string): Promise<void> {
     const pool = await getPool()
     await pool.query(
       `DELETE FROM ai_deepagent_store_items
@@ -461,7 +475,7 @@ class PostgresStore extends BaseStoreClass {
     )
   }
 
-  async listNamespaces(options?: {
+  override async listNamespaces(options?: {
     prefix?: string[]
     suffix?: string[]
     maxDepth?: number

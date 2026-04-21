@@ -95,7 +95,7 @@ export function workspaceInvitationScopeLabel(invitation: ProjectInvitationSumma
   return `项目角色：${roleLabel}`
 }
 
-export function formatDateTime(value: string): string {
+export function formatWorkspaceDateTime(value: string | null | undefined): string {
   const normalized = String(value || '').trim()
   if (!normalized)
     return '-'

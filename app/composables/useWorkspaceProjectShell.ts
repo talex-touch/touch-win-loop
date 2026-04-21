@@ -42,7 +42,7 @@ interface TopicBoardConfirmState extends Required<TopicBoardConfirmOptions> {
 export type DeviceRestoreChoice = 'sync' | 'keep'
 export type WorkspaceLeftSidebarCommandModuleId = 'resource_manager' | 'analysis'
 export type WorkspaceMainTabId = WorkspaceOpenTabState
-export type WorkspaceMeetingTabId = `meeting:${string}`
+type WorkspaceMeetingTabId = `meeting:${string}`
 export type WorkspaceMeetingCreateLocalTabId = WorkspaceMeetingCreateTabId
 export type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 export type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>

@@ -8,7 +8,7 @@ import type {
   ProjectKnowledgeProjectionType,
   ProjectKnowledgeSourceStatus,
 } from '~~/shared/types/domain'
-import type { ProjectKnowledgeMessagePayload } from '~~/shared/types/domain-legacy'
+import type { ProjectKnowledgeMessagePayload } from '~~/shared/types/domain'
 import { computed, ref } from 'vue'
 
 const props = defineProps<{

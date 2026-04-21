@@ -1,21 +1,2 @@
-export type {
-  AuthLoginMeta,
-  AuthLoginResult,
-  AuthMeResult,
-  AuthSession,
-  AuthSessionHistoryItem,
-  AuthSessionHistoryStatus,
-  AuthSessionProbeResult,
-  AuthUser,
-  CasdoorAuthMeta,
-  CasdoorIntegrationConfig,
-  OAuthAuthMeta,
-  OAuthProtocolMode,
-  PlatformPermission,
-  PlatformRole,
-  PlatformRoleAssignment,
-  UserNotification,
-  UserNotificationCategory,
-  UserNotificationListResult,
-  UserNotificationType,
-} from './domain-legacy'
+// 公共共享类型统一从 ./domain 导出，避免 Nuxt 生成重复自动导入。
+export {}

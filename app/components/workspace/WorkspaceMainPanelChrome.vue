@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ContextMenuAnchorPoint } from '~/components/ui/context-menu'
+import type { ContextMenuAnchorPoint } from '~/types/ui-context-menu'
 import type { WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
 import CollabPresenceAvatarStack from '~/components/workspace/collab/CollabPresenceAvatarStack.vue'
 

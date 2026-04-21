@@ -90,8 +90,8 @@ import type {
   WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
-import type { AiWorkspaceSceneDraft, WorkspaceContextualAssistantKey } from '~~/shared/types/domain-legacy'
-import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
+import type { AiWorkspaceSceneDraft, WorkspaceContextualAssistantKey } from '~~/shared/types/domain'
+import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
 import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
 import type { WorkspacePreviewMode } from '~/composables/useWorkspaceProjectResources'
