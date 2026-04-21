@@ -12565,6 +12565,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
         <WorkspaceShellLoadingOverlay
           v-if="workbenchSwitchLoading"
           :progress="workbenchSwitchProgress"
+          visual="text-progress"
         />
       </Transition>
     </section>
