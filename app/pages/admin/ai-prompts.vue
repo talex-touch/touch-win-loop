@@ -18,6 +18,7 @@ type ProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'sear
 type ProviderCapability = 'llm' | 'search'
 type ModelCapability = 'chat' | 'vision' | 'embedding' | 'image-gen' | 'video-gen'
 type LoadBalanceStrategy = 'round_robin'
+type FailoverStrategy = 'model_then_provider'
 type PlatformAiChannelKey
   = 'contest_filter'
     | 'project_chat'
@@ -106,8 +107,9 @@ interface SceneItem {
   enabled: boolean
   providerIds: string[]
   loadBalanceStrategy: LoadBalanceStrategy
+  models: string[]
   modelFallback: string[]
-  models?: string[]
+  failoverStrategy: FailoverStrategy
   prompt: string
 }
 
@@ -458,14 +460,18 @@ const sceneEditorForm = reactive({
   enabled: true,
   providerIds: [] as string[],
   loadBalanceStrategy: 'round_robin' as LoadBalanceStrategy,
+  models: [] as string[],
   modelFallback: [] as string[],
+  failoverStrategy: 'model_then_provider' as FailoverStrategy,
   prompt: '',
 })
 const sceneBatchEditorVisible = ref(false)
 const sceneBatchForm = reactive({
   providerIds: [] as string[],
   loadBalanceStrategy: 'round_robin' as LoadBalanceStrategy,
+  models: [] as string[],
   modelFallback: [] as string[],
+  failoverStrategy: 'model_then_provider' as FailoverStrategy,
 })
 
 function formatTime(value?: string | null): string {
@@ -1002,8 +1008,90 @@ function resolveSceneModelCatalog(providerIds: string[], currentModels: string[]
   return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
 }
 
-const sceneEditorModelOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.modelFallback, sceneRequiredCapability(sceneEditorForm.key), sceneEmbeddingApiStyleFilter(sceneEditorForm.key)))
-const sceneBatchModelOptions = computed(() => resolveSceneModelCatalog(sceneBatchForm.providerIds, sceneBatchForm.modelFallback))
+function resolveSceneBatchModelCatalog(providerIds: string[], currentModels: string[] = []): Array<{ model: string, label: string, priceText: string }> {
+  const providerSet = new Set(providerIds)
+  const map = new Map<string, { model: string, label: string, priceText: string }>()
+  for (const provider of providers.value.filter(item => item.capability === 'llm' && providerSet.has(item.id))) {
+    for (const model of provider.models.filter(item => item.enabled)) {
+      if (!map.has(model.model)) {
+        map.set(model.model, {
+          model: model.model,
+          label: model.label,
+          priceText: buildPriceText(model),
+        })
+      }
+    }
+  }
+  for (const model of currentModels) {
+    const normalized = String(model || '').trim()
+    if (normalized && !map.has(normalized)) {
+      map.set(normalized, {
+        model: normalized,
+        label: normalized,
+        priceText: '未在当前 Provider 模型池中',
+      })
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+}
+
+function normalizeSceneModels(models: string[], providerIds: string[], capability: ModelCapability = 'chat', embeddingApiStyle: EmbeddingApiStyle | null = null): string[] {
+  const catalog = new Set(resolveSceneModelCatalog(providerIds, [], capability, embeddingApiStyle).map(item => item.model))
+  const normalized = dedupeStrings(models)
+  if (catalog.size === 0)
+    return normalized
+  return normalized.filter(item => catalog.has(item))
+}
+
+function normalizeSceneBatchModels(models: string[], providerIds: string[]): string[] {
+  const catalog = new Set(resolveSceneBatchModelCatalog(providerIds, []).map(item => item.model))
+  const normalized = dedupeStrings(models)
+  if (catalog.size === 0)
+    return normalized
+  return normalized.filter(item => catalog.has(item))
+}
+
+function normalizeSceneRoutingConfig(
+  input: Pick<SceneItem, 'models' | 'modelFallback' | 'key'>,
+  providerIds: string[],
+): Pick<SceneItem, 'models' | 'modelFallback'> {
+  const models = normalizeSceneModels(
+    input.models.length > 0 ? input.models : input.modelFallback,
+    providerIds,
+    sceneRequiredCapability(input.key),
+    sceneEmbeddingApiStyleFilter(input.key),
+  )
+  const modelSet = new Set(models)
+  return {
+    models,
+    modelFallback: normalizeSceneModels(
+      input.modelFallback,
+      providerIds,
+      sceneRequiredCapability(input.key),
+      sceneEmbeddingApiStyleFilter(input.key),
+    ).filter(item => modelSet.has(item)),
+  }
+}
+
+function normalizeSceneBatchRoutingConfig(input: Pick<typeof sceneBatchForm, 'models' | 'modelFallback'>): Pick<typeof sceneBatchForm, 'models' | 'modelFallback'> {
+  const models = normalizeSceneBatchModels(input.models.length > 0 ? input.models : input.modelFallback, sceneBatchForm.providerIds)
+  const modelSet = new Set(models)
+  return {
+    models,
+    modelFallback: normalizeSceneBatchModels(input.modelFallback, sceneBatchForm.providerIds).filter(item => modelSet.has(item)),
+  }
+}
+
+const sceneEditorModelPoolOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.models, sceneRequiredCapability(sceneEditorForm.key), sceneEmbeddingApiStyleFilter(sceneEditorForm.key)))
+const sceneEditorFallbackOptions = computed(() => {
+  const modelSet = new Set(sceneEditorForm.models)
+  return sceneEditorModelPoolOptions.value.filter(item => modelSet.has(item.model))
+})
+const sceneBatchModelPoolOptions = computed(() => resolveSceneBatchModelCatalog(sceneBatchForm.providerIds, sceneBatchForm.models))
+const sceneBatchFallbackOptions = computed(() => {
+  const modelSet = new Set(sceneBatchForm.models)
+  return sceneBatchModelPoolOptions.value.filter(item => modelSet.has(item.model))
+})
 
 function resolveDefaultModelOptions(capability: ModelCapability): Array<{ model: string, label: string, providerName: string }> {
   const map = new Map<string, { model: string, label: string, providerName: string }>()
@@ -1030,14 +1118,6 @@ function normalizeSceneProviderIds(providerIds: string[]): string[] {
   return dedupeStrings(providerIds).filter(item => llmProviderIdSet.has(item))
 }
 
-function normalizeSceneModelFallback(modelFallback: string[], providerIds: string[], capability: ModelCapability = 'chat', embeddingApiStyle: EmbeddingApiStyle | null = null): string[] {
-  const catalog = new Set(resolveSceneModelCatalog(providerIds, [], capability, embeddingApiStyle).map(item => item.model))
-  const normalized = dedupeStrings(modelFallback)
-  if (catalog.size === 0)
-    return normalized
-  return normalized.filter(item => catalog.has(item))
-}
-
 const sceneRows = computed(() => {
   const definitionIndex = new Map(sceneDefinitions.value.map((item, index) => [item.key, index]))
   return [...sceneItems.value].sort((a, b) => Number(definitionIndex.get(a.key) ?? 999) - Number(definitionIndex.get(b.key) ?? 999))
@@ -1062,10 +1142,25 @@ function sceneProvidersPreview(scene: SceneItem): string {
     .join(' / ')
 }
 
-function sceneModelsPreview(scene: SceneItem): string {
-  if (scene.modelFallback.length === 0)
-    return '未配置，运行时将回退默认模型'
+function sceneModelPoolPreview(scene: SceneItem): string {
+  if (scene.models.length === 0)
+    return '未配置，运行时将回退默认模型池'
+  return scene.models.join(' / ')
+}
+
+function sceneFallbackPreview(scene: SceneItem): string {
+  if (scene.modelFallback.length === 0) {
+    if (scene.models.length === 0)
+      return '未配置，运行时将回退默认模型'
+    return `未单独配置，将按模型池顺序：${scene.models.join(' -> ')}`
+  }
   return scene.modelFallback.join(' -> ')
+}
+
+function sceneFailoverStrategyLabel(scene: Pick<SceneItem, 'failoverStrategy'>): string {
+  if (scene.failoverStrategy === 'model_then_provider')
+    return '按模型顺序切换，同模型内轮询 Provider'
+  return '按模型顺序切换，同模型内轮询 Provider'
 }
 
 function sceneUsageHint(scene: SceneItem): string {
@@ -1111,13 +1206,23 @@ function applyConsolePayload(payload: ProvidersPayload): void {
   defaultsForm.visionModel = payload.defaults?.visionModel || ''
   defaultsForm.documentModel = payload.defaults?.documentModel || ''
   sceneDefinitions.value = payload.scenes?.definitions || []
-  sceneItems.value = (payload.scenes?.items || []).map(item => ({
-    ...item,
-    providerIds: dedupeStrings(item.providerIds || []),
-    loadBalanceStrategy: item.loadBalanceStrategy || 'round_robin',
-    modelFallback: dedupeStrings(item.modelFallback || item.models || []),
-    prompt: String(item.prompt || ''),
-  }))
+  sceneItems.value = (payload.scenes?.items || []).map((item) => {
+    const providerIds = normalizeSceneProviderIds(item.providerIds || [])
+    const normalizedRouting = normalizeSceneRoutingConfig({
+      key: item.key,
+      models: dedupeStrings(item.models || item.modelFallback || []),
+      modelFallback: dedupeStrings(item.modelFallback || []),
+    }, providerIds)
+    return {
+      ...item,
+      providerIds,
+      loadBalanceStrategy: item.loadBalanceStrategy || 'round_robin',
+      models: normalizedRouting.models,
+      modelFallback: normalizedRouting.modelFallback,
+      failoverStrategy: item.failoverStrategy || 'model_then_provider',
+      prompt: String(item.prompt || ''),
+    }
+  })
 
   adminAiForm.enabled = Boolean(payload.adminAi.enabled)
   adminAiForm.webTimeoutMs = Number(payload.adminAi.webTimeoutMs || 12000)
@@ -1180,16 +1285,22 @@ async function saveConsole() {
           documentModel: defaultsForm.documentModel,
         },
         scenes: {
-          items: sceneItems.value.map(item => ({
-            key: item.key,
-            label: item.label,
-            description: item.description,
-            enabled: item.enabled,
-            providerIds: normalizeSceneProviderIds(item.providerIds),
-            loadBalanceStrategy: item.loadBalanceStrategy,
-            modelFallback: normalizeSceneModelFallback(item.modelFallback, item.providerIds, sceneRequiredCapability(item.key), sceneEmbeddingApiStyleFilter(item.key)),
-            prompt: item.prompt,
-          })),
+          items: sceneItems.value.map((item) => {
+            const providerIds = normalizeSceneProviderIds(item.providerIds)
+            const normalizedRouting = normalizeSceneRoutingConfig(item, providerIds)
+            return {
+              key: item.key,
+              label: item.label,
+              description: item.description,
+              enabled: item.enabled,
+              providerIds,
+              loadBalanceStrategy: item.loadBalanceStrategy,
+              models: normalizedRouting.models,
+              modelFallback: normalizedRouting.modelFallback,
+              failoverStrategy: item.failoverStrategy,
+              prompt: item.prompt,
+            }
+          }),
         },
         adminAi: {
           enabled: adminAiForm.enabled,
@@ -1269,22 +1380,60 @@ function handleProviderTypeChange(value: string | number | boolean | Record<stri
 
 function handleSceneProviderIdsChange(value: string | number | boolean | Array<string | number> | undefined) {
   const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
-  sceneEditorForm.providerIds = normalizeSceneProviderIds(values)
+  const providerIds = normalizeSceneProviderIds(values)
+  const normalizedRouting = normalizeSceneRoutingConfig(sceneEditorForm, providerIds)
+  sceneEditorForm.providerIds = providerIds
+  sceneEditorForm.models = normalizedRouting.models
+  sceneEditorForm.modelFallback = normalizedRouting.modelFallback
+}
+
+function handleSceneModelsChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  const previousModels = new Set(sceneEditorForm.models)
+  const models = normalizeSceneModels(values, sceneEditorForm.providerIds, sceneRequiredCapability(sceneEditorForm.key), sceneEmbeddingApiStyleFilter(sceneEditorForm.key))
+  const modelSet = new Set(models)
+  const modelFallback = sceneEditorForm.modelFallback.filter(item => modelSet.has(item))
+  for (const model of models) {
+    if (!previousModels.has(model) && !modelFallback.includes(model))
+      modelFallback.push(model)
+  }
+  sceneEditorForm.models = models
+  sceneEditorForm.modelFallback = modelFallback
 }
 
 function handleSceneModelFallbackChange(value: string | number | boolean | Array<string | number> | undefined) {
   const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
-  sceneEditorForm.modelFallback = dedupeStrings(values)
+  const modelSet = new Set(sceneEditorForm.models)
+  sceneEditorForm.modelFallback = dedupeStrings(values).filter(item => modelSet.has(item))
 }
 
 function handleSceneBatchProviderIdsChange(value: string | number | boolean | Array<string | number> | undefined) {
   const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
-  sceneBatchForm.providerIds = normalizeSceneProviderIds(values)
+  const providerIds = normalizeSceneProviderIds(values)
+  sceneBatchForm.providerIds = providerIds
+  const normalizedRouting = normalizeSceneBatchRoutingConfig(sceneBatchForm)
+  sceneBatchForm.models = normalizedRouting.models
+  sceneBatchForm.modelFallback = normalizedRouting.modelFallback
+}
+
+function handleSceneBatchModelsChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  const previousModels = new Set(sceneBatchForm.models)
+  const models = normalizeSceneBatchModels(values, sceneBatchForm.providerIds)
+  const modelSet = new Set(models)
+  const modelFallback = sceneBatchForm.modelFallback.filter(item => modelSet.has(item))
+  for (const model of models) {
+    if (!previousModels.has(model) && !modelFallback.includes(model))
+      modelFallback.push(model)
+  }
+  sceneBatchForm.models = models
+  sceneBatchForm.modelFallback = modelFallback
 }
 
 function handleSceneBatchModelFallbackChange(value: string | number | boolean | Array<string | number> | undefined) {
   const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
-  sceneBatchForm.modelFallback = dedupeStrings(values)
+  const modelSet = new Set(sceneBatchForm.models)
+  sceneBatchForm.modelFallback = dedupeStrings(values).filter(item => modelSet.has(item))
 }
 
 function saveProviderDrawer() {
@@ -1306,10 +1455,12 @@ function removeProvider(providerId: string) {
   providers.value = providers.value.filter(item => item.id !== providerId)
   sceneItems.value = sceneItems.value.map((scene) => {
     const providerIds = scene.providerIds.filter(id => id !== providerId)
+    const normalizedRouting = normalizeSceneRoutingConfig(scene, providerIds)
     return {
       ...scene,
       providerIds,
-      modelFallback: normalizeSceneModelFallback(scene.modelFallback, providerIds, sceneRequiredCapability(scene.key), sceneEmbeddingApiStyleFilter(scene.key)),
+      models: normalizedRouting.models,
+      modelFallback: normalizedRouting.modelFallback,
     }
   })
 }
@@ -1567,7 +1718,9 @@ function openSceneDrawer(record: SceneItem) {
   sceneEditorForm.enabled = Boolean(record.enabled)
   sceneEditorForm.providerIds = dedupeStrings(record.providerIds || [])
   sceneEditorForm.loadBalanceStrategy = record.loadBalanceStrategy || 'round_robin'
+  sceneEditorForm.models = dedupeStrings(record.models || record.modelFallback || [])
   sceneEditorForm.modelFallback = dedupeStrings(record.modelFallback || [])
+  sceneEditorForm.failoverStrategy = record.failoverStrategy || 'model_then_provider'
   sceneEditorForm.prompt = String(record.prompt || '')
   sceneEditorVisible.value = true
 }
@@ -1581,6 +1734,7 @@ function saveSceneDrawer() {
   if (index < 0)
     return
   const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds)
+  const normalizedRouting = normalizeSceneRoutingConfig(sceneEditorForm, providerIds)
   const next = [...sceneItems.value]
   next.splice(index, 1, {
     key: sceneEditorForm.key,
@@ -1589,7 +1743,9 @@ function saveSceneDrawer() {
     enabled: Boolean(sceneEditorForm.enabled),
     providerIds,
     loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
-    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds, sceneRequiredCapability(sceneEditorForm.key), sceneEmbeddingApiStyleFilter(sceneEditorForm.key)),
+    models: normalizedRouting.models,
+    modelFallback: normalizedRouting.modelFallback,
+    failoverStrategy: sceneEditorForm.failoverStrategy,
     prompt: String(sceneEditorForm.prompt || ''),
   })
   sceneItems.value = next
@@ -1598,10 +1754,13 @@ function saveSceneDrawer() {
 
 function openSceneBatchDrawer() {
   const mostUsedProviderIds = dedupeStrings(sceneItems.value.flatMap(item => item.providerIds || []))
-  const mostUsedModels = dedupeStrings(sceneItems.value.flatMap(item => item.modelFallback || []))
+  const mostUsedModels = dedupeStrings(sceneItems.value.flatMap(item => item.models || item.modelFallback || []))
+  const mostUsedFallback = dedupeStrings(sceneItems.value.flatMap(item => item.modelFallback || []))
   sceneBatchForm.providerIds = mostUsedProviderIds
   sceneBatchForm.loadBalanceStrategy = 'round_robin'
-  sceneBatchForm.modelFallback = mostUsedModels
+  sceneBatchForm.models = mostUsedModels
+  sceneBatchForm.modelFallback = mostUsedFallback
+  sceneBatchForm.failoverStrategy = 'model_then_provider'
   sceneBatchEditorVisible.value = true
 }
 
@@ -1611,25 +1770,44 @@ function closeSceneBatchDrawer() {
 
 function applySceneBatchConfig() {
   const providerIds = normalizeSceneProviderIds(sceneBatchForm.providerIds)
-  sceneItems.value = sceneItems.value.map(item => ({
-    ...item,
-    providerIds,
-    loadBalanceStrategy: sceneBatchForm.loadBalanceStrategy,
-    modelFallback: normalizeSceneModelFallback(sceneBatchForm.modelFallback, providerIds, sceneRequiredCapability(item.key), sceneEmbeddingApiStyleFilter(item.key)),
-  }))
+  const normalizedBatch = normalizeSceneBatchRoutingConfig(sceneBatchForm)
+  sceneItems.value = sceneItems.value.map((item) => {
+    const normalizedRouting = normalizeSceneRoutingConfig({
+      key: item.key,
+      models: normalizedBatch.models,
+      modelFallback: normalizedBatch.modelFallback,
+    }, providerIds)
+    return {
+      ...item,
+      providerIds,
+      loadBalanceStrategy: sceneBatchForm.loadBalanceStrategy,
+      models: normalizedRouting.models,
+      modelFallback: normalizedRouting.modelFallback,
+      failoverStrategy: sceneBatchForm.failoverStrategy,
+    }
+  })
   sceneBatchEditorVisible.value = false
-  Message.success(`已为 ${sceneItems.value.length} 个场景应用统一 Provider 与回退策略。`)
+  Message.success(`已为 ${sceneItems.value.length} 个场景应用统一 Provider、模型池与故障转移策略。`)
 }
 
 function applyCurrentSceneConfigToAll() {
   const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds)
-  sceneItems.value = sceneItems.value.map(item => ({
-    ...item,
-    providerIds,
-    loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
-    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds, sceneRequiredCapability(item.key), sceneEmbeddingApiStyleFilter(item.key)),
-  }))
-  Message.success(`已将「${sceneEditorForm.label}」的 Provider 绑定与回退策略复制到全部场景。`)
+  sceneItems.value = sceneItems.value.map((item) => {
+    const normalizedRouting = normalizeSceneRoutingConfig({
+      key: item.key,
+      models: sceneEditorForm.models,
+      modelFallback: sceneEditorForm.modelFallback,
+    }, providerIds)
+    return {
+      ...item,
+      providerIds,
+      loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
+      models: normalizedRouting.models,
+      modelFallback: normalizedRouting.modelFallback,
+      failoverStrategy: sceneEditorForm.failoverStrategy,
+    }
+  })
+  Message.success(`已将「${sceneEditorForm.label}」的 Provider 绑定、模型池与故障转移策略复制到全部场景。`)
 }
 
 async function testScene(scene: SceneItem) {
@@ -1913,7 +2091,7 @@ onMounted(async () => {
                 场景路由
               </div>
               <div class="text-xs text-slate-500">
-                每个场景绑定多个 Provider，先按模型回退链，再在可用 Provider 间轮询。
+                每个场景独立维护 Provider 绑定、模型池、回退顺序和故障转移策略；当前默认按模型顺序切换，同模型内轮询 Provider。
               </div>
             </div>
             <div class="flex flex-wrap gap-2">
@@ -1953,11 +2131,17 @@ onMounted(async () => {
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="模型回退链" data-index="modelFallback">
+            <a-table-column title="模型策略" data-index="modelFallback">
               <template #cell="scope">
-                <div class="space-y-2">
+                <div class="space-y-1.5">
                   <div class="text-sm text-slate-700">
-                    {{ sceneModelsPreview(scope.record) }}
+                    模型池：{{ sceneModelPoolPreview(scope.record) }}
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    回退顺序：{{ sceneFallbackPreview(scope.record) }}
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    故障转移：{{ sceneFailoverStrategyLabel(scope.record) }}
                   </div>
                   <div v-if="sceneTestMessage[scope.record.key]" class="text-xs text-slate-500">
                     {{ sceneTestMessage[scope.record.key] }}
@@ -2698,17 +2882,45 @@ onMounted(async () => {
               </a-option>
             </a-select>
           </a-form-item>
-          <a-form-item label="模型回退链">
+          <a-form-item label="模型池">
+            <a-select
+              v-model="sceneEditorForm.models"
+              multiple
+              allow-search
+              allow-clear
+              placeholder="按绑定 Provider 的模型池汇总选择"
+              @change="handleSceneModelsChange"
+            >
+              <a-option
+                v-for="item in sceneEditorModelPoolOptions"
+                :key="`scene-model-pool-${item.model}`"
+                :value="item.model"
+              >
+                <div class="space-y-0.5">
+                  <div class="flex gap-3 items-center justify-between">
+                    <span>{{ item.model }}</span>
+                    <span v-if="item.label && item.label !== item.model" class="text-xs text-slate-400">
+                      {{ item.label }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-slate-400">
+                    {{ item.priceText }}
+                  </div>
+                </div>
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="回退顺序">
             <a-select
               v-model="sceneEditorForm.modelFallback"
               multiple
               allow-search
               allow-clear
-              placeholder="按绑定 Provider 的模型池汇总选择"
+              placeholder="留空则按模型池顺序依次尝试"
               @change="handleSceneModelFallbackChange"
             >
               <a-option
-                v-for="item in sceneEditorModelOptions"
+                v-for="item in sceneEditorFallbackOptions"
                 :key="item.model"
                 :value="item.model"
               >
@@ -2726,12 +2938,25 @@ onMounted(async () => {
               </a-option>
             </a-select>
           </a-form-item>
+          <a-form-item label="故障转移策略">
+            <a-select v-model="sceneEditorForm.failoverStrategy">
+              <a-option value="model_then_provider">
+                先按模型切换，再在同模型内轮询 Provider
+              </a-option>
+            </a-select>
+          </a-form-item>
 
           <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
-            当前 Provider：{{ sceneEditorForm.providerIds.length > 0 ? sceneProvidersPreview({ ...sceneEditorForm, providerIds: sceneEditorForm.providerIds, modelFallback: [], enabled: true, key: sceneEditorForm.key, label: '', description: '', loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy, prompt: '' }) : '未绑定 Provider' }}
+            当前 Provider：{{ sceneEditorForm.providerIds.length > 0 ? sceneProvidersPreview({ ...sceneEditorForm, providerIds: sceneEditorForm.providerIds, models: [], modelFallback: [], enabled: true, key: sceneEditorForm.key, label: '', description: '', loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy, failoverStrategy: sceneEditorForm.failoverStrategy, prompt: '' }) : '未绑定 Provider' }}
           </div>
           <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
-            当前模型回退顺序：{{ sceneEditorForm.modelFallback.length > 0 ? sceneEditorForm.modelFallback.join(' -> ') : '未配置，运行时将回退默认模型' }}
+            当前模型池：{{ sceneEditorForm.models.length > 0 ? sceneEditorForm.models.join(' / ') : '未配置，运行时将回退默认模型池' }}
+          </div>
+          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
+            当前模型回退顺序：{{ sceneEditorForm.modelFallback.length > 0 ? sceneEditorForm.modelFallback.join(' -> ') : (sceneEditorForm.models.length > 0 ? `未单独配置，将按模型池顺序：${sceneEditorForm.models.join(' -> ')}` : '未配置，运行时将回退默认模型') }}
+          </div>
+          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
+            当前故障转移：{{ sceneFailoverStrategyLabel(sceneEditorForm) }}
           </div>
 
           <a-form-item label="场景提示词">
@@ -2768,7 +2993,7 @@ onMounted(async () => {
       <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
         <div class="gap-4 grid">
           <a-alert type="info" :show-icon="true">
-            这里会覆盖全部场景的 Provider 绑定、负载均衡策略和模型回退链，不会改动提示词和启停状态。
+            这里会覆盖全部场景的 Provider 绑定、负载均衡策略、模型池、回退顺序和故障转移策略，不会改动提示词和启停状态。
           </a-alert>
           <a-form-item label="统一 Provider 绑定">
             <a-select
@@ -2795,7 +3020,24 @@ onMounted(async () => {
               </a-option>
             </a-select>
           </a-form-item>
-          <a-form-item label="统一模型回退链">
+          <a-form-item label="统一模型池">
+            <a-select
+              v-model="sceneBatchForm.models"
+              multiple
+              allow-search
+              allow-clear
+              @change="handleSceneBatchModelsChange"
+            >
+              <a-option
+                v-for="item in sceneBatchModelPoolOptions"
+                :key="`batch-model-pool-${item.model}`"
+                :value="item.model"
+              >
+                {{ item.model }}
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="统一回退顺序">
             <a-select
               v-model="sceneBatchForm.modelFallback"
               multiple
@@ -2804,11 +3046,18 @@ onMounted(async () => {
               @change="handleSceneBatchModelFallbackChange"
             >
               <a-option
-                v-for="item in sceneBatchModelOptions"
+                v-for="item in sceneBatchFallbackOptions"
                 :key="`batch-model-${item.model}`"
                 :value="item.model"
               >
                 {{ item.model }}
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="统一故障转移策略">
+            <a-select v-model="sceneBatchForm.failoverStrategy">
+              <a-option value="model_then_provider">
+                先按模型切换，再在同模型内轮询 Provider
               </a-option>
             </a-select>
           </a-form-item>

@@ -73,13 +73,16 @@ it('search-only Provider 不参与 LLM 场景模型路由', async () => {
   assert.match(source, /llmProviderOptions/, '场景 Provider 下拉应来自 llmProviderOptions')
 })
 
-it('场景抽屉支持 Provider 绑定、轮询和模型回退链', async () => {
+it('场景抽屉支持 Provider 绑定、模型池、回退顺序和故障转移策略', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
   assert.match(source, /v-model:visible="sceneEditorVisible"/, '缺少场景编辑抽屉')
   assert.match(source, /绑定 Provider/, '缺少场景 Provider 绑定项')
   assert.match(source, /负载均衡策略/, '缺少负载均衡策略项')
-  assert.match(source, /模型回退链/, '缺少模型回退链项')
+  assert.match(source, /模型池/, '缺少模型池项')
+  assert.match(source, /回退顺序/, '缺少回退顺序项')
+  assert.match(source, /故障转移策略/, '缺少故障转移策略项')
+  assert.match(source, /failoverStrategy: 'model_then_provider'/, '场景表单未声明默认故障转移策略')
   assert.match(source, /knowledge_embedding/, '缺少专用 Embedding 场景')
   assert.match(source, /knowledge_visual_embedding/, '缺少专用视觉 Embedding 场景')
   assert.match(source, /sceneRequiredCapability/, '场景模型选择应按能力过滤')
@@ -94,8 +97,9 @@ it('知识库 Embedding 场景只使用 embedding 模型并禁用对话测试', 
 
   assert.match(source, /'knowledge_embedding'/, '场景类型缺少知识库 Embedding')
   assert.match(source, /function sceneRequiredCapability\(key: PlatformAiChannelKey\): ModelCapability \{[\s\S]*key === 'knowledge_embedding'[\s\S]*return 'embedding'/, '知识库 Embedding 场景未声明 embedding 能力')
-  assert.match(source, /resolveSceneModelCatalog\(sceneEditorForm\.providerIds, sceneEditorForm\.modelFallback, sceneRequiredCapability\(sceneEditorForm\.key\), sceneEmbeddingApiStyleFilter\(sceneEditorForm\.key\)\)/, '场景模型候选未按场景能力与 Embedding 接入类型过滤')
-  assert.match(source, /normalizeSceneModelFallback\(item\.modelFallback, item\.providerIds, sceneRequiredCapability\(item\.key\), sceneEmbeddingApiStyleFilter\(item\.key\)\)/, '保存场景配置时未按场景能力与 Embedding 接入类型过滤模型回退链')
+  assert.match(source, /resolveSceneModelCatalog\(sceneEditorForm\.providerIds, sceneEditorForm\.models, sceneRequiredCapability\(sceneEditorForm\.key\), sceneEmbeddingApiStyleFilter\(sceneEditorForm\.key\)\)/, '场景模型池候选未按场景能力与 Embedding 接入类型过滤')
+  assert.match(source, /function normalizeSceneRoutingConfig\(/, '场景保存前未统一整理模型池与回退顺序')
+  assert.match(source, /modelFallback: normalizeSceneModels\(/, '场景回退顺序未按模型池裁剪')
   assert.match(source, /if \(!sceneCanRunChatTest\(scene\)\)[\s\S]*无需执行对话测试/, 'Embedding 场景测试入口未拦截对话测试')
   assert.match(source, /:disabled="!sceneCanRunChatTest\(scope\.record\)"[\s\S]*无需测试/, 'Embedding 场景测试按钮未禁用并提示无需测试')
 })

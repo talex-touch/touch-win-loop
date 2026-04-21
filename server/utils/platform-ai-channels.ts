@@ -14,6 +14,7 @@ export type PlatformAiModelFormat = 'openai-compatible' | 'response'
 export type PlatformAiModelCapability = 'chat' | 'vision' | 'embedding' | 'image-gen' | 'video-gen'
 export type PlatformAiPricingSource = 'provider' | 'manual' | 'none'
 export type PlatformAiLoadBalanceStrategy = 'round_robin'
+export type PlatformAiFailoverStrategy = 'model_then_provider'
 export type PlatformAiChannelKey
   = 'contest_filter'
     | 'project_chat'
@@ -92,8 +93,9 @@ export interface PlatformAiChannelConfig {
   enabled: boolean
   providerIds: string[]
   loadBalanceStrategy: PlatformAiLoadBalanceStrategy
-  modelFallback: string[]
   models: string[]
+  modelFallback: string[]
+  failoverStrategy: PlatformAiFailoverStrategy
   prompt: string
 }
 
@@ -936,32 +938,83 @@ function resolveLoadBalanceStrategy(value: unknown): PlatformAiLoadBalanceStrate
     : 'round_robin'
 }
 
+function resolveFailoverStrategy(value: unknown): PlatformAiFailoverStrategy {
+  return toText(value).toLowerCase() === 'model_then_provider'
+    ? 'model_then_provider'
+    : 'model_then_provider'
+}
+
+function normalizeChannelModelsAndFallback(
+  key: PlatformAiChannelKey,
+  providers: PlatformAiProviderConfig[],
+  providerIds: string[],
+  defaults: PlatformAiSharedDefaults,
+  input: {
+    models: string[]
+    modelFallback: string[]
+  },
+): {
+    models: string[]
+    modelFallback: string[]
+  } {
+  const providerIdSet = new Set(providerIds)
+  const eligibleProviders = providers.filter(provider => provider.capability === 'llm' && (providerIdSet.size === 0 || providerIdSet.has(provider.id)))
+  const defaultModels = resolveDefaultModelsForChannel(key, defaults, eligibleProviders)
+  const explicitModels = dedupeStrings(input.models)
+  const explicitFallback = dedupeStrings(input.modelFallback)
+  const modelSeed = explicitModels.length > 0
+    ? explicitModels
+    : explicitFallback.length > 0
+      ? explicitFallback
+      : defaultModels
+  const models = modelSeed.filter(model => eligibleProviders.some(provider => resolveProviderModelForChannel(provider, model, key)))
+  const normalizedModels = models.length > 0
+    ? models
+    : (explicitModels.length === 0 && explicitFallback.length === 0 ? defaultModels : [])
+  const modelSet = new Set(normalizedModels)
+
+  return {
+    models: normalizedModels,
+    modelFallback: explicitFallback.filter(model => modelSet.has(model)),
+  }
+}
+
 function expandLegacyChannelConfig(
   raw: Record<string, unknown>,
   defaults: PlatformAiSharedDefaults,
   providers: PlatformAiProviderConfig[],
   defaultProviderIds: string[],
 ): PlatformAiChannelConfig[] {
-  const modelFallback = Array.isArray(raw.models)
-    ? dedupeStrings((raw.models as unknown[]).map(item => toText(item)))
-    : dedupeStrings([toText(raw.model)])
   const enabled = toBoolean(raw.enabled, true)
   const prompt = String(raw.prompt || '')
 
   return DOCUMENT_ASSIST_CHANNEL_KEYS.map((key) => {
     const definition = resolveChannelDefinition(key)
-    const fallback = modelFallback.length > 0
-      ? modelFallback
-      : resolveDefaultModelsForChannel(key, defaults, providers)
+    const normalizedProviderIds = [...defaultProviderIds]
+    const normalizedModels = normalizeChannelModelsAndFallback(
+      key,
+      providers,
+      normalizedProviderIds,
+      defaults,
+      {
+        models: Array.isArray(raw.models)
+          ? dedupeStrings((raw.models as unknown[]).map(item => toText(item)))
+          : dedupeStrings([toText(raw.model)]),
+        modelFallback: Array.isArray(raw.models)
+          ? dedupeStrings((raw.models as unknown[]).map(item => toText(item)))
+          : dedupeStrings([toText(raw.model)]),
+      },
+    )
     return {
       key,
       label: definition.label,
       description: definition.description,
       enabled,
-      providerIds: [...defaultProviderIds],
+      providerIds: normalizedProviderIds,
       loadBalanceStrategy: 'round_robin',
-      modelFallback: fallback,
-      models: fallback,
+      models: normalizedModels.models,
+      modelFallback: normalizedModels.modelFallback,
+      failoverStrategy: 'model_then_provider',
       prompt,
     }
   })
@@ -990,17 +1043,25 @@ function normalizeChannel(
     const provider = providers.find(item => item.id === providerId)
     return provider?.capability === 'llm'
   })
-  const modelFallback = Array.isArray(source.modelFallback)
-    ? dedupeStrings((source.modelFallback as unknown[]).map(item => toText(item)))
-    : Array.isArray(source.models)
-      ? dedupeStrings((source.models as unknown[]).map(item => toText(item)))
-      : dedupeStrings([toText(source.model)])
-  const fallbackModels = modelFallback.length > 0
-    ? modelFallback
-    : resolveDefaultModelsForChannel(key, defaults, providers)
   const providerIds = explicitProviderIds.length > 0
     ? sanitizedProviderIds
     : [...defaultProviderIds]
+  const normalizedModels = normalizeChannelModelsAndFallback(
+    key,
+    providers,
+    providerIds,
+    defaults,
+    {
+      models: Array.isArray(source.models)
+        ? dedupeStrings((source.models as unknown[]).map(item => toText(item)))
+        : [],
+      modelFallback: Array.isArray(source.modelFallback)
+        ? dedupeStrings((source.modelFallback as unknown[]).map(item => toText(item)))
+        : Array.isArray(source.models)
+          ? dedupeStrings((source.models as unknown[]).map(item => toText(item)))
+          : dedupeStrings([toText(source.model)]),
+    },
+  )
 
   return {
     key,
@@ -1009,8 +1070,9 @@ function normalizeChannel(
     enabled: toBoolean(source.enabled, true),
     providerIds,
     loadBalanceStrategy: resolveLoadBalanceStrategy(source.loadBalanceStrategy),
-    modelFallback: fallbackModels,
-    models: fallbackModels,
+    models: normalizedModels.models,
+    modelFallback: normalizedModels.modelFallback,
+    failoverStrategy: resolveFailoverStrategy(source.failoverStrategy),
     prompt: String(source.prompt || ''),
   }
 }
@@ -1047,7 +1109,7 @@ function parseChannelsFromJson(
   for (const definition of CHANNEL_DEFINITIONS) {
     if (map.has(definition.key))
       continue
-    const modelFallback = resolveDefaultModelsForChannel(definition.key, defaults, providers)
+    const models = resolveDefaultModelsForChannel(definition.key, defaults, providers)
     map.set(definition.key, {
       key: definition.key,
       label: definition.label,
@@ -1055,8 +1117,9 @@ function parseChannelsFromJson(
       enabled: true,
       providerIds: [...defaultProviderIds],
       loadBalanceStrategy: 'round_robin',
-      modelFallback,
-      models: modelFallback,
+      models,
+      modelFallback: models,
+      failoverStrategy: 'model_then_provider',
       prompt: '',
     })
   }
@@ -1258,7 +1321,7 @@ function resolveChannelCandidates(
     }
   }
 
-  const requestedModels = dedupeStrings(channel.modelFallback)
+  const requestedModels = dedupeStrings(channel.modelFallback.length > 0 ? channel.modelFallback : channel.models)
   let modelOrder = requestedModels.filter(model => eligibleProviders.some(provider => resolveProviderModelForChannel(provider, model, channel.key)))
   const usedFallback = modelOrder.length === 0
 
@@ -1314,12 +1377,15 @@ function toSerializableProvider(item: PlatformAiProviderConfig): PlatformAiProvi
 
 function toSerializableChannels(items: PlatformAiChannelConfig[]): PlatformAiChannelConfig[] {
   return items.map((item) => {
-    const modelFallback = dedupeStrings(item.modelFallback)
+    const models = dedupeStrings(item.models)
+    const modelSet = new Set(models)
+    const modelFallback = dedupeStrings(item.modelFallback).filter(model => modelSet.has(model))
     return {
       ...item,
       providerIds: dedupeStrings(item.providerIds),
+      models,
       modelFallback,
-      models: modelFallback,
+      failoverStrategy: resolveFailoverStrategy(item.failoverStrategy),
       prompt: String(item.prompt || ''),
     }
   })
@@ -1497,8 +1563,9 @@ export function resolveAiRuntimeForChannel(
     enabled: true,
     providerIds: defaultProviderIds,
     loadBalanceStrategy: 'round_robin' as const,
-    modelFallback: resolveDefaultModelsForChannel(key, registry.defaults, registry.providers),
     models: resolveDefaultModelsForChannel(key, registry.defaults, registry.providers),
+    modelFallback: resolveDefaultModelsForChannel(key, registry.defaults, registry.providers),
+    failoverStrategy: 'model_then_provider' as const,
     prompt: '',
   }
   const resolved = resolveChannelCandidates(runtime, channel, registry.providers, registry.defaults)

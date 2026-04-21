@@ -155,7 +155,7 @@ describe('platform-ai-channels', () => {
     expect(registry.providers[0]?.models.some(item => item.model === 'gpt-4.1')).toBe(false)
   })
 
-  it('旧场景模型链会自动迁移为 modelFallback 与首个 Provider 绑定', () => {
+  it('旧场景模型链会自动迁移为模型池、回退顺序与首个 Provider 绑定', () => {
     const runtime = createRuntime()
     runtime.ai.channelsJson = JSON.stringify({
       items: [
@@ -171,7 +171,9 @@ describe('platform-ai-channels', () => {
     const projectChat = registry.channels.find(item => item.key === 'project_chat')
 
     expect(projectChat?.providerIds).toEqual(['provider_1'])
+    expect(projectChat?.models).toEqual(['gpt-4.1-mini'])
     expect(projectChat?.modelFallback).toEqual(['gpt-4.1-mini'])
+    expect(projectChat?.failoverStrategy).toBe('model_then_provider')
   })
 
   it('多 Provider 场景会先按模型链，再在同模型下展开 Provider 候选', () => {
@@ -213,7 +215,9 @@ describe('platform-ai-channels', () => {
           key: 'project_chat',
           providerIds: ['provider_a', 'provider_b'],
           loadBalanceStrategy: 'round_robin',
+          models: ['gpt-4.1-mini', 'gpt-4.1'],
           modelFallback: ['gpt-4.1-mini', 'gpt-4.1'],
+          failoverStrategy: 'model_then_provider',
           enabled: true,
         },
       ],
@@ -292,7 +296,9 @@ describe('platform-ai-channels', () => {
         {
           key: 'knowledge_embedding',
           providerIds: ['provider_a'],
+          models: ['qwen-plus', 'text-embedding-v4'],
           modelFallback: ['qwen-plus', 'text-embedding-v4'],
+          failoverStrategy: 'model_then_provider',
           enabled: true,
         },
       ],
@@ -343,11 +349,13 @@ describe('platform-ai-channels', () => {
     expect(resolvePlatformAiChannelEmbeddingApiStyle('knowledge_visual_embedding')).toBe('bailian-multimodal')
 
     const embeddingScene = registry.channels.find(item => item.key === 'knowledge_embedding')
+    expect(embeddingScene?.models).toEqual(['text-embedding-v4'])
     expect(embeddingScene?.modelFallback).toEqual(['text-embedding-v4'])
     const embeddingSceneRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_embedding')
     expect(embeddingSceneRuntime.ai.model).toBe('text-embedding-v4')
 
     const visualEmbeddingScene = registry.channels.find(item => item.key === 'knowledge_visual_embedding')
+    expect(visualEmbeddingScene?.models).toEqual(['tongyi-embedding-vision-plus'])
     expect(visualEmbeddingScene?.modelFallback).toEqual(['tongyi-embedding-vision-plus'])
     const visualEmbeddingSceneRuntime = resolveAiRuntimeForChannel(runtime, 'knowledge_visual_embedding')
     expect(visualEmbeddingSceneRuntime.ai.model).toBe('tongyi-embedding-vision-plus')
@@ -376,7 +384,9 @@ describe('platform-ai-channels', () => {
         {
           key: 'project_chat',
           providerIds: ['provider_search'],
+          models: ['gpt-4.1-mini'],
           modelFallback: ['gpt-4.1-mini'],
+          failoverStrategy: 'model_then_provider',
           enabled: true,
         },
       ],
@@ -426,7 +436,9 @@ describe('platform-ai-channels', () => {
           key: 'project_chat',
           providerIds: ['provider_a', 'provider_b'],
           loadBalanceStrategy: 'round_robin',
+          models: ['gpt-4.1-mini', 'gpt-4.1'],
           modelFallback: ['gpt-4.1-mini', 'gpt-4.1'],
+          failoverStrategy: 'model_then_provider',
           enabled: true,
         },
       ],
@@ -467,5 +479,45 @@ describe('platform-ai-channels', () => {
     ])
     expect(warnSpy).toHaveBeenCalled()
     expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('未配置回退顺序时会按模型池顺序生成候选链', () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'provider_a',
+          name: 'Provider A',
+          type: 'newapi',
+          provider: 'newapi',
+          baseURL: 'https://newapi-a.example',
+          models: [
+            { model: 'gpt-4.1', enabled: true, format: 'openai-compatible' },
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+      ],
+      defaults: {
+        defaultModel: 'gpt-4.1-mini',
+        embeddingModel: 'text-embedding-3-small',
+        documentModel: 'gpt-4.1',
+      },
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'project_chat',
+          providerIds: ['provider_a'],
+          models: ['gpt-4.1', 'gpt-4.1-mini'],
+          modelFallback: [],
+          failoverStrategy: 'model_then_provider',
+          enabled: true,
+        },
+      ],
+    })
+
+    const resolved = resolveAiRuntimeForChannel(runtime, 'project_chat')
+    expect(resolved.candidates.map(item => item.ai.model)).toEqual(['gpt-4.1', 'gpt-4.1-mini'])
+    expect(resolved.channel.failoverStrategy).toBe('model_then_provider')
   })
 })
