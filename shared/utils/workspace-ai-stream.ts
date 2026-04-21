@@ -150,11 +150,10 @@ export function resolveWorkspaceStreamSystemMessageView(
     const parsedFromContent = parseToolContent(normalizedContent)
     const toolName = toText(metadata?.toolName) || parsedFromContent.toolName
     const payloadSummary = toText(metadata?.payloadSummary) || parsedFromContent.payloadSummary
-    const toolLabel = toolName ? resolveWorkspaceToolDisplayName(toolName) : ''
     return {
       eventType,
       seq,
-      title: toolLabel || '工具调用',
+      title: toolName ? `调用 ${toolName}` : '工具调用',
       toolName,
       payloadSummary,
     }

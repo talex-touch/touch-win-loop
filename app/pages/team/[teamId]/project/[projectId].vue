@@ -7190,7 +7190,7 @@ async function createCollabResource(
         ...(purpose === 'design'
           ? {
               ...designCreationPayload,
-              title: requestedTitle || designCreationPayload.title,
+              title: requestedTitle || (designMode === 'device_arrangement' ? '设备排布' : '设计稿'),
             }
           : {}),
         parentResourceId: parentResourceId || undefined,

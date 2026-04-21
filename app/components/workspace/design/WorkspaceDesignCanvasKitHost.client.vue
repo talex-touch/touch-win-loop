@@ -304,7 +304,7 @@ type FrameResizeSession = {
 
 type CreateElementTool = 'pencil' | 'rectangle' | 'ellipse' | 'arrow' | 'text' | 'image'
 
-interface CreateElementSession {
+type CreateElementSession = {
   pointerId: number
   tool: CreateElementTool
   ownerFrameId: string

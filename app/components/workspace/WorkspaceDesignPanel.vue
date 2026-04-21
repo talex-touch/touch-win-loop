@@ -3760,7 +3760,7 @@ function runElementStructuralCommand(command: string): boolean {
   if (!elements.length)
     return false
 
-  if (command === 'group') {
+  if (command === "group") {
     if (!canGroupSelectedElements(elements))
       return true
     const groupId = `group-${Date.now()}`
@@ -3787,7 +3787,7 @@ function runElementStructuralCommand(command: string): boolean {
     return true
   }
 
-  if (command === 'ungroup') {
+  if (command === "ungroup") {
     if (elements.length !== 1 || elements[0]?.type !== 'group')
       return true
     const group = elements[0]
