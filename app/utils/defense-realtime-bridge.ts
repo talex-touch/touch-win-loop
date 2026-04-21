@@ -11,13 +11,13 @@ import type {
 } from '~/utils/defense-realtime-media-controller'
 
 export interface DefenseRealtimeProviderBridge {
-  bootstrap: () => Promise<DefenseRealtimeBootstrapPayload>
-  connect: (mediaController: DefenseRealtimeMediaController) => Promise<void>
-  disconnect: () => Promise<void>
-  interrupt: () => Promise<void>
-  setAudioEnabled: (enabled: boolean) => Promise<void>
-  setVideoEnabled: (enabled: boolean) => Promise<void>
-  onEvent: (listener: (event: DefenseRealtimeNormalizedEvent) => void) => () => void
+  bootstrap(): Promise<DefenseRealtimeBootstrapPayload>
+  connect(mediaController: DefenseRealtimeMediaController): Promise<void>
+  disconnect(): Promise<void>
+  interrupt(): Promise<void>
+  setAudioEnabled(enabled: boolean): Promise<void>
+  setVideoEnabled(enabled: boolean): Promise<void>
+  onEvent(listener: (event: DefenseRealtimeNormalizedEvent) => void): () => void
 }
 
 function normalizeString(value: unknown): string {

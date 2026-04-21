@@ -3,6 +3,7 @@ import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import type {
   AiAssistantOptions,
   AiCanvasAssistAction,
+  AiCanvasAssistImportPreview,
   AiCanvasAssistRequest,
   AiCanvasAssistResult,
   AiCanvasAssistSourceFormat,
@@ -10,6 +11,16 @@ import type {
 } from '~~/shared/types/domain'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import {
+  sceneDocumentToDesignDocument,
+  serializeDesignDocument,
+} from '~~/shared/utils/design-document'
+import {
+  importArchitectureFromMetadata,
+  importFromDDL,
+  importFromMarkdownOutline,
+  importFromMermaid,
+} from '~~/shared/utils/scene-document'
 import { runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 
 const MAX_CANVAS_ASSIST_MESSAGES = 8
@@ -151,6 +162,35 @@ export function buildCanvasAssistPrompt(input: {
   ].join('\n')
 }
 
+function buildCanvasAssistImportPreview(input: {
+  sourceText: string
+  sourceFormat: AiCanvasAssistSourceFormat
+  template: AiCanvasAssistRequest['template']
+}): AiCanvasAssistImportPreview | null {
+  const sourceText = toCanvasAssistText(input.sourceText)
+  if (!sourceText)
+    return null
+
+  try {
+    const sceneDocument = input.sourceFormat === 'markdown_outline'
+      ? importFromMarkdownOutline(sourceText)
+      : input.sourceFormat === 'ddl'
+        ? importFromDDL(sourceText).sceneDocument
+        : input.sourceFormat === 'architecture'
+          ? importArchitectureFromMetadata(sourceText).sceneDocument
+          : importFromMermaid(sourceText)
+    return {
+      target: 'scene_document',
+      summary: `已生成可导入设计画布的 ${input.template} 预览。`,
+      sceneDocument,
+      designDocument: serializeDesignDocument(sceneDocumentToDesignDocument(sceneDocument)),
+    }
+  }
+  catch {
+    return null
+  }
+}
+
 export async function runCanvasAssistGeneration(input: {
   runtime: RuntimeSettings
   action: AiCanvasAssistAction
@@ -207,6 +247,11 @@ export async function runCanvasAssistGeneration(input: {
     const sourceText = extractMessageText(output.content)
     if (!sourceText)
       throw new Error('画布 AI 未返回可用结构源。')
+    const importPreview = buildCanvasAssistImportPreview({
+      sourceText,
+      sourceFormat,
+      template: input.template,
+    })
 
     return {
       assistantReply: '画布结构源预览已生成。',
@@ -214,6 +259,8 @@ export async function runCanvasAssistGeneration(input: {
       template: input.template,
       sourceFormat,
       sourceText,
+      importPreview,
+      previewSummary: importPreview?.summary || '画布结构源预览已生成。',
     } satisfies AiCanvasAssistResult
   })
 

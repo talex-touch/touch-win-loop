@@ -2,9 +2,12 @@ import type { H3Event } from 'h3'
 import type { Queryable } from '~~/server/utils/db'
 import type {
   ProjectKnowledgeCitation,
+  ProjectKnowledgeCitationLocator,
+  ProjectKnowledgeCitationSourceScope,
   ProjectKnowledgeIndexSourceStatus,
   ProjectKnowledgeModality,
   ProjectKnowledgeProjectionType,
+  ProjectKnowledgeScopeType,
   ProjectKnowledgeSourceStatus,
   Resource,
 } from '~~/shared/types/domain'
@@ -33,8 +36,11 @@ interface ProjectKnowledgeContextInput {
 interface ProjectKnowledgeChunkHit {
   chunkId: string
   sourceId: string
+  scopeType: ProjectKnowledgeScopeType
   sourceResourceId?: string | null
+  linkedContestResourceId?: string | null
   resourceTitle: string
+  resourceSource?: Resource['source'] | ''
   chunkKind: string
   citationLabel: string
   pageNumber?: number | null
@@ -44,6 +50,7 @@ interface ProjectKnowledgeChunkHit {
   modality?: ProjectKnowledgeModality
   projectionType?: ProjectKnowledgeProjectionType
   projectionSource?: string
+  metadata: Record<string, unknown>
   fallbackUsed: boolean
   score: number
 }
@@ -288,18 +295,92 @@ function buildProjectionLabel(hit: Pick<ProjectKnowledgeChunkHit, 'projectionTyp
   return ''
 }
 
+function resolveCitationSourceScope(hit: ProjectKnowledgeChunkHit): ProjectKnowledgeCitationSourceScope {
+  if (
+    hit.projectionType === 'meeting_notes'
+    || hit.projectionType === 'meeting_transcript'
+    || normalizeString(hit.metadata.meetingId)
+    || hit.metadata.meetingMemory === true
+    || hit.metadata.defenseSummaryNotes === true
+  ) {
+    return 'meeting_artifact'
+  }
+
+  if (
+    hit.modality === 'draw'
+    || hit.projectionType === 'draw_projection'
+    || normalizeString(hit.metadata.drawMode)
+  ) {
+    return 'canvas_resource'
+  }
+
+  if (hit.scopeType === 'contest_resource' || normalizeString(hit.linkedContestResourceId))
+    return 'contest_resource'
+
+  if (hit.resourceSource === 'library')
+    return 'platform_resource'
+
+  return 'project_resource'
+}
+
+function buildCitationLocator(hit: ProjectKnowledgeChunkHit): ProjectKnowledgeCitationLocator | null {
+  const nodeId = normalizeString(
+    hit.metadata.nodeId
+      || hit.metadata.primaryNodeId
+      || (Array.isArray(hit.metadata.nodeIds) ? hit.metadata.nodeIds[0] : ''),
+  )
+  const anchorId = normalizeString(
+    hit.metadata.anchorId
+      || hit.metadata.anchor
+      || hit.metadata.sectionAnchorId
+      || hit.metadata.headingId,
+  )
+  const utteranceRange = normalizeString(hit.metadata.utteranceRange)
+  const page = hit.pageNumber == null ? undefined : hit.pageNumber
+  const section = normalizeString(hit.sectionLabel) || undefined
+
+  if (!page && !section && !anchorId && !nodeId && !utteranceRange)
+    return null
+
+  const labelParts: string[] = []
+  if (page != null)
+    labelParts.push(`第 ${page} 页`)
+  if (section)
+    labelParts.push(section)
+  if (utteranceRange)
+    labelParts.push(`发言 ${utteranceRange}`)
+  if (nodeId)
+    labelParts.push(`节点 ${nodeId}`)
+  if (anchorId)
+    labelParts.push(`锚点 ${anchorId}`)
+
+  return {
+    page,
+    section,
+    anchorId: anchorId || undefined,
+    nodeId: nodeId || undefined,
+    utteranceRange: utteranceRange || undefined,
+    label: labelParts.join(' · ') || undefined,
+  }
+}
+
 function buildCitation(hit: ProjectKnowledgeChunkHit): ProjectKnowledgeCitation {
+  const locator = buildCitationLocator(hit)
   return {
     sourceId: hit.sourceId,
     sourceResourceId: hit.sourceResourceId,
     chunkId: hit.chunkId,
     resourceTitle: hit.resourceTitle,
     label: hit.citationLabel || hit.resourceTitle,
+    sourceScope: resolveCitationSourceScope(hit),
     sourceStatus: hit.sourceStatus,
     modality: hit.modality,
     projectionType: hit.projectionType,
     page: hit.pageNumber == null ? undefined : hit.pageNumber,
     section: normalizeString(hit.sectionLabel) || undefined,
+    anchorId: normalizeString(locator?.anchorId) || undefined,
+    nodeId: normalizeString(locator?.nodeId) || undefined,
+    locator,
     quote: summarizeText(hit.content, 140) || undefined,
   }
 }
@@ -435,8 +516,11 @@ export async function buildProjectKnowledgeLocalContext(
       return {
         chunkId: chunk.id,
         sourceId: chunk.sourceId,
+        scopeType: chunk.scopeType,
         sourceResourceId: chunk.sourceResourceId,
+        linkedContestResourceId: chunk.linkedContestResourceId,
         resourceTitle: chunk.resourceTitle,
+        resourceSource: chunk.resourceSource,
         chunkKind: chunk.chunkKind,
         citationLabel: chunk.citationLabel || chunk.resourceTitle,
         pageNumber: chunk.pageNumber,
@@ -446,6 +530,7 @@ export async function buildProjectKnowledgeLocalContext(
         modality,
         projectionType,
         projectionSource: normalizeString(chunk.metadata.projectionSource) || undefined,
+        metadata: chunk.metadata,
         fallbackUsed,
         score,
       } satisfies ProjectKnowledgeChunkHit

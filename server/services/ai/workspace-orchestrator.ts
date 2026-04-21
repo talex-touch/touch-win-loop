@@ -10,6 +10,7 @@ import type {
   AiWorkspaceSceneDraft,
   AiWorkspaceWorkflowDraft,
   ChatMessage,
+  ProjectKnowledgeMessagePayload,
   ProjectIssueSeverity,
   WorkflowArchitectureView,
   WorkflowLayoutPreset,
@@ -71,6 +72,7 @@ export interface WorkspaceAiExecutionResult {
   documentDraft: AiWorkspaceDocumentDraft | null
   workflowDraft: AiWorkspaceWorkflowDraft | null
   sceneDraft: AiWorkspaceSceneDraft | null
+  knowledge?: ProjectKnowledgeMessagePayload | null
 }
 
 export interface WorkspaceAiExecutionContext {

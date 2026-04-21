@@ -1,4 +1,5 @@
 import type {
+  AiCanvasAssistAction,
   AiCanvasAssistRequest,
   AiCanvasAssistSourceFormat,
   AiCanvasAssistStreamEvent,
@@ -23,8 +24,12 @@ import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 
+function toText(value: unknown): string {
+  return toCanvasAssistText(value)
+}
+
 function chunkText(text: string, chunkSize = 48): string[] {
-  const normalized = toCanvasAssistText(text)
+  const normalized = toText(text)
   if (!normalized)
     return []
 
@@ -34,27 +39,35 @@ function chunkText(text: string, chunkSize = 48): string[] {
   return chunks
 }
 
+function resolveCanvasChannelKey(action: AiCanvasAssistAction): 'workspace_canvas_generate' | 'workspace_canvas_complete' | 'workspace_canvas_refine' {
+  if (action === 'complete')
+    return 'workspace_canvas_complete'
+  if (action === 'refine')
+    return 'workspace_canvas_refine'
+  return 'workspace_canvas_generate'
+}
+
 function normalizeRequest(body: Partial<AiCanvasAssistRequest> | null | undefined): AiCanvasAssistRequest {
   const context = body?.context || {}
-  const workspaceId = toCanvasAssistText(body?.teamId || body?.workspaceId || context.teamId || context.workspaceId)
+  const workspaceId = toText(body?.teamId || body?.workspaceId || context.teamId || context.workspaceId)
   return {
     teamId: workspaceId,
     workspaceId,
-    projectId: toCanvasAssistText(body?.projectId || context.projectId),
+    projectId: toText(body?.projectId || context.projectId),
     action: normalizeCanvasAction(body?.action),
-    template: (toCanvasAssistText(body?.template) || 'flowchart') as AiCanvasAssistRequest['template'],
+    template: (toText(body?.template) || 'flowchart') as AiCanvasAssistRequest['template'],
     messages: Array.isArray(body?.messages) ? body.messages : [],
     context: {
       teamId: workspaceId,
       workspaceId,
-      projectId: toCanvasAssistText(body?.projectId || context.projectId),
-      contestId: toCanvasAssistText(context.contestId),
-      trackId: toCanvasAssistText(context.trackId),
-      major: toCanvasAssistText(context.major),
-      resourceId: toCanvasAssistText(context.resourceId),
-      resourceTitle: toCanvasAssistText(context.resourceTitle),
-      sourceText: toCanvasAssistText(context.sourceText),
-      sourceFormat: (toCanvasAssistText(context.sourceFormat) || 'mermaid') as AiCanvasAssistSourceFormat,
+      projectId: toText(body?.projectId || context.projectId),
+      contestId: toText(context.contestId),
+      trackId: toText(context.trackId),
+      major: toText(context.major),
+      resourceId: toText(context.resourceId),
+      resourceTitle: toText(context.resourceTitle),
+      sourceText: toText(context.sourceText),
+      sourceFormat: (toText(context.sourceFormat) || 'mermaid') as AiCanvasAssistSourceFormat,
     },
     aiOptions: body?.aiOptions || {},
   }
@@ -66,11 +79,7 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const request = normalizeRequest(await readBody<Partial<AiCanvasAssistRequest>>(event).catch(() => ({})))
   request.template = normalizeCanvasTemplate(request.template)
-  const channelKey = request.action === 'complete'
-    ? 'workspace_canvas_complete'
-    : request.action === 'refine'
-      ? 'workspace_canvas_refine'
-      : 'workspace_canvas_generate'
+  const channelKey = resolveCanvasChannelKey(request.action)
   const channelRuntime = resolveAiRuntimeForChannel(runtime, channelKey)
   const aiConfig = {
     ...channelRuntime.ai,
@@ -106,7 +115,7 @@ export default defineEventHandler(async (event) => {
     }, 40097)
   }
 
-  if (request.action !== 'generate' && !toCanvasAssistText(request.context?.sourceText)) {
+  if (request.action !== 'generate' && !toText(request.context?.sourceText)) {
     setResponseStatus(event, 400)
     return fail('当前图结构为空，暂时无法执行补全或续改。', {
       startedAt,

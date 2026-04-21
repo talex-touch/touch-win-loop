@@ -282,6 +282,9 @@ const diagramSourceText = ref('')
 const canvasAiPrompt = ref('')
 const canvasAiRunning = ref(false)
 const canvasAiPreviewPending = ref(false)
+const canvasAiPreviewSceneDocument = ref<SceneDocument | null>(null)
+const canvasAiPreviewDesignDocument = ref<string>('')
+const canvasAiPreviewSummary = ref('')
 const canvasAiError = ref('')
 const canvasAiAction = ref<AiCanvasAssistAction>('generate')
 const canvasAiTemplate = ref<AiCanvasAssistRequest['template']>('flowchart')
@@ -734,6 +737,23 @@ function previewCanvasAssistSource(
   }
   importFromMermaid(sourceText)
   return true
+}
+
+function resolveCanvasAssistPreviewSceneDocument(result: Partial<AiCanvasAssistResult>): SceneDocument | null {
+  const sceneDocument = result.importPreview?.sceneDocument
+  if (!sceneDocument)
+    return null
+
+  return sceneDocumentFromUnknown(sceneDocument, {
+    fallbackDrawMode: 'diagram',
+    fallbackSourceType: 'manual',
+  })
+}
+
+function resetCanvasAssistPreviewState(): void {
+  canvasAiPreviewSceneDocument.value = null
+  canvasAiPreviewDesignDocument.value = ''
+  canvasAiPreviewSummary.value = ''
 }
 
 async function loadCanvasAiRuntimeStatus(): Promise<void> {
@@ -5086,18 +5106,22 @@ function applyDiagramSource(): void {
     return
 
   const embeddedScene
-    = diagramSourceFormat.value === 'mermaid'
+    = canvasAiPreviewSceneDocument.value
+      || (diagramSourceFormat.value === 'mermaid'
       ? importFromMermaid(diagramSourceText.value)
       : diagramSourceFormat.value === 'markdown_outline'
         ? importFromMarkdownOutline(diagramSourceText.value)
         : diagramSourceFormat.value === 'ddl'
           ? importFromDDL(diagramSourceText.value).sceneDocument
           : importArchitectureFromMetadata(diagramSourceText.value)
-            .sceneDocument
+            .sceneDocument)
 
   clearDiagramSelection()
   canvasAiPreviewPending.value = false
-  commitDiagramFrameUpdate(frame.id, { embeddedScene })
+  resetCanvasAssistPreviewState()
+  commitDiagramFrameUpdate(frame.id, {
+    embeddedScene: canvasAiPreviewSceneDocument.value || embeddedScene,
+  })
 }
 
 async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
@@ -5132,6 +5156,7 @@ async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
   canvasAiRunning.value = true
   canvasAiError.value = ''
   canvasAiAction.value = action
+  resetCanvasAssistPreviewState()
 
   const nextMessages = [
     ...canvasAiMessages.value.slice(-5),
@@ -5226,6 +5251,9 @@ async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
             throw new Error('画布 AI 未返回可用结构源。')
           }
 
+          canvasAiPreviewSceneDocument.value = resolveCanvasAssistPreviewSceneDocument(result)
+          canvasAiPreviewDesignDocument.value = normalizeString(result.importPreview?.designDocument)
+          canvasAiPreviewSummary.value = normalizeString(result.previewSummary || result.importPreview?.summary)
           previewCanvasAssistSource(nextSourceText, nextSourceFormat)
           diagramSourceFormat.value = nextSourceFormat
           diagramSourceText.value = nextSourceText
@@ -5306,6 +5334,7 @@ function syncDiagramEditorFromFrame(frame: DesignFrameModel | null): void {
     diagramSourceFormat.value as AiCanvasAssistSourceFormat,
   )
   canvasAiPreviewPending.value = false
+  resetCanvasAssistPreviewState()
   canvasAiError.value = ''
   canvasAiPrompt.value = ''
   canvasAiMessages.value = []
@@ -5361,6 +5390,7 @@ function updateDiagramGraph(
     const nextSourceText = exportGraphSourceToMermaid(nextGraph)
     diagramSourceFormat.value = 'mermaid'
     diagramSourceText.value = nextSourceText
+    resetCanvasAssistPreviewState()
 
     return relayoutSceneDocument({
       ...scene,

@@ -735,7 +735,7 @@ export default defineEventHandler(async (event) => {
                   sceneDraft: execution.data.data.sceneDraft,
                 }
               : {}),
-            knowledge: contextBundle.knowledge,
+            knowledge: execution.data.data.knowledge || contextBundle.knowledge,
           },
           createdByUserId: user.id,
         })
@@ -829,7 +829,7 @@ export default defineEventHandler(async (event) => {
         documentDraft: persisted.documentDraft,
         workflowDraft: persisted.workflowDraft,
         sceneDraft: persisted.sceneDraft,
-        knowledge: contextBundle.knowledge,
+        knowledge: execution.data.data.knowledge || contextBundle.knowledge,
       }
 
       throwIfAborted(abortController.signal)

@@ -2,6 +2,8 @@
 import type {
   ChatMessage,
   ProjectKnowledgeCitation,
+  ProjectKnowledgeCitationLocator,
+  ProjectKnowledgeCitationSourceScope,
   ProjectKnowledgeModality,
   ProjectKnowledgeProjectionType,
   ProjectKnowledgeSourceStatus,
@@ -37,11 +39,26 @@ function normalizeKnowledge(value: unknown): ProjectKnowledgeMessagePayload | nu
           chunkId: normalizeString(item.chunkId),
           resourceTitle: normalizeString(item.resourceTitle),
           label: normalizeString(item.label),
+          sourceScope: (normalizeString(item.sourceScope) || 'project_resource') as ProjectKnowledgeCitationSourceScope,
           sourceStatus: (normalizeString(item.sourceStatus) || undefined) as ProjectKnowledgeSourceStatus | undefined,
           modality: (normalizeString(item.modality) || undefined) as ProjectKnowledgeModality | undefined,
           projectionType: (normalizeString(item.projectionType) || undefined) as ProjectKnowledgeProjectionType | undefined,
           page: Number.isFinite(Number(item.page)) ? Number(item.page) : undefined,
           section: normalizeString(item.section) || undefined,
+          anchorId: normalizeString(item.anchorId) || undefined,
+          nodeId: normalizeString(item.nodeId) || undefined,
+          locator: item.locator && typeof item.locator === 'object' && !Array.isArray(item.locator)
+            ? {
+                page: Number.isFinite(Number((item.locator as Record<string, unknown>).page))
+                  ? Number((item.locator as Record<string, unknown>).page)
+                  : undefined,
+                section: normalizeString((item.locator as Record<string, unknown>).section) || undefined,
+                anchorId: normalizeString((item.locator as Record<string, unknown>).anchorId) || undefined,
+                nodeId: normalizeString((item.locator as Record<string, unknown>).nodeId) || undefined,
+                utteranceRange: normalizeString((item.locator as Record<string, unknown>).utteranceRange) || undefined,
+                label: normalizeString((item.locator as Record<string, unknown>).label) || undefined,
+              } satisfies ProjectKnowledgeCitationLocator
+            : null,
           quote: normalizeString(item.quote) || undefined,
         } satisfies ProjectKnowledgeCitation
       })
@@ -67,10 +84,24 @@ const citationToggleLabel = computed(() => `资料引用(${visibleCitations.valu
 
 function buildCitationMeta(citation: ProjectKnowledgeCitation): string {
   const parts: string[] = []
+  if (citation.sourceScope === 'platform_resource')
+    parts.push('平台资料')
+  else if (citation.sourceScope === 'contest_resource')
+    parts.push('竞赛资料')
+  else if (citation.sourceScope === 'meeting_artifact')
+    parts.push('会议资料')
+  else if (citation.sourceScope === 'canvas_resource')
+    parts.push('画布资料')
   if (citation.page != null)
     parts.push(`第 ${citation.page} 页`)
   if (normalizeString(citation.section))
     parts.push(String(citation.section).trim())
+  if (citation.locator?.utteranceRange)
+    parts.push(`发言 ${citation.locator.utteranceRange}`)
+  if (citation.locator?.nodeId || citation.nodeId)
+    parts.push(`节点 ${citation.locator?.nodeId || citation.nodeId}`)
+  if (citation.locator?.anchorId || citation.anchorId)
+    parts.push(`锚点 ${citation.locator?.anchorId || citation.anchorId}`)
   return parts.join(' · ')
 }
 
