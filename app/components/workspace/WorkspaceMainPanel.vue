@@ -2628,6 +2628,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         v-else-if="activeTabId === 'loopy_data'"
         :active-project="activeProject"
         :active-project-id="props.activeProjectId"
+        :selected-resources="props.selectedResources"
         :dashboard="props.projectKnowledgeDashboard"
         :loading="props.projectKnowledgeLoading"
         :error="props.projectKnowledgeError"

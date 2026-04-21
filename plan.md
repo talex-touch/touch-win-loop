@@ -1,6 +1,6 @@
-# 当前重构计划：文档与画布概念收敛
+# 当前重构计划：文档、画布与 Intelligence Workflow 收敛
 
-更新时间：2026-04-18
+更新时间：2026-04-22
 
 ## 目标
 
@@ -33,6 +33,8 @@
 5. 右侧 `AgentProto` 已支持 `AI 生成 / AI 补全 / AI 续改 / 调样式` 四类 workflow 草案动作，首期全部走“预览后手动应用”。
 6. 当前 apply 边界已锁定为 `单页可写回、多页仅预览`，并通过 `baseWorkflowHash` 阻止过期草案覆盖用户最新画布。
 7. draw.io embed 宿主已支持公开配置，workflow 相关单测与 Playwright smoke 夹具已经补齐。
+8. `Loopy 数据` 已新增“智能工作流”视图，支持保存线性 workflow、运行历史、审批暂停与 continue 恢复。
+9. Intelligence workflow runtime 已复用现有 `executeWorkspaceAi()`、`ai_chat_sessions`、`ai_project_change_requests` 和 provider runner，不再并行维护第二套执行底座。
 
 ## 当前约束
 
@@ -48,11 +50,11 @@
 
 ### M2
 
-- 基于当前 `workflowDraft` 能力继续补强结构模板与样式预设，但仍保持“完整草案 + 手动 apply”的安全边界。
+- 补强 Intelligence workflow 的 step editor 体验：增加更细的 tool input 表单、run 详情抽屉与审批说明，同时继续保持线性 v1 边界。
 
 ### M3
 
-- 在 `binary` 预览稳定后，再评估 ONLYOFFICE 等在线 Office 编辑能力接入。
+- 在 `binary` 预览稳定后，再评估 ONLYOFFICE 等在线 Office 编辑能力接入；与此同时再决定 MCP bridge 是否进入第二阶段。
 
 ## 历史归档
 

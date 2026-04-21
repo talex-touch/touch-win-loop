@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import type { Project, ProjectKnowledgeIndexDashboard } from '~~/shared/types/domain'
+import type { Project, ProjectKnowledgeIndexDashboard, Resource } from '~~/shared/types/domain'
 
 type ProjectKnowledgeReindexTarget = 'all' | 'stale' | 'failed'
-type LoopyWorkbenchView = 'overview' | 'health' | 'relations' | 'semantic'
+type LoopyWorkbenchView = 'overview' | 'health' | 'relations' | 'semantic' | 'workflows'
 
 const props = withDefaults(defineProps<{
   activeProject?: Project | null
   activeProjectId?: string
+  selectedResources?: Resource[]
   dashboard?: ProjectKnowledgeIndexDashboard | null
   loading?: boolean
   error?: string
@@ -15,6 +16,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   activeProject: null,
   activeProjectId: '',
+  selectedResources: () => [],
   dashboard: null,
   loading: false,
   error: '',
@@ -54,6 +56,12 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, des
     label: '语义空间',
     icon: 'scatter_plot',
     description: '查看 Embedding 空间分布',
+  },
+  {
+    id: 'workflows',
+    label: '智能工作流',
+    icon: 'account_tree',
+    description: '保存、运行并继续项目内 workflow',
   },
 ]
 </script>
@@ -130,6 +138,13 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, des
         :dashboard="props.dashboard"
       />
     </ClientOnly>
+
+    <WorkspaceLoopyDataWorkflowsView
+      v-else-if="currentView === 'workflows'"
+      :active-project="props.activeProject"
+      :active-project-id="props.activeProjectId"
+      :selected-resources="props.selectedResources"
+    />
   </div>
 </template>
 
