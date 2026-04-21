@@ -19,6 +19,9 @@ import type {
   DefenseRealtimeMediaMode,
   DefenseRealtimeProvider,
   DefenseRealtimeSessionMeta,
+  ProjectExportJob,
+  ProjectExportJobDiagnostics,
+  ProjectExportProfile,
   ProjectIssue,
   ProjectIssueReport,
   ProjectResourceCommentAnchor,
@@ -150,6 +153,12 @@ const props = withDefaults(defineProps<{
   workflowRestyleDisabledReason?: string
   issueReportSubmitting?: boolean
   issueReportExporting?: boolean
+  contestExportProfiles?: ProjectExportProfile[]
+  contestExportActiveProfileId?: string
+  contestExportJobs?: ProjectExportJob[]
+  contestExportDiagnostics?: ProjectExportJobDiagnostics | null
+  contestBundleExporting?: boolean
+  contestBundleRetryingJobId?: string
   aiEnabled?: boolean
   aiDisabledReason?: string
   tabSpacingPreset?: WorkspaceTabSpacingPreset | ''
@@ -239,6 +248,12 @@ const props = withDefaults(defineProps<{
   workflowRestyleDisabledReason: '',
   issueReportSubmitting: false,
   issueReportExporting: false,
+  contestExportProfiles: () => [],
+  contestExportActiveProfileId: '',
+  contestExportJobs: () => [],
+  contestExportDiagnostics: null,
+  contestBundleExporting: false,
+  contestBundleRetryingJobId: '',
   aiEnabled: true,
   aiDisabledReason: '',
   tabSpacingPreset: '',
@@ -279,6 +294,9 @@ const emit = defineEmits<{
   'reconnectDefenseRealtime': []
   'submitIssueReport': [reportId: string]
   'exportIssueReport': [reportId: string]
+  'updateContestExportProfile': [profileId: string]
+  'runContestBundleExport': []
+  'retryContestBundleExport': [jobId: string]
   'selectCommentThread': [threadId: string]
   'createCommentThread': [body: string]
   'replyCommentThread': [payload: { threadId: string, body: string }]
@@ -625,6 +643,56 @@ const issueReportStatusLabel = computed(() => {
     return '已提交评审'
   return '草稿'
 })
+
+const showContestExportPanel = computed(() => {
+  return Boolean(props.selectedContest || props.contestExportProfiles.length > 0 || props.contestExportJobs.length > 0)
+})
+
+const contestExportProfileMap = computed(() => {
+  return new Map(props.contestExportProfiles.map(item => [item.id, item] as const))
+})
+
+const recentContestExportJobs = computed(() => props.contestExportJobs.slice(0, 4))
+
+function resolveContestExportJobStatusLabel(status: ProjectExportJob['status']): string {
+  if (status === 'processing')
+    return '生成中'
+  if (status === 'succeeded')
+    return '已完成'
+  if (status === 'failed')
+    return '失败'
+  return '排队中'
+}
+
+function resolveContestExportJobSummary(job: ProjectExportJob): string {
+  return job.manifest?.profile?.title
+    || contestExportProfileMap.value.get(String(job.profileId || '').trim())?.title
+    || '默认导出'
+}
+
+function handleContestExportProfileChange(event: Event): void {
+  const target = event.target as HTMLSelectElement | null
+  emit('updateContestExportProfile', String(target?.value || '').trim())
+}
+
+function requestRunContestBundleExport(): void {
+  if (props.contestBundleExporting)
+    return
+  emit('runContestBundleExport')
+}
+
+function requestRetryContestBundleExport(jobId: string): void {
+  if (!jobId || props.contestBundleRetryingJobId)
+    return
+  emit('retryContestBundleExport', jobId)
+}
+
+function openContestExportArtifact(resourceId?: string | null): void {
+  const normalized = String(resourceId || '').trim()
+  if (!normalized)
+    return
+  emit('openResource', normalized)
+}
 
 const commentDraftText = ref('')
 const commentReplyDraftMap = reactive<Record<string, string>>({})
@@ -2994,6 +3062,123 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 <p class="text-[11px] text-slate-500 mt-1">
                   追问：{{ round.followUp }}
                 </p>
+              </div>
+            </div>
+
+            <div v-if="showContestExportPanel" class="space-y-2">
+              <div class="p-3 border border-slate-200 rounded bg-white space-y-3" data-testid="workspace-contest-export-panel">
+                <div class="flex gap-2 items-center justify-between">
+                  <div>
+                    <div class="text-xs text-slate-700 font-semibold">
+                      竞赛导出
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-1">
+                      {{ props.selectedContest?.name || '当前项目' }} · {{ props.selectedTrack?.name || '默认 profile' }}
+                    </p>
+                  </div>
+                  <button
+                    class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
+                    type="button"
+                    :disabled="props.contestBundleExporting || props.contestExportProfiles.length === 0"
+                    @click="requestRunContestBundleExport"
+                  >
+                    {{ props.contestBundleExporting ? '导出中...' : '生成导出包' }}
+                  </button>
+                </div>
+
+                <label class="space-y-1">
+                  <span class="text-[11px] text-slate-500">导出 Profile</span>
+                  <select
+                    class="text-[11px] text-slate-700 px-2 border border-slate-200 rounded bg-white h-8 w-full"
+                    :value="props.contestExportActiveProfileId"
+                    @change="handleContestExportProfileChange"
+                  >
+                    <option
+                      v-for="profile in props.contestExportProfiles"
+                      :key="profile.id"
+                      :value="profile.id"
+                    >
+                      {{ profile.title }}
+                    </option>
+                  </select>
+                </label>
+
+                <div class="gap-2 grid grid-cols-2">
+                  <div class="p-2 border border-slate-200 rounded bg-slate-50">
+                    <div class="text-[10px] text-slate-400 tracking-[0.12em] uppercase">
+                      处理中
+                    </div>
+                    <div class="text-[11px] text-slate-700 mt-1">
+                      {{ props.contestExportDiagnostics?.processingCount || 0 }}
+                    </div>
+                  </div>
+                  <div class="p-2 border border-slate-200 rounded bg-slate-50">
+                    <div class="text-[10px] text-slate-400 tracking-[0.12em] uppercase">
+                      失败数
+                    </div>
+                    <div class="text-[11px] text-slate-700 mt-1">
+                      {{ props.contestExportDiagnostics?.failedCount || 0 }}
+                    </div>
+                  </div>
+                </div>
+
+                <div class="text-[11px] text-slate-500 space-y-1">
+                  <p>最近成功：{{ props.contestExportDiagnostics?.lastSuccessAt || '暂无' }}</p>
+                  <p>最近失败：{{ props.contestExportDiagnostics?.lastFailureAt || '暂无' }}</p>
+                </div>
+
+                <div class="space-y-1">
+                  <div class="text-[11px] text-slate-500">
+                    最近导出任务
+                  </div>
+                  <div
+                    v-if="recentContestExportJobs.length === 0"
+                    class="text-[11px] text-slate-500 p-2 border border-slate-200 rounded border-dashed"
+                  >
+                    还没有导出任务。生成一次导出包后，这里会显示状态、失败原因和产物入口。
+                  </div>
+                  <div v-else class="space-y-2">
+                    <div
+                      v-for="job in recentContestExportJobs"
+                      :key="job.id"
+                      class="p-2 border border-slate-200 rounded bg-slate-50"
+                    >
+                      <div class="flex gap-2 items-start justify-between">
+                        <div>
+                          <div class="text-[11px] text-slate-700 font-semibold">
+                            {{ resolveContestExportJobSummary(job) }}
+                          </div>
+                          <p class="text-[10px] text-slate-500 mt-1">
+                            {{ resolveContestExportJobStatusLabel(job.status) }} · 第 {{ job.attempt }} 次
+                          </p>
+                        </div>
+                        <button
+                          v-if="job.status === 'failed'"
+                          class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100 disabled:opacity-60"
+                          type="button"
+                          :disabled="props.contestBundleRetryingJobId === job.id"
+                          @click="requestRetryContestBundleExport(job.id)"
+                        >
+                          {{ props.contestBundleRetryingJobId === job.id ? '重试中...' : '重试' }}
+                        </button>
+                      </div>
+                      <p v-if="job.errorMessage" class="text-[10px] text-rose-600 mt-1">
+                        失败原因：{{ job.errorMessage }}
+                      </p>
+                      <div v-if="job.artifacts.length > 0" class="flex gap-2 items-center flex-wrap mt-2">
+                        <button
+                          v-for="artifact in job.artifacts.filter(item => item.resourceId)"
+                          :key="artifact.id"
+                          class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
+                          type="button"
+                          @click="openContestExportArtifact(artifact.resourceId)"
+                        >
+                          {{ artifact.title }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

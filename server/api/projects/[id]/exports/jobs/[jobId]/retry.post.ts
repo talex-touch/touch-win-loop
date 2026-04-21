@@ -1,13 +1,13 @@
 import { setResponseStatus } from 'h3'
-import { buildProjectContestExportBundle } from '~~/server/services/project/project-contest-export'
 import { runProjectContestExportJob } from '~~/server/services/project/project-contest-export-job'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
+import { getProjectExportJobById } from '~~/server/utils/project-export-store'
 
-interface ContestBundleExportBody {
+interface RetryProjectExportBody {
   profileId?: string
 }
 
@@ -20,18 +20,18 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
-  const body = (await readBody<ContestBundleExportBody>(event).catch(() => ({} as ContestBundleExportBody))) || {}
-  const endpointTag = 'contest-bundle'
+  const jobId = normalizeString(getRouterParam(event, 'jobId'))
+  const body = (await readBody<RetryProjectExportBody>(event).catch(() => ({} as RetryProjectExportBody))) || {}
 
-  if (!projectId) {
+  if (!projectId || !jobId) {
     setResponseStatus(event, 400)
-    return fail('缺少 projectId。', {
+    return fail('缺少 projectId 或 jobId。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 400211)
+    }, 400213)
   }
 
   try {
@@ -39,32 +39,31 @@ export default defineEventHandler(async (event) => {
       const project = await getVisibleProjectById(db, user, projectId)
       if (!project)
         throw new Error('PROJECT_NOT_FOUND')
+      const previousJob = await getProjectExportJobById(db, {
+        projectId,
+        jobId,
+      })
+      if (!previousJob)
+        throw new Error('EXPORT_JOB_NOT_FOUND')
 
       const exported = await runProjectContestExportJob(db, {
         project,
         actorUserId: user.id,
-        profileId: normalizeString(body.profileId) || null,
-        execute: () => buildProjectContestExportBundle(db, {
-          project,
-          actorUserId: user.id,
-          profileId: normalizeString(body.profileId) || null,
-        }),
+        profileId: normalizeString(body.profileId) || previousJob.profileId || null,
+        trigger: 'retry',
+        attempt: Math.max(1, previousJob.attempt + 1),
+        parentJobId: previousJob.id,
       })
 
       return {
-        endpoint: endpointTag,
+        endpoint: 'contest-bundle-retry',
         job: exported.job,
         manifest: exported.manifest,
         artifacts: exported.artifacts,
       }
     })
 
-    return ok({
-      job: result.job,
-      manifest: result.manifest,
-      artifacts: result.artifacts,
-      endpoint: result.endpoint,
-    }, {
+    return ok(result, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -81,16 +80,25 @@ export default defineEventHandler(async (event) => {
         model: runtime.ai.model,
         fallbackUsed: false,
         attempts: 1,
-      }, 404211)
+      }, 404213)
     }
-
+    if (error instanceof Error && error.message === 'EXPORT_JOB_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('export job not found', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 404214)
+    }
     setResponseStatus(event, 500)
-    return fail(normalizeString(error instanceof Error ? error.message : error) || 'contest bundle export failed', {
+    return fail(normalizeString(error instanceof Error ? error.message : error) || 'contest bundle retry failed', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 500211)
+    }, 500214)
   }
 })

@@ -3923,6 +3923,36 @@ export interface ProjectExportBundleManifest {
   knowledgeSummary: string
 }
 
+export type ProjectExportJobStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
+
+export type ProjectExportJobTrigger = 'manual' | 'retry'
+
+export interface ProjectExportJob {
+  id: string
+  projectId: string
+  workspaceId: string
+  profileId?: string | null
+  trigger: ProjectExportJobTrigger
+  status: ProjectExportJobStatus
+  attempt: number
+  parentJobId?: string | null
+  errorMessage: string
+  manifest?: ProjectExportBundleManifest | null
+  artifacts: ProjectExportArtifact[]
+  startedByUserId?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectExportJobDiagnostics {
+  processingCount: number
+  failedCount: number
+  lastSuccessAt?: string | null
+  lastFailureAt?: string | null
+}
+
 export type AdminAgentStreamEventType = 'progress' | 'tool' | 'delta' | 'artifact' | 'done' | 'error'
 
 export interface AdminAgentStreamEvent {

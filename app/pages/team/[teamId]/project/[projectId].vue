@@ -42,6 +42,9 @@ import type {
   ProjectInvitationSummary,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectExportJob,
+  ProjectExportJobDiagnostics,
+  ProjectExportProfile,
   ProjectMeetingDetail,
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
@@ -720,9 +723,23 @@ let projectResourcePreviewRequestId = 0
 let chatMessagesRequestId = 0
 let chatSessionsRequestId = 0
 let defenseSessionDetailRequestId = 0
+let projectExportJobsRequestId = 0
 const activeChatStreamAbortController = ref<AbortController | null>(null)
 const deletingChatSessionId = ref('')
 const chatMessagesLoading = ref(false)
+type ProjectExportJobsPayload = {
+  profiles: ProjectExportProfile[]
+  jobs: ProjectExportJob[]
+  diagnostics: ProjectExportJobDiagnostics | null
+  activeProfileId: string
+}
+const projectExportProfiles = ref<ProjectExportProfile[]>([])
+const projectExportActiveProfileId = ref('')
+const projectExportJobs = ref<ProjectExportJob[]>([])
+const projectExportDiagnostics = ref<ProjectExportJobDiagnostics | null>(null)
+const contestBundleExporting = ref(false)
+const contestBundleRetryingJobId = ref('')
+const projectExportJobsLoadedProjectId = ref('')
 const {
   resources,
   recycleResources,
@@ -6244,6 +6261,45 @@ async function loadProjectResources() {
   }
 }
 
+async function loadProjectExportJobs(projectId = activeProjectId.value) {
+  const normalizedProjectId = String(projectId || '').trim()
+  const requestId = ++projectExportJobsRequestId
+  const sameProjectRefresh = projectExportJobsLoadedProjectId.value === normalizedProjectId
+  if (!normalizedProjectId) {
+    projectExportProfiles.value = []
+    projectExportActiveProfileId.value = ''
+    projectExportJobs.value = []
+    projectExportDiagnostics.value = null
+    projectExportJobsLoadedProjectId.value = ''
+    return
+  }
+
+  try {
+    const response = await unsafeFetch<ApiResponse<ProjectExportJobsPayload>>(endpoint(`/projects/${normalizedProjectId}/exports/jobs`))
+    if (requestId !== projectExportJobsRequestId || normalizedProjectId !== String(activeProjectId.value || '').trim())
+      return
+    projectExportProfiles.value = response.data.profiles || []
+    projectExportJobs.value = response.data.jobs || []
+    projectExportDiagnostics.value = response.data.diagnostics || null
+    projectExportJobsLoadedProjectId.value = normalizedProjectId
+    const nextProfileId = String(projectExportActiveProfileId.value || '').trim()
+    const responseProfileId = String(response.data.activeProfileId || '').trim()
+    if (!projectExportProfiles.value.some(item => item.id === nextProfileId))
+      projectExportActiveProfileId.value = responseProfileId || projectExportProfiles.value[0]?.id || ''
+  }
+  catch {
+    if (requestId !== projectExportJobsRequestId || normalizedProjectId !== String(activeProjectId.value || '').trim())
+      return
+    if (!sameProjectRefresh) {
+      projectExportProfiles.value = []
+      projectExportActiveProfileId.value = ''
+      projectExportJobs.value = []
+      projectExportDiagnostics.value = null
+      projectExportJobsLoadedProjectId.value = ''
+    }
+  }
+}
+
 async function loadProjectResourceLibrary() {
   const projectId = String(activeProjectId.value || '').trim()
   const sameProjectRefresh = resourceLibraryLoadedProjectId.value === projectId
@@ -6562,6 +6618,96 @@ async function exportIssueReport(reportId: string) {
   }
   finally {
     issueReportExporting.value = false
+  }
+}
+
+function updateContestExportProfile(profileId: string) {
+  const normalizedProfileId = String(profileId || '').trim()
+  if (!normalizedProfileId) {
+    projectExportActiveProfileId.value = ''
+    return
+  }
+  if (!projectExportProfiles.value.some(item => item.id === normalizedProfileId))
+    return
+  projectExportActiveProfileId.value = normalizedProfileId
+}
+
+async function runContestBundleExport() {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || contestBundleExporting.value)
+    return
+
+  contestBundleExporting.value = true
+  try {
+    const response = await unsafeFetch<ApiResponse<{
+      job: ProjectExportJob
+      manifest: { id: string, profile: ProjectExportProfile }
+      artifacts: ProjectExportJob['artifacts']
+      endpoint: string
+    }>>(endpoint(`/projects/${projectId}/exports/contest-bundle`), {
+      method: 'POST',
+      body: {
+        profileId: String(projectExportActiveProfileId.value || '').trim() || undefined,
+      },
+    })
+
+    const bundleArtifact = response.data.artifacts.find(item => item.kind === 'bundle' && item.resourceId)
+      || response.data.artifacts.find(item => item.kind === 'pdf_report' && item.resourceId)
+      || null
+
+    await Promise.allSettled([
+      loadProjectResources(),
+      loadProjectExportJobs(projectId),
+    ])
+    if (bundleArtifact?.resourceId)
+      await openProjectResourcePreview(bundleArtifact.resourceId)
+    statusLine.value = `已生成「${response.data.manifest.profile.title}」导出包，可在右栏最近导出任务中继续查看。`
+  }
+  catch (error) {
+    await loadProjectExportJobs(projectId).catch(() => undefined)
+    statusLine.value = resolveApiErrorMessage(error, '竞赛导出失败，请稍后重试。')
+  }
+  finally {
+    contestBundleExporting.value = false
+  }
+}
+
+async function retryContestBundleExport(jobId: string) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const normalizedJobId = String(jobId || '').trim()
+  if (!projectId || !normalizedJobId || contestBundleRetryingJobId.value)
+    return
+
+  contestBundleRetryingJobId.value = normalizedJobId
+  try {
+    const response = await unsafeFetch<ApiResponse<{
+      job: ProjectExportJob
+      manifest: { id: string, profile: ProjectExportProfile }
+      artifacts: ProjectExportJob['artifacts']
+      endpoint: string
+    }>>(endpoint(`/projects/${projectId}/exports/jobs/${normalizedJobId}/retry`), {
+      method: 'POST',
+      body: {
+        profileId: String(projectExportActiveProfileId.value || '').trim() || undefined,
+      },
+    })
+    const bundleArtifact = response.data.artifacts.find(item => item.kind === 'bundle' && item.resourceId)
+      || response.data.artifacts.find(item => item.kind === 'pdf_report' && item.resourceId)
+      || null
+    await Promise.allSettled([
+      loadProjectResources(),
+      loadProjectExportJobs(projectId),
+    ])
+    if (bundleArtifact?.resourceId)
+      await openProjectResourcePreview(bundleArtifact.resourceId)
+    statusLine.value = `已重试并生成「${response.data.manifest.profile.title}」导出包。`
+  }
+  catch (error) {
+    await loadProjectExportJobs(projectId).catch(() => undefined)
+    statusLine.value = resolveApiErrorMessage(error, '重试竞赛导出失败，请稍后重试。')
+  }
+  finally {
+    contestBundleRetryingJobId.value = ''
   }
 }
 
@@ -11493,6 +11639,7 @@ watch(metaKQuery, (nextQuery) => {
 
 watch([activeProjectId, selectedContestId, selectedTrackId], async () => {
   await consumeTopicBoardCreateSeed()
+  await loadProjectExportJobs()
 })
 
 watch(resources, (nextResources) => {
@@ -12376,6 +12523,12 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 :issue-loading="issueCenterLoading"
                 :issue-report-submitting="issueReportSubmitting"
                 :issue-report-exporting="issueReportExporting"
+                :contest-export-profiles="projectExportProfiles"
+                :contest-export-active-profile-id="projectExportActiveProfileId"
+                :contest-export-jobs="projectExportJobs"
+                :contest-export-diagnostics="projectExportDiagnostics"
+                :contest-bundle-exporting="contestBundleExporting"
+                :contest-bundle-retrying-job-id="contestBundleRetryingJobId"
                 :defense-rounds="defenseRounds"
                 :defense-scorecard="defenseScorecard"
                 :defense-personas="defensePersonas"
@@ -12457,6 +12610,9 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 @reconnect-defense-realtime="reconnectDefenseRealtime"
                 @submit-issue-report="submitIssueReport"
                 @export-issue-report="exportIssueReport"
+                @update-contest-export-profile="updateContestExportProfile"
+                @run-contest-bundle-export="runContestBundleExport"
+                @retry-contest-bundle-export="retryContestBundleExport"
                 @create-comment-thread="createMarkdownCommentThread"
                 @reply-comment-thread="replyMarkdownCommentThread"
                 @resolve-comment-thread="resolveMarkdownCommentThread"

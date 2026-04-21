@@ -1,15 +1,12 @@
 import { setResponseStatus } from 'h3'
-import { buildProjectContestExportBundle } from '~~/server/services/project/project-contest-export'
-import { runProjectContestExportJob } from '~~/server/services/project/project-contest-export-job'
+import { buildProjectExportJobDiagnostics } from '~~/server/services/project/project-contest-export-job'
+import { resolveProjectExportProfiles } from '~~/server/services/project/project-contest-export'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { listProjectExportJobs } from '~~/server/utils/project-export-store'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
-
-interface ContestBundleExportBody {
-  profileId?: string
-}
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -20,8 +17,6 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
-  const body = (await readBody<ContestBundleExportBody>(event).catch(() => ({} as ContestBundleExportBody))) || {}
-  const endpointTag = 'contest-bundle'
 
   if (!projectId) {
     setResponseStatus(event, 400)
@@ -31,7 +26,7 @@ export default defineEventHandler(async (event) => {
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 400211)
+    }, 400212)
   }
 
   try {
@@ -39,32 +34,22 @@ export default defineEventHandler(async (event) => {
       const project = await getVisibleProjectById(db, user, projectId)
       if (!project)
         throw new Error('PROJECT_NOT_FOUND')
-
-      const exported = await runProjectContestExportJob(db, {
-        project,
-        actorUserId: user.id,
-        profileId: normalizeString(body.profileId) || null,
-        execute: () => buildProjectContestExportBundle(db, {
-          project,
-          actorUserId: user.id,
-          profileId: normalizeString(body.profileId) || null,
-        }),
+      const profiles = resolveProjectExportProfiles({
+        contestId: normalizeString(project.contestId) || null,
       })
-
+      const jobs = await listProjectExportJobs(db, {
+        projectId,
+        limit: 8,
+      })
       return {
-        endpoint: endpointTag,
-        job: exported.job,
-        manifest: exported.manifest,
-        artifacts: exported.artifacts,
+        profiles,
+        jobs,
+        diagnostics: buildProjectExportJobDiagnostics(jobs),
+        activeProfileId: profiles[0]?.id || '',
       }
     })
 
-    return ok({
-      job: result.job,
-      manifest: result.manifest,
-      artifacts: result.artifacts,
-      endpoint: result.endpoint,
-    }, {
+    return ok(result, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -81,16 +66,8 @@ export default defineEventHandler(async (event) => {
         model: runtime.ai.model,
         fallbackUsed: false,
         attempts: 1,
-      }, 404211)
+      }, 404212)
     }
-
-    setResponseStatus(event, 500)
-    return fail(normalizeString(error instanceof Error ? error.message : error) || 'contest bundle export failed', {
-      startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 500211)
+    throw error
   }
 })
