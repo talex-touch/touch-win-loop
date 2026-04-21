@@ -153,7 +153,7 @@ function formatShareExpiry(value: string): string {
   position: absolute;
   inset: 0;
   border: none;
-  background: rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.06);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
@@ -166,14 +166,13 @@ function formatShareExpiry(value: string): string {
 
 .workspace-final-review-materials-drawer {
   position: absolute;
-  top: 16px;
-  bottom: 16px;
-  left: 16px;
+  top: 12px;
+  bottom: 12px;
+  left: 12px;
   width: min(368px, calc(100% - 32px));
   border: 1px solid rgba(214, 224, 238, 0.95);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(18px);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -227,7 +226,7 @@ function formatShareExpiry(value: string): string {
 .workspace-final-review-materials-drawer__close,
 .workspace-final-review-materials-drawer__action {
   border: 1px solid #d9e2ef;
-  border-radius: 999px;
+  border-radius: 8px;
   background: #ffffff;
   color: #264061;
   cursor: pointer;
@@ -321,9 +320,9 @@ function formatShareExpiry(value: string): string {
   gap: 12px;
   align-items: flex-start;
   justify-content: space-between;
-  border: 1px solid #e3eaf4;
-  border-radius: 16px;
-  background: #fbfdff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
   padding: 12px 13px;
 }
 

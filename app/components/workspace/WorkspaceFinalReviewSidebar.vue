@@ -186,7 +186,7 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
   position: absolute;
   inset: 0;
   border: none;
-  background: rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.06);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
@@ -199,14 +199,13 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
 
 .workspace-final-review-sidebar {
   position: absolute;
-  top: 16px;
-  right: 16px;
-  bottom: 16px;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
   width: min(392px, calc(100% - 32px));
   border: 1px solid rgba(214, 224, 238, 0.95);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.97);
-  backdrop-filter: blur(18px);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -271,7 +270,7 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
 .workspace-final-review-sidebar__close {
   min-height: 34px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: 8px;
   background: #ffffff;
   color: #264061;
   font-size: 12px;
@@ -286,9 +285,9 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
 
 .workspace-final-review-sidebar__summary-card,
 .workspace-final-review-sidebar__issue-card {
-  border: 1px solid #e2eaf4;
-  border-radius: 18px;
-  background: #fbfdff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
   padding: 14px;
 }
 
@@ -313,9 +312,9 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
   align-items: center;
   min-height: 22px;
   padding: 0 8px;
-  border-radius: 999px;
-  background: #e9f1ff;
-  color: #2454a7;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
   font-size: 10px;
   line-height: 1;
   font-weight: 700;
@@ -370,8 +369,8 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
 .workspace-final-review-sidebar__assistant-badge {
   width: 28px;
   height: 28px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  border-radius: 8px;
+  background: #2563eb;
   color: #ffffff;
   display: inline-flex;
   align-items: center;
@@ -382,7 +381,7 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
 }
 
 .workspace-final-review-sidebar__message-bubble {
-  border-radius: 16px;
+  border-radius: 10px;
   padding: 12px 13px;
   color: #20344f;
   font-size: 13px;
@@ -414,7 +413,7 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
   width: 100%;
   resize: none;
   border: 1px solid #d6e0ec;
-  border-radius: 16px;
+  border-radius: 8px;
   background: #ffffff;
   padding: 12px 13px;
   color: #10213a;
@@ -423,9 +422,9 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
 }
 
 .workspace-final-review-sidebar__textarea:focus {
-  outline: none;
+  outline: 2px solid rgba(59, 130, 246, 0.18);
+  outline-offset: 0;
   border-color: #94b5ec;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
 
 .workspace-final-review-sidebar__textarea:disabled {
@@ -443,7 +442,7 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
 
 .workspace-final-review-sidebar__send {
   min-height: 42px;
-  border-radius: 14px;
+  border-radius: 8px;
   background: #2563eb;
   border-color: #2f65d6;
   color: #ffffff;

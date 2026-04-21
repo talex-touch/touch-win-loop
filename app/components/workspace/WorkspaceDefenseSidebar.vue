@@ -276,16 +276,15 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
   gap: 16px;
   height: 100%;
   min-height: 0;
-  padding: 18px 16px;
-  background: linear-gradient(180deg, rgba(248, 250, 255, 0.98) 0%, rgba(241, 245, 255, 0.98) 100%);
+  padding: 16px;
+  background: #f8fafc;
 }
 
 .workspace-defense-sidebar__overview,
 .workspace-defense-sidebar__personas {
   border: 1px solid rgba(216, 224, 239, 0.95);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  background: #ffffff;
 }
 
 .workspace-defense-sidebar__overview {
@@ -326,9 +325,9 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
 
 .workspace-defense-sidebar__meeting {
   padding: 14px;
-  border-radius: 18px;
-  background: #f7f9fe;
-  border: 1px solid #dde6f4;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
 }
 
 .workspace-defense-sidebar__meeting[data-tone='live'] {
@@ -370,9 +369,9 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
 
 .workspace-defense-sidebar__overview-item {
   padding: 14px;
-  border-radius: 18px;
-  background: #fbfcff;
-  border: 1px solid #e8edf7;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
 }
 
 .workspace-defense-sidebar__personas-header {
@@ -399,8 +398,9 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
   min-width: 42px;
   height: 28px;
   padding: 0 10px;
-  border-radius: 999px;
-  background: #eff4ff;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
   color: #35537f;
   font-size: 11px;
   font-weight: 700;
@@ -418,15 +418,14 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
 
 .workspace-defense-sidebar__persona {
   padding: 14px;
-  border-radius: 18px;
-  background: #f8fbff;
-  border: 1px solid #e2ebf7;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
 }
 
 .workspace-defense-sidebar__persona[data-active='true'] {
-  background: #eef4ff;
-  border-color: #bfd3f6;
-  box-shadow: inset 0 0 0 1px rgba(102, 146, 234, 0.15);
+  background: #eff6ff;
+  border-color: #bfdbfe;
 }
 
 .workspace-defense-sidebar__persona-topline {
@@ -454,7 +453,7 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
   min-width: 62px;
   height: 24px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: 8px;
   font-size: 10px;
   line-height: 1;
   font-weight: 700;
@@ -479,8 +478,8 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
   margin: 0 18px 18px;
   padding: 14px;
   border: 1px dashed #d3ddea;
-  border-radius: 18px;
-  background: #fbfcff;
+  border-radius: 10px;
+  background: #f8fafc;
 }
 
 @media (max-width: 1279px) {

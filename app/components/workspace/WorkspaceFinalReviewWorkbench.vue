@@ -408,11 +408,9 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 .workspace-final-review-workbench__hero {
   border: 1px solid #d7e3f5;
-  border-radius: 24px;
-  padding: 22px 24px;
-  background:
-    radial-gradient(circle at top right, rgba(59, 130, 246, 0.16), transparent 34%),
-    linear-gradient(180deg, #f8fbff 0%, #f3f8ff 100%);
+  border-radius: 12px;
+  padding: 20px 22px;
+  background: #ffffff;
   display: grid;
   gap: 18px;
 }
@@ -460,12 +458,12 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 .workspace-final-review-workbench__stat,
 .workspace-final-review-workbench__panel {
   border: 1px solid #dbe5f3;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  background: #ffffff;
 }
 
 .workspace-final-review-workbench__stat {
-  padding: 16px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -583,7 +581,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
   align-items: center;
   min-height: 24px;
   padding: 0 9px;
-  border-radius: 999px;
+  border-radius: 8px;
   border: 1px solid transparent;
   font-size: 11px;
   line-height: 1;
@@ -591,9 +589,10 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 }
 
 .workspace-final-review-workbench__risk-summary {
-  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
   padding: 14px 15px;
-  background: #f6f9ff;
+  background: #f8fafc;
   color: #324764;
   font-size: 13px;
   line-height: 1.8;
@@ -609,10 +608,10 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 .workspace-final-review-workbench__issue-item,
 .workspace-final-review-workbench__evidence-item,
 .workspace-final-review-workbench__compact-item {
-  border-radius: 16px;
-  border: 1px solid #e4ebf5;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
   padding: 12px 13px;
-  background: #fbfdff;
+  background: #ffffff;
 }
 
 .workspace-final-review-workbench__issue-severity {
@@ -620,9 +619,9 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
   align-items: center;
   min-height: 22px;
   padding: 0 8px;
-  border-radius: 999px;
-  background: #e9f1ff;
-  color: #2454a7;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
   font-size: 10px;
   line-height: 1;
   font-weight: 700;
@@ -649,7 +648,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 .workspace-final-review-workbench__action {
   min-height: 44px;
-  border-radius: 14px;
+  border-radius: 8px;
   padding: 0 14px;
   font-size: 13px;
   line-height: 1;
@@ -659,8 +658,8 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 .workspace-final-review-workbench__action:hover,
 .workspace-final-review-workbench__inline-action:hover {
-  border-color: #bcd0ee;
-  background: #f7faff;
+  border-color: #cbd5e1;
+  background: #f8fafc;
 }
 
 .workspace-final-review-workbench__action--primary {
@@ -687,7 +686,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 .workspace-final-review-workbench__inline-action {
   min-height: 32px;
-  border-radius: 999px;
+  border-radius: 8px;
   padding: 0 12px;
   font-size: 12px;
   line-height: 1;

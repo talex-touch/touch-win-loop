@@ -947,20 +947,17 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
 .workspace-defense-workbench__hero {
-  border: 1px solid rgba(208, 219, 239, 0.95);
-  border-radius: 32px;
-  padding: 28px;
-  background:
-    radial-gradient(circle at top right, rgba(222, 191, 77, 0.18), transparent 32%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 255, 0.96));
+  border: 1px solid #dbe4f2;
+  border-radius: 12px;
+  padding: 24px;
+  background: #ffffff;
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
   gap: 20px;
-  box-shadow: 0 22px 50px rgba(15, 23, 42, 0.08);
 }
 
 .workspace-defense-workbench__eyebrow,
@@ -1011,11 +1008,11 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
   display: inline-flex;
   align-items: center;
   min-height: 32px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid #dbe4f4;
-  color: #27466f;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #334155;
   font-size: 12px;
   font-weight: 600;
 }
@@ -1027,10 +1024,10 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__stat {
-  padding: 16px;
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.76);
-  border: 1px solid #e0e7f5;
+  padding: 14px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
 }
 
 .workspace-defense-workbench__stat-value {
@@ -1045,35 +1042,33 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
 }
 
 .workspace-defense-workbench__action {
-  min-height: 40px;
+  min-height: 38px;
   padding: 0 16px;
-  border-radius: 999px;
-  border: 1px solid #d4ddec;
-  background: rgba(255, 255, 255, 0.94);
-  color: #27415f;
+  border-radius: 8px;
+  border: 1px solid #dbe4f2;
+  background: #ffffff;
+  color: #334155;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   transition:
     background-color 0.18s ease,
     border-color 0.18s ease,
-    color 0.18s ease,
-    transform 0.18s ease;
+    color 0.18s ease;
 }
 
 .workspace-defense-workbench__action:hover {
-  transform: translateY(-1px);
-  border-color: #b9c9e2;
-  background: #ffffff;
+  border-color: #cbd5e1;
+  background: #f8fafc;
 }
 
 .workspace-defense-workbench__action--primary {
-  border-color: #2856a1;
-  background: #23467b;
+  border-color: #2563eb;
+  background: #2563eb;
   color: #ffffff;
 }
 
@@ -1090,7 +1085,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__realtime {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 255, 0.98));
+  background: #ffffff;
 }
 
 .workspace-defense-workbench__realtime-shell {
@@ -1129,8 +1124,8 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
 .workspace-defense-workbench__field-control {
   min-height: 42px;
-  border-radius: 14px;
-  border: 1px solid #d8e2f2;
+  border-radius: 8px;
+  border: 1px solid #dbe4f2;
   background: #ffffff;
   color: #12304f;
   padding: 0 12px;
@@ -1147,35 +1142,33 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__toggle {
   min-height: 38px;
   padding: 0 14px;
-  border-radius: 999px;
-  border: 1px solid #d8e1ee;
+  border-radius: 8px;
+  border: 1px solid #dbe4f2;
   background: #ffffff;
-  color: #4c6281;
+  color: #475569;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .workspace-defense-workbench__toggle--active {
-  border-color: #8cb4eb;
-  background: #eef5ff;
+  border-color: #93c5fd;
+  background: #eff6ff;
   color: #1d4f96;
 }
 
 .workspace-defense-workbench__preview {
-  border-radius: 24px;
-  border: 1px solid #dce6f4;
-  background: linear-gradient(135deg, #f8fbff, #eef5ff);
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
   padding: 12px;
 }
 
 .workspace-defense-workbench__preview-surface {
   min-height: 188px;
-  border-radius: 18px;
-  border: 1px dashed #bdd0eb;
-  background:
-    radial-gradient(circle at top left, rgba(52, 109, 182, 0.14), transparent 34%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(242, 247, 255, 0.95));
+  border-radius: 8px;
+  border: 1px dashed #cbd5e1;
+  background: #ffffff;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1187,9 +1180,9 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
 .workspace-defense-workbench__status-card {
   padding: 14px;
-  border-radius: 20px;
-  background: #fbfdff;
-  border: 1px solid #e2eaf6;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
 }
 
 .workspace-defense-workbench__status-value {
@@ -1202,7 +1195,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__realtime-alert {
-  border-radius: 18px;
+  border-radius: 10px;
   border: 1px solid rgba(231, 146, 98, 0.32);
   background: rgba(255, 246, 239, 0.95);
   color: #9a4b17;
@@ -1212,8 +1205,8 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__realtime-log {
-  border-radius: 20px;
-  border: 1px solid #dfe8f4;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
   background: #ffffff;
   padding: 14px;
 }
@@ -1238,10 +1231,9 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
 .workspace-defense-workbench__panel {
   border: 1px solid #dbe4f2;
-  border-radius: 28px;
-  padding: 22px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.05);
+  border-radius: 12px;
+  padding: 20px;
+  background: #ffffff;
 }
 
 .workspace-defense-workbench__panel--wide {
@@ -1269,24 +1261,24 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
   flex-direction: column;
   gap: 8px;
   padding: 18px;
-  border-radius: 24px;
-  border: 1px solid #dbe5f4;
-  background: linear-gradient(135deg, rgba(241, 246, 255, 0.92), rgba(255, 255, 255, 0.98));
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
 }
 
 .workspace-defense-workbench__clock-hero[data-tone='live'] {
-  border-color: rgba(41, 117, 87, 0.22);
-  background: linear-gradient(135deg, rgba(234, 249, 242, 0.96), rgba(255, 255, 255, 0.98));
+  border-color: #bbf7d0;
+  background: #f0fdf4;
 }
 
 .workspace-defense-workbench__clock-hero[data-tone='queued'] {
-  border-color: rgba(176, 129, 41, 0.22);
-  background: linear-gradient(135deg, rgba(255, 248, 230, 0.98), rgba(255, 255, 255, 0.98));
+  border-color: #fde68a;
+  background: #fffbeb;
 }
 
 .workspace-defense-workbench__clock-hero[data-tone='ended'] {
-  border-color: rgba(102, 116, 138, 0.18);
-  background: linear-gradient(135deg, rgba(245, 247, 251, 0.96), rgba(255, 255, 255, 0.98));
+  border-color: #e2e8f0;
+  background: #f8fafc;
 }
 
 .workspace-defense-workbench__clock-label,
@@ -1348,20 +1340,20 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__persona-card,
 .workspace-defense-workbench__timeline-item {
   padding: 14px;
-  border-radius: 20px;
-  background: #fbfcff;
-  border: 1px solid #e6edf7;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
 }
 
 .workspace-defense-workbench__schedule-item[data-state='active'],
 .workspace-defense-workbench__persona-card[data-status='active'] {
-  border-color: rgba(43, 104, 185, 0.28);
-  background: linear-gradient(135deg, rgba(240, 246, 255, 0.98), rgba(255, 255, 255, 0.98));
+  border-color: #93c5fd;
+  background: #eff6ff;
 }
 
 .workspace-defense-workbench__schedule-item[data-state='completed'],
 .workspace-defense-workbench__persona-card[data-status='muted'] {
-  background: linear-gradient(135deg, rgba(247, 249, 252, 0.98), rgba(255, 255, 255, 0.98));
+  background: #f8fafc;
 }
 
 .workspace-defense-workbench__schedule-time {
@@ -1386,9 +1378,9 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
   align-items: center;
   min-height: 26px;
   padding: 0 10px;
-  border-radius: 999px;
-  background: #eef4ff;
-  color: #2452a2;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
   font-size: 11px;
   line-height: 1;
   font-weight: 700;
@@ -1402,9 +1394,9 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
 .workspace-defense-workbench__score-item {
   padding: 14px;
-  border-radius: 20px;
-  background: #f8fbff;
-  border: 1px solid #e4ebf7;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1423,8 +1415,8 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__score-item--total {
-  background: #eef4ff;
-  border-color: #cddbf6;
+  background: #eff6ff;
+  border-color: #bfdbfe;
 }
 
 .workspace-defense-workbench__score-summary {
@@ -1440,9 +1432,9 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
 .workspace-defense-workbench__round {
   padding: 14px;
-  border-radius: 20px;
-  background: #fbfcff;
-  border: 1px solid #e6edf7;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
 }
 
 .workspace-defense-workbench__round-topline {
@@ -1466,9 +1458,9 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
   min-width: 36px;
   height: 28px;
   padding: 0 10px;
-  border-radius: 999px;
-  background: #eff4ff;
-  color: #2452a2;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
   font-size: 12px;
   font-weight: 700;
 }

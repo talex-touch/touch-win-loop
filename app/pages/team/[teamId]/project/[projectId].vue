@@ -13025,9 +13025,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  background:
-    radial-gradient(circle at top left, rgba(239, 204, 84, 0.14), transparent 28%),
-    linear-gradient(180deg, #f6f8fc 0%, #eef3fb 100%);
+  background: #f8fafc;
 }
 
 .workspace-defense-shell__sidebar {
@@ -13044,16 +13042,14 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 20px;
+  padding: 16px;
 }
 
 .workspace-final-review-shell {
   position: relative;
   min-width: 0;
   min-height: 0;
-  background:
-    radial-gradient(circle at top right, rgba(37, 99, 235, 0.14), transparent 26%),
-    linear-gradient(180deg, #f8fbff 0%, #f4f8ff 100%);
+  background: #f8fafc;
 }
 
 .workspace-final-review-stage {
@@ -13061,24 +13057,24 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 20px 68px;
+  padding: 16px 56px;
 }
 
 .workspace-final-review-edge {
   position: absolute;
   top: 50%;
   z-index: 18;
-  width: 42px;
-  min-height: 112px;
+  width: 40px;
+  min-height: 104px;
   border: 1px solid rgba(205, 217, 235, 0.96);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.92);
-  color: #3b5479;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #475569;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   transform: translateY(-50%);
   cursor: pointer;
   transition:
@@ -13089,22 +13085,22 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
 
 .workspace-final-review-edge:hover {
   border-color: #b6c9e7;
-  background: rgba(255, 255, 255, 0.98);
-  color: #24497f;
+  background: #f8fafc;
+  color: #334155;
 }
 
 .workspace-final-review-edge--active {
-  border-color: #8fb1e8;
-  background: #eef4ff;
+  border-color: #93c5fd;
+  background: #eff6ff;
   color: #1d4ed8;
 }
 
 .workspace-final-review-edge--left {
-  left: 12px;
+  left: 10px;
 }
 
 .workspace-final-review-edge--right {
-  right: 12px;
+  right: 10px;
 }
 
 .workspace-final-review-edge__icon {
