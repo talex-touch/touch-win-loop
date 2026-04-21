@@ -144,7 +144,7 @@ let startupNotifyChatSearchSequence = 0
 const syncColumns = [
   { title: '同步信息', dataIndex: 'name', slotName: 'name', width: 220 },
   { title: '主库来源', dataIndex: 'source', slotName: 'source', width: 340 },
-  { title: '子表同步项', dataIndex: 'itemCount', slotName: 'itemCount', width: 140 },
+  { title: '子表同步项', dataIndex: 'itemCount', slotName: 'itemCount', width: 240 },
   { title: '最近执行', dataIndex: 'latestRun', slotName: 'latestRun', width: 220 },
   { title: '主调度', dataIndex: 'schedule', slotName: 'schedule', width: 220 },
   { title: '问题', dataIndex: 'issueStats', slotName: 'issueStats', width: 120 },
@@ -231,6 +231,29 @@ const createSyncForm = reactive({
 const SYNC_ENVIRONMENT_OPTIONS: Array<{ value: FeishuBitableSyncEnvironment, label: string, tagColor: string, namePrefix: string }> = [
   { value: 'test', label: '测试环境', tagColor: 'gold', namePrefix: '[测试]' },
   { value: 'production', label: '正式环境', tagColor: 'green', namePrefix: '[正式]' },
+]
+
+const CREATE_SYNC_MILESTONES = [
+  {
+    step: '01',
+    title: '先建主库',
+    description: '先保存 appToken、环境标签和可选的 table/view 草稿，不在这一步处理字段映射。',
+  },
+  {
+    step: '02',
+    title: '再配子表',
+    description: '进入编辑抽屉，为每个子表创建同步项，并确认同步到哪类平台实体。',
+  },
+  {
+    step: '03',
+    title: '先预检再执行',
+    description: '先补映射、回填和自动同步规则，再用预检和单行模拟确认结果。',
+  },
+  {
+    step: '04',
+    title: '最后启用调度',
+    description: '首轮手动执行通过后，再决定是否开启主同步和定时调度。',
+  },
 ]
 
 const SYNC_ITEM_ENTITY_TYPE_LABELS: Record<FeishuBitableSyncItemEntityType, string> = {
@@ -400,6 +423,78 @@ function syncScheduleStatusColor(sync: FeishuBitableSync): string {
   if (!sync.schedule.enabled)
     return 'gray'
   return sync.enabled ? 'green' : 'gold'
+}
+
+function syncProgressStageLabel(sync: FeishuBitableSync): string {
+  if (sync.archivedAt)
+    return '只读归档'
+  if (!sync.itemCount)
+    return '待配子表'
+  if (!sync.enabled)
+    return '主同步停用'
+  if (!sync.enabledItemCount)
+    return '待启用子项'
+  if (sync.issueStats.open)
+    return '待处理问题'
+  if (!sync.latestRunSummary)
+    return '待首轮验证'
+  if (!sync.schedule.enabled)
+    return '手动运行稳定'
+  return '稳定运行中'
+}
+
+function syncProgressStageColor(sync: FeishuBitableSync): string {
+  if (sync.archivedAt)
+    return 'gray'
+  if (!sync.itemCount)
+    return 'gold'
+  if (!sync.enabled)
+    return 'gray'
+  if (!sync.enabledItemCount)
+    return 'gold'
+  if (sync.issueStats.open)
+    return 'red'
+  if (!sync.latestRunSummary)
+    return 'arcoblue'
+  if (!sync.schedule.enabled)
+    return 'green'
+  return 'green'
+}
+
+function syncProgressSummary(sync: FeishuBitableSync): string {
+  if (sync.archivedAt)
+    return '当前只保留历史配置，不再参与导入链路。'
+  if (!sync.itemCount)
+    return '主库已接入，当前还没有子表同步项。'
+  if (!sync.enabled)
+    return '子表与配置保留，但主同步停用后不会响应事件或调度。'
+  if (!sync.enabledItemCount)
+    return '已有子表同步项，但还没有任何启用中的导入入口。'
+  if (sync.issueStats.open)
+    return `当前有 ${sync.issueStats.open} 个待处理问题，建议先清理映射或回填问题。`
+  if (!sync.latestRunSummary)
+    return '已有启用中的子表同步项，但还没完成首轮手动验证。'
+  if (!sync.schedule.enabled)
+    return '首轮验证已完成，当前更适合手动控制执行节奏。'
+  return '主同步与调度均已进入可持续运行状态。'
+}
+
+function syncNextActionText(sync: FeishuBitableSync): string {
+  if (sync.archivedAt)
+    return '如需继续使用，先恢复归档。'
+  if (!sync.itemCount)
+    return '打开编辑抽屉，至少创建一个子表同步项。'
+  if (!sync.enabled)
+    return '确认配置后再重新启用主同步。'
+  if (!sync.enabledItemCount)
+    return '进入子表同步项，先启用至少一个可运行入口。'
+  if (sync.issueStats.open)
+    return '先处理问题单，再继续预检或启用调度。'
+  if (!sync.latestRunSummary)
+    return '先做一次手动执行，确认落库和回填。'
+  if (!sync.schedule.enabled)
+    return '验证稳定后，再按需开启主调度。'
+  return '持续关注最近运行结果和问题单。'
 }
 
 function scheduleModeLabel(mode?: string | null): string {
@@ -1572,6 +1667,24 @@ onMounted(initializePage)
               </div>
             </div>
 
+            <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-4">
+              <div
+                v-for="step in CREATE_SYNC_MILESTONES"
+                :key="step.step"
+                class="p-3 border border-slate-200 bg-slate-50"
+              >
+                <p class="text-[10px] uppercase tracking-[0.18em] text-slate-400 font-medium m-0">
+                  {{ step.step }}
+                </p>
+                <p class="text-[11px] text-slate-900 font-semibold m-0 mt-2">
+                  {{ step.title }}
+                </p>
+                <p class="text-[10px] text-slate-500 m-0 mt-1 leading-5">
+                  {{ step.description }}
+                </p>
+              </div>
+            </div>
+
             <a-table
               v-model:expanded-keys="expandedSyncKeys"
               :columns="syncColumns"
@@ -1622,11 +1735,19 @@ onMounted(initializePage)
 
               <template #itemCount="{ record }">
                 <div class="space-y-1">
-                  <a-tag color="arcoblue" size="small">
-                    {{ record.itemCount }} 个子表项
-                  </a-tag>
+                  <div class="flex flex-wrap gap-1">
+                    <a-tag color="arcoblue" size="small">
+                      {{ record.itemCount }} 个子表项
+                    </a-tag>
+                    <a-tag :color="syncProgressStageColor(record)" size="small">
+                      {{ syncProgressStageLabel(record) }}
+                    </a-tag>
+                  </div>
                   <p class="text-[10px] text-slate-500 m-0">
-                    {{ record.enabled ? `已启用 ${record.enabledItemCount}` : '主同步已禁用' }}
+                    {{ syncProgressSummary(record) }}
+                  </p>
+                  <p class="text-[10px] text-slate-400 m-0">
+                    下一步：{{ syncNextActionText(record) }}
                   </p>
                   <a-button size="mini" type="text" class="!px-0" @click.stop="toggleSyncExpanded(record)">
                     {{ expandedSyncKeys.includes(record.id) ? '收起子项' : '展开查看' }}
@@ -2242,10 +2363,27 @@ onMounted(initializePage)
       width="720px"
     >
       <div class="space-y-3">
-        <div class="p-3 border border-slate-200 bg-slate-50">
+        <div class="p-3 border border-slate-200 bg-slate-50 space-y-3">
           <p class="text-[11px] text-slate-700 m-0">
             创建阶段只识别并保存主库来源。字段映射、回填、预检与启用都在创建成功后的编辑抽屉里继续配置。
           </p>
+          <div class="gap-3 grid md:grid-cols-2">
+            <div
+              v-for="step in CREATE_SYNC_MILESTONES"
+              :key="`create-${step.step}`"
+              class="p-3 border border-slate-200 bg-white"
+            >
+              <p class="text-[10px] uppercase tracking-[0.18em] text-slate-400 font-medium m-0">
+                {{ step.step }}
+              </p>
+              <p class="text-[11px] text-slate-900 font-semibold m-0 mt-2">
+                {{ step.title }}
+              </p>
+              <p class="text-[10px] text-slate-500 m-0 mt-1 leading-5">
+                {{ step.description }}
+              </p>
+            </div>
+          </div>
         </div>
 
         <div class="gap-3 grid md:grid-cols-2">

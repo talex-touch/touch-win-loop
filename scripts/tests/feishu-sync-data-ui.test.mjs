@@ -124,6 +124,25 @@ it('飞书同步项详情支持同步清理预览、危险确认与执行接口'
   assert.match(editorSource, /blockedConflictCount|冲突\/重复被拦截/, '同步项详情未展示冲突/重复被拦截信息')
 })
 
+it('飞书导入设计会在总览页和同步项详情里暴露阶段化流程', async () => {
+  const [overviewSource, editorSource] = await Promise.all([
+    readFile(OVERVIEW_FILE, 'utf8'),
+    readFile(EDITOR_FILE, 'utf8'),
+  ])
+
+  assert.match(overviewSource, /const CREATE_SYNC_MILESTONES = \[/, '飞书总览页未收敛导入阶段常量')
+  assert.match(overviewSource, /先建主库[\s\S]*再配子表[\s\S]*先预检再执行[\s\S]*最后启用调度/, '飞书总览页未展示完整导入主路径')
+  assert.match(overviewSource, /syncProgressStageLabel\(sync: FeishuBitableSync\)/, '飞书总览页缺少同步阶段标签函数')
+  assert.match(overviewSource, /syncNextActionText\(sync: FeishuBitableSync\)/, '飞书总览页缺少下一步动作摘要')
+  assert.match(overviewSource, /下一步：\{\{ syncNextActionText\(record\) \}\}/, '飞书同步列表未展示下一步动作提示')
+
+  assert.match(editorSource, /const itemStageCards = computed\(\(\) => \{/, '同步项详情未构建导入阶段状态卡')
+  assert.match(editorSource, /key: 'source'[\s\S]*title: '来源'[\s\S]*key: 'mapping'[\s\S]*title: '基础映射'[\s\S]*key: 'writeback'[\s\S]*title: '回填配置'[\s\S]*key: 'autoSync'[\s\S]*title: '自动同步'[\s\S]*key: 'execution'[\s\S]*title: '执行入口'/, '同步项详情阶段卡未覆盖完整导入链路')
+  assert.match(editorSource, /const itemNextStepHint = computed\(\(\) => \{/, '同步项详情缺少下一步建议计算')
+  assert.match(editorSource, /当前导入阶段/, '同步项详情未展示阶段摘要区块')
+  assert.match(editorSource, /下一步建议：\{\{ itemNextStepHint \}\}/, '同步项详情未展示下一步建议文案')
+})
+
 it('飞书集成页与资料管理页会补齐同步数据查询入口', async () => {
   const [overviewSource, resourcePageSource] = await Promise.all([
     readFile(OVERVIEW_FILE, 'utf8'),

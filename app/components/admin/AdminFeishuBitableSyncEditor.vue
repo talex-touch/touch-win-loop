@@ -91,6 +91,7 @@ interface SyncWritebackFormState {
 type SyncWritebackFieldKey = keyof Pick<SyncWritebackFormState, 'status' | 'syncedAt' | 'errorMessage' | 'reasonCode' | 'entityId' | 'runId' | 'triggerSource'>
 type SaveCurrentItemContext = 'main' | 'mapping' | 'writeback' | 'autoSync'
 type SyncIssueCategoryKey = 'mapping' | 'relation' | 'writeback' | 'source'
+type ItemStageTone = 'green' | 'gold' | 'gray' | 'red' | 'blue'
 type AutoSyncFilteredSample = NonNullable<NonNullable<FeishuBitableSyncItemRun['diagnostics']>['autoSync']['filteredSamples']>[number]
 type BusinessSkipSample = NonNullable<NonNullable<FeishuBitableSyncItemRun['diagnostics']>['businessSkipSamples']>[number]
 interface CurrentItemLogRunSampleState {
@@ -582,6 +583,182 @@ const savedAutoSyncWatchedFields = computed(() => splitMultiValueText(savedAutoS
 const autoSyncSummaryText = computed(() => savedAutoSyncState.value.enabled
   ? `预检、手动执行和事件同步都会只处理“${savedAutoSyncState.value.recordStatusField || '记录状态'} ∈ 已完成”且“${savedAutoSyncState.value.syncStatusField || '同步信息'} ∈ 未同步”的记录。`
   : '当前未启用自动同步规则，预检和手动执行仍会按当前视图全量处理。')
+
+function itemStageToneMeta(tone: ItemStageTone) {
+  if (tone === 'green') {
+    return {
+      panelClass: 'border-emerald-200 bg-emerald-50',
+      badgeClass: 'bg-emerald-600 text-white',
+    }
+  }
+  if (tone === 'gold') {
+    return {
+      panelClass: 'border-amber-200 bg-amber-50',
+      badgeClass: 'bg-amber-500 text-white',
+    }
+  }
+  if (tone === 'red') {
+    return {
+      panelClass: 'border-rose-200 bg-rose-50',
+      badgeClass: 'bg-rose-600 text-white',
+    }
+  }
+  if (tone === 'blue') {
+    return {
+      panelClass: 'border-sky-200 bg-sky-50',
+      badgeClass: 'bg-sky-600 text-white',
+    }
+  }
+  return {
+    panelClass: 'border-slate-200 bg-slate-50',
+    badgeClass: 'bg-slate-500 text-white',
+  }
+}
+
+const itemStageCards = computed(() => {
+  const sourceReady = Boolean(toText(itemForm.tableId))
+  const mappingBlockedByLegacyFields = unexpectedConfiguredMappingLabels.value.length > 0
+  const mappingReady = sourceReady && !missingRequiredMappingLabels.value.length && configuredMappingCount.value > 0 && !mappingBlockedByLegacyFields
+  const writebackReady = writebackForm.enabled
+    ? Boolean(writebackSelectableFieldCount.value && selectedWritebackFieldCount.value)
+    : false
+  const executionReady = !archivedReadonly.value && !syncExecutionDisabled.value && itemForm.isEnabled
+  const sourceTone: ItemStageTone = sourceReady ? 'green' : 'gold'
+  const mappingTone: ItemStageTone = !sourceReady
+    ? 'gray'
+    : mappingBlockedByLegacyFields
+      ? 'gold'
+      : mappingReady
+        ? 'green'
+        : 'gold'
+  const writebackTone: ItemStageTone = !writebackForm.enabled
+    ? 'gray'
+    : writebackStatusFieldRisk.value || !writebackSelectableFieldCount.value || !selectedWritebackFieldCount.value
+      ? 'gold'
+      : 'green'
+  const autoSyncTone: ItemStageTone = savedAutoSyncState.value.enabled ? 'green' : 'gray'
+  const executionTone: ItemStageTone = archivedReadonly.value
+    ? 'gray'
+    : currentItemRunDisabled.value
+      ? 'gold'
+      : currentItem.value?.latestRunSummary
+        ? 'green'
+        : 'blue'
+
+  return [
+    {
+      key: 'source',
+      title: '来源',
+      status: sourceReady ? '已选子表' : '待选子表',
+      summary: sourceReady
+        ? `${itemForm.tableName || itemForm.tableId} / ${itemForm.viewName || itemForm.viewId || '全部视图'}`
+        : '先选择子表，视图可选。',
+      hint: sourceReady
+        ? '如需更新字段候选，点“刷新多维表格字段”。'
+        : '来源没定之前，映射和回填都不值得继续细化。',
+      ...itemStageToneMeta(sourceTone),
+    },
+    {
+      key: 'mapping',
+      title: '基础映射',
+      status: !sourceReady
+        ? '依赖来源'
+        : mappingReady
+          ? '已具备预检条件'
+          : mappingBlockedByLegacyFields
+            ? '有旧字段残留'
+            : '待补重点字段',
+      summary: !sourceReady
+        ? '先选来源后再看映射。'
+        : `已配置 ${configuredMappingCount.value} 项；重点缺失 ${missingRequiredMappingLabels.value.length} 项。`,
+      hint: mappingBlockedByLegacyFields
+        ? `建议先整理旧字段：${unexpectedConfiguredMappingLabels.value.join(' / ')}。`
+        : missingRequiredMappingLabels.value.length
+          ? `优先补齐 ${missingRequiredMappingLabels.value.join(' / ')}。`
+          : '可以先预检，再决定是否保存到正式配置。',
+      ...itemStageToneMeta(mappingTone),
+    },
+    {
+      key: 'writeback',
+      title: '回填配置',
+      status: !writebackForm.enabled
+        ? '未启用回填'
+        : writebackStatusFieldRisk.value
+          ? '状态字段需改写'
+          : writebackReady
+            ? '回填可用'
+            : '待补回填列',
+      summary: !writebackForm.enabled
+        ? '当前不回写飞书列。'
+        : `已选 ${selectedWritebackFieldCount.value}/${WRITEBACK_FIELD_CONFIGS.length} 个字段；可选字段 ${writebackSelectableFieldCount.value}。`,
+      hint: writebackStatusFieldRisk.value
+        ? `保存时会自动把状态列改写到 ${effectiveWritebackStatusField.value || '同步信息'}。`
+        : writebackForm.enabled && !writebackSelectableFieldCount.value
+          ? '先刷新字段概览，再选择状态、同步时间、runId 等列。'
+          : writebackForm.enabled && !selectedWritebackFieldCount.value
+            ? '建议至少配置状态、同步时间、错误摘要、实体 ID 和 runId。'
+            : '回填的是飞书列，不是平台字段。',
+      ...itemStageToneMeta(writebackTone),
+    },
+    {
+      key: 'autoSync',
+      title: '自动同步',
+      status: savedAutoSyncState.value.enabled ? '规则已启用' : '未启用自动同步',
+      summary: savedAutoSyncState.value.enabled
+        ? `${savedAutoSyncState.value.recordStatusField || '记录状态'} / ${savedAutoSyncState.value.syncStatusField || '同步信息'} 已接管事件命中。`
+        : '当前只有手动执行和预检会主动消费这份配置。',
+      hint: savedAutoSyncState.value.enabled
+        ? `完成值 ${savedAutoSyncCompletedValues.value.join(' / ') || '已完成'}；额外监听 ${savedAutoSyncWatchedFields.value.length} 个字段。`
+        : '建议先手动验证稳定，再决定是否把事件同步接进来。',
+      ...itemStageToneMeta(autoSyncTone),
+    },
+    {
+      key: 'execution',
+      title: '执行入口',
+      status: archivedReadonly.value
+        ? '归档只读'
+        : syncExecutionDisabled.value
+          ? '主同步未启用'
+          : !itemForm.isEnabled
+            ? '同步项未启用'
+            : currentItem.value?.latestRunSummary
+              ? '可稳定复跑'
+              : '待首轮验证',
+      summary: currentItem.value?.latestRunSummary
+        ? `最近执行：${formatDateTime(currentItem.value.latestRunSummary.startedAt)}。`
+        : '建议先预检，再做首轮手动执行。',
+      hint: archivedReadonly.value
+        ? '归档同步只保留查看，不可再执行。'
+        : executionReady
+          ? '推荐顺序：预检 -> 单行模拟 -> 保存配置 -> 手动执行。'
+          : '先确认主同步和当前同步项都处于启用状态。',
+      ...itemStageToneMeta(executionTone),
+    },
+  ]
+})
+
+const itemNextStepHint = computed(() => {
+  if (!toText(itemForm.tableId))
+    return '先在“来源”里选子表/视图并刷新字段概览。'
+  if (missingRequiredMappingLabels.value.length)
+    return `先在“基础映射”补齐 ${missingRequiredMappingLabels.value.join(' / ')}。`
+  if (unexpectedConfiguredMappingLabels.value.length)
+    return `先整理旧字段残留：${unexpectedConfiguredMappingLabels.value.join(' / ')}。`
+  if (writebackForm.enabled && !writebackSelectableFieldCount.value)
+    return '先刷新字段概览，再进入“回填配置”选择回填列。'
+  if (writebackForm.enabled && !selectedWritebackFieldCount.value)
+    return '进入“回填配置”，至少补齐状态、同步时间、实体 ID 和 runId。'
+  if (syncExecutionDisabled.value)
+    return '保存当前配置后，先启用主同步，再决定是否开放手动执行。'
+  if (!itemForm.isEnabled)
+    return '保存当前配置后，先启用这个同步项，再做预检和首轮手动执行。'
+  if (!currentItem.value?.latestRunSummary)
+    return '当前已经具备执行条件，建议按“预检 -> 单行模拟 -> 手动执行”的顺序完成首轮验证。'
+  if (!savedAutoSyncState.value.enabled)
+    return '首轮验证已经完成，接下来可以评估是否开启自动同步规则。'
+  return '当前链路已经跑通，继续关注执行日志、问题单和调度状态。'
+})
+
 const autoSyncCompletedValues = computed<string[]>({
   get: () => splitMultiValueText(autoSyncForm.completedValuesText),
   set: values => autoSyncForm.completedValuesText = joinMultiValueText(values),
@@ -3422,6 +3599,46 @@ watch(() => props.selectedItemId, (value) => {
                   <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem('main')">
                     保存配置
                   </a-button>
+                </div>
+              </div>
+
+              <div class="p-3 border border-slate-200 rounded bg-slate-50 space-y-3">
+                <div class="flex flex-wrap gap-2 items-center justify-between">
+                  <div>
+                    <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                      当前导入阶段
+                    </h3>
+                    <p class="text-[11px] text-slate-500 m-0 mt-1">
+                      用一屏状态卡判断这条同步项现在卡在哪一步，不必逐个打开二级 Drawer 才能确认。
+                    </p>
+                  </div>
+                  <p class="text-[11px] text-slate-700 m-0">
+                    下一步建议：{{ itemNextStepHint }}
+                  </p>
+                </div>
+
+                <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-5">
+                  <section
+                    v-for="card in itemStageCards"
+                    :key="card.key"
+                    class="p-3 border rounded space-y-2"
+                    :class="card.panelClass"
+                  >
+                    <div class="flex gap-2 items-center justify-between">
+                      <p class="text-[11px] text-slate-900 font-semibold m-0">
+                        {{ card.title }}
+                      </p>
+                      <span class="text-[10px] px-2 py-1 rounded-full" :class="card.badgeClass">
+                        {{ card.status }}
+                      </span>
+                    </div>
+                    <p class="text-[11px] text-slate-700 m-0 leading-5">
+                      {{ card.summary }}
+                    </p>
+                    <p class="text-[10px] text-slate-500 m-0 leading-5">
+                      {{ card.hint }}
+                    </p>
+                  </section>
                 </div>
               </div>
 
