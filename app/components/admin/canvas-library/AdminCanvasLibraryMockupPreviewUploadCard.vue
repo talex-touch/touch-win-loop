@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { RequestOption, UploadRequest } from '@arco-design/web-vue'
 import type { PropType } from 'vue'
+import { ref, watch } from 'vue'
 
-defineProps({
+const props = defineProps({
   previewUrl: {
     type: String,
     default: '',
@@ -48,6 +49,13 @@ defineProps({
     required: true,
   },
 })
+
+const uploadControlKey = ref(0)
+
+watch(() => props.uploading, (uploading, previousUploading) => {
+  if (previousUploading && !uploading)
+    uploadControlKey.value += 1
+})
 </script>
 
 <template>
@@ -76,6 +84,7 @@ defineProps({
         </p>
         <div class="mt-3">
           <a-upload
+            :key="uploadControlKey"
             :accept="accept"
             :custom-request="customRequest"
             :show-file-list="false"

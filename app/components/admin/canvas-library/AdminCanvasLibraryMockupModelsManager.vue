@@ -171,6 +171,7 @@ const shellUploadSubmitting = ref(false)
 const selectedDetail = ref<MockupModelDetail | null>(null)
 const variantPreviewUploading = reactive<Record<string, boolean>>({})
 const variantShellUploading = reactive<Record<string, boolean>>({})
+const variantShellUploadControlKeys = reactive<Record<string, number>>({})
 const variantTitleDrafts = reactive<Record<string, string>>({})
 const variantCreateVisible = ref(false)
 const variantCreateDraft = ref('')
@@ -573,6 +574,10 @@ function resetVariantLocalState(variants: MockupDeviceVariant[]): void {
     if (!activeKeys.has(slotKey))
       delete variantShellUploading[slotKey]
   })
+  Object.keys(variantShellUploadControlKeys).forEach((slotKey) => {
+    if (!activeKeys.has(slotKey))
+      delete variantShellUploadControlKeys[slotKey]
+  })
 }
 
 function createNextVariantSlotKey(): MockupVariantSlotKey {
@@ -877,6 +882,25 @@ function createAbortError(): DOMException {
   return new DOMException('已取消上传', 'AbortError')
 }
 
+function bumpVariantShellUploadControlKey(slotKey: MockupVariantSlotKey | string): void {
+  const normalizedSlotKey = normalizeString(slotKey)
+  if (!normalizedSlotKey)
+    return
+  variantShellUploadControlKeys[normalizedSlotKey] = (variantShellUploadControlKeys[normalizedSlotKey] || 0) + 1
+}
+
+function finishVariantShellUpload(slotKey: MockupVariantSlotKey | string): void {
+  const normalizedSlotKey = normalizeString(slotKey)
+  if (!normalizedSlotKey)
+    return
+  variantShellUploading[normalizedSlotKey] = false
+  bumpVariantShellUploadControlKey(normalizedSlotKey)
+}
+
+function resolveVariantShellUploadKey(slotKey: MockupVariantSlotKey): string {
+  return `${slotKey}:${variantShellUploadControlKeys[slotKey] || 0}`
+}
+
 function cancelPendingVariantShellUpload(): void {
   const slotKey = pendingVariantShellUpload.slotKey
   const requestOption = pendingVariantShellUpload.requestOption
@@ -886,7 +910,7 @@ function cancelPendingVariantShellUpload(): void {
   if (abortController)
     abortController.abort()
   if (slotKey)
-    variantShellUploading[slotKey] = false
+    finishVariantShellUpload(slotKey)
   resetPendingVariantShellUpload()
   if (requestOption)
     requestOption.onError(createAbortError())
@@ -901,7 +925,7 @@ async function confirmPendingVariantShellUpload(): Promise<void> {
     shellUploadConfirmVisible.value = false
     shellUploadSubmitting.value = false
     if (slotKey)
-      variantShellUploading[slotKey] = false
+      finishVariantShellUpload(slotKey)
     requestOption?.onError(new Error('当前素材图确认信息不完整，请重新上传。'))
     resetPendingVariantShellUpload()
     notifyError('当前素材图确认信息不完整，请重新上传。')
@@ -912,7 +936,7 @@ async function confirmPendingVariantShellUpload(): Promise<void> {
   if (!presetKey) {
     shellUploadConfirmVisible.value = false
     shellUploadSubmitting.value = false
-    variantShellUploading[slotKey] = false
+    finishVariantShellUpload(slotKey)
     requestOption.onError(new Error('当前型号缺少 preset 标识，无法上传素材图。'))
     resetPendingVariantShellUpload()
     notifyError('当前型号缺少 preset 标识，无法上传素材图。')
@@ -955,7 +979,7 @@ async function confirmPendingVariantShellUpload(): Promise<void> {
       requestOption.onError(new Error('素材图已上传，但绑定到变体失败，请改用素材列表手动选择。'))
       shellUploadConfirmVisible.value = false
       shellUploadSubmitting.value = false
-      variantShellUploading[slotKey] = false
+      finishVariantShellUpload(slotKey)
       resetPendingVariantShellUpload()
       return
     }
@@ -965,7 +989,7 @@ async function confirmPendingVariantShellUpload(): Promise<void> {
     notifySuccess('变体素材图上传成功，已绑定到当前变体。')
     shellUploadConfirmVisible.value = false
     shellUploadSubmitting.value = false
-    variantShellUploading[slotKey] = false
+    finishVariantShellUpload(slotKey)
     resetPendingVariantShellUpload()
   }
   catch (error: any) {
@@ -974,7 +998,7 @@ async function confirmPendingVariantShellUpload(): Promise<void> {
     notifyError(String(error?.message || '变体素材图上传失败。'))
     requestOption.onError(error)
     shellUploadSubmitting.value = false
-    variantShellUploading[slotKey] = false
+    finishVariantShellUpload(slotKey)
     shellUploadConfirmVisible.value = false
     resetPendingVariantShellUpload()
   }
@@ -1002,7 +1026,7 @@ function buildVariantShellUploadRequest(variant: MockupDeviceVariant): (option: 
 
         const dimensions = await inspectImageFile(file)
         if (cancelled) {
-          variantShellUploading[slotKey] = false
+          finishVariantShellUpload(slotKey)
           option.onError(createAbortError())
           return
         }
@@ -1026,7 +1050,7 @@ function buildVariantShellUploadRequest(variant: MockupDeviceVariant): (option: 
         shellUploadConfirmVisible.value = true
       }
       catch (error: any) {
-        variantShellUploading[slotKey] = false
+        finishVariantShellUpload(slotKey)
         if (isAbortError(error))
           return
         notifyError(String(error?.message || '变体素材图上传准备失败。'))
@@ -1044,7 +1068,7 @@ function buildVariantShellUploadRequest(variant: MockupDeviceVariant): (option: 
           cancelPendingVariantShellUpload()
           return
         }
-        variantShellUploading[slotKey] = false
+        finishVariantShellUpload(slotKey)
         option.onError(createAbortError())
       },
     }
@@ -2114,6 +2138,7 @@ onMounted(() => {
                       </a-option>
                     </a-select>
                     <a-upload
+                      :key="resolveVariantShellUploadKey(scope.record.slotKey)"
                       :accept="PREVIEW_UPLOAD_ACCEPT"
                       :custom-request="buildVariantShellUploadRequest(scope.record)"
                       :show-file-list="false"
@@ -2185,6 +2210,7 @@ onMounted(() => {
       :footer="false"
       title="确认变体素材图"
       width="680px"
+      @cancel="cancelPendingVariantShellUpload"
     >
       <div class="space-y-4">
         <div class="text-sm text-slate-700 p-4 border border-slate-200 rounded-lg bg-slate-50">

@@ -15,6 +15,10 @@ const ADMIN_MOCKUP_COMPONENT_FILE = resolve(
   process.cwd(),
   'app/components/admin/canvas-library/AdminCanvasLibraryMockupModelsManager.vue',
 )
+const ADMIN_MOCKUP_PREVIEW_UPLOAD_CARD_FILE = resolve(
+  process.cwd(),
+  'app/components/admin/canvas-library/AdminCanvasLibraryMockupPreviewUploadCard.vue',
+)
 const ADMIN_MOCKUP_VARIANT_DELETE_API_FILE = resolve(
   process.cwd(),
   'server/api/admin/mockups/models/[id]/variants/[slotKey].delete.ts',
@@ -45,10 +49,11 @@ const DEVICE_SHELL_BINDING_ERROR_PATTERN = /throw new Error\(['"]素材图必须
 const MOCKUPS_TAB_QUERY_PATTERN = /tab:\s*['"]mockups['"]/
 
 it('mockup 型号已并入画布资源库，并保留兼容路由跳转', async () => {
-  const [adminPageSource, adminCanvasLibraryPageSource, adminMockupComponentSource, adminSubnavSource] = await Promise.all([
+  const [adminPageSource, adminCanvasLibraryPageSource, adminMockupComponentSource, adminMockupPreviewUploadCardSource, adminSubnavSource] = await Promise.all([
     readFile(ADMIN_PAGE_FILE, 'utf8'),
     readFile(ADMIN_CANVAS_LIBRARY_PAGE_FILE, 'utf8'),
     readFile(ADMIN_MOCKUP_COMPONENT_FILE, 'utf8'),
+    readFile(ADMIN_MOCKUP_PREVIEW_UPLOAD_CARD_FILE, 'utf8'),
     readFile(ADMIN_SUBNAV_FILE, 'utf8'),
   ])
 
@@ -81,6 +86,12 @@ it('mockup 型号已并入画布资源库，并保留兼容路由跳转', async 
   assert.match(adminMockupComponentSource, /startAddVariant\(\)/, '展示变体新增入口未先进入命名态')
   assert.match(adminMockupComponentSource, /function normalizeVariantTitleInput/, '展示变体新增与改名未复用统一标题归一化逻辑')
   assert.match(adminMockupComponentSource, /title: nextTitle/, '展示变体新增未直接以输入标题创建')
+  assert.match(adminMockupComponentSource, /variantShellUploadControlKeys/, '变体素材图上传器缺少本地复位 key 管理')
+  assert.match(adminMockupComponentSource, /:key="resolveVariantShellUploadKey\(scope\.record\.slotKey\)"/, '变体素材图上传器缺少按变体复位 key')
+  assert.match(adminMockupComponentSource, /@cancel="cancelPendingVariantShellUpload"/, '素材图确认弹层关闭时未统一走清理逻辑')
+  assert.match(adminMockupPreviewUploadCardSource, /const uploadControlKey = ref\(0\)/, '预览图上传卡片缺少本地复位 key')
+  assert.match(adminMockupPreviewUploadCardSource, /watch\(\(\) => props\.uploading/, '预览图上传卡片未监听上传结束时机')
+  assert.match(adminMockupPreviewUploadCardSource, /:key="uploadControlKey"/, '预览图上传卡片缺少上传器复位 key')
   assert.doesNotMatch(adminMockupComponentSource, /:model-value="scope\.record\.title"/, '展示变体标题仍是只读绑定，无法输入')
   assert.doesNotMatch(adminMockupComponentSource, /#cell="\{ record \}"/, 'Mockup 型号表格不应继续使用 record 解构 cell slot')
   assert.doesNotMatch(adminMockupComponentSource, /placeholder="标题"/, '创建型号表单不应再暴露标题字段')
