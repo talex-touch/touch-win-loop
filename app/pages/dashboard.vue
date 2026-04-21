@@ -205,7 +205,7 @@ onMounted(() => {
     <NuxtPage v-if="!isDashboardIndex" />
     <section
       v-else
-      class="flex h-full min-h-0 min-w-0 w-full overflow-hidden"
+      class="flex h-full min-h-0 w-full min-w-0 overflow-hidden"
       data-testid="dashboard-loopy-home"
     >
       <div class="border border-slate-200 rounded-lg bg-white grid h-full min-h-0 w-full overflow-hidden lg:grid-cols-[280px_minmax(0,1fr)]">

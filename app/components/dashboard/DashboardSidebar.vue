@@ -88,6 +88,10 @@ function openProfileDialog() {
   profileDialogVisible.value = true
 }
 
+function isBrandIcon(icon: string): boolean {
+  return icon === 'brand-mark'
+}
+
 async function onWorkspaceSwitch(workspaceId: string) {
   const targetId = String(workspaceId || '').trim()
   if (!targetId)
@@ -118,13 +122,11 @@ function onUserUpdated(user: AuthUser) {
 
 <template>
   <aside class="border-r border-blue-100 bg-white shrink-0 flex-col w-64 hidden lg:flex">
-    <div class="p-6 flex gap-3 items-center">
-      <div class="text-white rounded-lg bg-blue-700 flex h-8 w-8 items-center justify-center">
-        <span class="material-symbols-outlined text-xl">analytics</span>
-      </div>
-      <h1 class="text-lg text-slate-900 tracking-tight font-bold">
+    <div class="p-6 border-b border-blue-50 space-y-3">
+      <BrandLogo variant="lockup" class="dashboard-sidebar__brand-lockup" />
+      <p class="text-xs text-slate-500 leading-5">
         竞赛分析平台
-      </h1>
+      </p>
     </div>
 
     <nav class="px-4 flex-1 space-y-1">
@@ -137,7 +139,13 @@ function onUserUpdated(user: AuthUser) {
           ? 'bg-blue-50 text-blue-700 font-medium'
           : 'text-slate-600 hover:bg-slate-50'"
       >
-        <span class="material-symbols-outlined text-[22px]">{{ item.icon }}</span>
+        <BrandLogo
+          v-if="isBrandIcon(item.icon)"
+          variant="mark"
+          class="shrink-0"
+          style="--winloop-brand-mark-size: 22px;"
+        />
+        <span v-else class="material-symbols-outlined text-[22px]">{{ item.icon }}</span>
         <span>{{ item.label }}</span>
       </NuxtLink>
     </nav>
@@ -168,10 +176,10 @@ function onUserUpdated(user: AuthUser) {
         @workspace-created="onWorkspaceCreated"
       />
       <WorkspaceSwitchEntry
-        v-else
-        mode="link"
+      v-else
+      mode="link"
         label="项目台"
-        icon="workspaces"
+        icon="brand-mark"
         to="/team"
       />
 
@@ -229,3 +237,9 @@ function onUserUpdated(user: AuthUser) {
     @workspace-updated="onWorkspaceUpdated"
   />
 </template>
+
+<style scoped>
+.dashboard-sidebar__brand-lockup {
+  --winloop-brand-lockup-width: 128px;
+}
+</style>

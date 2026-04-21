@@ -19,6 +19,7 @@ const KNOWLEDGE_WORKER_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/resou
 const ADMIN_INDEX_FILE = resolve(process.cwd(), 'app/pages/admin/index.vue')
 const ADMIN_OPERATIONS_STORE_FILE = resolve(process.cwd(), 'server/utils/admin-operations-store.ts')
 const PROJECT_KNOWLEDGE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-knowledge-store.ts')
+const KNOWLEDGE_ANALYTICS_STORE_FILE = resolve(process.cwd(), 'server/utils/project-knowledge-analytics-store.ts')
 
 describe('project knowledge phase2', () => {
   it('aI 返回协议与 assistant metadata 已扩展 knowledge 结构', async () => {
@@ -91,9 +92,10 @@ describe('project knowledge phase2', () => {
   })
 
   it('项目知识索引 dashboard 已补齐真实 embedding provenance 与诊断聚合', async () => {
-    const [typesSource, storeSource, pluginSource] = await Promise.all([
+    const [typesSource, storeSource, analyticsStoreSource, pluginSource] = await Promise.all([
       readFile(DOMAIN_TYPES_FILE, 'utf8'),
       readFile(PROJECT_KNOWLEDGE_STORE_FILE, 'utf8'),
+      readFile(KNOWLEDGE_ANALYTICS_STORE_FILE, 'utf8'),
       readFile(KNOWLEDGE_WORKER_PLUGIN_FILE, 'utf8'),
     ])
 
@@ -102,6 +104,10 @@ describe('project knowledge phase2', () => {
     assert.match(typesSource, /embeddingFallbackUsed\?: boolean/, '共享 Chunk metadata 缺少 embeddingFallbackUsed provenance')
     assert.match(typesSource, /healthState: ProjectKnowledgeIndexHealthState/, '共享 dashboard diagnostics 缺少 healthState')
     assert.match(typesSource, /visuals: ProjectKnowledgeIndexVisuals/, '共享 dashboard 缺少 visuals 聚合字段')
+    assert.match(typesSource, /export interface ProjectKnowledgeSemanticLayoutSummary \{[\s\S]*averageSimilarity: number[\s\S]*maxSimilarity: number[\s\S]*\}/, '共享类型缺少语义空间 summary 结构')
+    assert.match(typesSource, /densityScore: number/, '共享类型缺少 cluster densityScore')
+    assert.match(typesSource, /topicLabel: string/, '共享类型缺少 cluster topicLabel')
+    assert.match(typesSource, /similarityScore: number/, '共享类型缺少 cluster similarityScore')
     assert.match(storeSource, /buildProjectKnowledgeRuntimeStatus/, '项目知识索引 store 未聚合 runtime 诊断')
     assert.match(storeSource, /buildProjectKnowledgeWorkerStatus/, '项目知识索引 store 未聚合 worker 诊断')
     assert.match(storeSource, /healthState: 'missing_runtime'/, '项目知识索引 store 缺少 missing_runtime 判定')
@@ -111,6 +117,12 @@ describe('project knowledge phase2', () => {
     assert.match(storeSource, /healthState: 'healthy'/, '项目知识索引 store 缺少 healthy 判定')
     assert.match(storeSource, /starfieldNodes:/, '项目知识索引 store 未生成状态星图输入')
     assert.match(storeSource, /embeddingComposition:/, '项目知识索引 store 未生成 embedding 构成图输入')
+    assert.match(analyticsStoreSource, /summary: emptySummary/, '语义空间 analytics store 缺少空 summary 返回')
+    assert.match(analyticsStoreSource, /densityScore:/, '语义空间 analytics store 未生成 cluster densityScore')
+    assert.match(analyticsStoreSource, /topicLabel:/, '语义空间 analytics store 未生成 cluster topicLabel')
+    assert.match(analyticsStoreSource, /similarityScore:/, '语义空间 analytics store 未生成 cluster similarityScore')
+    assert.match(analyticsStoreSource, /averageSimilarity:/, '语义空间 analytics store 未生成 summary averageSimilarity')
+    assert.match(analyticsStoreSource, /maxSimilarity:/, '语义空间 analytics store 未生成 summary maxSimilarity')
     assert.match(pluginSource, /embeddingProvider: embeddingResult\.provider/, '知识索引 worker 未持久化 embedding provider')
     assert.match(pluginSource, /embeddingModel: embeddingResult\.model/, '知识索引 worker 未持久化 embedding model')
     assert.match(pluginSource, /embeddingFallbackUsed: embeddingResult\.fallbackUsed/, '知识索引 worker 未持久化 fallback 标记')

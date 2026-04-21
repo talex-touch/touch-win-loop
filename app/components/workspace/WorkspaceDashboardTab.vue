@@ -125,7 +125,7 @@ function resolveMappingScoreTextClass(score: number): string {
   <div class="w-full space-y-4">
     <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
       <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex gap-3 items-center">
-        <span class="material-symbols-outlined text-xl text-blue-600">space_dashboard</span>
+        <BrandLogo variant="mark" class="shrink-0" style="--winloop-brand-mark-size: 22px;" />
         <div>
           <h2 class="text-sm font-bold">
             WinLoop 仪表盘

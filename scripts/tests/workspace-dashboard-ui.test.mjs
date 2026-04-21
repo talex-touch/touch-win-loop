@@ -186,6 +186,7 @@ it('平台首页改成纯 Loopy 问答页，侧边导航同步切换品牌', asy
   assert.match(loopyDialogSource, /projectId: ''[\s\S]*mode: 'dialog_ask'/, 'Loopy 对话 composable 未固定走 workspace 级 dialog_ask')
   assert.doesNotMatch(loopyDialogSource, /selectedProjectId|changeProject|requireProjectForSend|LOOPY_PROJECT_STORAGE_KEY_PREFIX/, 'Loopy 对话 composable 仍残留项目级逻辑')
   assert.match(dashboardWorkspaceSource, /label: 'Loopy'/, '侧边导航未将首页概览改名为 Loopy')
+  assert.match(dashboardWorkspaceSource, /icon: 'brand-mark'/, '侧边导航首页入口未切换到共享品牌图标')
   assert.doesNotMatch(dashboardWorkspaceSource, /首页概览/, '侧边导航仍保留旧的首页概览命名')
 })
 

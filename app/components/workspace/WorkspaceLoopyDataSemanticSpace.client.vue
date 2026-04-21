@@ -1,251 +1,276 @@
 <script setup lang="ts">
+import type { CSSProperties } from 'vue'
 import type {
   ApiResponse,
-  ProjectKnowledgeEmbeddingStatus,
-  ProjectKnowledgeNodeDetail,
-  ProjectKnowledgeSemanticLayoutLevel,
+  ProjectKnowledgeIndexDashboard,
+  ProjectKnowledgeSemanticCluster,
   ProjectKnowledgeSemanticLayoutPayload,
-  ProjectKnowledgeSemanticLayoutType,
   ProjectKnowledgeSemanticPoint,
 } from '~~/shared/types/domain'
-import * as THREE from 'three'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import WorkspaceLoopyDataNodeDetail from '~/components/workspace/WorkspaceLoopyDataNodeDetail.vue'
 import { useApiEndpoint } from '~/composables/useApiEndpoint'
 
-const props = defineProps<{
+interface PlotPoint extends ProjectKnowledgeSemanticPoint {
+  plotX: number
+  plotY: number
+  radius: number
+  color: string
+}
+
+interface PlotCluster extends ProjectKnowledgeSemanticCluster {
+  plotX: number
+  plotY: number
+  color: string
+  haloRadius: number
+}
+
+const props = withDefaults(defineProps<{
   projectId?: string
-}>()
+  dashboard?: ProjectKnowledgeIndexDashboard | null
+}>(), {
+  projectId: '',
+  dashboard: null,
+})
 
 const { endpoint } = useApiEndpoint()
-const containerRef = ref<HTMLDivElement | null>(null)
+
+const VIEWBOX_WIDTH = 980
+const VIEWBOX_HEIGHT = 620
+const PLOT_PADDING_X = 68
+const PLOT_PADDING_Y = 54
+
 const loading = ref(false)
 const error = ref('')
 const payload = ref<ProjectKnowledgeSemanticLayoutPayload | null>(null)
-const detail = ref<ProjectKnowledgeNodeDetail | null>(null)
-const detailLoading = ref(false)
-const detailError = ref('')
-const layoutType = ref<ProjectKnowledgeSemanticLayoutType>('chunk_space')
-const level = ref<ProjectKnowledgeSemanticLayoutLevel>('chunk')
-const embeddingStatus = ref<ProjectKnowledgeEmbeddingStatus | ''>('')
+const hoveredPointId = ref('')
+const selectedPointId = ref('')
 
-let renderer: THREE.WebGLRenderer | null = null
-let scene: THREE.Scene | null = null
-let camera: THREE.PerspectiveCamera | null = null
-let controls: OrbitControls | null = null
-let frameHandle = 0
-let pointRoot: THREE.Object3D | null = null
-const raycaster = new THREE.Raycaster()
-const pointer = new THREE.Vector2()
-
-function toneColor(point: ProjectKnowledgeSemanticPoint): THREE.Color {
-  const modality = point.modality
-  if (modality === 'text')
-    return new THREE.Color('#3c82f6')
-  if (modality === 'image')
-    return new THREE.Color('#14b8a6')
-  if (modality === 'audio')
-    return new THREE.Color('#f59e0b')
-  if (modality === 'video')
-    return new THREE.Color('#ef5a8b')
-  if (modality === 'draw')
-    return new THREE.Color('#8b5cf6')
-  return new THREE.Color('#64748b')
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
 }
 
-function statusOpacity(status: ProjectKnowledgeEmbeddingStatus): number {
-  if (status === 'native')
-    return 0.96
-  if (status === 'derived')
-    return 0.82
-  if (status === 'fallback')
-    return 0.56
-  if (status === 'failed')
-    return 0.32
-  return 0.24
+function resolveAlgorithmLabel(value?: string | null): string {
+  return String(value || '').trim().toLowerCase() === 'pca3d' ? 'PCA' : 'UMAP'
 }
 
-function pointScale(point: ProjectKnowledgeSemanticPoint): number {
-  return Math.max(0.16, Math.min(1.1, 0.14 + (point.importance / 10)))
+function resolveClusterColor(index: number, total: number): string {
+  const safeTotal = Math.max(1, total)
+  const ratio = safeTotal <= 1 ? 0.5 : index / (safeTotal - 1)
+  const hue = 252 - (ratio * 56)
+  const saturation = 88 - (ratio * 8)
+  const lightness = 62 + (ratio * 12)
+  return `hsl(${hue.toFixed(0)} ${saturation.toFixed(0)}% ${lightness.toFixed(0)}%)`
 }
 
-function pointGeometry(point: ProjectKnowledgeSemanticPoint): THREE.BufferGeometry {
-  if (point.nodeType === 'cluster')
-    return new THREE.IcosahedronGeometry(0.52, 0)
-  if (point.modality === 'image')
-    return new THREE.BoxGeometry(0.44, 0.44, 0.44)
-  if (point.modality === 'audio')
-    return new THREE.ConeGeometry(0.32, 0.62, 6)
-  if (point.modality === 'draw')
-    return new THREE.OctahedronGeometry(0.4, 0)
-  return new THREE.SphereGeometry(0.28, 14, 14)
+function resolvePointOpacity(point: ProjectKnowledgeSemanticPoint): number {
+  if (point.embeddingStatus === 'native')
+    return 0.92
+  if (point.embeddingStatus === 'derived')
+    return 0.76
+  if (point.embeddingStatus === 'fallback')
+    return 0.52
+  if (point.embeddingStatus === 'failed')
+    return 0.28
+  return 0.2
 }
 
-function disposeObject(object: THREE.Object3D | null): void {
-  if (!object)
+function formatSimilarity(value: number): string {
+  const normalized = Number(value || 0)
+  if (!Number.isFinite(normalized) || normalized <= 0)
+    return '0.00'
+  return normalized.toFixed(2)
+}
+
+function resolveDensityLabel(value: number): string {
+  if (value >= 0.78)
+    return '高'
+  if (value >= 0.52)
+    return '中'
+  return '低'
+}
+
+function clearActivePoint(): void {
+  hoveredPointId.value = ''
+  selectedPointId.value = ''
+}
+
+function handlePointEnter(pointId: string): void {
+  if (selectedPointId.value)
     return
-  object.traverse((child) => {
-    const mesh = child as THREE.Mesh
-    if (mesh.geometry)
-      mesh.geometry.dispose()
-    const material = mesh.material
-    if (Array.isArray(material))
-      material.forEach(item => item.dispose())
-    else
-      material?.dispose?.()
-  })
-  if (scene)
-    scene.remove(object)
+  hoveredPointId.value = pointId
 }
 
-function rebuildScene(): void {
-  if (!scene)
+function handlePointLeave(): void {
+  if (selectedPointId.value)
     return
+  hoveredPointId.value = ''
+}
 
-  disposeObject(pointRoot)
-  pointRoot = new THREE.Group()
+function handlePointSelect(pointId: string): void {
+  const nextSelected = selectedPointId.value === pointId ? '' : pointId
+  selectedPointId.value = nextSelected
+  hoveredPointId.value = nextSelected
+}
+
+const clusterIndexMap = computed(() => {
+  return new Map((payload.value?.clusters || []).map((cluster, index) => [cluster.id, index + 1]))
+})
+
+const clusterMap = computed(() => {
+  return new Map((payload.value?.clusters || []).map(cluster => [cluster.id, cluster]))
+})
+
+const chartBounds = computed(() => {
   const points = payload.value?.points || []
-
-  if (points.length > 1000) {
-    const geometry = new THREE.BufferGeometry()
-    const positions = new Float32Array(points.length * 3)
-    const colors = new Float32Array(points.length * 3)
-    points.forEach((point, index) => {
-      positions[index * 3] = point.x
-      positions[(index * 3) + 1] = point.y
-      positions[(index * 3) + 2] = point.z
-      const color = toneColor(point)
-      colors[index * 3] = color.r
-      colors[(index * 3) + 1] = color.g
-      colors[(index * 3) + 2] = color.b
-    })
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-    const material = new THREE.PointsMaterial({
-      size: 0.19,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.92,
-      sizeAttenuation: true,
-    })
-    const cloud = new THREE.Points(geometry, material)
-    cloud.userData.points = points
-    pointRoot.add(cloud)
-  }
-  else {
-    for (const point of points) {
-      const geometry = pointGeometry(point)
-      const material = new THREE.MeshStandardMaterial({
-        color: toneColor(point),
-        transparent: true,
-        opacity: statusOpacity(point.embeddingStatus),
-        emissive: toneColor(point).clone().multiplyScalar(point.nodeType === 'cluster' ? 0.22 : 0.08),
-        metalness: 0.06,
-        roughness: 0.42,
-      })
-      const mesh = new THREE.Mesh(geometry, material)
-      mesh.position.set(point.x, point.y, point.z)
-      mesh.scale.setScalar(pointScale(point))
-      mesh.userData.point = point
-      pointRoot.add(mesh)
+  if (points.length === 0) {
+    return {
+      minX: -1,
+      maxX: 1,
+      minY: -1,
+      maxY: 1,
     }
   }
 
-  scene.add(pointRoot)
-}
+  const valuesX = points.map(point => point.x)
+  const valuesY = points.map(point => point.y)
+  const rawMinX = Math.min(...valuesX)
+  const rawMaxX = Math.max(...valuesX)
+  const rawMinY = Math.min(...valuesY)
+  const rawMaxY = Math.max(...valuesY)
+  const rangeX = Math.max(1, rawMaxX - rawMinX)
+  const rangeY = Math.max(1, rawMaxY - rawMinY)
+  const paddingX = rangeX * 0.08
+  const paddingY = rangeY * 0.08
 
-function animate(): void {
-  if (!renderer || !scene || !camera)
-    return
-  frameHandle = window.requestAnimationFrame(animate)
-  controls?.update()
-  renderer.render(scene, camera)
-}
-
-function handleResize(): void {
-  if (!renderer || !camera || !containerRef.value)
-    return
-  const width = containerRef.value.clientWidth
-  const height = containerRef.value.clientHeight
-  renderer.setSize(width, height, false)
-  camera.aspect = width / Math.max(height, 1)
-  camera.updateProjectionMatrix()
-}
-
-async function loadNodeDetail(point: ProjectKnowledgeSemanticPoint): Promise<void> {
-  const projectId = String(props.projectId || '').trim()
-  const resolvedType = point.nodeType === 'cluster' ? 'source' : point.nodeType
-  const resolvedNodeId = point.nodeType === 'cluster'
-    ? String(point.metadata.sourceId || point.clusterId || '').trim()
-    : point.nodeId
-  if (!projectId || !resolvedNodeId || (resolvedType !== 'source' && resolvedType !== 'chunk'))
-    return
-
-  detailLoading.value = true
-  detailError.value = ''
-  try {
-    const query = new URLSearchParams({
-      nodeId: resolvedNodeId,
-      nodeType: resolvedType,
-    })
-    const response = await unsafeFetch<ApiResponse<ProjectKnowledgeNodeDetail>>(
-      `${endpoint(`/projects/${projectId}/knowledge/node-detail`)}?${query.toString()}`,
-    )
-    detail.value = response.data || null
+  return {
+    minX: rawMinX - paddingX,
+    maxX: rawMaxX + paddingX,
+    minY: rawMinY - paddingY,
+    maxY: rawMaxY + paddingY,
   }
-  catch (fetchError: any) {
-    detail.value = null
-    detailError.value = String(fetchError?.data?.message || '加载节点详情失败，请稍后重试。').trim() || '加载节点详情失败，请稍后重试。'
-  }
-  finally {
-    detailLoading.value = false
-  }
+})
+
+function projectPointX(value: number): number {
+  const width = VIEWBOX_WIDTH - (PLOT_PADDING_X * 2)
+  const minX = chartBounds.value.minX
+  const maxX = chartBounds.value.maxX
+  const ratio = (value - minX) / Math.max(maxX - minX, 1)
+  return PLOT_PADDING_X + (clampNumber(ratio, 0, 1) * width)
 }
 
-function pickPoint(event: PointerEvent): void {
-  if (!renderer || !camera || !containerRef.value || !pointRoot)
-    return
-  const rect = containerRef.value.getBoundingClientRect()
-  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
-  pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1)
-  raycaster.setFromCamera(pointer, camera)
-  const intersections = raycaster.intersectObjects(pointRoot.children, true)
-  const hit = intersections[0]
-  if (!hit)
-    return
-  const directPoint = hit.object.userData.point as ProjectKnowledgeSemanticPoint | undefined
-  if (directPoint) {
-    void loadNodeDetail(directPoint)
-    return
-  }
-
-  const points = hit.object.userData.points as ProjectKnowledgeSemanticPoint[] | undefined
-  if (points && typeof hit.index === 'number' && points[hit.index])
-    void loadNodeDetail(points[hit.index]!)
+function projectPointY(value: number): number {
+  const height = VIEWBOX_HEIGHT - (PLOT_PADDING_Y * 2)
+  const minY = chartBounds.value.minY
+  const maxY = chartBounds.value.maxY
+  const ratio = (value - minY) / Math.max(maxY - minY, 1)
+  return VIEWBOX_HEIGHT - PLOT_PADDING_Y - (clampNumber(ratio, 0, 1) * height)
 }
+
+const plotClusters = computed<PlotCluster[]>(() => {
+  const clusters = payload.value?.clusters || []
+  return clusters.map((cluster, index) => ({
+    ...cluster,
+    plotX: projectPointX(cluster.centroid.x),
+    plotY: projectPointY(cluster.centroid.y),
+    color: resolveClusterColor(index, clusters.length),
+    haloRadius: clampNumber(40 + (Math.sqrt(cluster.nodeCount || 1) * 3.6), 52, 128),
+  }))
+})
+
+const clusterColorMap = computed(() => {
+  return new Map(plotClusters.value.map(cluster => [cluster.id, cluster.color]))
+})
+
+const plotPoints = computed<PlotPoint[]>(() => {
+  return (payload.value?.points || []).map((point) => {
+    return {
+      ...point,
+      plotX: projectPointX(point.x),
+      plotY: projectPointY(point.y),
+      radius: clampNumber(1.2 + (point.importance * 0.16), 1.6, 4.2),
+      color: clusterColorMap.value.get(point.clusterId) || resolveClusterColor(0, 1),
+    }
+  })
+})
+
+const plotPointMap = computed(() => {
+  return new Map(plotPoints.value.map(point => [point.id, point]))
+})
+
+const activePlotPoint = computed(() => {
+  return plotPointMap.value.get(selectedPointId.value || hoveredPointId.value) || null
+})
+
+const activeCluster = computed(() => {
+  if (!activePlotPoint.value)
+    return null
+  return clusterMap.value.get(activePlotPoint.value.clusterId) || null
+})
+
+const tooltipStyle = computed<CSSProperties>(() => {
+  if (!activePlotPoint.value)
+    return {}
+
+  const leftPercent = clampNumber((activePlotPoint.value.plotX / VIEWBOX_WIDTH) * 100, 10, 90)
+  const topPercent = clampNumber((activePlotPoint.value.plotY / VIEWBOX_HEIGHT) * 100, 12, 88)
+  const placeLeft = leftPercent > 68
+
+  return {
+    left: `${leftPercent}%`,
+    top: `${topPercent}%`,
+    transform: placeLeft ? 'translate(calc(-100% - 16px), -50%)' : 'translate(16px, -50%)',
+  }
+})
+
+const algorithmLabel = computed(() => resolveAlgorithmLabel(payload.value?.layout?.algorithm))
+
+const embeddingDimensionLabel = computed(() => {
+  const dimensions = Math.max(0, Math.round(Number(props.dashboard?.runtime.embeddingDimensions || 0)))
+  return `${dimensions} 维`
+})
+
+const metricCards = computed(() => {
+  const summary = payload.value?.summary
+  return [
+    {
+      label: '聚类数',
+      value: (summary?.clusterCount || 0).toLocaleString('zh-CN'),
+    },
+    {
+      label: '点数量',
+      value: (summary?.pointCount || 0).toLocaleString('zh-CN'),
+    },
+    {
+      label: '平均相似度',
+      value: formatSimilarity(summary?.averageSimilarity || 0),
+    },
+    {
+      label: '最大相似度',
+      value: formatSimilarity(summary?.maxSimilarity || 0),
+    },
+  ]
+})
 
 async function loadLayout(): Promise<void> {
   const projectId = String(props.projectId || '').trim()
   if (!projectId) {
     payload.value = null
+    clearActivePoint()
     return
   }
 
   loading.value = true
   error.value = ''
+  clearActivePoint()
+
   try {
-    const params = new URLSearchParams({
-      layoutType: layoutType.value,
-      level: level.value,
+    const query = new URLSearchParams({
+      layoutType: 'chunk_space',
+      level: 'chunk',
     })
-    if (embeddingStatus.value)
-      params.set('embeddingStatus', embeddingStatus.value)
     const response = await unsafeFetch<ApiResponse<ProjectKnowledgeSemanticLayoutPayload>>(
-      `${endpoint(`/projects/${projectId}/knowledge/semantic-layout`)}?${params.toString()}`,
+      `${endpoint(`/projects/${projectId}/knowledge/semantic-layout`)}?${query.toString()}`,
     )
     payload.value = response.data || null
-    rebuildScene()
   }
   catch (fetchError: any) {
     payload.value = null
@@ -256,279 +281,440 @@ async function loadLayout(): Promise<void> {
   }
 }
 
-onMounted(() => {
-  if (!containerRef.value)
-    return
-
-  scene = new THREE.Scene()
-  scene.background = new THREE.Color('#f4f9ff')
-  scene.fog = new THREE.Fog('#f4f9ff', 10, 42)
-
-  camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500)
-  camera.position.set(0, 0, 15)
-
-  renderer = new THREE.WebGLRenderer({
-    antialias: true,
-    alpha: true,
-  })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-  containerRef.value.appendChild(renderer.domElement)
-
-  const ambient = new THREE.AmbientLight('#ffffff', 1.1)
-  const keyLight = new THREE.DirectionalLight('#d5f1ff', 1.4)
-  keyLight.position.set(6, 8, 10)
-  const fillLight = new THREE.DirectionalLight('#ffd6d6', 0.5)
-  fillLight.position.set(-5, -4, 8)
-  scene.add(ambient, keyLight, fillLight)
-
-  controls = new OrbitControls(camera, renderer.domElement)
-  controls.enableDamping = true
-  controls.dampingFactor = 0.06
-  controls.minDistance = 5
-  controls.maxDistance = 40
-
-  renderer.domElement.addEventListener('click', pickPoint)
-  window.addEventListener('resize', handleResize)
-  handleResize()
-  rebuildScene()
-  animate()
-})
-
-onBeforeUnmount(() => {
-  if (renderer?.domElement)
-    renderer.domElement.removeEventListener('click', pickPoint)
-  window.removeEventListener('resize', handleResize)
-  if (frameHandle)
-    window.cancelAnimationFrame(frameHandle)
-  disposeObject(pointRoot)
-  controls?.dispose()
-  renderer?.dispose()
-  if (renderer?.domElement.parentNode)
-    renderer.domElement.parentNode.removeChild(renderer.domElement)
-  renderer = null
-  controls = null
-  camera = null
-  scene = null
-})
-
-watch(() => [props.projectId, layoutType.value, level.value, embeddingStatus.value], () => {
-  detail.value = null
-  detailError.value = ''
+watch(() => props.projectId, () => {
   void loadLayout()
 }, { immediate: true })
 </script>
 
 <template>
-  <div class="loopy-space">
-    <section class="loopy-space__shell">
-      <div class="loopy-space__toolbar">
-        <div class="loopy-space__segmented">
-          <button
-            v-for="item in [
-              { key: 'chunk_space', label: 'Chunk Space' },
-              { key: 'document_galaxy', label: 'Document Galaxy' },
-              { key: 'multimodal_bridge', label: 'Multimodal Bridge' },
-            ]"
-            :key="item.key"
-            class="loopy-space__tab"
-            :data-active="layoutType === item.key"
-            type="button"
-            @click="layoutType = item.key as ProjectKnowledgeSemanticLayoutType"
-          >
-            {{ item.label }}
-          </button>
+  <section class="loopy-embedding" data-testid="workspace-loopy-semantic-space">
+    <header class="loopy-embedding__header">
+      <div class="loopy-embedding__title-wrap">
+        <div class="loopy-embedding__title-row">
+          <h3>Embedding 空间分布</h3>
+          <span class="material-symbols-outlined loopy-embedding__title-icon">help</span>
+        </div>
+        <p class="loopy-embedding__subtitle">
+          真实向量经降维后形成的聚类分布，悬停即可查看当前簇的数量、密度、主题和相似度。
+        </p>
+      </div>
+
+      <div class="loopy-embedding__controls">
+        <button type="button" class="loopy-embedding__control" disabled aria-disabled="true">
+          <span>{{ algorithmLabel }}</span>
+          <span class="material-symbols-outlined">expand_more</span>
+        </button>
+        <button type="button" class="loopy-embedding__control" disabled aria-disabled="true">
+          <span>{{ embeddingDimensionLabel }}</span>
+          <span class="material-symbols-outlined">expand_more</span>
+        </button>
+      </div>
+    </header>
+
+    <div
+      v-if="payload && payload.layout && payload.summary.pointCount > 0"
+      class="loopy-embedding__meta"
+    >
+      <span>布局状态 {{ payload.layout.status === 'degraded' ? '轻度退化' : '已就绪' }}</span>
+      <span>已显示 {{ payload.selectionSummary.returnedPoints.toLocaleString('zh-CN') }} / {{ payload.summary.pointCount.toLocaleString('zh-CN') }}</span>
+      <span>最近刷新 {{ payload.layout.updatedAt || payload.analytics.semanticLayoutUpdatedAt || '-' }}</span>
+    </div>
+
+    <div v-if="loading" class="loopy-embedding__empty">
+      正在计算 Embedding 空间分布...
+    </div>
+    <div v-else-if="error" class="loopy-embedding__empty loopy-embedding__empty--error">
+      {{ error }}
+    </div>
+    <div v-else-if="!payload || !payload.layout || plotPoints.length === 0" class="loopy-embedding__empty">
+      当前还没有可用的 Embedding 空间分布。
+    </div>
+    <div
+      v-else
+      class="loopy-embedding__chart-shell"
+      data-testid="workspace-loopy-semantic-space-chart"
+      @click="clearActivePoint"
+    >
+      <div class="loopy-embedding__chart-glow loopy-embedding__chart-glow--left" />
+      <div class="loopy-embedding__chart-glow loopy-embedding__chart-glow--right" />
+
+      <svg
+        class="loopy-embedding__chart"
+        :viewBox="`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`"
+        role="img"
+        aria-label="Embedding 空间分布散点图"
+        @click="clearActivePoint"
+      >
+        <g class="loopy-embedding__halos">
+          <circle
+            v-for="cluster in plotClusters"
+            :key="`halo-${cluster.id}`"
+            :cx="cluster.plotX"
+            :cy="cluster.plotY"
+            :r="cluster.haloRadius"
+            :fill="cluster.color"
+            fill-opacity="0.14"
+          />
+        </g>
+
+        <g class="loopy-embedding__points">
+          <circle
+            v-for="point in plotPoints"
+            :key="point.id"
+            :cx="point.plotX"
+            :cy="point.plotY"
+            :r="point.radius"
+            :fill="point.color"
+            :fill-opacity="resolvePointOpacity(point)"
+            class="loopy-embedding__point"
+            :class="{ 'is-active': activePlotPoint?.id === point.id }"
+            @mouseenter.stop="handlePointEnter(point.id)"
+            @mouseleave.stop="handlePointLeave"
+            @click.stop="handlePointSelect(point.id)"
+          />
+        </g>
+
+        <g v-if="activePlotPoint" class="loopy-embedding__focus">
+          <circle
+            :cx="activePlotPoint.plotX"
+            :cy="activePlotPoint.plotY"
+            :r="activePlotPoint.radius + 8"
+            :stroke="activePlotPoint.color"
+            stroke-width="1.6"
+            fill="none"
+            stroke-opacity="0.9"
+          />
+          <circle
+            :cx="activePlotPoint.plotX"
+            :cy="activePlotPoint.plotY"
+            :r="activePlotPoint.radius + 13"
+            :stroke="activePlotPoint.color"
+            stroke-width="1"
+            fill="none"
+            stroke-opacity="0.24"
+          />
+        </g>
+      </svg>
+
+      <div
+        v-if="activeCluster && activePlotPoint"
+        class="loopy-embedding__tooltip"
+        :style="tooltipStyle"
+        @click.stop
+      >
+        <div class="loopy-embedding__tooltip-title">
+          Cluster #{{ clusterIndexMap.get(activeCluster.id) || 1 }}
         </div>
 
-        <div class="loopy-space__segmented">
-          <button
-            v-for="item in ['cluster', 'document', 'chunk']"
-            :key="item"
-            class="loopy-space__tab"
-            :data-active="level === item"
-            type="button"
-            @click="level = item as ProjectKnowledgeSemanticLayoutLevel"
-          >
-            {{ item }}
-          </button>
+        <div class="loopy-embedding__tooltip-grid">
+          <div class="loopy-embedding__tooltip-row">
+            <span>数量</span>
+            <strong>{{ activeCluster.nodeCount.toLocaleString('zh-CN') }}</strong>
+          </div>
+          <div class="loopy-embedding__tooltip-row">
+            <span>密度</span>
+            <strong>{{ resolveDensityLabel(activeCluster.densityScore) }}</strong>
+          </div>
+          <div class="loopy-embedding__tooltip-row">
+            <span>主题</span>
+            <strong>{{ activeCluster.topicLabel || '未分类主题' }}</strong>
+          </div>
+          <div class="loopy-embedding__tooltip-row">
+            <span>相似度</span>
+            <strong>{{ formatSimilarity(activeCluster.similarityScore) }}</strong>
+          </div>
         </div>
+      </div>
+    </div>
 
-        <label class="loopy-space__field">
-          <span>Embedding 状态</span>
-          <select v-model="embeddingStatus">
-            <option value="">全部</option>
-            <option value="native">native</option>
-            <option value="derived">derived</option>
-            <option value="fallback">fallback</option>
-            <option value="missing">missing</option>
-            <option value="failed">failed</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="loopy-space__meta">
-        <span>算法 {{ payload?.layout?.algorithm || '-' }}</span>
-        <span>状态 {{ payload?.layout?.status || '-' }}</span>
-        <span>返回 {{ payload?.selectionSummary.returnedPoints || 0 }} / {{ payload?.selectionSummary.totalPoints || 0 }}</span>
-        <span>最近刷新 {{ payload?.layout?.updatedAt || payload?.analytics.semanticLayoutUpdatedAt || '-' }}</span>
-      </div>
-
-      <div v-if="loading" class="loopy-space__empty">
-        正在计算真实语义布局...
-      </div>
-      <div v-else-if="error" class="loopy-space__empty loopy-space__empty--error">
-        {{ error }}
-      </div>
-      <div v-else-if="!payload || !payload.layout" class="loopy-space__empty">
-        当前还没有可用的语义空间布局。
-      </div>
-      <div v-else ref="containerRef" class="loopy-space__canvas" />
-
-      <div class="loopy-space__legend">
-        <span class="loopy-space__legend-item"><i style="background:#3c82f6" />text</span>
-        <span class="loopy-space__legend-item"><i style="background:#14b8a6" />image</span>
-        <span class="loopy-space__legend-item"><i style="background:#f59e0b" />audio</span>
-        <span class="loopy-space__legend-item"><i style="background:#ef5a8b" />video</span>
-        <span class="loopy-space__legend-item"><i style="background:#8b5cf6" />draw</span>
-      </div>
-    </section>
-
-    <WorkspaceLoopyDataNodeDetail
-      :detail="detail"
-      :loading="detailLoading"
-      :error="detailError"
-      empty-label="点击 3D 空间中的点位查看 source / chunk 详情"
-    />
-  </div>
+    <div class="loopy-embedding__metrics">
+      <article
+        v-for="card in metricCards"
+        :key="card.label"
+        class="loopy-embedding__metric-card"
+      >
+        <strong>{{ card.value }}</strong>
+        <span>{{ card.label }}</span>
+      </article>
+    </div>
+  </section>
 </template>
 
 <style scoped>
-.loopy-space {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 16px;
-  min-height: 760px;
-}
-
-.loopy-space__shell {
+.loopy-embedding {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  border: 1px solid #dbe7f3;
-  border-radius: 24px;
+  gap: 16px;
+  border: 1px solid #dce7f4;
+  border-radius: 28px;
   background:
-    radial-gradient(circle at top left, rgba(61, 173, 197, 0.11), transparent 30%),
-    linear-gradient(160deg, #ffffff 0%, #f7fbff 100%);
+    radial-gradient(circle at top left, rgba(126, 95, 255, 0.08), transparent 28%),
+    radial-gradient(circle at top right, rgba(108, 212, 255, 0.12), transparent 34%),
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   padding: 18px;
-  box-shadow: 0 12px 30px rgba(36, 73, 125, 0.05);
+  box-shadow: 0 14px 32px rgba(36, 73, 125, 0.06);
 }
 
-.loopy-space__toolbar,
-.loopy-space__meta,
-.loopy-space__legend {
+.loopy-embedding__header {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
 }
 
-.loopy-space__segmented {
-  display: inline-flex;
-  gap: 6px;
-  padding: 4px;
-  border: 1px solid #dbe7f3;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
+.loopy-embedding__title-wrap {
+  min-width: 0;
 }
 
-.loopy-space__tab,
-.loopy-space__field select {
-  min-height: 34px;
-  border-radius: 999px;
-  border: 1px solid #d7e4f1;
-  background: #fff;
-  color: #3a5677;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.loopy-space__tab {
-  padding: 0 12px;
-}
-
-.loopy-space__tab[data-active='true'] {
-  background: #11253a;
-  border-color: #11253a;
-  color: #fff;
-}
-
-.loopy-space__field {
+.loopy-embedding__title-row {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
-  color: #5d7698;
-  font-size: 12px;
 }
 
-.loopy-space__field select {
-  padding: 0 10px;
+.loopy-embedding__title-row h3 {
+  margin: 0;
+  color: #1b2e49;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
 }
 
-.loopy-space__meta {
-  color: #6980a0;
-  font-size: 12px;
+.loopy-embedding__title-icon {
+  color: #91a3bf;
+  font-size: 18px;
 }
 
-.loopy-space__canvas,
-.loopy-space__empty {
-  width: 100%;
-  height: 620px;
+.loopy-embedding__subtitle {
+  margin: 10px 0 0;
+  color: #607694;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.loopy-embedding__controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.loopy-embedding__control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 14px;
   border: 1px solid #dbe7f3;
-  border-radius: 22px;
-  background:
-    radial-gradient(circle at center, rgba(255, 255, 255, 0.88), rgba(244, 249, 255, 0.96)),
-    linear-gradient(180deg, #f7fbff 0%, #ffffff 100%);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #33506f;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+  cursor: default;
 }
 
-.loopy-space__empty {
+.loopy-embedding__control .material-symbols-outlined {
+  color: #7f93ac;
+  font-size: 18px;
+}
+
+.loopy-embedding__meta {
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: #6980a0;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: #6d82a1;
+  font-size: 12px;
+}
+
+.loopy-embedding__chart-shell,
+.loopy-embedding__empty {
+  position: relative;
+  overflow: hidden;
+  min-height: 560px;
+  border: 1px solid #dce7f4;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(255, 255, 255, 0.96), rgba(245, 249, 255, 0.98)),
+    linear-gradient(180deg, #fbfdff 0%, #f4f8ff 100%);
+}
+
+.loopy-embedding__chart-glow {
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  border-radius: 999px;
+  filter: blur(28px);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.loopy-embedding__chart-glow--left {
+  left: -24px;
+  top: 88px;
+  background: rgba(124, 102, 255, 0.18);
+}
+
+.loopy-embedding__chart-glow--right {
+  right: 18px;
+  top: 56px;
+  background: rgba(100, 210, 255, 0.2);
+}
+
+.loopy-embedding__chart {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 560px;
+}
+
+.loopy-embedding__point {
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    fill-opacity 120ms ease,
+    opacity 120ms ease;
+}
+
+.loopy-embedding__point.is-active {
+  fill-opacity: 1;
+}
+
+.loopy-embedding__tooltip {
+  position: absolute;
+  z-index: 3;
+  width: min(248px, calc(100% - 28px));
+  padding: 18px 18px 16px;
+  border: 1px solid rgba(225, 232, 242, 0.98);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 40px rgba(48, 76, 122, 0.14);
+  backdrop-filter: blur(18px);
+}
+
+.loopy-embedding__tooltip-title {
+  color: #213551;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.loopy-embedding__tooltip-grid {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.loopy-embedding__tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #6d84a3;
   font-size: 13px;
 }
 
-.loopy-space__empty--error {
+.loopy-embedding__tooltip-row strong {
+  color: #1d324e;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.loopy-embedding__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7084a1;
+  font-size: 13px;
+}
+
+.loopy-embedding__empty--error {
   color: #b45309;
 }
 
-.loopy-space__legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  min-height: 30px;
-  border-radius: 999px;
+.loopy-embedding__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.loopy-embedding__metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 108px;
+  padding: 18px 18px 16px;
   border: 1px solid #dce7f4;
-  background: rgba(255, 255, 255, 0.92);
-  color: #506985;
-  font-size: 12px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
 }
 
-.loopy-space__legend-item i {
-  display: inline-flex;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
+.loopy-embedding__metric-card strong {
+  color: #1d304c;
+  font-size: 36px;
+  line-height: 1;
+  letter-spacing: -0.04em;
 }
 
-@media (max-width: 1440px) {
-  .loopy-space {
-    grid-template-columns: 1fr;
+.loopy-embedding__metric-card span {
+  color: #7085a3;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@media (max-width: 1200px) {
+  .loopy-embedding__header {
+    flex-direction: column;
   }
 
-  .loopy-space__field {
-    margin-left: 0;
+  .loopy-embedding__controls {
+    width: 100%;
+  }
+
+  .loopy-embedding__control {
+    flex: 1 1 0;
+    justify-content: space-between;
+  }
+
+  .loopy-embedding__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .loopy-embedding {
+    padding: 14px;
+  }
+
+  .loopy-embedding__title-row h3 {
+    font-size: 24px;
+  }
+
+  .loopy-embedding__chart-shell,
+  .loopy-embedding__empty {
+    min-height: 420px;
+  }
+
+  .loopy-embedding__chart {
+    height: 420px;
+  }
+
+  .loopy-embedding__tooltip {
+    width: min(220px, calc(100% - 24px));
+    padding: 16px;
+  }
+
+  .loopy-embedding__metric-card strong {
+    font-size: 30px;
+  }
+}
+
+@media (max-width: 560px) {
+  .loopy-embedding__metrics {
+    grid-template-columns: 1fr;
   }
 }
 </style>

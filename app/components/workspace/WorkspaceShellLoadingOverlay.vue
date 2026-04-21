@@ -9,20 +9,11 @@ const props = withDefaults(defineProps<{
   progress: 0,
 })
 
-const WORDMARK_VIEWBOX_WIDTH = 1480
-const WORDMARK_VIEWBOX_HEIGHT = 320
-
 const displayProgress = ref(clampProgress(props.progress))
-const wordmarkBaseTextRef = ref<SVGTextElement | null>(null)
-const wordmarkBounds = ref({
-  y: 0,
-  height: WORDMARK_VIEWBOX_HEIGHT,
-})
 
 const progressLabel = computed(() => `${Math.round(displayProgress.value)}%`)
 const statusLabel = computed(() => `${props.label} ${progressLabel.value}`)
-const progressClipHeight = computed(() => (wordmarkBounds.value.height * displayProgress.value) / 100)
-const progressClipY = computed(() => (wordmarkBounds.value.y + wordmarkBounds.value.height) - progressClipHeight.value)
+const progressFillHeight = computed(() => `${displayProgress.value}%`)
 
 let progressAnimationFrame: ReturnType<typeof requestAnimationFrame> | null = null
 
@@ -77,40 +68,6 @@ function animateProgress(nextProgress: number): void {
 }
 
 watch(() => props.progress, nextProgress => animateProgress(nextProgress), { immediate: true })
-watch(() => props.brand, () => {
-  void syncWordmarkBounds()
-})
-
-async function syncWordmarkBounds(): Promise<void> {
-  if (!import.meta.client)
-    return
-  await nextTick()
-  const textEl = wordmarkBaseTextRef.value
-  if (!textEl)
-    return
-  try {
-    const bounds = textEl.getBBox()
-    if (!Number.isFinite(bounds.y) || !Number.isFinite(bounds.height) || bounds.height <= 0)
-      return
-    const nextY = Math.max(0, bounds.y)
-    const nextHeight = Math.min(WORDMARK_VIEWBOX_HEIGHT - nextY, bounds.height)
-    if (nextHeight <= 0)
-      return
-    wordmarkBounds.value = {
-      y: nextY,
-      height: nextHeight,
-    }
-  }
-  catch {
-  }
-}
-
-onMounted(() => {
-  void syncWordmarkBounds()
-  if (!import.meta.client || !('fonts' in document) || !document.fonts?.ready)
-    return
-  void document.fonts.ready.then(() => syncWordmarkBounds())
-})
 
 onBeforeUnmount(() => {
   stopProgressAnimation()
@@ -127,42 +84,12 @@ onBeforeUnmount(() => {
     @contextmenu.prevent.stop
   >
     <div class="workspace-shell-loading-overlay__content" aria-hidden="true">
-      <svg
-        class="workspace-shell-loading-overlay__wordmark"
-        :viewBox="`0 0 ${WORDMARK_VIEWBOX_WIDTH} ${WORDMARK_VIEWBOX_HEIGHT}`"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        <defs>
-          <clipPath id="workspace-shell-loading-wordmark-fill">
-            <rect
-              x="0"
-              :y="progressClipY"
-              :width="WORDMARK_VIEWBOX_WIDTH"
-              :height="progressClipHeight"
-            />
-          </clipPath>
-        </defs>
-        <text
-          ref="wordmarkBaseTextRef"
-          x="50%"
-          y="56%"
-          text-anchor="middle"
-          dominant-baseline="middle"
-          class="workspace-shell-loading-overlay__text workspace-shell-loading-overlay__text--base"
-        >
-          {{ props.brand }}
-        </text>
-        <text
-          x="50%"
-          y="56%"
-          text-anchor="middle"
-          dominant-baseline="middle"
-          clip-path="url(#workspace-shell-loading-wordmark-fill)"
-          class="workspace-shell-loading-overlay__text workspace-shell-loading-overlay__text--fill"
-        >
-          {{ props.brand }}
-        </text>
-      </svg>
+      <div class="workspace-shell-loading-overlay__wordmark">
+        <BrandLogo variant="lockup" class="workspace-shell-loading-overlay__brand workspace-shell-loading-overlay__brand--base" />
+        <div class="workspace-shell-loading-overlay__fill" :style="{ height: progressFillHeight }">
+          <BrandLogo variant="lockup" class="workspace-shell-loading-overlay__brand workspace-shell-loading-overlay__brand--fill" />
+        </div>
+      </div>
       <span class="workspace-shell-loading-overlay__percent">{{ progressLabel }}</span>
     </div>
     <span class="workspace-shell-loading-overlay__sr-only">{{ statusLabel }}</span>
@@ -190,27 +117,34 @@ onBeforeUnmount(() => {
 }
 
 .workspace-shell-loading-overlay__wordmark {
-  display: block;
-  width: min(92vw, 1400px);
-  height: auto;
-  overflow: visible;
+  position: relative;
+  width: min(56vw, 280px);
+  line-height: 0;
 }
 
-.workspace-shell-loading-overlay__text {
-  font-family: var(--wl-font-sans);
-  font-size: 92px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+.workspace-shell-loading-overlay__brand {
+  --winloop-brand-lockup-width: 100%;
+  display: block;
+  width: 100%;
   user-select: none;
 }
 
-.workspace-shell-loading-overlay__text--base {
-  fill: var(--wl-text-faint);
-  opacity: 0.42;
+.workspace-shell-loading-overlay__brand--base {
+  opacity: 0.18;
+  filter: grayscale(1);
 }
 
-.workspace-shell-loading-overlay__text--fill {
-  fill: var(--wl-primary-600);
+.workspace-shell-loading-overlay__brand--fill {
+  opacity: 1;
+}
+
+.workspace-shell-loading-overlay__fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  transition: height 0.22s ease;
 }
 
 .workspace-shell-loading-overlay__percent {
@@ -237,8 +171,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
-  .workspace-shell-loading-overlay__text {
-    letter-spacing: 0.05em;
+  .workspace-shell-loading-overlay__wordmark {
+    width: min(68vw, 220px);
   }
 }
 </style>

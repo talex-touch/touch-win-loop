@@ -188,7 +188,13 @@ onBeforeUnmount(() => {
     :to="props.to"
     class="text-slate-500 mt-4 px-3 py-2 flex gap-3 transition-colors items-center hover:text-slate-900"
   >
-    <span class="material-symbols-outlined">{{ props.icon }}</span>
+    <BrandLogo
+      v-if="props.icon === 'brand-mark'"
+      variant="mark"
+      class="shrink-0"
+      style="--winloop-brand-mark-size: 20px;"
+    />
+    <span v-else class="material-symbols-outlined">{{ props.icon }}</span>
     <span class="text-sm font-medium">{{ props.label }}</span>
   </NuxtLink>
 

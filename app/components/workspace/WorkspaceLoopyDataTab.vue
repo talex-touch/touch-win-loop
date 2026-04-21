@@ -29,21 +29,21 @@ const emit = defineEmits<{
 }>()
 
 const currentView = ref<LoopyWorkbenchView>('health')
-const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, description: string }> = [
+const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string }> = [
   {
     id: 'health',
     label: '索引健康',
-    description: '回答系统哪里坏了、坏到什么程度。',
+    icon: 'monitor_heart',
   },
   {
     id: 'relations',
     label: '关系探索',
-    description: '回答文档、Chunk、跨模态对象怎么连。',
+    icon: 'account_tree',
   },
   {
     id: 'semantic',
     label: '语义空间',
-    description: '回答真实 embedding 空间是否成立。',
+    icon: 'scatter_plot',
   },
 ]
 </script>
@@ -51,32 +51,26 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, description: stri
 <template>
   <div
     data-testid="workspace-project-knowledge-index"
-    class="space-y-5"
+    class="space-y-4"
   >
-    <header class="loopy-workbench__header">
-      <div>
-        <div class="loopy-workbench__eyebrow">
-          Loopy 数据
-        </div>
-        <h2 class="loopy-workbench__title">
-          状态、结构、语义三层工作台
-        </h2>
-        <p class="loopy-workbench__subtitle">
-          健康页只看诊断，关系页只看连接，3D 页只看真实降维后的语义空间。
-        </p>
+    <header class="loopy-workbench__toolbar">
+      <div class="loopy-workbench__eyebrow">
+        Loopy 数据
       </div>
 
-      <div class="loopy-workbench__tabs">
+      <div class="loopy-workbench__switcher" role="tablist" aria-label="Loopy 数据视图切换">
         <button
           v-for="item in viewMeta"
           :key="item.id"
-          class="loopy-workbench__tab"
+          class="loopy-workbench__switch"
           :data-active="currentView === item.id"
           type="button"
+          role="tab"
+          :aria-selected="currentView === item.id"
           @click="currentView = item.id"
         >
-          <span class="loopy-workbench__tab-label">{{ item.label }}</span>
-          <span class="loopy-workbench__tab-desc">{{ item.description }}</span>
+          <span class="material-symbols-outlined loopy-workbench__switch-icon">{{ item.icon }}</span>
+          <span class="loopy-workbench__switch-label">{{ item.label }}</span>
         </button>
       </div>
     </header>
@@ -100,89 +94,92 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, description: stri
     </ClientOnly>
 
     <ClientOnly v-else>
-      <WorkspaceLoopyDataSemanticSpace :project-id="props.activeProjectId" />
+      <WorkspaceLoopyDataSemanticSpace
+        :project-id="props.activeProjectId"
+        :dashboard="props.dashboard"
+      />
     </ClientOnly>
   </div>
 </template>
 
 <style scoped>
-.loopy-workbench__header {
+.loopy-workbench__toolbar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 16px;
+  padding: 4px 0;
 }
 
 .loopy-workbench__eyebrow {
   color: #6b83a4;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
 
-.loopy-workbench__title {
-  margin: 10px 0 0;
-  color: #152842;
-  font-size: 30px;
-  line-height: 1.12;
-  letter-spacing: -0.02em;
-}
-
-.loopy-workbench__subtitle {
-  margin: 12px 0 0;
-  color: #5e7396;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.loopy-workbench__tabs {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-width: 680px;
-}
-
-.loopy-workbench__tab {
-  display: grid;
-  gap: 8px;
-  min-height: 96px;
-  padding: 16px;
+.loopy-workbench__switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
   border: 1px solid #dce7f4;
-  border-radius: 22px;
-  background: linear-gradient(180deg, #fff, #f8fbff);
-  color: #4f6788;
-  text-align: left;
-  box-shadow: 0 12px 28px rgba(36, 73, 125, 0.05);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 8px 20px rgba(36, 73, 125, 0.05);
 }
 
-.loopy-workbench__tab[data-active='true'] {
-  border-color: #0f2235;
-  background:
-    radial-gradient(circle at top right, rgba(70, 170, 255, 0.16), transparent 34%),
-    linear-gradient(180deg, #13253a, #18324d);
-  color: #e8f3ff;
+.loopy-workbench__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #536b8c;
+  transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.loopy-workbench__tab-label {
-  font-size: 16px;
+.loopy-workbench__switch[data-active='true'] {
+  background: linear-gradient(180deg, #18314d, #11243b);
+  color: #f4f8ff;
+  box-shadow: 0 10px 22px rgba(17, 36, 59, 0.18);
+}
+
+.loopy-workbench__switch-icon {
+  font-size: 18px;
+}
+
+.loopy-workbench__switch-label {
+  font-size: 13px;
   font-weight: 800;
-}
-
-.loopy-workbench__tab-desc {
-  font-size: 12px;
-  line-height: 1.6;
 }
 
 @media (max-width: 1400px) {
-  .loopy-workbench__header {
+  .loopy-workbench__toolbar {
     flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .loopy-workbench__switcher {
+    width: 100%;
+    flex-wrap: wrap;
+    border-radius: 22px;
   }
 
-  .loopy-workbench__tabs {
-    min-width: 0;
-    width: 100%;
-    grid-template-columns: 1fr;
+  .loopy-workbench__switch {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: center;
+  }
+
+  .loopy-workbench__switch:last-child {
+    flex-basis: 100%;
   }
 }
 </style>

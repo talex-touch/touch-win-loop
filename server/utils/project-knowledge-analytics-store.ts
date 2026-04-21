@@ -219,6 +219,128 @@ function averageVector(vectors: number[][]): number[] {
   return result.map(value => value / vectors.length)
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function formatSemanticResourceKindLabel(resourceKind: unknown): string {
+  const normalized = normalizeString(resourceKind)
+  if (normalized === 'document')
+    return '文档'
+  if (normalized === 'markdown')
+    return '文档'
+  if (normalized === 'image')
+    return '图片'
+  if (normalized === 'audio')
+    return '音频'
+  if (normalized === 'video')
+    return '视频'
+  if (normalized === 'draw')
+    return '画布'
+  if (normalized === 'link')
+    return '链接'
+  if (normalized === 'binary')
+    return '资料'
+  return ''
+}
+
+const SEMANTIC_TOPIC_STOPWORDS = new Set([
+  'cluster',
+  'chunk',
+  'page',
+  'section',
+  'resource',
+  'source',
+  'docx',
+  'pptx',
+  'xlsx',
+  'pdf',
+  'md',
+  'txt',
+  'png',
+  'jpg',
+  'jpeg',
+  'mp3',
+  'mp4',
+  'mov',
+  'avi',
+  'section',
+  '文档',
+  '资料',
+  '说明',
+  '说明书',
+  '项目',
+  '方案',
+  '版本',
+  '最终版',
+  '更新版',
+  '副本',
+])
+
+function extractSemanticTopicTokens(text: string): string[] {
+  const source = normalizeString(text)
+  if (!source)
+    return []
+
+  const tokens: string[] = []
+  const matches = source.match(/[A-Za-z][A-Za-z0-9_-]{2,}|[\u4E00-\u9FFF]{2,10}/g) || []
+  for (const token of matches) {
+    const normalized = token.trim()
+    const lowered = normalized.toLowerCase()
+    if (!normalized || SEMANTIC_TOPIC_STOPWORDS.has(lowered))
+      continue
+    if (/^\d+$/.test(lowered))
+      continue
+    tokens.push(normalized)
+  }
+  return tokens
+}
+
+function deriveSemanticTopicLabel(clusterLabel: string, clusterChunks: ChunkLike[]): string {
+  const tokenCount = new Map<string, number>()
+  const resourceKindLabel = formatSemanticResourceKindLabel(clusterChunks[0]?.resourceKind)
+
+  for (const text of [
+    clusterLabel,
+    ...clusterChunks.slice(0, 18).map(chunk => chunk.title || chunk.citationLabel || chunk.resourceTitle),
+  ]) {
+    for (const token of extractSemanticTopicTokens(text))
+      tokenCount.set(token, (tokenCount.get(token) || 0) + 1)
+  }
+
+  const bestToken = [...tokenCount.entries()]
+    .sort((left, right) => {
+      if (right[1] !== left[1])
+        return right[1] - left[1]
+      return right[0].length - left[0].length
+    })[0]?.[0] || ''
+
+  if (bestToken) {
+    if (/(文档|纪要|方案|说明|报告|清单|计划|设计|表格|视频|音频|图片)/.test(bestToken))
+      return bestToken
+    if (resourceKindLabel)
+      return `${bestToken}${resourceKindLabel}`
+    return bestToken
+  }
+
+  if (resourceKindLabel)
+    return resourceKindLabel
+
+  return clusterLabel.slice(0, 10) || '未分类主题'
+}
+
+function meanDistance2d(
+  points: Array<{ x: number, y: number }>,
+  centroid: { x: number, y: number },
+): number {
+  if (points.length === 0)
+    return 0
+  const totalDistance = points.reduce((sum, point) => {
+    return sum + Math.hypot(point.x - centroid.x, point.y - centroid.y)
+  }, 0)
+  return totalDistance / points.length
+}
+
 function hashNoise(value: string, axis: number): number {
   const seed = `${value}:${axis}`
   let hash = 0
@@ -470,6 +592,23 @@ function chunkEmbeddingStatus(chunk: ChunkLike): ProjectKnowledgeEmbeddingStatus
 
 function chunkModel(chunk: ChunkLike): string {
   return normalizeString(chunkMetadata(chunk).embeddingModel)
+}
+
+function buildChunkFilterNode(chunk: ChunkLike): ProjectKnowledgeRelationsPayload['nodes'][number] {
+  return {
+    id: chunk.id,
+    nodeType: 'chunk',
+    label: chunk.title || chunk.citationLabel || chunk.resourceTitle,
+    modality: chunkModality(chunk),
+    embeddingStatus: chunkEmbeddingStatus(chunk),
+    provenanceSourceType: chunkProvenance(chunk),
+    resourceKind: normalizeString(chunk.resourceKind),
+    sourceId: chunk.sourceId,
+    importance: Math.max(1, Math.log2(Math.max(chunk.content.length, 24))),
+    metadata: {
+      embeddingModel: chunkModel(chunk),
+    },
+  }
 }
 
 function projectPointToAnchor(input: {
@@ -1498,8 +1637,18 @@ export async function buildProjectKnowledgeSemanticLayoutPayload(
     modelVersion: input.modelVersion,
     timeRangeDays: input.timeRangeDays,
   }
-  const [analytics, layoutResult] = await Promise.all([
+  const emptySummary: ProjectKnowledgeSemanticLayoutPayload['summary'] = {
+    clusterCount: 0,
+    pointCount: 0,
+    averageSimilarity: 0,
+    maxSimilarity: 0,
+  }
+  const [analytics, chunks, layoutResult] = await Promise.all([
     ensureProjectKnowledgeAnalyticsMaterialized(db, { projectId: input.projectId }),
+    listProjectKnowledgeSearchChunks(db, {
+      projectId: input.projectId,
+      includeStale: true,
+    }),
     db.query<ProjectKnowledgeLayoutRow>(
       `SELECT
         id,
@@ -1527,6 +1676,7 @@ export async function buildProjectKnowledgeSemanticLayoutPayload(
       projectId: input.projectId,
       analytics,
       layout: null,
+      summary: emptySummary,
       clusters: [],
       points: [],
       selectionSummary: {
@@ -1577,12 +1727,64 @@ export async function buildProjectKnowledgeSemanticLayoutPayload(
     } as ProjectKnowledgeRelationsPayload['nodes'][number]
     return matchNodeFilters(node, filters, layout.updatedAt)
   })
-  const limit = input.level === 'chunk' ? 1600 : input.level === 'document' ? 400 : 160
+  const filteredChunks = chunks.filter(chunk => matchNodeFilters(buildChunkFilterNode(chunk), filters, chunk.updatedAt || layout.updatedAt))
+  const filteredChunkById = new Map(filteredChunks.map(chunk => [chunk.id, chunk]))
+  const filteredPointsByCluster = new Map<string, ProjectKnowledgeSemanticPoint[]>()
+  for (const point of filteredPoints) {
+    const bucket = filteredPointsByCluster.get(point.clusterId) || []
+    bucket.push(point)
+    filteredPointsByCluster.set(point.clusterId, bucket)
+  }
+
+  const globalPlotPoints = filteredPoints.map(point => ({
+    x: point.x,
+    y: point.y,
+  }))
+  const globalCentroid = globalPlotPoints.length > 0
+    ? {
+        x: globalPlotPoints.reduce((sum, point) => sum + point.x, 0) / globalPlotPoints.length,
+        y: globalPlotPoints.reduce((sum, point) => sum + point.y, 0) / globalPlotPoints.length,
+      }
+    : { x: 0, y: 0 }
+  const globalMeanRadius = Math.max(0.0001, meanDistance2d(globalPlotPoints, globalCentroid))
+
+  const limit = input.level === 'chunk' ? 9000 : input.level === 'document' ? 400 : 160
   const points = filteredPoints.slice(0, limit)
   const clusters = allPoints
     .filter(point => point.level === 'cluster')
-    .map<ProjectKnowledgeSemanticCluster>((point) => {
-      const clusterPoints = allPoints.filter(item => item.clusterId === point.clusterId && item.level !== 'cluster')
+    .map<ProjectKnowledgeSemanticCluster | null>((point) => {
+      const clusterPoints = filteredPointsByCluster.get(point.clusterId) || []
+      if (clusterPoints.length === 0)
+        return null
+
+      const clusterChunks = clusterPoints
+        .map(item => filteredChunkById.get(item.nodeId))
+        .filter((chunk): chunk is ChunkLike => Boolean(chunk))
+      const clusterEmbeddings = clusterChunks
+        .filter(chunk => chunk.embedding.length > 0 && chunkEmbeddingStatus(chunk) !== 'missing' && chunkEmbeddingStatus(chunk) !== 'failed')
+        .map(chunk => chunk.embedding)
+      const clusterCentroid = {
+        x: clusterPoints.reduce((sum, item) => sum + item.x, 0) / clusterPoints.length,
+        y: clusterPoints.reduce((sum, item) => sum + item.y, 0) / clusterPoints.length,
+      }
+      const clusterMeanRadius = meanDistance2d(clusterPoints, clusterCentroid)
+      const densityScore = clusterPoints.length <= 1
+        ? 1
+        : clampNumber(1 - (clusterMeanRadius / Math.max(globalMeanRadius * 1.45, 0.0001)), 0.12, 0.98)
+
+      let similarityScore = 0
+      if (clusterEmbeddings.length >= 2) {
+        const centroidVector = averageVector(clusterEmbeddings)
+        const totalSimilarity = clusterEmbeddings.reduce((sum, vector) => sum + cosineSimilarity(vector, centroidVector), 0)
+        similarityScore = clampNumber(totalSimilarity / clusterEmbeddings.length, 0, 0.999)
+      }
+      else if (clusterEmbeddings.length === 1) {
+        similarityScore = clampNumber(0.72 + (densityScore * 0.22), 0, 0.98)
+      }
+      else {
+        similarityScore = clampNumber(densityScore * 0.84, 0, 0.95)
+      }
+
       return {
         id: point.clusterId,
         label: point.label.replace(/\s+cluster$/i, ''),
@@ -1591,6 +1793,9 @@ export async function buildProjectKnowledgeSemanticLayoutPayload(
           ? clusterPoints[0]!.modality
           : 'mixed',
         embeddingStatus: point.embeddingStatus,
+        densityScore: Number(densityScore.toFixed(4)),
+        topicLabel: deriveSemanticTopicLabel(point.label.replace(/\s+cluster$/i, ''), clusterChunks),
+        similarityScore: Number(similarityScore.toFixed(4)),
         centroid: {
           x: point.x,
           y: point.y,
@@ -1598,11 +1803,25 @@ export async function buildProjectKnowledgeSemanticLayoutPayload(
         },
       }
     })
+    .filter((cluster): cluster is ProjectKnowledgeSemanticCluster => Boolean(cluster))
+
+  const totalClusterNodes = clusters.reduce((sum, cluster) => sum + cluster.nodeCount, 0)
+  const averageSimilarity = totalClusterNodes > 0
+    ? clusters.reduce((sum, cluster) => sum + (cluster.similarityScore * cluster.nodeCount), 0) / totalClusterNodes
+    : 0
+  const maxSimilarity = clusters.reduce((max, cluster) => Math.max(max, cluster.similarityScore), 0)
+  const summary: ProjectKnowledgeSemanticLayoutPayload['summary'] = {
+    clusterCount: clusters.length,
+    pointCount: filteredPoints.length,
+    averageSimilarity: Number(averageSimilarity.toFixed(4)),
+    maxSimilarity: Number(maxSimilarity.toFixed(4)),
+  }
 
   return {
     projectId: input.projectId,
     analytics,
     layout,
+    summary,
     clusters,
     points,
     selectionSummary: {

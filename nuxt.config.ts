@@ -60,7 +60,7 @@ export default defineNuxtConfig({
           href: 'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Material+Symbols+Outlined:wght@300;400;500;600;700&display=swap',
         },
         { key: 'app-favicon-ico', rel: 'icon', href: '/favicon.ico', sizes: 'any' },
-        { key: 'app-favicon-svg', id: 'app-favicon-svg', rel: 'icon', type: 'image/svg+xml', href: '/nuxt.svg', sizes: 'any' },
+        { key: 'app-favicon-svg', id: 'app-favicon-svg', rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg', sizes: 'any' },
         { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
       ],
       meta: [

@@ -132,7 +132,7 @@ onBeforeUnmount(() => {
         aria-label="研发工作台面包屑"
         class="flex gap-1 min-w-0 items-center"
       >
-        <span class="material-symbols-outlined text-xl text-blue-600">dataset</span>
+        <BrandLogo variant="mark" class="shrink-0" style="--winloop-brand-mark-size: 22px;" />
         <button
           class="text-sm text-slate-900 font-bold px-1 py-0.5 rounded transition-colors hover:bg-slate-100"
           type="button"

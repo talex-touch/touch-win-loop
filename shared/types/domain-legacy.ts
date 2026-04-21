@@ -730,11 +730,21 @@ export interface ProjectKnowledgeSemanticCluster {
   nodeCount: number
   modality: ProjectKnowledgeModality | 'mixed' | 'unknown'
   embeddingStatus: ProjectKnowledgeEmbeddingStatus
+  densityScore: number
+  topicLabel: string
+  similarityScore: number
   centroid: {
     x: number
     y: number
     z: number
   }
+}
+
+export interface ProjectKnowledgeSemanticLayoutSummary {
+  clusterCount: number
+  pointCount: number
+  averageSimilarity: number
+  maxSimilarity: number
 }
 
 export interface ProjectKnowledgeSemanticPoint {
@@ -817,6 +827,7 @@ export interface ProjectKnowledgeSemanticLayoutPayload {
   projectId: string
   analytics: ProjectKnowledgeAnalyticsFreshness
   layout: ProjectKnowledgeSemanticLayout | null
+  summary: ProjectKnowledgeSemanticLayoutSummary
   clusters: ProjectKnowledgeSemanticCluster[]
   points: ProjectKnowledgeSemanticPoint[]
   selectionSummary: {
