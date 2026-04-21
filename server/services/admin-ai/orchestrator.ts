@@ -8,10 +8,13 @@ import type {
   Track,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
-import { createDeepAgent } from 'deepagents'
 import { tool } from 'langchain'
 import { z } from 'zod'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
+import {
+  buildDeepAgentThreadBinding,
+  createPersistedDeepAgent,
+} from '~~/server/services/ai/deepagent-factory'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { getContestDetail, getContestPublishCheck, getPublishedRubricByTrack } from '~~/server/utils/contest-store'
@@ -377,8 +380,16 @@ async function buildAssistantReplyWithDeepAgent(input: {
 
   const runOnce = async () => {
     await input.hooks.onProgress?.('调用 DeepAgent 生成总结中...')
-
-    const agent = createDeepAgent({
+    const binding = buildDeepAgentThreadBinding({
+      workspaceId: input.request.workspaceId,
+      projectId: input.request.contestId,
+      mode: `admin_${input.resolvedTaskType}`,
+      sessionId: toText(input.request.sessionId) || `contest:${input.request.contestId}`,
+      scope: 'admin',
+    })
+    const persisted = createPersistedDeepAgent({
+      runtime: input.runtime as unknown as EffectiveRuntime,
+      binding,
       model: createChatModel(input.runtime.ai),
       tools: [getArtifactContext, webSearch, fetchWebPage],
       systemPrompt: [
@@ -402,6 +413,7 @@ async function buildAssistantReplyWithDeepAgent(input: {
         },
       ],
     })
+    const agent = persisted.agent
 
     const prompt = [
       `任务类型：${input.resolvedTaskType}`,
@@ -417,7 +429,7 @@ async function buildAssistantReplyWithDeepAgent(input: {
 
     const response = await agent.invoke({
       messages: [{ role: 'user', content: prompt }],
-    })
+    }, persisted.config)
 
     const assistantText = extractAssistantText(response)
     return assistantText || fallback

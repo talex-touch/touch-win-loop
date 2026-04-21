@@ -1,7 +1,8 @@
-import type { WorkspaceAiMode } from '~~/shared/types/domain'
+import type { AiChatSessionContextSnapshot, AiChatSessionRunState, WorkspaceAiMode } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { getAiChatSessionContext } from '~~/server/utils/chat-session-context-store'
 import { getAiChatSessionById, listAiChatMessagesBySession } from '~~/server/utils/chat-store'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
@@ -61,9 +62,19 @@ export default defineEventHandler(async (event) => {
       limit,
     })
 
+    const contextRecord = await getAiChatSessionContext(db, {
+      workspaceId,
+      sessionId,
+    })
+
     return {
       session,
       messages,
+      contextSnapshot: (contextRecord?.contextSnapshot || null) as AiChatSessionContextSnapshot | null,
+      runState: (contextRecord?.runState || {
+        status: 'idle',
+        resumeAvailable: false,
+      }) as AiChatSessionRunState,
     }
   }).catch((error) => {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
@@ -100,6 +111,8 @@ export default defineEventHandler(async (event) => {
   return ok({
     session: toTeamChatSessionResponse(payload.session),
     messages: payload.messages.map(toTeamChatMessageResponse),
+    contextSnapshot: payload.contextSnapshot,
+    runState: payload.runState,
   }, {
     startedAt,
     provider: runtime.ai.provider,

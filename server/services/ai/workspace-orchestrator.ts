@@ -27,6 +27,11 @@ import { createDeepAgent } from 'deepagents'
 import { tool } from 'langchain'
 import { z } from 'zod'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
+import {
+  buildDeepAgentThreadBinding,
+  createPersistedDeepAgent,
+  resolveLatestDeepAgentCheckpointRef,
+} from '~~/server/services/ai/deepagent-factory'
 import { resolveCanvasSourceFormat, runCanvasAssistGeneration } from '~~/server/services/ai/canvas-assist'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
@@ -152,6 +157,7 @@ interface WorkspaceModeState {
 }
 
 interface WorkspaceModeExecutionInput {
+  sessionId: string
   runtime: RuntimeSettings
   ai: RuntimeSettings['ai']
   context: WorkspaceAiExecutionContext
@@ -165,6 +171,8 @@ export interface WorkspaceExecutionOutcome {
   data: WorkspaceAiExecutionResult
   fallbackUsed: boolean
   attempts: number
+  checkpointRef?: string
+  degradedReason?: string
 }
 
 const MAX_WORKSPACE_AGENT_MESSAGES = 10
@@ -761,6 +769,17 @@ function isContextualDraftActionIntent(context: WorkspaceAiExecutionContext): bo
     || Boolean(toText(context.requestedAgentAction))
     || Boolean(toText(context.workflowAction))
     || Boolean(toText(context.sceneAction))
+}
+
+function isWriteLockedWorkspaceMode(
+  profile: WorkspaceAgentProfile,
+  context: WorkspaceAiExecutionContext,
+): boolean {
+  if (profile.mode === 'dialog_ask')
+    return false
+  if (profile.mode === 'contextual_agent')
+    return isContextualDraftActionIntent(context)
+  return true
 }
 
 function shouldExposeAgentProtoDraftTools(context: WorkspaceAiExecutionContext): boolean {
@@ -2018,7 +2037,10 @@ async function executeWorkspaceAgentMode(
 ): Promise<WorkspaceExecutionOutcome> {
   const contextSnapshot = buildContextSnapshot(input.context)
   const channelPrompt = toText(input.channelPrompt)
+  const writeLockedMode = isWriteLockedWorkspaceMode(profile, input.context)
   let hasVisibleExecutionOutput = false
+  let degradedReason = ''
+  let checkpointRef = ''
 
   const retryAwareHooks: WorkspaceAiHooks = {
     onProgress: message => input.hooks.onProgress?.(message),
@@ -2053,33 +2075,68 @@ async function executeWorkspaceAgentMode(
         ...input,
         hooks: retryAwareHooks,
       }, profile, state, contextSnapshot)
-      const agent = createDeepAgent({
-        model: createChatModel(input.ai),
-        tools: toolset.tools,
-        systemPrompt: buildWorkspaceSystemPrompt(profile, channelPrompt, input.context),
+      const threadBinding = buildDeepAgentThreadBinding({
+        workspaceId: input.context.workspaceId,
+        projectId: input.context.projectId,
+        mode: profile.mode,
+        sessionId: input.sessionId,
+        scope: writeLockedMode ? 'write' : 'read',
       })
+
+      let agent = null as ReturnType<typeof createDeepAgent> | null
+      let streamConfig: Record<string, unknown> = {}
+
+      try {
+        await resolveLatestDeepAgentCheckpointRef(threadBinding)
+        const persisted = createPersistedDeepAgent({
+          runtime: input.runtime,
+          binding: threadBinding,
+          model: createChatModel(input.ai),
+          tools: toolset.tools,
+          systemPrompt: buildWorkspaceSystemPrompt(profile, channelPrompt, input.context),
+        })
+        agent = persisted.agent as ReturnType<typeof createDeepAgent>
+        streamConfig = persisted.config as Record<string, unknown>
+      }
+      catch (error) {
+        if (writeLockedMode)
+          throw new Error(`DEEPAGENT_PERSISTENCE_REQUIRED:${error instanceof Error ? (error.message || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR'}`)
+
+        degradedReason = 'DEEPAGENT_PERSISTENCE_UNAVAILABLE'
+        agent = createDeepAgent({
+          model: createChatModel(input.ai),
+          tools: toolset.tools,
+          systemPrompt: buildWorkspaceSystemPrompt(profile, channelPrompt, input.context),
+        })
+      }
 
       const stream = agent.streamEvents({
         messages: buildWorkspaceConversationMessages(profile.mode, input.context, input.messages) as any,
       }, {
         version: 'v2',
         signal: input.signal,
+        ...(streamConfig as any),
       })
-      return consumeWorkspaceAgentStream({
+      const consumed = await consumeWorkspaceAgentStream({
         stream,
         profile,
         state,
         hooks: retryAwareHooks,
         signal: input.signal,
       })
+      if (!degradedReason)
+        checkpointRef = await resolveLatestDeepAgentCheckpointRef(threadBinding)
+      return consumed
     },
     shouldRetryOnError: ({ error }) => !hasVisibleExecutionOutput && !isAbortError(error),
   })
 
   return {
     data: executed.data,
-    fallbackUsed: executed.fallbackUsed,
+    fallbackUsed: executed.fallbackUsed || Boolean(degradedReason),
     attempts: executed.attempts,
+    checkpointRef: checkpointRef || undefined,
+    degradedReason: degradedReason || undefined,
   }
 }
 
@@ -2104,6 +2161,7 @@ async function executeContextualAgentWorkspaceAi(input: WorkspaceModeExecutionIn
 }
 
 export async function executeWorkspaceAi(input: {
+  sessionId: string
   runtime: RuntimeSettings
   ai: RuntimeSettings['ai']
   mode: WorkspaceAiMode
@@ -2114,6 +2172,7 @@ export async function executeWorkspaceAi(input: {
   signal?: AbortSignal
 }): Promise<WorkspaceExecutionOutcome> {
   const executionInput: WorkspaceModeExecutionInput = {
+    sessionId: input.sessionId,
     runtime: input.runtime,
     ai: input.ai,
     context: input.context,

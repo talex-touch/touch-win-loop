@@ -10,6 +10,9 @@ interface UserAiRuntimeFeatureStatus {
   provider: string
   model: string
   reason: string
+  degraded: boolean
+  writeBlocked: boolean
+  rebuildRecommended: boolean
 }
 
 interface UserAiRuntimeStatus {
@@ -26,6 +29,8 @@ interface UserAiRuntimeStatus {
   canvasGenerate: UserAiRuntimeFeatureStatus
   canvasComplete: UserAiRuntimeFeatureStatus
   canvasRefine: UserAiRuntimeFeatureStatus
+  knowledgeEmbedding: UserAiRuntimeFeatureStatus
+  knowledgeVisualEmbedding: UserAiRuntimeFeatureStatus
   defense: UserAiRuntimeFeatureStatus
   contestFilter: UserAiRuntimeFeatureStatus
   topicProposal: UserAiRuntimeFeatureStatus
@@ -42,6 +47,9 @@ function combineFeatureStatuses(
     provider: configuredItem?.provider || '',
     model: configuredItem?.model || '',
     reason: buildAiNotConfiguredMessage(label),
+    degraded: !items.some(item => item.configured),
+    writeBlocked: !items.some(item => item.configured),
+    rebuildRecommended: !items.some(item => item.configured),
   }
 }
 
@@ -49,13 +57,21 @@ function buildFeatureStatus(
   runtime: Awaited<ReturnType<typeof readEffectiveRuntimeSettings>>['runtime'],
   channelKey: PlatformAiChannelKey,
   label: string,
+  options: {
+    writeBlocked?: boolean
+    rebuildRecommended?: boolean
+  } = {},
 ): UserAiRuntimeFeatureStatus {
   const resolved = resolveAiRuntimeForChannel(runtime, channelKey)
+  const configured = isAiRuntimeConfigured(resolved.ai)
   return {
-    configured: isAiRuntimeConfigured(resolved.ai),
+    configured,
     provider: String(resolved.ai.provider || '').trim(),
     model: String(resolved.ai.model || '').trim(),
     reason: buildAiNotConfiguredMessage(label),
+    degraded: !configured,
+    writeBlocked: Boolean(options.writeBlocked && !configured),
+    rebuildRecommended: Boolean(options.rebuildRecommended && !configured),
   }
 }
 
@@ -65,14 +81,14 @@ export default defineEventHandler(async (event) => {
   await requireAuth(event)
 
   const workspaceDialogAsk = buildFeatureStatus(runtime, 'workspace_dialog_ask', '工作台 AI')
-  const workspaceAutoOptimize = buildFeatureStatus(runtime, 'workspace_auto_optimize', '工作台 AI')
-  const workspaceIssueDiscovery = buildFeatureStatus(runtime, 'workspace_issue_discovery', '工作台 AI')
-  const documentSummarize = buildFeatureStatus(runtime, 'workspace_document_summarize', '文档总结 AI')
-  const documentRewrite = buildFeatureStatus(runtime, 'workspace_document_rewrite', '文档润写 AI')
-  const documentContinue = buildFeatureStatus(runtime, 'workspace_document_continue', '文档续写 AI')
-  const documentExpand = buildFeatureStatus(runtime, 'workspace_document_expand', '文档扩写 AI')
-  const documentCompleteContext = buildFeatureStatus(runtime, 'workspace_document_complete_context', '文档补全上下文 AI')
-  const documentRestructure = buildFeatureStatus(runtime, 'workspace_document_restructure', '文档结构整理 AI')
+  const workspaceAutoOptimize = buildFeatureStatus(runtime, 'workspace_auto_optimize', '工作台 AI', { writeBlocked: true })
+  const workspaceIssueDiscovery = buildFeatureStatus(runtime, 'workspace_issue_discovery', '工作台 AI', { writeBlocked: true })
+  const documentSummarize = buildFeatureStatus(runtime, 'workspace_document_summarize', '文档总结 AI', { writeBlocked: true })
+  const documentRewrite = buildFeatureStatus(runtime, 'workspace_document_rewrite', '文档润写 AI', { writeBlocked: true })
+  const documentContinue = buildFeatureStatus(runtime, 'workspace_document_continue', '文档续写 AI', { writeBlocked: true })
+  const documentExpand = buildFeatureStatus(runtime, 'workspace_document_expand', '文档扩写 AI', { writeBlocked: true })
+  const documentCompleteContext = buildFeatureStatus(runtime, 'workspace_document_complete_context', '文档补全上下文 AI', { writeBlocked: true })
+  const documentRestructure = buildFeatureStatus(runtime, 'workspace_document_restructure', '文档结构整理 AI', { writeBlocked: true })
   const documentAssist = combineFeatureStatuses('文档 AI', [
     documentSummarize,
     documentRewrite,
@@ -81,9 +97,15 @@ export default defineEventHandler(async (event) => {
     documentCompleteContext,
     documentRestructure,
   ])
-  const canvasGenerate = buildFeatureStatus(runtime, 'workspace_canvas_generate', '画布生成 AI')
-  const canvasComplete = buildFeatureStatus(runtime, 'workspace_canvas_complete', '画布补全 AI')
-  const canvasRefine = buildFeatureStatus(runtime, 'workspace_canvas_refine', '画布续改 AI')
+  const canvasGenerate = buildFeatureStatus(runtime, 'workspace_canvas_generate', '画布生成 AI', { writeBlocked: true })
+  const canvasComplete = buildFeatureStatus(runtime, 'workspace_canvas_complete', '画布补全 AI', { writeBlocked: true })
+  const canvasRefine = buildFeatureStatus(runtime, 'workspace_canvas_refine', '画布续改 AI', { writeBlocked: true })
+  const knowledgeEmbedding = buildFeatureStatus(runtime, 'knowledge_embedding', '知识 Embedding', {
+    rebuildRecommended: true,
+  })
+  const knowledgeVisualEmbedding = buildFeatureStatus(runtime, 'knowledge_visual_embedding', '知识视觉 Embedding', {
+    rebuildRecommended: true,
+  })
   const defense = buildFeatureStatus(runtime, 'defense', '答辩 AI')
   const contestFilter = buildFeatureStatus(runtime, 'contest_filter', '赛事筛选 AI')
   const topicProposal = buildFeatureStatus(runtime, 'topic_proposal', '选题助手 AI')
@@ -103,6 +125,8 @@ export default defineEventHandler(async (event) => {
     canvasGenerate,
     canvasComplete,
     canvasRefine,
+    knowledgeEmbedding,
+    knowledgeVisualEmbedding,
     defense,
     contestFilter,
     topicProposal,

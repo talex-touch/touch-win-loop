@@ -30,6 +30,7 @@ import type {
   ResourceKind,
 } from '~~/shared/types/domain'
 import { createHash, randomUUID } from 'node:crypto'
+import { resolveKnowledgeEmbeddingRuntimeProfile } from '~~/server/services/knowledge-ai'
 import { isAiRuntimeConfigured, normalizeAiRuntimeProvider } from '~~/server/utils/ai-runtime'
 import {
   normalizePlatformAiClientType,
@@ -163,6 +164,7 @@ interface ProjectKnowledgeChunkStatsRow {
   fallback_chunk_count: string
   unknown_chunk_count: string
   multimodal_chunk_count: string
+  signature_mismatch_count: string
 }
 
 interface ProjectKnowledgeTaskCountRow {
@@ -210,9 +212,16 @@ interface ProjectKnowledgeAggregateChunkStats {
   fallbackEmbeddedChunkCount: number
   unknownEmbeddedChunkCount: number
   multimodalEmbeddedChunkCount: number
+  signatureMismatchChunkCount: number
 }
 
 interface ProjectKnowledgeSourceChunkStats extends ProjectKnowledgeAggregateChunkStats {}
+
+interface ProjectKnowledgeBackfillRuntimeSnapshot {
+  embeddingConfigured: boolean
+  textRuntimeVersion: string
+  visualRuntimeVersion: string
+}
 
 export interface ProjectKnowledgeTaskContext {
   task: ProjectKnowledgeIndexTaskSnapshot
@@ -618,6 +627,27 @@ function buildProjectKnowledgeWorkerStatus(): ProjectKnowledgeIndexWorkerStatus 
   }
 }
 
+async function resolveProjectKnowledgeBackfillRuntimeSnapshot(runtime: RuntimeSettings): Promise<ProjectKnowledgeBackfillRuntimeSnapshot> {
+  const [textProfile, visualProfile] = await Promise.all([
+    resolveKnowledgeEmbeddingRuntimeProfile({
+      runtime,
+      text: 'project knowledge runtime probe',
+      inputType: 'text',
+    }),
+    resolveKnowledgeEmbeddingRuntimeProfile({
+      runtime,
+      contents: [{ image: 'https://example.invalid/runtime-probe.png' }],
+      inputType: 'image',
+    }),
+  ])
+
+  return {
+    embeddingConfigured: Boolean(textProfile.runtimeConfigured || visualProfile.runtimeConfigured),
+    textRuntimeVersion: normalizeString(textProfile.runtimeVersion),
+    visualRuntimeVersion: normalizeString(visualProfile.runtimeVersion),
+  }
+}
+
 function resolveSourceChunkStats(
   chunkStatsBySourceId: Map<string, ProjectKnowledgeSourceChunkStats>,
   sourceId: string,
@@ -628,6 +658,7 @@ function resolveSourceChunkStats(
     fallbackEmbeddedChunkCount: 0,
     unknownEmbeddedChunkCount: 0,
     multimodalEmbeddedChunkCount: 0,
+    signatureMismatchChunkCount: 0,
   }
 }
 
@@ -638,6 +669,8 @@ function buildProjectKnowledgeHealth(
     runtime: ProjectKnowledgeIndexRuntimeStatus
     worker: ProjectKnowledgeIndexWorkerStatus
     chunkStats: ProjectKnowledgeAggregateChunkStats
+    backfillPendingCount: number
+    backfillRunningCount: number
   },
 ): {
   healthState: ProjectKnowledgeIndexHealthState
@@ -721,6 +754,30 @@ function buildProjectKnowledgeHealth(
     })
   }
 
+  if (input.chunkStats.signatureMismatchChunkCount > 0) {
+    issues.push({
+      code: 'embedding_signature_mismatch',
+      severity: 'warning',
+      message: `存在 ${input.chunkStats.signatureMismatchChunkCount} 个 Chunk 的 embedding signature 已过期，需要回填重建。`,
+    })
+  }
+
+  if (input.backfillPendingCount > 0) {
+    issues.push({
+      code: 'embedding_backfill_pending',
+      severity: 'warning',
+      message: `存在 ${input.backfillPendingCount} 个资源等待 embedding 回填。`,
+    })
+  }
+
+  if (input.backfillRunningCount > 0) {
+    issues.push({
+      code: 'embedding_backfill_running',
+      severity: 'info',
+      message: `存在 ${input.backfillRunningCount} 个资源正在执行 embedding 回填。`,
+    })
+  }
+
   if (input.chunkStats.chunkCount === 0) {
     issues.push({
       code: 'no_chunks',
@@ -761,7 +818,14 @@ function buildProjectKnowledgeHealth(
     }
   }
 
-  if (hasRealEmbeddings && backlogCount === 0 && input.summary.failedCount === 0) {
+  if (
+    hasRealEmbeddings
+    && backlogCount === 0
+    && input.summary.failedCount === 0
+    && input.chunkStats.signatureMismatchChunkCount === 0
+    && input.backfillPendingCount === 0
+    && input.backfillRunningCount === 0
+  ) {
     return {
       healthState: 'healthy',
       healthMessage: '真实 embedding 已产出，当前索引状态健康。',
@@ -1370,7 +1434,10 @@ async function getProjectKnowledgeTaskCount(
 async function getProjectKnowledgeAggregateChunkStats(
   db: Queryable,
   projectId: string,
+  runtimeSnapshot?: ProjectKnowledgeBackfillRuntimeSnapshot,
 ): Promise<ProjectKnowledgeAggregateChunkStats> {
+  const textRuntimeVersion = normalizeString(runtimeSnapshot?.textRuntimeVersion)
+  const visualRuntimeVersion = normalizeString(runtimeSnapshot?.visualRuntimeVersion)
   const result = await db.query<ProjectKnowledgeChunkStatsRow>(
     `SELECT
       '' AS source_id,
@@ -1389,10 +1456,23 @@ async function getProjectKnowledgeAggregateChunkStats(
       COUNT(*) FILTER (
         WHERE COALESCE(metadata ->> 'embeddingApiStyle', '') = 'bailian-multimodal'
           AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = FALSE
-      )::TEXT AS multimodal_chunk_count
+      )::TEXT AS multimodal_chunk_count,
+      COUNT(*) FILTER (
+        WHERE COALESCE(NULLIF(metadata ->> 'embeddingRuntimeVersion', ''), '') <> ''
+          AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = FALSE
+          AND COALESCE(
+            metadata ->> 'embeddingRuntimeVersion',
+            ''
+          ) <> CASE
+            WHEN COALESCE(metadata ->> 'embeddingApiStyle', '') = 'bailian-multimodal'
+              OR COALESCE(metadata ->> 'embeddingInputType', '') IN ('image', 'video', 'multi_images', 'fused')
+            THEN $2
+            ELSE $3
+          END
+      )::TEXT AS signature_mismatch_count
      FROM project_knowledge_chunks
      WHERE project_id = $1`,
-    [projectId],
+    [projectId, visualRuntimeVersion, textRuntimeVersion],
   )
 
   const row = result.rows[0]
@@ -1402,13 +1482,17 @@ async function getProjectKnowledgeAggregateChunkStats(
     fallbackEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.fallback_chunk_count, 0))),
     unknownEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.unknown_chunk_count, 0))),
     multimodalEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.multimodal_chunk_count, 0))),
+    signatureMismatchChunkCount: Math.max(0, Math.round(normalizeNumber(row?.signature_mismatch_count, 0))),
   }
 }
 
 async function listProjectKnowledgeSourceChunkStats(
   db: Queryable,
   projectId: string,
+  runtimeSnapshot?: ProjectKnowledgeBackfillRuntimeSnapshot,
 ): Promise<Map<string, ProjectKnowledgeSourceChunkStats>> {
+  const textRuntimeVersion = normalizeString(runtimeSnapshot?.textRuntimeVersion)
+  const visualRuntimeVersion = normalizeString(runtimeSnapshot?.visualRuntimeVersion)
   const result = await db.query<ProjectKnowledgeChunkStatsRow>(
     `SELECT
       source_id,
@@ -1427,11 +1511,24 @@ async function listProjectKnowledgeSourceChunkStats(
       COUNT(*) FILTER (
         WHERE COALESCE(metadata ->> 'embeddingApiStyle', '') = 'bailian-multimodal'
           AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = FALSE
-      )::TEXT AS multimodal_chunk_count
+      )::TEXT AS multimodal_chunk_count,
+      COUNT(*) FILTER (
+        WHERE COALESCE(NULLIF(metadata ->> 'embeddingRuntimeVersion', ''), '') <> ''
+          AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = FALSE
+          AND COALESCE(
+            metadata ->> 'embeddingRuntimeVersion',
+            ''
+          ) <> CASE
+            WHEN COALESCE(metadata ->> 'embeddingApiStyle', '') = 'bailian-multimodal'
+              OR COALESCE(metadata ->> 'embeddingInputType', '') IN ('image', 'video', 'multi_images', 'fused')
+            THEN $2
+            ELSE $3
+          END
+      )::TEXT AS signature_mismatch_count
      FROM project_knowledge_chunks
      WHERE project_id = $1
      GROUP BY source_id`,
-    [projectId],
+    [projectId, visualRuntimeVersion, textRuntimeVersion],
   )
 
   return new Map(result.rows.map((row) => {
@@ -1441,6 +1538,7 @@ async function listProjectKnowledgeSourceChunkStats(
       fallbackEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.fallback_chunk_count, 0))),
       unknownEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.unknown_chunk_count, 0))),
       multimodalEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.multimodal_chunk_count, 0))),
+      signatureMismatchChunkCount: Math.max(0, Math.round(normalizeNumber(row.signature_mismatch_count, 0))),
     }]
   }))
 }
@@ -1739,6 +1837,7 @@ export async function syncProjectKnowledgeSourcesForProject(
   },
 ): Promise<ProjectKnowledgeIndexSourceStatus[]> {
   const { runtime } = await readEffectiveRuntimeSettings()
+  const runtimeSnapshot = await resolveProjectKnowledgeBackfillRuntimeSnapshot(runtime)
   const candidates = await listProjectKnowledgeCandidateRows(db, {
     projectId: input.projectId,
     resourceIds: input.resourceIds,
@@ -1747,6 +1846,7 @@ export async function syncProjectKnowledgeSourcesForProject(
     projectId: input.projectId,
     resourceIds: input.resourceIds,
   })
+  const chunkStatsBySourceId = await listProjectKnowledgeSourceChunkStats(db, input.projectId, runtimeSnapshot)
   const existingMap = new Map(existingRows.map(row => [buildSourceEntityKey(row.scope_type, row.source_resource_id, row.linked_contest_resource_id), row]))
   const autoEnqueue = input.autoEnqueue !== false
 
@@ -1813,6 +1913,13 @@ export async function syncProjectKnowledgeSourcesForProject(
     let nextEtaSeconds = Math.max(0, Math.round(normalizeNumber(existing.eta_seconds, 0)))
     let nextChunkTotal = Math.max(0, Math.round(normalizeNumber(existing.chunk_total, 0)))
     let nextChunkIndexed = Math.max(0, Math.round(normalizeNumber(existing.chunk_indexed, 0)))
+    const existingChunkStats = resolveSourceChunkStats(chunkStatsBySourceId, existing.id)
+    const hasBackfillCandidate = runtimeSnapshot.embeddingConfigured
+      && (
+        existingChunkStats.fallbackEmbeddedChunkCount > 0
+        || existingChunkStats.unknownEmbeddedChunkCount > 0
+        || existingChunkStats.signatureMismatchChunkCount > 0
+      )
 
     if (hashChanged || versionChanged) {
       if (!isProcessingSourceStatus(existing.status) && existing.status !== 'queued') {
@@ -1827,6 +1934,9 @@ export async function syncProjectKnowledgeSourcesForProject(
           nextChunkIndexed = 0
         }
       }
+    }
+    else if (hasBackfillCandidate && existing.status === 'ready') {
+      nextStatus = 'stale'
     }
 
     await db.query(
@@ -1867,12 +1977,12 @@ export async function syncProjectKnowledgeSourcesForProject(
     if (!refreshed)
       continue
 
-    if (!hashChanged && !versionChanged && refreshed.status !== 'pending' && refreshed.status !== 'stale')
+    if (!hashChanged && !versionChanged && !hasBackfillCandidate && refreshed.status !== 'pending' && refreshed.status !== 'stale')
       continue
 
     await internalEnqueueProjectKnowledgeIndexTask(db, {
       source: refreshed,
-      taskType: hashChanged || versionChanged ? 'reindex' : 'upsert',
+      taskType: hashChanged || versionChanged || hasBackfillCandidate ? 'reindex' : 'upsert',
       preserveStaleStatus: refreshed.status === 'stale',
     })
   }
@@ -1978,6 +2088,8 @@ export async function buildProjectKnowledgeIndexDashboard(
     syncSources?: boolean
   },
 ): Promise<ProjectKnowledgeIndexDashboard> {
+  const { runtime: effectiveRuntime } = await readEffectiveRuntimeSettings()
+  const runtimeSnapshot = await resolveProjectKnowledgeBackfillRuntimeSnapshot(effectiveRuntime)
   if (input.syncSources !== false) {
     await syncProjectKnowledgeSourcesForProject(db, {
       projectId: input.projectId,
@@ -2006,8 +2118,8 @@ export async function buildProjectKnowledgeIndexDashboard(
     }),
     getRecentSucceededAverageDurationSeconds(db, input.projectId),
     getProjectKnowledgeTaskCount(db, input.projectId),
-    getProjectKnowledgeAggregateChunkStats(db, input.projectId),
-    listProjectKnowledgeSourceChunkStats(db, input.projectId),
+    getProjectKnowledgeAggregateChunkStats(db, input.projectId, runtimeSnapshot),
+    listProjectKnowledgeSourceChunkStats(db, input.projectId, runtimeSnapshot),
     listProjectKnowledgeChunkKindCounts(db, input.projectId),
     listProjectKnowledgeFailureReasonCounts(db, input.projectId),
     listProjectKnowledgeTaskTrendRows(db, input.projectId),
@@ -2024,6 +2136,20 @@ export async function buildProjectKnowledgeIndexDashboard(
   const failedCount = sources.filter(item => item.status === 'failed').length
   const staleCount = sources.filter(item => item.status === 'stale').length
   const skippedCount = sources.filter(item => item.status === 'skipped').length
+  const backfillPendingCount = sources.filter((source) => {
+    const stats = resolveSourceChunkStats(chunkStatsBySourceId, source.id)
+    const needsBackfill = stats.fallbackEmbeddedChunkCount > 0
+      || stats.unknownEmbeddedChunkCount > 0
+      || stats.signatureMismatchChunkCount > 0
+    return needsBackfill && (source.status === 'stale' || source.status === 'queued' || source.status === 'pending')
+  }).length
+  const backfillRunningCount = sources.filter((source) => {
+    const stats = resolveSourceChunkStats(chunkStatsBySourceId, source.id)
+    const needsBackfill = stats.fallbackEmbeddedChunkCount > 0
+      || stats.unknownEmbeddedChunkCount > 0
+      || stats.signatureMismatchChunkCount > 0
+    return needsBackfill && PROCESSING_SOURCE_STATUS_SET.has(source.status)
+  }).length
 
   const totalContribution = indexableResources > 0
     ? sources
@@ -2082,6 +2208,8 @@ export async function buildProjectKnowledgeIndexDashboard(
     runtime,
     worker,
     chunkStats,
+    backfillPendingCount,
+    backfillRunningCount,
   })
   const contestResourceTitles = await listContestResourceTitlesByIds(
     db,
@@ -2156,6 +2284,23 @@ export async function buildProjectKnowledgeIndexDashboard(
     return source.status === 'failed' && normalizeString(source.lastError).includes('BAILIAN_MULTIMODAL')
   }).length
   const embeddingHealthReason = health.issues.find(issue => issue.severity !== 'info')?.code || (health.healthState === 'healthy' ? '' : health.healthState)
+  const signatureMismatchSourceCount = sources.filter((source) => {
+    const stats = resolveSourceChunkStats(chunkStatsBySourceId, source.id)
+    return stats.signatureMismatchChunkCount > 0
+  }).length
+  const lastHealthyAt = sources
+    .filter((source) => {
+      if (source.status !== 'ready')
+        return false
+      const stats = resolveSourceChunkStats(chunkStatsBySourceId, source.id)
+      return stats.chunkCount > 0
+        && stats.fallbackEmbeddedChunkCount === 0
+        && stats.unknownEmbeddedChunkCount === 0
+        && stats.signatureMismatchChunkCount === 0
+    })
+    .map(source => normalizeString(source.lastIndexedAt) || normalizeString(source.updatedAt))
+    .filter(Boolean)
+    .sort((left, right) => right.localeCompare(left))[0] || undefined
   const diagnostics: ProjectKnowledgeIndexDiagnostics = {
     candidateResourceCount: candidateRows.length,
     sourceCount: sources.length,
@@ -2169,6 +2314,20 @@ export async function buildProjectKnowledgeIndexDashboard(
     healthState: health.healthState,
     healthMessage: health.healthMessage,
     embeddingHealthReason: embeddingHealthReason || undefined,
+    degradedReason: health.healthState === 'healthy' ? undefined : (embeddingHealthReason || health.healthState),
+    rebuildRecommended: Boolean(
+      staleCount > 0
+      || failedCount > 0
+      || backfillPendingCount > 0
+      || backfillRunningCount > 0
+      || signatureMismatchSourceCount > 0
+      || chunkStats.fallbackEmbeddedChunkCount > 0
+      || chunkStats.unknownEmbeddedChunkCount > 0
+    ),
+    signatureMismatchSourceCount,
+    backfillPendingCount,
+    backfillRunningCount,
+    lastHealthyAt,
     issues: health.issues,
   }
 
@@ -2868,33 +3027,104 @@ export async function listProjectKnowledgeSearchChunks(
     [input.projectId, statusList],
   )
 
-  return result.rows.map((row) => {
-    const embedding = mode === 'vector'
-      ? normalizeEmbeddingText(row.embedding_text)
-      : normalizeNumberArray(row.embedding_json)
-    return {
-      id: row.id,
-      sourceId: row.source_id,
-      projectId: row.project_id,
-      scopeType: row.scope_type,
-      sourceResourceId: row.source_resource_id,
-      linkedContestResourceId: row.linked_contest_resource_id,
-      resourceTitle: normalizeString(row.resource_title) || '未命名资源',
-      resourceKind: row.resource_kind,
-      resourceSource: row.resource_source,
-      sourceStatus: row.source_status,
-      chunkIndex: Math.max(0, Math.round(normalizeNumber(row.chunk_index, 0))),
-      chunkKind: row.chunk_kind,
-      title: normalizeString(row.title),
-      content: normalizeString(row.content),
-      citationLabel: normalizeString(row.citation_label),
-      pageNumber: row.page_number == null ? null : Math.max(1, Math.round(normalizeNumber(row.page_number, 1))),
-      sectionLabel: normalizeString(row.section_label),
-      sourceHash: normalizeString(row.source_hash),
-      indexVersion: normalizeString(row.index_version),
-      metadata: normalizeRecord(row.metadata),
-      embedding,
-      updatedAt: row.updated_at,
-    }
-  })
+  return result.rows.map(row => mapProjectKnowledgeSearchChunkRow(row, mode))
+}
+
+function mapProjectKnowledgeSearchChunkRow(
+  row: ProjectKnowledgeSearchChunkRow,
+  mode: ProjectKnowledgeVectorMode,
+): ProjectKnowledgeSearchChunk {
+  const embedding = mode === 'vector'
+    ? normalizeEmbeddingText(row.embedding_text)
+    : normalizeNumberArray(row.embedding_json)
+  return {
+    id: row.id,
+    sourceId: row.source_id,
+    projectId: row.project_id,
+    scopeType: row.scope_type,
+    sourceResourceId: row.source_resource_id,
+    linkedContestResourceId: row.linked_contest_resource_id,
+    resourceTitle: normalizeString(row.resource_title) || '未命名资源',
+    resourceKind: row.resource_kind,
+    resourceSource: row.resource_source,
+    sourceStatus: row.source_status,
+    chunkIndex: Math.max(0, Math.round(normalizeNumber(row.chunk_index, 0))),
+    chunkKind: row.chunk_kind,
+    title: normalizeString(row.title),
+    content: normalizeString(row.content),
+    citationLabel: normalizeString(row.citation_label),
+    pageNumber: row.page_number == null ? null : Math.max(1, Math.round(normalizeNumber(row.page_number, 1))),
+    sectionLabel: normalizeString(row.section_label),
+    sourceHash: normalizeString(row.source_hash),
+    indexVersion: normalizeString(row.index_version),
+    metadata: normalizeRecord(row.metadata),
+    embedding,
+    updatedAt: row.updated_at,
+  }
+}
+
+export async function listProjectKnowledgeSearchChunksByVectorPreselect(
+  db: Queryable,
+  input: {
+    projectId: string
+    embedding: number[]
+    includeStale?: boolean
+    limit?: number
+  },
+): Promise<ProjectKnowledgeSearchChunk[]> {
+  const mode = await resolveProjectKnowledgeVectorMode(db)
+  const normalizedEmbedding = normalizeNumberArray(input.embedding)
+  if (mode !== 'vector' || normalizedEmbedding.length === 0)
+    return []
+
+  const statusList = input.includeStale ? ['ready', 'stale'] : ['ready']
+  const limit = Math.max(6, Math.min(80, Math.round(normalizeNumber(input.limit, 36))))
+  const result = await db.query<ProjectKnowledgeSearchChunkRow>(
+    `SELECT
+      pkc.id,
+      pkc.source_id,
+      pkc.project_id,
+      pkc.scope_type,
+      pkc.source_resource_id,
+      pkc.linked_contest_resource_id,
+      pkc.chunk_index,
+      pkc.chunk_kind,
+      pkc.title,
+      pkc.content,
+      pkc.citation_label,
+      pkc.page_number,
+      pkc.section_label,
+      pkc.source_hash,
+      pkc.index_version,
+      pkc.metadata,
+      pkc.updated_at::TEXT,
+      pks.status AS source_status,
+      pr.title AS resource_title,
+      pr.resource_kind,
+      pr.source AS resource_source,
+      pkc.embedding::TEXT AS embedding_text,
+      NULL::JSONB AS embedding_json
+     FROM project_knowledge_chunks pkc
+     JOIN project_knowledge_sources pks
+       ON pks.id = pkc.source_id
+      AND pks.project_id = pkc.project_id
+     JOIN project_resources pr
+       ON pr.id = pkc.source_resource_id
+      AND pr.project_id = pkc.project_id
+      AND pr.status = 'active'
+     WHERE pkc.project_id = $1
+       AND pks.status = ANY($2::TEXT[])
+       AND COALESCE(NULLIF(pkc.metadata ->> 'embeddingDimensions', ''), '0')::INT = $3
+     ORDER BY pkc.embedding <=> $4::vector ASC, pkc.updated_at DESC
+     LIMIT $5`,
+    [
+      input.projectId,
+      statusList,
+      normalizedEmbedding.length,
+      `[${normalizedEmbedding.join(',')}]`,
+      limit,
+    ],
+  )
+
+  return result.rows.map(row => mapProjectKnowledgeSearchChunkRow(row, mode))
 }

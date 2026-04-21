@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type {
   AiChatMessage,
+  AiChatSessionContextSnapshot,
+  AiChatSessionRunState,
   AiChatSession,
   AiContestFilterResult,
   AiDefenseJudgeRound,
@@ -836,6 +838,8 @@ const documentAssistRequestState = reactive<MarkdownDocumentAssistRequestState>(
   selectionText: '',
   selectionRange: null,
 })
+const activeChatSessionContextSnapshot = ref<AiChatSessionContextSnapshot | null>(null)
+const activeChatSessionRunState = ref<AiChatSessionRunState | null>(null)
 const appliedAgentDocDraftKeys = ref<string[]>([])
 const projectIssuesLoadedProjectId = ref('')
 
@@ -861,6 +865,8 @@ function resetChatDraftArtifactState(): void {
 function clearActiveChatArtifacts(options: {
   preserveMessages?: boolean
 } = {}): void {
+  activeChatSessionContextSnapshot.value = null
+  activeChatSessionRunState.value = null
   if (options.preserveMessages) {
     chatDraft.value = null
     chatMissingFields.value = []
@@ -8983,6 +8989,31 @@ async function handleMarkdownImageAction(payload: {
   }
 }
 
+async function restoreChatSessionContextSnapshot(
+  snapshot: AiChatSessionContextSnapshot | null | undefined,
+): Promise<void> {
+  if (!snapshot)
+    return
+
+  activeChatSessionContextSnapshot.value = snapshot
+
+  if (aiMode.value === 'contextual_agent')
+    projectAssistantMode.value = snapshot.contextualAssistantKey ? 'contextual' : 'dialog_ask'
+
+  const resourceId = normalizeString(snapshot.resourceId)
+  if (resourceId && resourceId !== normalizeString(previewResourceId.value))
+    await openProjectResourcePreview(resourceId, { openTab: false })
+
+  if (aiMode.value === 'document_assist') {
+    documentAssistRequestState.resourceId = resourceId
+    documentAssistRequestState.resourceTitle = normalizeString(snapshot.resourceTitle)
+    documentAssistRequestState.selectionText = String(snapshot.selectionText || '').trim()
+    documentAssistRequestState.selectionRange = snapshot.selectionRange || null
+    if (resourceId && normalizeString(activeMarkdownResourceId.value) === resourceId)
+      documentAssistRequestState.markdown = getActiveMarkdownMirror()
+  }
+}
+
 async function loadChatMessages(sessionId: string) {
   const projectId = String(activeProjectId.value || '').trim()
   const workspaceId = String(activeWorkspaceId.value || '').trim()
@@ -9004,7 +9035,12 @@ async function loadChatMessages(sessionId: string) {
   }
 
   try {
-    const data = await requestProjectApi<{ session: AiChatSession, messages: AiChatMessage[] }>(
+    const data = await requestProjectApi<{
+      session: AiChatSession
+      messages: AiChatMessage[]
+      contextSnapshot: AiChatSessionContextSnapshot | null
+      runState: AiChatSessionRunState
+    }>(
       endpoint(`/teams/${workspaceId}/chat/sessions/${normalizedSessionId}/messages`),
       {
         projectId,
@@ -9031,10 +9067,13 @@ async function loadChatMessages(sessionId: string) {
       })) as ChatMessage[]
 
     chatMessages.value = restoredMessages
+    activeChatSessionRunState.value = data.runState || null
     chatDraft.value = null
     chatMissingFields.value = []
     resetChatDraftArtifactState()
     chatMessagesLoadedSessionId.value = normalizedSessionId
+    if (mode !== 'defense')
+      await restoreChatSessionContextSnapshot(data.contextSnapshot)
 
     if (mode === 'defense') {
       defenseSessionMeta.value = data.session

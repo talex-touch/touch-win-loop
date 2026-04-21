@@ -80,8 +80,8 @@ describe('project knowledge focused regression', () => {
     assert.match(source, /const citations = selectedHits\.map\(buildCitation\)/, 'knowledge context 未把命中结果转换为 citations')
     assert.match(
       source,
-      /return \{[\s\S]*summaryText:\s*lines\.join\('\\n\\n'\),[\s\S]*citations,[\s\S]*warning,[\s\S]*usedFallback:\s*false[\s\S]*\}/,
-      'knowledge context 缺少 ready 命中时的 citations + warning 返回结构',
+      /return \{[\s\S]*summaryText:\s*lines\.join\('\\n\\n'\),[\s\S]*citations,[\s\S]*warning,[\s\S]*usedFallback:\s*(?:false|degradedResultUsed)[\s\S]*\}/,
+      'knowledge context 缺少 ready 命中时的 citations + warning + degraded 标记返回结构',
     )
     assert.match(
       source,

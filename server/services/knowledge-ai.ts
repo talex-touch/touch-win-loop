@@ -1,8 +1,10 @@
 import type { H3Event } from 'h3'
 import type {
+  EmbeddingSignature,
   ProjectKnowledgeEmbeddingApiStyle,
   ProjectKnowledgeEmbeddingInputType,
 } from '~~/shared/types/domain'
+import type { RuntimeSettings } from '~~/server/utils/env'
 import { createHash } from 'node:crypto'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
@@ -60,7 +62,31 @@ export interface KnowledgeEmbeddingResult {
   inputType: ProjectKnowledgeEmbeddingInputType
   dimensions: number
   fusionUsed: boolean
+  runtimeVersion: string
+  signature: EmbeddingSignature
+  failureReason?: string
   requestId?: string
+}
+
+export interface KnowledgeEmbeddingRuntimeProfile {
+  sourceText: string
+  contents: KnowledgeEmbeddingContentItem[]
+  channelKey: 'knowledge_embedding' | 'knowledge_visual_embedding'
+  provider: string
+  model: string
+  clientType: KnowledgeEmbeddingClientType
+  apiStyle: ProjectKnowledgeEmbeddingApiStyle
+  inputType: ProjectKnowledgeEmbeddingInputType
+  dimensions: number
+  fusionUsed: boolean
+  runtimeVersion: string
+  signature: EmbeddingSignature
+  runtimeConfigured: boolean
+  normalizedApiKey: string
+  endpoint: string
+  baseURL: string
+  timeoutMs: number
+  maxRetries: number
 }
 
 export interface KnowledgeEntityAnalysisResult {
@@ -102,6 +128,139 @@ export function buildDeterministicKnowledgeEmbedding(text: string, dimensions = 
     values.push(Number((((byte / 255) * 2) - 1).toFixed(6)))
   }
   return values
+}
+
+interface KnowledgeEmbeddingCacheEntry {
+  cacheKey: string
+  expiresAt: number
+  value: KnowledgeEmbeddingResult
+}
+
+const KNOWLEDGE_EMBEDDING_CACHE_KEY = Symbol.for('winloop.knowledge.embedding.cache.v1')
+const KNOWLEDGE_EMBEDDING_CACHE_TTL_MS = 45_000
+
+function getKnowledgeEmbeddingCache(): Map<string, KnowledgeEmbeddingCacheEntry> {
+  const globalRef = globalThis as Record<symbol, unknown>
+  const cached = globalRef[KNOWLEDGE_EMBEDDING_CACHE_KEY]
+  if (cached instanceof Map)
+    return cached as Map<string, KnowledgeEmbeddingCacheEntry>
+  const next = new Map<string, KnowledgeEmbeddingCacheEntry>()
+  globalRef[KNOWLEDGE_EMBEDDING_CACHE_KEY] = next
+  return next
+}
+
+function buildKnowledgeEmbeddingRuntimeVersion(input: {
+  provider: string
+  model: string
+  apiStyle: ProjectKnowledgeEmbeddingApiStyle
+  dimensions: number
+}): string {
+  const payload = JSON.stringify({
+    provider: normalizeAiRuntimeProvider(input.provider),
+    model: normalizeEmbeddingModel(input.model),
+    apiStyle: input.apiStyle,
+    dimensions: Math.max(0, normalizePositiveInt(input.dimensions, 0)),
+  })
+  return createHash('sha256').update(payload).digest('hex').slice(0, 12)
+}
+
+function buildKnowledgeEmbeddingSignature(input: {
+  provider: string
+  model: string
+  apiStyle: ProjectKnowledgeEmbeddingApiStyle
+  dimensions: number
+  inputType: ProjectKnowledgeEmbeddingInputType
+  fusionUsed: boolean
+}): EmbeddingSignature {
+  return {
+    provider: normalizeAiRuntimeProvider(input.provider),
+    model: normalizeEmbeddingModel(input.model),
+    apiStyle: input.apiStyle,
+    dimensions: Math.max(0, normalizePositiveInt(input.dimensions, 0)),
+    inputType: input.inputType,
+    fusionUsed: Boolean(input.fusionUsed),
+    runtimeVersion: buildKnowledgeEmbeddingRuntimeVersion(input),
+  }
+}
+
+function buildKnowledgeEmbeddingCacheKey(input: {
+  text: string
+  contents: KnowledgeEmbeddingContentItem[]
+  provider: string
+  model: string
+  apiStyle: ProjectKnowledgeEmbeddingApiStyle
+  dimensions: number
+  inputType: ProjectKnowledgeEmbeddingInputType
+  fusionUsed: boolean
+}): string {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      text: toKnowledgeText(input.text),
+      contents: input.contents,
+      provider: normalizeAiRuntimeProvider(input.provider),
+      model: normalizeEmbeddingModel(input.model),
+      apiStyle: input.apiStyle,
+      dimensions: Math.max(0, normalizePositiveInt(input.dimensions, 0)),
+      inputType: input.inputType,
+      fusionUsed: Boolean(input.fusionUsed),
+    }))
+    .digest('hex')
+}
+
+function cloneKnowledgeEmbeddingResult(value: KnowledgeEmbeddingResult): KnowledgeEmbeddingResult {
+  return {
+    ...value,
+    embedding: [...value.embedding],
+    signature: {
+      ...value.signature,
+    },
+  }
+}
+
+function resolveKnowledgeEmbeddingFailureReason(error: unknown, fallback = 'EMBEDDING_REQUEST_FAILED'): string {
+  if (error instanceof Error)
+    return toKnowledgeText(error.message) || fallback
+  return toKnowledgeText(error) || fallback
+}
+
+function createKnowledgeEmbeddingResult(input: {
+  embedding: number[]
+  provider: string
+  model: string
+  fallbackUsed: boolean
+  attempts: number
+  clientType: KnowledgeEmbeddingClientType
+  apiStyle: ProjectKnowledgeEmbeddingApiStyle
+  inputType: ProjectKnowledgeEmbeddingInputType
+  dimensions: number
+  fusionUsed: boolean
+  runtimeVersion: string
+  failureReason?: string
+  requestId?: string
+}): KnowledgeEmbeddingResult {
+  return {
+    embedding: [...input.embedding],
+    provider: input.provider,
+    model: input.model,
+    fallbackUsed: input.fallbackUsed,
+    attempts: input.attempts,
+    clientType: input.clientType,
+    apiStyle: input.apiStyle,
+    inputType: input.inputType,
+    dimensions: input.dimensions,
+    fusionUsed: input.fusionUsed,
+    runtimeVersion: input.runtimeVersion,
+    signature: buildKnowledgeEmbeddingSignature({
+      provider: input.provider,
+      model: input.model,
+      apiStyle: input.apiStyle,
+      dimensions: input.dimensions,
+      inputType: input.inputType,
+      fusionUsed: input.fusionUsed,
+    }),
+    failureReason: toKnowledgeText(input.failureReason) || undefined,
+    requestId: toKnowledgeText(input.requestId) || undefined,
+  }
 }
 
 function normalizeEmbeddingModel(model: string): string {
@@ -287,9 +446,10 @@ async function createOpenAiCompatibleTextEmbedding(input: {
   timeoutMs: number
   maxRetries: number
   dimensions: number
+  runtimeVersion: string
 }): Promise<KnowledgeEmbeddingResult> {
   if (!input.text) {
-    return {
+    return createKnowledgeEmbeddingResult({
       embedding: [],
       provider: input.provider,
       model: input.model,
@@ -300,11 +460,13 @@ async function createOpenAiCompatibleTextEmbedding(input: {
       inputType: 'text',
       dimensions: input.dimensions,
       fusionUsed: false,
-    }
+      runtimeVersion: input.runtimeVersion,
+      failureReason: 'EMBEDDING_EMPTY_INPUT',
+    })
   }
 
   if (!input.apiKey || !input.model || !input.endpoint) {
-    return {
+    return createKnowledgeEmbeddingResult({
       embedding: buildDeterministicKnowledgeEmbedding(input.text, input.dimensions),
       provider: input.provider,
       model: input.model,
@@ -315,7 +477,9 @@ async function createOpenAiCompatibleTextEmbedding(input: {
       inputType: 'text',
       dimensions: input.dimensions,
       fusionUsed: false,
-    }
+      runtimeVersion: input.runtimeVersion,
+      failureReason: 'EMBEDDING_RUNTIME_NOT_CONFIGURED',
+    })
   }
 
   const result = await runWithRetry<number[]>({
@@ -352,7 +516,7 @@ async function createOpenAiCompatibleTextEmbedding(input: {
     fallback: () => buildDeterministicKnowledgeEmbedding(input.text, input.dimensions),
   })
 
-  return {
+  return createKnowledgeEmbeddingResult({
     embedding: result.data,
     provider: input.provider,
     model: input.model,
@@ -363,7 +527,9 @@ async function createOpenAiCompatibleTextEmbedding(input: {
     inputType: 'text',
     dimensions: result.data.length || input.dimensions,
     fusionUsed: false,
-  }
+    runtimeVersion: input.runtimeVersion,
+    failureReason: result.fallbackUsed ? resolveKnowledgeEmbeddingFailureReason(result.lastError) : '',
+  })
 }
 
 async function createBailianMultimodalEmbedding(input: {
@@ -377,9 +543,10 @@ async function createBailianMultimodalEmbedding(input: {
   dimensions: number
   fusionUsed: boolean
   inputType: ProjectKnowledgeEmbeddingInputType
+  runtimeVersion: string
 }): Promise<KnowledgeEmbeddingResult> {
   if (input.contents.length === 0) {
-    return {
+    return createKnowledgeEmbeddingResult({
       embedding: [],
       provider: input.provider,
       model: input.model,
@@ -390,7 +557,8 @@ async function createBailianMultimodalEmbedding(input: {
       inputType: input.inputType,
       dimensions: input.dimensions,
       fusionUsed: input.fusionUsed,
-    }
+      runtimeVersion: input.runtimeVersion,
+    })
   }
 
   if (!input.apiKey || !input.model || !input.baseURL)
@@ -445,7 +613,7 @@ async function createBailianMultimodalEmbedding(input: {
     },
   })
 
-  return {
+  return createKnowledgeEmbeddingResult({
     embedding: result.data.embedding,
     provider: input.provider,
     model: input.model,
@@ -456,8 +624,9 @@ async function createBailianMultimodalEmbedding(input: {
     inputType: result.data.inputType,
     dimensions: result.data.embedding.length || input.dimensions,
     fusionUsed: input.fusionUsed,
+    runtimeVersion: input.runtimeVersion,
     requestId: result.data.requestId,
-  }
+  })
 }
 
 function buildAnalysisFallback(text: string): Omit<KnowledgeEntityAnalysisResult, 'provider' | 'model' | 'fallbackUsed' | 'attempts'> {
@@ -489,7 +658,102 @@ export async function createKnowledgeEmbedding(input: {
   enableFusion?: boolean
   event?: H3Event
 }): Promise<KnowledgeEmbeddingResult> {
-  const { runtime } = await readEffectiveRuntimeSettings(input.event)
+  const profile = await resolveKnowledgeEmbeddingRuntimeProfile(input)
+  const useCache = Boolean(input.event)
+    && profile.channelKey === 'knowledge_embedding'
+    && profile.inputType === 'text'
+    && !profile.fusionUsed
+    && profile.sourceText.length > 0
+  const cacheKey = useCache
+    ? buildKnowledgeEmbeddingCacheKey({
+        text: profile.sourceText,
+        contents: profile.contents,
+        provider: profile.provider,
+        model: profile.model,
+        apiStyle: profile.apiStyle,
+        dimensions: profile.dimensions,
+        inputType: profile.inputType,
+        fusionUsed: profile.fusionUsed,
+      })
+    : ''
+  if (cacheKey) {
+    const cache = getKnowledgeEmbeddingCache()
+    const cached = cache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now())
+      return cloneKnowledgeEmbeddingResult(cached.value)
+    if (cached)
+      cache.delete(cacheKey)
+  }
+
+  let result: KnowledgeEmbeddingResult
+  if (profile.apiStyle === 'bailian-multimodal') {
+    if (!profile.runtimeConfigured || !profile.normalizedApiKey)
+      throw new Error('BAILIAN_MULTIMODAL_RUNTIME_NOT_CONFIGURED')
+
+    result = await createBailianMultimodalEmbedding({
+      contents: profile.contents,
+      provider: profile.provider,
+      model: profile.model,
+      apiKey: profile.normalizedApiKey,
+      baseURL: profile.baseURL,
+      timeoutMs: profile.timeoutMs,
+      maxRetries: profile.maxRetries,
+      dimensions: profile.dimensions,
+      fusionUsed: profile.fusionUsed,
+      inputType: profile.inputType,
+      runtimeVersion: profile.runtimeVersion,
+    })
+  }
+  else if (!profile.runtimeConfigured || !profile.model || !profile.endpoint || !profile.normalizedApiKey) {
+    result = createKnowledgeEmbeddingResult({
+      embedding: profile.sourceText ? buildDeterministicKnowledgeEmbedding(profile.sourceText, profile.dimensions) : [],
+      provider: profile.provider,
+      model: profile.model,
+      fallbackUsed: true,
+      attempts: 1,
+      clientType: 'openai-compatible',
+      apiStyle: 'openai-compatible-text',
+      inputType: 'text',
+      dimensions: profile.dimensions,
+      fusionUsed: false,
+      runtimeVersion: profile.runtimeVersion,
+      failureReason: 'EMBEDDING_RUNTIME_NOT_CONFIGURED',
+    })
+  }
+  else {
+    result = await createOpenAiCompatibleTextEmbedding({
+      text: profile.sourceText,
+      provider: profile.provider,
+      model: profile.model,
+      apiKey: profile.normalizedApiKey,
+      endpoint: profile.endpoint,
+      timeoutMs: profile.timeoutMs,
+      maxRetries: profile.maxRetries,
+      dimensions: profile.dimensions,
+      runtimeVersion: profile.runtimeVersion,
+    })
+  }
+
+  if (cacheKey) {
+    getKnowledgeEmbeddingCache().set(cacheKey, {
+      cacheKey,
+      expiresAt: Date.now() + KNOWLEDGE_EMBEDDING_CACHE_TTL_MS,
+      value: cloneKnowledgeEmbeddingResult(result),
+    })
+  }
+
+  return result
+}
+
+export async function resolveKnowledgeEmbeddingRuntimeProfile(input: {
+  text?: string
+  contents?: KnowledgeEmbeddingContentItem[]
+  inputType?: ProjectKnowledgeEmbeddingInputType
+  enableFusion?: boolean
+  event?: H3Event
+  runtime?: RuntimeSettings
+}): Promise<KnowledgeEmbeddingRuntimeProfile> {
+  const runtime = input.runtime || (await readEffectiveRuntimeSettings(input.event)).runtime
   const sourceText = normalizeKnowledgeEmbeddingInputText({
     text: input.text,
     contents: input.contents,
@@ -521,31 +785,6 @@ export async function createKnowledgeEmbedding(input: {
   const normalizedApiKey = normalizePlatformAiApiKey(embeddingAi.apiKey)
   const timeoutMs = Math.max(3_000, Math.min(120_000, Number(embeddingAi.timeoutMs || 15_000)))
   const maxRetries = Math.max(0, Math.min(6, Number(embeddingAi.maxRetries || 0)))
-
-  if (apiStyle === 'bailian-multimodal') {
-    const embeddingRuntimeConfigured = isAiRuntimeConfigured({
-      provider: embeddingAi.provider,
-      baseURL: embeddingAi.baseURL,
-      apiKey: embeddingAi.apiKey,
-      model,
-    })
-    if (!embeddingRuntimeConfigured || !normalizedApiKey)
-      throw new Error('BAILIAN_MULTIMODAL_RUNTIME_NOT_CONFIGURED')
-
-    return createBailianMultimodalEmbedding({
-      contents,
-      provider,
-      model,
-      apiKey: normalizedApiKey,
-      baseURL: resolveDashScopeNativeBaseURL(embeddingAi.baseURL, provider),
-      timeoutMs,
-      maxRetries,
-      dimensions,
-      fusionUsed,
-      inputType: input.inputType || inferKnowledgeEmbeddingInputType(contents, fusionUsed),
-    })
-  }
-
   const endpoint = resolvePlatformAiRequestBaseURL(embeddingAi.baseURL, provider)
   const embeddingRuntimeConfigured = isAiRuntimeConfigured({
     provider: embeddingAi.provider,
@@ -553,30 +792,40 @@ export async function createKnowledgeEmbedding(input: {
     apiKey: embeddingAi.apiKey,
     model,
   })
-  if (!embeddingRuntimeConfigured || !model || !endpoint || !normalizedApiKey) {
-    return {
-      embedding: sourceText ? buildDeterministicKnowledgeEmbedding(sourceText, dimensions) : [],
-      provider,
-      model,
-      fallbackUsed: true,
-      attempts: 1,
-      clientType: 'openai-compatible',
-      apiStyle: 'openai-compatible-text',
-      inputType: 'text',
-      dimensions,
-      fusionUsed: false,
-    }
-  }
 
-  return createOpenAiCompatibleTextEmbedding({
-    text: sourceText,
+  return {
+    sourceText,
+    contents,
+    channelKey: embeddingChannelKey,
     provider,
     model,
-    apiKey: normalizedApiKey,
+    clientType: apiStyle === 'bailian-multimodal' ? 'bailian-native' : 'openai-compatible',
+    apiStyle,
+    inputType: input.inputType || inferKnowledgeEmbeddingInputType(contents, fusionUsed),
+    dimensions,
+    fusionUsed,
+    runtimeVersion: buildKnowledgeEmbeddingRuntimeVersion({
+      provider,
+      model,
+      apiStyle,
+      dimensions,
+    }),
+    signature: buildKnowledgeEmbeddingSignature({
+      provider,
+      model,
+      apiStyle,
+      dimensions,
+      inputType: input.inputType || inferKnowledgeEmbeddingInputType(contents, fusionUsed),
+      fusionUsed,
+    }),
+    runtimeConfigured: embeddingRuntimeConfigured && Boolean(model) && (apiStyle === 'bailian-multimodal'
+      ? Boolean(resolveDashScopeNativeBaseURL(embeddingAi.baseURL, provider)) && Boolean(normalizedApiKey)
+      : Boolean(endpoint) && Boolean(normalizedApiKey)),
+    normalizedApiKey,
     endpoint,
+    baseURL: resolveDashScopeNativeBaseURL(embeddingAi.baseURL, provider),
     timeoutMs,
     maxRetries,
-    dimensions,
   })
 }
 

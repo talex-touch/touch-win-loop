@@ -21,6 +21,9 @@ interface AiChatSessionRow {
   contest_id: string
   track_id: string
   major: string
+  has_context_snapshot: boolean
+  resume_available: boolean
+  degraded: boolean
   message_count: number | string
   last_message_at: string | null
   created_at: string
@@ -97,6 +100,9 @@ function mapChatSession(row: AiChatSessionRow): AiChatSession {
     contestId: row.contest_id || '',
     trackId: row.track_id || '',
     major: row.major || '',
+    hasContextSnapshot: Boolean(row.has_context_snapshot),
+    resumeAvailable: Boolean(row.resume_available),
+    degraded: Boolean(row.degraded),
     messageCount: Number(row.message_count || 0),
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
@@ -159,6 +165,9 @@ export async function createAiChatSession(
       contest_id,
       track_id,
       major,
+      FALSE AS has_context_snapshot,
+      FALSE AS resume_available,
+      FALSE AS degraded,
       0::INT AS message_count,
       NULL::TEXT AS last_message_at,
       created_at::TEXT,
@@ -225,11 +234,20 @@ export async function listAiChatSessionsByWorkspace(
       s.contest_id,
       s.track_id,
       s.major,
+      CASE
+        WHEN c.session_id IS NULL THEN FALSE
+        ELSE c.context_json <> '{}'::JSONB
+      END AS has_context_snapshot,
+      COALESCE((c.run_state_json ->> 'resumeAvailable')::BOOLEAN, FALSE) AS resume_available,
+      COALESCE((c.run_state_json ->> 'degraded')::BOOLEAN, FALSE) AS degraded,
       COALESCE(m.message_count, 0)::INT AS message_count,
       m.last_message_at,
       s.created_at::TEXT,
       s.updated_at::TEXT
      FROM ai_chat_sessions s
+     LEFT JOIN ai_chat_session_context c
+       ON c.session_id = s.id
+      AND c.workspace_id = s.workspace_id
      LEFT JOIN LATERAL (
        SELECT
          COUNT(*) FILTER (WHERE role IN ('user', 'assistant'))::INT AS message_count,
@@ -289,11 +307,20 @@ export async function getAiChatSessionById(
       s.contest_id,
       s.track_id,
       s.major,
+      CASE
+        WHEN c.session_id IS NULL THEN FALSE
+        ELSE c.context_json <> '{}'::JSONB
+      END AS has_context_snapshot,
+      COALESCE((c.run_state_json ->> 'resumeAvailable')::BOOLEAN, FALSE) AS resume_available,
+      COALESCE((c.run_state_json ->> 'degraded')::BOOLEAN, FALSE) AS degraded,
       COALESCE(m.message_count, 0)::INT AS message_count,
       m.last_message_at,
       s.created_at::TEXT,
       s.updated_at::TEXT
      FROM ai_chat_sessions s
+     LEFT JOIN ai_chat_session_context c
+       ON c.session_id = s.id
+      AND c.workspace_id = s.workspace_id
      LEFT JOIN LATERAL (
        SELECT
          COUNT(*) FILTER (WHERE role IN ('user', 'assistant'))::INT AS message_count,

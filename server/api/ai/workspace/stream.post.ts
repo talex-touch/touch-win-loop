@@ -31,6 +31,7 @@ import {
   getAiChatSessionById,
   patchAiChatSessionContext,
 } from '~~/server/utils/chat-store'
+import { upsertAiChatSessionContext } from '~~/server/utils/chat-session-context-store'
 import { getContestDetail, recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
@@ -178,11 +179,10 @@ function resolveInitialSessionTitle(
   mode: WorkspaceAiMode,
   contestName: string,
   trackName: string,
-  assistantLabel?: string,
 ): string {
   if (mode === 'dialog_ask')
     return '新对话'
-  return buildSessionTitle(mode, contestName, trackName, assistantLabel)
+  return buildSessionTitle(mode, contestName, trackName)
 }
 
 function resolvePersistedSessionTitle(input: {
@@ -200,6 +200,27 @@ function resolvePersistedSessionTitle(input: {
   }
 
   return buildSessionTitle(input.mode, input.contestName, input.trackName, input.assistantLabel)
+}
+
+function buildSessionContextSnapshot(request: AiWorkspaceRequest) {
+  return {
+    resourceId: toText(request.context?.resourceId),
+    resourceTitle: toText(request.context?.resourceTitle),
+    previewMode: toText(request.context?.previewMode),
+    contextualAssistantKey: toText(request.context?.contextualAssistantKey) as WorkspaceContextualAssistantKey | '',
+    assistantPreset: request.context?.assistantPreset || 'default',
+    assistantLabel: toText(request.context?.assistantLabel),
+    selectionText: toText(request.context?.selectionText),
+    selectionRange: request.context?.selectionRange || null,
+    activeTabId: toText(request.context?.activeTabId),
+    resourcePurpose: toText(request.context?.resourcePurpose) as typeof request.context.resourcePurpose,
+    requestedAgentAction: toText(request.context?.requestedAgentAction) as typeof request.context.requestedAgentAction,
+    workflowSnapshot: request.context?.workflowSnapshot || null,
+    sceneHash: toText(request.context?.sceneHash),
+    sceneSourceFormat: request.context?.sceneSourceFormat,
+    sceneSourceText: toText(request.context?.sceneSourceText),
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function summarizeProjectSettings(snapshot: Awaited<ReturnType<typeof getProjectSettingsSnapshot>>): string {
@@ -420,7 +441,7 @@ export default defineEventHandler(async (event) => {
         projectId: scopeProjectId,
         mode: scopeMode,
         createdByUserId: user.id,
-        title: resolveInitialSessionTitle(scopeMode, contestName, trackName, request.context?.assistantLabel),
+        title: resolveInitialSessionTitle(scopeMode, contestName, trackName),
         contestId: request.context?.contestId,
         trackId: request.context?.trackId,
         major: request.context?.major,
@@ -446,6 +467,24 @@ export default defineEventHandler(async (event) => {
         trackName,
         assistantLabel: request.context?.assistantLabel,
       }),
+    })
+
+    await upsertAiChatSessionContext(db, {
+      workspaceId: request.workspaceId || '',
+      sessionId: session.id,
+      projectId: scopeProjectId,
+      mode: scopeMode,
+      contextSnapshot: buildSessionContextSnapshot(request),
+      runState: {
+        status: 'running',
+        lastEventSeq: 0,
+        resumeAvailable: false,
+        degraded: false,
+        degradedReason: '',
+      },
+      lastCheckpointRef: '',
+      lastError: '',
+      touchActiveAt: true,
     })
 
     const quota = await teamConsumeAiQuota(db, {
@@ -600,6 +639,7 @@ export default defineEventHandler(async (event) => {
         }
 
         return executeWorkspaceAi({
+          sessionId: prepared.sessionId,
           runtime,
           ai: nextAiConfig,
           mode: request.mode || 'dialog_ask',
@@ -671,12 +711,14 @@ export default defineEventHandler(async (event) => {
 
       const persisted = await withTransaction(event, async (db) => {
         throwIfAborted(abortController.signal)
+        const assistantFallbackUsed = Boolean(execution.data.fallbackUsed)
         const baseMetadata = {
           mode: scopeMode,
           projectId: scopeProjectId,
           channelKey: execution.channel.key,
           providerId: execution.provider?.id || null,
           attemptChain: execution.attemptChain,
+          usedFailover: Boolean(execution.usedFallback && !assistantFallbackUsed),
         }
 
         if (latestUserMessage) {
@@ -720,10 +762,14 @@ export default defineEventHandler(async (event) => {
           content: execution.data.data.assistantReply,
           provider: execution.ai.provider,
           model: execution.ai.model,
-          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+          fallbackUsed: assistantFallbackUsed,
           metadata: {
             ...baseMetadata,
             latencyMs: execution.latencyMs,
+            degraded: assistantFallbackUsed,
+            degradedReason: execution.data.degradedReason || '',
+            checkpointRef: execution.data.checkpointRef || '',
+            knowledgeRuntimeStatus: contextBundle.knowledge,
             ...(execution.data.data.documentDraft
               ? {
                   agentDocDraft: execution.data.data.documentDraft,
@@ -760,6 +806,26 @@ export default defineEventHandler(async (event) => {
             trackName,
             assistantLabel: request.context?.assistantLabel,
           }),
+        })
+
+        await upsertAiChatSessionContext(db, {
+          workspaceId: request.workspaceId || '',
+          sessionId: prepared.sessionId,
+          projectId: scopeProjectId,
+          mode: scopeMode,
+          contextSnapshot: buildSessionContextSnapshot(request),
+          runState: {
+            status: 'completed',
+            lastEventSeq: streamSystemSeq,
+            lastCheckpointRef: execution.data.checkpointRef,
+            lastError: '',
+            degraded: assistantFallbackUsed,
+            degradedReason: execution.data.degradedReason || '',
+            resumeAvailable: Boolean(execution.data.checkpointRef),
+          },
+          lastCheckpointRef: execution.data.checkpointRef || '',
+          lastError: '',
+          touchActiveAt: true,
         })
 
         const proposals = request.projectId
@@ -805,7 +871,8 @@ export default defineEventHandler(async (event) => {
             providerId: execution.provider?.id || null,
             proposals: proposals.length,
             issues: issuePayload?.issues.length || 0,
-            fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+            fallbackUsed: assistantFallbackUsed,
+            usedFailover: Boolean(execution.usedFallback && !assistantFallbackUsed),
             attempts: execution.attemptChain.length,
             attemptChain: execution.attemptChain,
             latencyMs: execution.latencyMs,
@@ -841,14 +908,53 @@ export default defineEventHandler(async (event) => {
         result,
         meta: {
           attempts: execution.attemptChain.length,
-          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+          fallbackUsed: execution.data.fallbackUsed,
+          usedFailover: Boolean(execution.usedFallback && !execution.data.fallbackUsed),
+          degradedReason: execution.data.degradedReason || '',
+          checkpointRef: execution.data.checkpointRef || '',
           latencyMs: execution.latencyMs,
         },
       })
     }
     catch (error) {
-      if (isAbortError(error))
+      if (isAbortError(error)) {
+        await withTransaction(event, async (db) => {
+          await upsertAiChatSessionContext(db, {
+            workspaceId: request.workspaceId || '',
+            sessionId: prepared.sessionId,
+            projectId: scopeProjectId,
+            mode: scopeMode,
+            contextSnapshot: buildSessionContextSnapshot(request),
+            runState: {
+              status: 'interrupted',
+              lastEventSeq: streamSystemSeq,
+              lastError: 'ABORTED',
+              resumeAvailable: true,
+            },
+            lastError: 'ABORTED',
+            touchActiveAt: true,
+          })
+        }).catch(() => undefined)
         return
+      }
+
+      await withTransaction(event, async (db) => {
+        await upsertAiChatSessionContext(db, {
+          workspaceId: request.workspaceId || '',
+          sessionId: prepared.sessionId,
+          projectId: scopeProjectId,
+          mode: scopeMode,
+          contextSnapshot: buildSessionContextSnapshot(request),
+          runState: {
+            status: 'failed',
+            lastEventSeq: streamSystemSeq,
+            lastError: toErrorMessage(error),
+            resumeAvailable: false,
+          },
+          lastError: toErrorMessage(error),
+          touchActiveAt: true,
+        })
+      }).catch(() => undefined)
 
       await pushEvent('error', {
         message: toErrorMessage(error),

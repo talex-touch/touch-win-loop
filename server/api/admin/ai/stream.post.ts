@@ -14,6 +14,7 @@ import {
   getAiChatSessionById,
   patchAiChatSessionContext,
 } from '~~/server/utils/chat-store'
+import { upsertAiChatSessionContext } from '~~/server/utils/chat-session-context-store'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
@@ -56,6 +57,14 @@ function buildSessionTitle(request: AdminAgentRunRequest): string {
   }
 
   return `管理助手 · ${map[request.taskType]}`
+}
+
+function buildAdminSessionContextSnapshot(request: AdminAgentRunRequest) {
+  return {
+    assistantLabel: buildSessionTitle(request),
+    activeTabId: String(request.context?.targetModule || '').trim(),
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function toErrorMessage(error: unknown): string {
@@ -143,6 +152,22 @@ export default defineEventHandler(async (event) => {
       title: buildSessionTitle(request),
     })
 
+    await upsertAiChatSessionContext(db, {
+      workspaceId: request.workspaceId,
+      sessionId: session.id,
+      contextSnapshot: buildAdminSessionContextSnapshot(request),
+      runState: {
+        status: 'running',
+        lastEventSeq: 0,
+        degraded: false,
+        degradedReason: '',
+        resumeAvailable: false,
+      },
+      lastCheckpointRef: '',
+      lastError: '',
+      touchActiveAt: true,
+    })
+
     const quota = await teamConsumeAiQuota(db, {
       workspaceId: request.workspaceId,
       userId: user.id,
@@ -225,7 +250,10 @@ export default defineEventHandler(async (event) => {
       })
 
       const execution = await runWithPlatformAiChannelFallback(runtime, resolveAdminChannelKey(request.taskType), async ({ ai, prompt }) => {
-        return executeAdminAgent(event, request, {
+        return executeAdminAgent(event, {
+          ...request,
+          sessionId: prepared.sessionId,
+        }, {
           onProgress: message => pushEvent('progress', { message }),
           onTool: (name, payload) => pushEvent('tool', {
             name,
@@ -290,6 +318,21 @@ export default defineEventHandler(async (event) => {
           title: buildSessionTitle(request),
         })
 
+        await upsertAiChatSessionContext(db, {
+          workspaceId: request.workspaceId,
+          sessionId: prepared.sessionId,
+          contextSnapshot: buildAdminSessionContextSnapshot(request),
+          runState: {
+            status: 'completed',
+            degraded: execution.usedFallback || execution.data.fallbackUsed,
+            degradedReason: execution.usedFallback || execution.data.fallbackUsed ? 'ADMIN_AGENT_DEGRADED' : '',
+            resumeAvailable: true,
+          },
+          lastCheckpointRef: '',
+          lastError: '',
+          touchActiveAt: true,
+        })
+
         await recordContestAuditLog(db, {
           actorUserId: user.id,
           action: 'ai.invoke.admin_agent',
@@ -326,6 +369,18 @@ export default defineEventHandler(async (event) => {
       const message = toErrorMessage(error)
 
       await withTransaction(event, async (db) => {
+        await upsertAiChatSessionContext(db, {
+          workspaceId: request.workspaceId,
+          sessionId: prepared.sessionId,
+          contextSnapshot: buildAdminSessionContextSnapshot(request),
+          runState: {
+            status: 'failed',
+            lastError: message,
+            resumeAvailable: false,
+          },
+          lastError: message,
+          touchActiveAt: true,
+        })
         await recordContestAuditLog(db, {
           actorUserId: user.id,
           action: 'ai.invoke.admin_agent_failed',

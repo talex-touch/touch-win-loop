@@ -20,6 +20,7 @@ import {
 import {
   buildProjectKnowledgeIndexDashboard,
   listProjectKnowledgeSearchChunks,
+  listProjectKnowledgeSearchChunksByVectorPreselect,
 } from '~~/server/utils/project-knowledge-store'
 
 interface ProjectKnowledgeContextInput {
@@ -430,14 +431,10 @@ export async function buildProjectKnowledgeLocalContext(
 
   const query = normalizeString(input.query) || [input.contestName, input.trackName, input.major].map(item => normalizeString(item)).filter(Boolean).join(' ')
   const tokens = buildQueryTokens(query)
-  const [dashboard, chunks, queryEmbeddingResult] = await Promise.all([
+  const [dashboard, queryEmbeddingResult] = await Promise.all([
     buildProjectKnowledgeIndexDashboard(db, {
       projectId,
       syncSources: false,
-    }),
-    listProjectKnowledgeSearchChunks(db, {
-      projectId,
-      includeStale: true,
     }),
     query
       ? createKnowledgeEmbedding({
@@ -451,8 +448,39 @@ export async function buildProjectKnowledgeLocalContext(
           model: '',
           fallbackUsed: true,
           attempts: 1,
+          clientType: 'openai-compatible' as const,
+          apiStyle: 'openai-compatible-text' as const,
+          inputType: 'text' as const,
+          dimensions: 0,
+          fusionUsed: false,
+          runtimeVersion: '',
+          signature: {
+            provider: '',
+            model: '',
+            apiStyle: 'openai-compatible-text' as const,
+            dimensions: 0,
+            inputType: 'text' as const,
+            fusionUsed: false,
+            runtimeVersion: '',
+          },
+          failureReason: 'EMPTY_QUERY',
         }),
   ])
+  const queryEmbedding = queryEmbeddingResult.embedding
+  const preselectedChunks = queryEmbedding.length > 0 && !queryEmbeddingResult.fallbackUsed
+    ? await listProjectKnowledgeSearchChunksByVectorPreselect(db, {
+        projectId,
+        includeStale: true,
+        embedding: queryEmbedding,
+        limit: Math.max(18, Math.min(60, Number(input.limit || 6) * 6)),
+      }).catch(() => [])
+    : []
+  const chunks = preselectedChunks.length > 0
+    ? preselectedChunks
+    : await listProjectKnowledgeSearchChunks(db, {
+        projectId,
+        includeStale: true,
+      })
 
   const sourceByResourceId = new Map(
     dashboard.sources
@@ -472,12 +500,23 @@ export async function buildProjectKnowledgeLocalContext(
     .slice(0, 8)
     .map(item => item.resource)
 
-  const warning = buildIncompleteWarning({
-    relatedResources,
-    sourceByResourceId,
-  })
+  const runtimeWarnings = [
+    queryEmbeddingResult.fallbackUsed
+      ? `Query embedding 当前处于 degraded 状态：${normalizeString(queryEmbeddingResult.failureReason) || 'EMBEDDING_RUNTIME_NOT_CONFIGURED'}`
+      : '',
+    dashboard.diagnostics.degradedReason
+      ? `知识索引当前状态：${dashboard.diagnostics.healthMessage}`
+      : '',
+  ].filter(Boolean)
 
-  const queryEmbedding = queryEmbeddingResult.embedding
+  const warning = [
+    buildIncompleteWarning({
+      relatedResources,
+      sourceByResourceId,
+    }),
+    ...runtimeWarnings,
+  ].filter(Boolean).join('；')
+
   const queryIntent = detectQueryIntent(query, tokens)
   const scoredHits = chunks
     .map((chunk) => {
@@ -552,6 +591,9 @@ export async function buildProjectKnowledgeLocalContext(
       break
   }
 
+  const degradedHitUsed = selectedHits.some(hit => hit.fallbackUsed || hit.sourceStatus === 'stale')
+  const degradedResultUsed = Boolean(queryEmbeddingResult.fallbackUsed || dashboard.diagnostics.degradedReason || degradedHitUsed)
+
   if (selectedHits.length === 0) {
     const fallback = buildProjectResourceLocalContext(resources, {
       contestName: input.contestName,
@@ -591,6 +633,6 @@ export async function buildProjectKnowledgeLocalContext(
     summaryText: lines.join('\n\n'),
     citations,
     warning,
-    usedFallback: false,
+    usedFallback: degradedResultUsed,
   }
 }

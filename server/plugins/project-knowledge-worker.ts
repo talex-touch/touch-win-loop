@@ -1035,6 +1035,9 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
       embeddingInputType: ProjectKnowledgeEmbeddingInputType
       embeddingDimensions: number
       embeddingFusionUsed: boolean
+      embeddingRuntimeVersion: string
+      embeddingSignature: ProjectKnowledgeChunkMetadata['embeddingSignature']
+      embeddingFailureReason?: string
     }> = []
     const chunkTotal = chunks.length
 
@@ -1055,6 +1058,9 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
         embeddingInputType: embeddingResult.inputType,
         embeddingDimensions: embeddingResult.dimensions,
         embeddingFusionUsed: embeddingResult.fusionUsed,
+        embeddingRuntimeVersion: embeddingResult.runtimeVersion,
+        embeddingSignature: embeddingResult.signature,
+        embeddingFailureReason: embeddingResult.failureReason,
       })
 
       const chunkIndexed = embeddedChunks.length
@@ -1131,6 +1137,9 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
                   embeddingInputType: item.embeddingInputType,
                   embeddingDimensions: item.embeddingDimensions,
                   embeddingFusionUsed: item.embeddingFusionUsed,
+                  embeddingRuntimeVersion: item.embeddingRuntimeVersion,
+                  embeddingSignature: item.embeddingSignature,
+                  embeddingFailureReason: item.embeddingFailureReason,
                   provenanceSourceType,
                   embeddingStatus,
                   sourceConfidence,

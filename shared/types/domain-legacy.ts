@@ -437,6 +437,9 @@ export interface ProjectKnowledgeChunkMetadata {
   embeddingInputType?: ProjectKnowledgeEmbeddingInputType
   embeddingDimensions?: number
   embeddingFusionUsed?: boolean
+  embeddingRuntimeVersion?: string
+  embeddingSignature?: EmbeddingSignature
+  embeddingFailureReason?: string
   embeddingStatus?: ProjectKnowledgeEmbeddingStatus
   embeddingQualityScore?: number
   sourceConfidence?: number
@@ -494,7 +497,23 @@ export interface ProjectKnowledgeIndexDiagnostics {
   healthState: ProjectKnowledgeIndexHealthState
   healthMessage: string
   embeddingHealthReason?: string
+  degradedReason?: string
+  rebuildRecommended?: boolean
+  signatureMismatchSourceCount?: number
+  backfillPendingCount?: number
+  backfillRunningCount?: number
+  lastHealthyAt?: string
   issues: ProjectKnowledgeIndexDiagnosticIssue[]
+}
+
+export interface EmbeddingSignature {
+  provider: string
+  model: string
+  apiStyle: ProjectKnowledgeEmbeddingApiStyle
+  dimensions: number
+  inputType: ProjectKnowledgeEmbeddingInputType
+  fusionUsed: boolean
+  runtimeVersion: string
 }
 
 export interface ProjectKnowledgeAnalyticsFreshness {
@@ -2818,6 +2837,16 @@ export interface WorkspaceStreamSystemMessageMetadata extends Record<string, unk
   payloadSummary?: string
 }
 
+export interface AiRuntimeChannelHealth {
+  configured: boolean
+  provider: string
+  model: string
+  reason: string
+  degraded?: boolean
+  writeBlocked?: boolean
+  rebuildRecommended?: boolean
+}
+
 export interface AiModelOption {
   id: string
   label: string
@@ -2876,6 +2905,9 @@ export interface AiChatSession {
   contestId?: string
   trackId?: string
   major?: string
+  hasContextSnapshot?: boolean
+  resumeAvailable?: boolean
+  degraded?: boolean
   messageCount: number
   lastMessageAt: string | null
   createdAt: string
@@ -2895,6 +2927,36 @@ export interface AiChatMessage {
   metadata?: Record<string, unknown>
   createdByUserId: string
   createdAt: string
+}
+
+export interface AiChatSessionContextSnapshot {
+  resourceId?: string
+  resourceTitle?: string
+  previewMode?: string
+  contextualAssistantKey?: WorkspaceContextualAssistantKey | ''
+  assistantPreset?: WorkspaceAiAssistantPreset
+  assistantLabel?: string
+  selectionText?: string
+  selectionRange?: AiWorkspaceDocumentSelectionRange | null
+  activeTabId?: string
+  resourcePurpose?: CollabPurpose | ''
+  requestedAgentAction?: WorkflowDraftAction
+  workflowSnapshot?: WorkflowSnapshot | null
+  sceneHash?: string
+  sceneSourceFormat?: AiCanvasAssistSourceFormat
+  sceneSourceText?: string
+  updatedAt?: string
+}
+
+export interface AiChatSessionRunState {
+  status: 'idle' | 'running' | 'interrupted' | 'completed' | 'failed'
+  lastEventSeq?: number
+  lastCheckpointRef?: string
+  lastError?: string
+  degraded?: boolean
+  degradedReason?: string
+  resumeAvailable?: boolean
+  updatedAt?: string
 }
 
 export interface AiContestFilterRequest {

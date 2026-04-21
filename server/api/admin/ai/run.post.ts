@@ -9,6 +9,7 @@ import {
   getAiChatSessionById,
   patchAiChatSessionContext,
 } from '~~/server/utils/chat-store'
+import { upsertAiChatSessionContext } from '~~/server/utils/chat-session-context-store'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
@@ -51,6 +52,14 @@ function buildSessionTitle(request: AdminAgentRunRequest): string {
   }
 
   return `管理助手 · ${map[request.taskType]}`
+}
+
+function buildAdminSessionContextSnapshot(request: AdminAgentRunRequest) {
+  return {
+    assistantLabel: buildSessionTitle(request),
+    activeTabId: String(request.context?.targetModule || '').trim(),
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function resolveAdminChannelKey(taskType: AdminAgentTaskType): 'admin_general' | 'admin_publish_assistant' {
@@ -132,6 +141,22 @@ export default defineEventHandler(async (event) => {
       title: buildSessionTitle(request),
     })
 
+    await upsertAiChatSessionContext(db, {
+      workspaceId: request.workspaceId,
+      sessionId: session.id,
+      contextSnapshot: buildAdminSessionContextSnapshot(request),
+      runState: {
+        status: 'running',
+        lastEventSeq: 0,
+        degraded: false,
+        degradedReason: '',
+        resumeAvailable: false,
+      },
+      lastCheckpointRef: '',
+      lastError: '',
+      touchActiveAt: true,
+    })
+
     const quota = await teamConsumeAiQuota(db, {
       workspaceId: request.workspaceId,
       userId: user.id,
@@ -193,7 +218,10 @@ export default defineEventHandler(async (event) => {
   }
 
   const execution = await runWithPlatformAiChannelFallback(runtime, resolveAdminChannelKey(request.taskType), async ({ ai, prompt }) => {
-    return executeAdminAgent(event, request, {}, {
+    return executeAdminAgent(event, {
+      ...request,
+      sessionId: prepared.sessionId,
+    }, {}, {
       runtime: {
         ...runtime,
         ai: {
@@ -204,6 +232,20 @@ export default defineEventHandler(async (event) => {
       channelPrompt: prompt,
     })
   }).catch((error) => {
+    void withTransaction(event, async (db) => {
+      await upsertAiChatSessionContext(db, {
+        workspaceId: request.workspaceId,
+        sessionId: prepared.sessionId,
+        contextSnapshot: buildAdminSessionContextSnapshot(request),
+        runState: {
+          status: 'failed',
+          lastError: error instanceof Error ? (error.message || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',
+          resumeAvailable: false,
+        },
+        lastError: error instanceof Error ? (error.message || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',
+        touchActiveAt: true,
+      })
+    }).catch(() => undefined)
     if (error instanceof Error && error.message === 'CONTEST_NOT_FOUND') {
       setResponseStatus(event, 404)
       return 'CONTEST_NOT_FOUND' as const
@@ -264,6 +306,23 @@ export default defineEventHandler(async (event) => {
       trackId: request.context?.trackId,
       major: request.context?.major,
       title: buildSessionTitle(request),
+    })
+
+    await upsertAiChatSessionContext(db, {
+      workspaceId: request.workspaceId,
+      sessionId: prepared.sessionId,
+      contextSnapshot: buildAdminSessionContextSnapshot(request),
+      runState: {
+        status: 'completed',
+        lastCheckpointRef: '',
+        lastError: '',
+        degraded: execution.usedFallback || execution.data.fallbackUsed,
+        degradedReason: execution.usedFallback || execution.data.fallbackUsed ? 'ADMIN_AGENT_DEGRADED' : '',
+        resumeAvailable: true,
+      },
+      lastCheckpointRef: '',
+      lastError: '',
+      touchActiveAt: true,
     })
 
     await recordContestAuditLog(db, {
