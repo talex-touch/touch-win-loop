@@ -186,7 +186,7 @@ onBeforeUnmount(() => {
   <NuxtLink
     v-if="props.mode === 'link'"
     :to="props.to"
-    class="text-slate-500 mt-4 px-3 py-2 flex gap-3 transition-colors items-center hover:text-slate-900"
+    class="text-slate-700 mt-0 px-3 py-2 border border-slate-200 rounded-xl bg-white flex gap-2 transition-colors items-center hover:text-slate-900 hover:border-blue-200 hover:bg-blue-50/40"
   >
     <BrandLogo
       v-if="props.icon === 'brand-mark'"
@@ -195,57 +195,57 @@ onBeforeUnmount(() => {
       style="--winloop-brand-mark-size: 20px;"
     />
     <span v-else class="material-symbols-outlined">{{ props.icon }}</span>
-    <span class="text-sm font-medium">{{ props.label }}</span>
+    <span class="text-[0.9375rem] font-semibold">{{ props.label }}</span>
   </NuxtLink>
 
-  <div v-else ref="switchRootRef" class="mt-3.5 w-full relative">
+  <div v-else ref="switchRootRef" class="mt-0 w-full relative">
     <button
       type="button"
-      class="group px-3.5 text-left border border-slate-200 rounded-lg bg-white h-10 w-full transition-colors hover:border-blue-200"
+      class="group px-3 text-left border border-slate-200 rounded-xl bg-white h-11 w-full transition-all hover:border-blue-200 hover:bg-blue-50/40"
       @click="togglePopup"
     >
-      <div class="flex gap-2.5 h-full items-center">
+      <div class="flex gap-2 h-full items-center">
         <div class="flex-1 min-w-0">
-          <p class="text-[14px] text-slate-900 font-semibold truncate">
+          <p class="text-[1rem] text-slate-900 font-semibold truncate">
             {{ currentWorkspace?.workspace.name || '选择项目空间' }}
           </p>
         </div>
-        <span class="material-symbols-outlined text-[20px] text-slate-400 transition-transform group-hover:text-slate-600">expand_more</span>
+        <span class="material-symbols-outlined text-[1rem] text-slate-400 transition-transform group-hover:text-slate-600">expand_more</span>
       </div>
     </button>
 
     <div
       v-if="popupVisible"
-      class="p-2.5 border border-slate-200 rounded-xl bg-white w-[280px] z-30"
-      style="position: absolute; left: 0; bottom: calc(100% + 8px);"
+      class="p-2.5 border border-slate-200 rounded-xl bg-white w-full shadow-[0_16px_36px_-28px_rgba(15,23,42,0.45)] z-30"
+      style="position: absolute; left: 0; right: 0; bottom: calc(100% + 8px);"
     >
-      <div class="px-0.5 pb-2 border-b border-slate-100">
-        <p class="text-[13px] text-slate-900 font-semibold">
+      <div class="px-0.5 pb-2.5 border-b border-slate-100">
+        <p class="text-[0.875rem] text-slate-900 font-semibold">
           项目空间
         </p>
       </div>
 
-      <div class="py-2 max-h-60 overflow-y-auto space-y-1.5">
+      <div class="py-2.5 max-h-60 overflow-y-auto space-y-1.5">
         <button
           v-for="item in internalWorkspaceOptions"
           :key="item.workspace.id"
           type="button"
           class="px-3 py-2 text-left border rounded-lg w-full transition-colors"
           :class="item.workspace.id === props.modelValue
-            ? 'border-blue-200 bg-blue-50'
+            ? 'border-blue-200 bg-blue-50/80'
             : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'"
           @click="selectWorkspace(item.workspace.id)"
         >
           <div class="min-w-0">
             <div class="flex gap-2 items-center justify-between">
-              <p class="text-[13px] text-slate-900 font-semibold truncate">
+              <p class="text-[0.875rem] text-slate-900 font-semibold truncate">
                 {{ item.workspace.name }}
               </p>
-              <span class="text-[10px] text-slate-500 shrink-0">
+              <span class="text-[0.6875rem] text-slate-500 shrink-0">
                 {{ workspaceTypeLabel(item.workspace.type) }}
               </span>
             </div>
-            <p v-if="props.showQuota && item.quota" class="text-[10px] text-slate-500 mt-0.5">
+            <p v-if="props.showQuota && item.quota" class="text-[0.6875rem] text-slate-500 mt-0.5">
               席位 {{ item.quota.seatUsed }}/{{ item.quota.seatLimit }} · AI {{ item.quota.aiQuotaUsed }}/{{ item.quota.aiQuotaTotal }}
             </p>
           </div>
@@ -253,21 +253,21 @@ onBeforeUnmount(() => {
 
         <div
           v-if="internalWorkspaceOptions.length === 0"
-          class="px-0.5 pb-2 border-b border-slate-100"
+          class="px-0.5 pb-2.5 border-b border-slate-100"
         >
-          <p class="text-[13px] text-slate-700 font-medium">
+          <p class="text-[0.875rem] text-slate-700 font-medium">
             还没有可用空间
           </p>
-          <p class="text-[11px] text-slate-500 mt-1">
+          <p class="text-[0.75rem] text-slate-500 mt-1">
             先创建一个项目空间，再进入协作。
           </p>
         </div>
       </div>
 
-      <div class="pt-2 border-t border-slate-100">
+      <div class="pt-2.5 border-t border-slate-100">
         <button
           type="button"
-          class="text-[13px] text-slate-700 font-medium border border-slate-200 rounded-lg bg-slate-50 h-9 w-full transition-colors hover:border-slate-300 hover:bg-slate-100"
+          class="text-[0.875rem] text-slate-700 font-medium border border-slate-200 rounded-lg bg-slate-50 h-9 w-full transition-colors hover:border-slate-300 hover:bg-slate-100"
           @click="openCreateDialog"
         >
           创建新的项目空间

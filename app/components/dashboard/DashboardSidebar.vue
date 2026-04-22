@@ -121,103 +121,114 @@ function onUserUpdated(user: AuthUser) {
 </script>
 
 <template>
-  <aside class="border-r border-blue-100 bg-white shrink-0 flex-col w-64 hidden lg:flex">
-    <div class="p-6 border-b border-blue-50 space-y-3">
-      <BrandLogo variant="lockup" class="dashboard-sidebar__brand-lockup" />
-      <p class="text-xs text-slate-500 leading-5">
-        竞赛分析平台
-      </p>
-    </div>
-
-    <nav class="px-4 flex-1 space-y-1">
-      <NuxtLink
-        v-for="item in props.menuItems"
-        :key="item.id"
-        :to="item.to"
-        class="px-3 py-2 rounded-lg flex gap-3 transition-colors items-center"
-        :class="isMenuItemActive(item)
-          ? 'bg-blue-50 text-blue-700 font-medium'
-          : 'text-slate-600 hover:bg-slate-50'"
-      >
-        <BrandLogo
-          v-if="isBrandIcon(item.icon)"
-          variant="mark"
-          class="shrink-0"
-          style="--winloop-brand-mark-size: 22px;"
-        />
-        <span v-else class="material-symbols-outlined text-[22px]">{{ item.icon }}</span>
-        <span>{{ item.label }}</span>
-      </NuxtLink>
-    </nav>
-
-    <div class="mt-auto p-4">
-      <div class="p-4 border border-slate-100 rounded-xl bg-slate-50">
-        <p class="text-xs text-slate-400 tracking-wider font-bold mb-3 uppercase">
-          热门话题
-        </p>
-        <ul class="text-sm space-y-2">
-          <li
-            v-for="topic in props.topics"
-            :key="topic.id"
-            class="text-slate-600 flex gap-2 items-center hover:text-blue-700"
-          >
-            <span class="text-xs text-blue-700 font-bold">#</span>{{ topic.label }}
-          </li>
-        </ul>
+  <aside class="dashboard-sidebar hidden lg:flex">
+    <div class="dashboard-sidebar__inner">
+      <div class="dashboard-sidebar__brand-panel">
+        <div class="dashboard-sidebar__brand-mark-shell" aria-hidden="true">
+          <BrandLogo variant="mark" class="dashboard-sidebar__brand-mark" />
+        </div>
+        <div class="dashboard-sidebar__brand-copy">
+          <p class="dashboard-sidebar__brand-title">
+            WinLoop
+          </p>
+          <p class="dashboard-sidebar__brand-subtitle">
+            竞赛分析平台
+          </p>
+        </div>
       </div>
 
-      <WorkspaceSwitchEntry
-        v-if="props.workspaceOptions.length > 0"
-        mode="select"
-        :model-value="selectedWorkspaceId"
-        :workspace-options="props.workspaceOptions"
-        :show-quota="false"
-        @update:model-value="onWorkspaceSwitch"
-        @workspace-created="onWorkspaceCreated"
-      />
-      <WorkspaceSwitchEntry
-      v-else
-      mode="link"
-        label="项目台"
-        icon="brand-mark"
-        to="/team"
-      />
+      <nav class="dashboard-sidebar__nav" aria-label="主导航">
+        <NuxtLink
+          v-for="item in props.menuItems"
+          :key="item.id"
+          :to="item.to"
+          class="dashboard-sidebar__nav-item"
+          :class="{ 'dashboard-sidebar__nav-item--active': isMenuItemActive(item) }"
+        >
+          <span class="dashboard-sidebar__nav-icon" :class="{ 'dashboard-sidebar__nav-icon--brand': isBrandIcon(item.icon) }">
+            <BrandLogo
+              v-if="isBrandIcon(item.icon)"
+              variant="mark"
+              class="dashboard-sidebar__nav-brand"
+            />
+            <span v-else class="material-symbols-outlined dashboard-sidebar__nav-glyph">{{ item.icon }}</span>
+          </span>
+          <span class="dashboard-sidebar__nav-label">{{ item.label }}</span>
+        </NuxtLink>
+      </nav>
 
-      <div class="mt-4 p-3 border border-slate-200 rounded-xl bg-white flex gap-3 items-center">
-        <img
-          v-if="displayAvatarUrl"
-          :src="displayAvatarUrl"
-          class="border border-slate-200 rounded-full h-10 w-10 object-cover"
-          alt="用户头像"
-        >
-        <div
-          v-else
-          class="text-sm text-white font-semibold border border-slate-200 rounded-full bg-slate-900 flex shrink-0 h-10 w-10 items-center justify-center"
-        >
-          {{ analystInitial }}
+      <div class="dashboard-sidebar__footer">
+        <section class="dashboard-sidebar__topic-card" aria-label="热门话题">
+          <div class="dashboard-sidebar__topic-heading">
+            <span class="material-symbols-outlined dashboard-sidebar__topic-heading-icon">local_fire_department</span>
+            <span>热门话题</span>
+          </div>
+          <ul class="dashboard-sidebar__topic-list">
+            <li
+              v-for="topic in props.topics"
+              :key="topic.id"
+              class="dashboard-sidebar__topic-item"
+            >
+              <span class="dashboard-sidebar__topic-prefix">#</span>
+              <span class="dashboard-sidebar__topic-label">{{ topic.label }}</span>
+            </li>
+          </ul>
+        </section>
+
+        <div class="dashboard-sidebar__workspace-entry">
+          <WorkspaceSwitchEntry
+            v-if="props.workspaceOptions.length > 0"
+            mode="select"
+            :model-value="selectedWorkspaceId"
+            :workspace-options="props.workspaceOptions"
+            :show-quota="false"
+            @update:model-value="onWorkspaceSwitch"
+            @workspace-created="onWorkspaceCreated"
+          />
+          <WorkspaceSwitchEntry
+            v-else
+            mode="link"
+            label="项目台"
+            icon="brand-mark"
+            to="/team"
+          />
         </div>
-        <div class="min-w-0">
-          <p class="text-sm text-slate-900 font-semibold truncate">
-            {{ props.analystName }}
-          </p>
-          <p
-            v-if="props.showAdminBadge"
-            class="text-[10px] text-rose-700 font-semibold mt-1 px-1.5 py-0.5 border border-rose-200 rounded-md bg-rose-50 inline-flex"
+
+        <div class="dashboard-sidebar__account-card">
+          <img
+            v-if="displayAvatarUrl"
+            :src="displayAvatarUrl"
+            class="dashboard-sidebar__account-avatar"
+            alt="用户头像"
           >
-            管理页
-          </p>
-          <p class="text-xs text-slate-500 truncate">
-            {{ props.analystTier }}
-          </p>
+          <div
+            v-else
+            class="dashboard-sidebar__account-avatar dashboard-sidebar__account-avatar--fallback"
+          >
+            {{ analystInitial }}
+          </div>
+          <div class="dashboard-sidebar__account-copy">
+            <div class="dashboard-sidebar__account-name-row">
+              <p class="dashboard-sidebar__account-name">
+                {{ props.analystName }}
+              </p>
+              <p v-if="props.showAdminBadge" class="dashboard-sidebar__account-badge">
+                管理页
+              </p>
+            </div>
+            <p class="dashboard-sidebar__account-tier">
+              {{ props.analystTier }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="dashboard-sidebar__account-action"
+            title="个人设置"
+            @click.stop="openProfileDialog"
+          >
+            <span class="material-symbols-outlined dashboard-sidebar__account-action-icon">settings</span>
+          </button>
         </div>
-        <button
-          type="button"
-          class="text-slate-500 ml-auto rounded-md flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-800 hover:bg-slate-100"
-          title="个人设置"
-          @click.stop="openProfileDialog"
-        >
-          <span class="material-symbols-outlined text-[20px]">settings</span>
-        </button>
       </div>
     </div>
   </aside>
@@ -239,7 +250,305 @@ function onUserUpdated(user: AuthUser) {
 </template>
 
 <style scoped>
-.dashboard-sidebar__brand-lockup {
-  --winloop-brand-lockup-width: 128px;
+.dashboard-sidebar {
+  width: 15.75rem;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-right: 1px solid #e7ecf5;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+  font-size: 1rem;
+}
+
+.dashboard-sidebar__inner {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem 0.875rem 0.875rem;
+}
+
+.dashboard-sidebar__brand-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.625rem 0.875rem;
+  border-bottom: 1px solid #eef3f8;
+  text-align: center;
+}
+
+.dashboard-sidebar__brand-mark-shell {
+  display: flex;
+  width: 4rem;
+  height: 4rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1.125rem;
+  background: radial-gradient(
+    circle at 50% 35%,
+    rgba(255, 255, 255, 0.98) 0%,
+    rgba(248, 251, 255, 0.98) 66%,
+    rgba(241, 246, 255, 0.94) 100%
+  );
+}
+
+.dashboard-sidebar__brand-mark {
+  --winloop-brand-mark-size: 2.45rem;
+}
+
+.dashboard-sidebar__brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+}
+
+.dashboard-sidebar__brand-title {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: #0f172a;
+}
+
+.dashboard-sidebar__brand-subtitle {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #98a3b7;
+}
+
+.dashboard-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+  padding: 0 0.25rem;
+}
+
+.dashboard-sidebar__nav-item {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  color: #6a7890;
+  text-decoration: none;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.dashboard-sidebar__nav-item:hover {
+  background: #f7f9fc;
+  color: #334155;
+}
+
+.dashboard-sidebar__nav-item--active {
+  background: #edf3ff;
+  color: #2563eb;
+  box-shadow: inset 0 0 0 1px #dbe6ff;
+}
+
+.dashboard-sidebar__nav-item--active .dashboard-sidebar__nav-label {
+  font-weight: 700;
+}
+
+.dashboard-sidebar__nav-icon {
+  display: flex;
+  width: 1.375rem;
+  min-width: 1.375rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.dashboard-sidebar__nav-brand {
+  --winloop-brand-mark-size: 1.125rem;
+}
+
+.dashboard-sidebar__nav-glyph {
+  font-size: 1.125rem;
+  line-height: 1;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 320,
+    'opsz' 24;
+}
+
+.dashboard-sidebar__nav-label {
+  font-size: 1rem;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.dashboard-sidebar__footer {
+  display: flex;
+  margin-top: auto;
+  flex-direction: column;
+  gap: 0.625rem;
+  padding: 0.5rem 0.25rem 0;
+}
+
+.dashboard-sidebar__topic-card {
+  border: 1px solid #edf1f7;
+  border-radius: 1rem;
+  background: #ffffff;
+  padding: 0.8125rem 0.8125rem 0.875rem;
+}
+
+.dashboard-sidebar__topic-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  font-weight: 700;
+  color: #a0abc0;
+}
+
+.dashboard-sidebar__topic-heading-icon {
+  font-size: 0.875rem;
+  line-height: 1;
+  color: #4f7dff;
+}
+
+.dashboard-sidebar__topic-list {
+  display: flex;
+  margin: 0.625rem 0 0;
+  padding: 0;
+  list-style: none;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.dashboard-sidebar__topic-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dashboard-sidebar__topic-prefix {
+  font-size: 0.875rem;
+  line-height: 1;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.dashboard-sidebar__topic-label {
+  font-size: 1rem;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #52627c;
+}
+
+.dashboard-sidebar__account-card {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  border: 1px solid #edf1f7;
+  border-radius: 1rem;
+  background: #ffffff;
+  padding: 0.625rem 0.75rem;
+}
+
+.dashboard-sidebar__account-avatar {
+  display: flex;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 9999px;
+  object-fit: cover;
+}
+
+.dashboard-sidebar__account-avatar--fallback {
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 0.875rem;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.dashboard-sidebar__account-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.dashboard-sidebar__account-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+}
+
+.dashboard-sidebar__account-name {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1rem;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.dashboard-sidebar__account-badge {
+  margin: 0;
+  flex-shrink: 0;
+  border: 1px solid #fecdd3;
+  border-radius: 9999px;
+  background: #fff1f2;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.625rem;
+  line-height: 1;
+  font-weight: 700;
+  color: #be123c;
+}
+
+.dashboard-sidebar__account-tier {
+  margin: 0.25rem 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #97a3b8;
+}
+
+.dashboard-sidebar__account-action {
+  display: inline-flex;
+  width: 1.875rem;
+  height: 1.875rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 0.75rem;
+  background: transparent;
+  color: #7f8ca2;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.dashboard-sidebar__account-action:hover {
+  background: #f5f7fb;
+  color: #334155;
+}
+
+.dashboard-sidebar__account-action-icon {
+  font-size: 0.9375rem;
+  line-height: 1;
+}
+
+.dashboard-sidebar__workspace-entry :deep(.mt-3\.5) {
+  margin-top: 0;
 }
 </style>

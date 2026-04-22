@@ -63,7 +63,8 @@ it('dashboard 与项目台品牌入口全部切换到统一品牌图形', async 
     readFile(WORKSPACE_DASHBOARD_TAB_FILE, 'utf8'),
   ])
 
-  assert.match(dashboardSidebarSource, /<BrandLogo variant="lockup" class="dashboard-sidebar__brand-lockup"/, 'DashboardSidebar 顶部品牌区未改用共享 lockup')
+  assert.match(dashboardSidebarSource, /<BrandLogo variant="mark" class="dashboard-sidebar__brand-mark"/, 'DashboardSidebar 顶部品牌区未改用共享 mark')
+  assert.match(dashboardSidebarSource, /dashboard-sidebar__brand-title/, 'DashboardSidebar 顶部品牌区缺少独立品牌标题')
   assert.match(dashboardSidebarSource, /isBrandIcon\(item\.icon\)/, 'DashboardSidebar 未对品牌图标做统一渲染分支')
   assert.match(dashboardWorkspaceSource, /icon:\s*'brand-mark'/, 'dashboard 菜单未把首页入口切到统一品牌图形')
   assert.match(workspaceSwitchSource, /props\.icon === 'brand-mark'/, 'WorkspaceSwitchEntry 未支持品牌图标入口')
