@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import type {
   ApiResponse,
-  FeishuBitableSyncCleanupPreview,
-  FeishuBitableSyncCleanupResult,
   FeishuBitableRecordLocatorType,
   FeishuBitableSimulateBusinessStatus,
   FeishuBitableSimulateRecordRequest,
   FeishuBitableSimulateRecordResult,
   FeishuBitableSync,
+  FeishuBitableSyncCleanupPreview,
+  FeishuBitableSyncCleanupResult,
   FeishuBitableSyncDetail,
   FeishuBitableSyncEnvironment,
   FeishuBitableSyncItem,
@@ -583,6 +583,8 @@ const savedAutoSyncWatchedFields = computed(() => splitMultiValueText(savedAutoS
 const autoSyncSummaryText = computed(() => savedAutoSyncState.value.enabled
   ? `预检、手动执行和事件同步都会只处理“${savedAutoSyncState.value.recordStatusField || '记录状态'} ∈ 已完成”且“${savedAutoSyncState.value.syncStatusField || '同步信息'} ∈ 未同步”的记录。`
   : '当前未启用自动同步规则，预检和手动执行仍会按当前视图全量处理。')
+const currentItemLatestRunFailed = computed(() => runHealthFailed(currentItem.value?.latestRunSummary))
+const currentItemLatestRunWarned = computed(() => runHealthWarned(currentItem.value?.latestRunSummary))
 
 function itemStageToneMeta(tone: ItemStageTone) {
   if (tone === 'green') {
@@ -637,13 +639,43 @@ const itemStageCards = computed(() => {
       ? 'gold'
       : 'green'
   const autoSyncTone: ItemStageTone = savedAutoSyncState.value.enabled ? 'green' : 'gray'
-  const executionTone: ItemStageTone = archivedReadonly.value
-    ? 'gray'
-    : currentItemRunDisabled.value
-      ? 'gold'
-      : currentItem.value?.latestRunSummary
-        ? 'green'
-        : 'blue'
+  let executionTone: ItemStageTone = 'blue'
+  let executionStatus = '待首轮验证'
+  let executionHint = '先确认主同步和当前同步项都处于启用状态。'
+
+  if (archivedReadonly.value) {
+    executionTone = 'gray'
+    executionStatus = '归档只读'
+    executionHint = '归档同步只保留查看，不可再执行。'
+  }
+  else if (syncExecutionDisabled.value) {
+    executionTone = 'gold'
+    executionStatus = '主同步未启用'
+    executionHint = '先确认主同步已启用，再回来执行预检和手动同步。'
+  }
+  else if (!itemForm.isEnabled) {
+    executionTone = 'gold'
+    executionStatus = '同步项未启用'
+    executionHint = '先启用当前同步项，再继续预检和手动执行。'
+  }
+  else if (currentItemLatestRunFailed.value) {
+    executionTone = 'red'
+    executionStatus = '最近执行失败'
+    executionHint = '先看最近运行日志与预检结果，修正后再重跑。'
+  }
+  else if (currentItemLatestRunWarned.value) {
+    executionTone = 'gold'
+    executionStatus = '最近执行告警'
+    executionHint = '先核对错误记录、跳过原因和回填状态，再决定是否继续放量。'
+  }
+  else if (currentItem.value?.latestRunSummary) {
+    executionTone = 'green'
+    executionStatus = '可稳定复跑'
+    executionHint = '推荐顺序：预检 -> 单行模拟 -> 保存配置 -> 手动执行。'
+  }
+  else if (executionReady) {
+    executionHint = '推荐顺序：预检 -> 单行模拟 -> 保存配置 -> 手动执行。'
+  }
 
   return [
     {
@@ -715,23 +747,11 @@ const itemStageCards = computed(() => {
     {
       key: 'execution',
       title: '执行入口',
-      status: archivedReadonly.value
-        ? '归档只读'
-        : syncExecutionDisabled.value
-          ? '主同步未启用'
-          : !itemForm.isEnabled
-            ? '同步项未启用'
-            : currentItem.value?.latestRunSummary
-              ? '可稳定复跑'
-              : '待首轮验证',
+      status: executionStatus,
       summary: currentItem.value?.latestRunSummary
-        ? `最近执行：${formatDateTime(currentItem.value.latestRunSummary.startedAt)}。`
+        ? `最近执行：${formatDateTime(currentItem.value.latestRunSummary.startedAt)} / ${runHealthLabel(currentItem.value.latestRunSummary)}${currentItem.value.latestRunSummary.errorCount ? ` / 错误 ${currentItem.value.latestRunSummary.errorCount}` : ''}。`
         : '建议先预检，再做首轮手动执行。',
-      hint: archivedReadonly.value
-        ? '归档同步只保留查看，不可再执行。'
-        : executionReady
-          ? '推荐顺序：预检 -> 单行模拟 -> 保存配置 -> 手动执行。'
-          : '先确认主同步和当前同步项都处于启用状态。',
+      hint: executionHint,
       ...itemStageToneMeta(executionTone),
     },
   ]
@@ -752,6 +772,10 @@ const itemNextStepHint = computed(() => {
     return '保存当前配置后，先启用主同步，再决定是否开放手动执行。'
   if (!itemForm.isEnabled)
     return '保存当前配置后，先启用这个同步项，再做预检和首轮手动执行。'
+  if (currentItemLatestRunFailed.value)
+    return '先看最近运行日志与预检结果，修正后再重跑。'
+  if (currentItemLatestRunWarned.value)
+    return '最近一次执行仍有错误或部分成功，先清理异常记录，再决定是否开启自动同步。'
   if (!currentItem.value?.latestRunSummary)
     return '当前已经具备执行条件，建议按“预检 -> 单行模拟 -> 手动执行”的顺序完成首轮验证。'
   if (!savedAutoSyncState.value.enabled)
@@ -791,6 +815,12 @@ const simulateSourceFieldsPageData = computed(() => {
   return fields.slice(start, start + SIMULATE_SOURCE_FIELD_PAGE_SIZE)
 })
 const simulateSourceFieldsTotal = computed(() => simulateResult.value?.sourceFields.length || 0)
+const syncDetailLatestRunSummary = computed(() => syncDetail.value?.latestRunSummary || null)
+const syncDetailLatestRunText = computed(() => {
+  if (!syncDetailLatestRunSummary.value)
+    return '暂无执行记录'
+  return `${formatDateTime(syncDetailLatestRunSummary.value.startedAt)} / ${runHealthLabel(syncDetailLatestRunSummary.value)}${syncDetailLatestRunSummary.value.errorCount ? ` / 错误 ${syncDetailLatestRunSummary.value.errorCount}` : ''} / ${triggerSourceLabel(syncDetailLatestRunSummary.value.triggerSource)}`
+})
 const syncEnvironmentLabel = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.label || '未标记')
 const syncEnvironmentTagColor = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.tagColor || 'gray')
 const selectPopupContainer = computed(() => editorRootRef.value)
@@ -1017,6 +1047,37 @@ function runStatusColor(status?: string | null): string {
   return 'gray'
 }
 
+interface RunHealthSummaryLike {
+  status?: string | null
+  errorCount?: number | null
+}
+
+function runHealthFailed(summary?: RunHealthSummaryLike | null): boolean {
+  return summary?.status === 'failed'
+}
+
+function runHealthWarned(summary?: RunHealthSummaryLike | null): boolean {
+  return summary?.status === 'partial_success' || Boolean(summary?.errorCount)
+}
+
+function runHealthLabel(summary?: RunHealthSummaryLike | null): string {
+  if (!summary)
+    return '未执行'
+  if (summary.status === 'success' && Number(summary.errorCount || 0) > 0)
+    return '成功但有告警'
+  return runStatusLabel(summary.status || '')
+}
+
+function runHealthColor(summary?: RunHealthSummaryLike | null): string {
+  if (!summary)
+    return 'gray'
+  if (runHealthFailed(summary))
+    return 'red'
+  if (runHealthWarned(summary))
+    return 'gold'
+  return runStatusColor(summary.status)
+}
+
 function triggerSourceLabel(source?: string | null): string {
   if (source === 'manual')
     return '手动'
@@ -1081,7 +1142,7 @@ function formatDateTime(value?: string | null): string {
 function latestRunSummaryText(summary?: FeishuTaskLatestRunSummary | null): string {
   if (!summary)
     return '暂无执行记录'
-  return `${formatDateTime(summary.startedAt)} / ${runStatusLabel(summary.status)} / 错误 ${summary.errorCount}`
+  return `${formatDateTime(summary.startedAt)} / ${runHealthLabel(summary)} / 错误 ${summary.errorCount}`
 }
 
 function shouldShowPersonaZeroOutputHint(summary?: {
@@ -2682,7 +2743,7 @@ function buildCurrentItemDraft(): FeishuBitableSyncItemPreviewRequest {
   const mapping = parseJsonText(itemForm.mappingText, '字段映射')
   const options = parseJsonText(itemForm.optionsText, '同步选项')
   const autoSync = parseJsonText(autoSyncDraftText.value, '自动同步配置')
-  const writeback = parseJsonText(itemForm.writebackText, '状态回填配置')
+  const writeback = parseJsonText(writebackDraftText.value, '状态回填配置')
   const draft: FeishuBitableSyncItemPreviewRequest = {
     source: {
       appToken: itemForm.appToken.trim(),
@@ -2750,7 +2811,7 @@ async function simulateCurrentItemRecord() {
     const draft: FeishuBitableSimulateRecordRequest = {
       ...buildCurrentItemDraft(),
       locatorType: simulateForm.locatorType,
-      locatorValue,
+      locatorValue: String(locatorValue),
     }
     const data = await requestApi<FeishuBitableSimulateRecordResult>(
       endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/simulate-record`),
@@ -3129,12 +3190,15 @@ watch(() => props.selectedItemId, (value) => {
           <a-tag v-if="syncDetail?.archivedAt" color="gray" size="small">
             已归档
           </a-tag>
+          <a-tag size="small" :color="runHealthColor(syncDetailLatestRunSummary)">
+            {{ runHealthLabel(syncDetailLatestRunSummary) }}
+          </a-tag>
         </div>
         <h1 class="text-[16px] text-slate-900 font-semibold m-0">
           {{ syncDetail?.name || '多维同步信息' }}
         </h1>
         <p class="text-[12px] text-slate-500 m-0">
-          主库 appToken：{{ syncDetail?.source.appToken || '-' }} / 最近执行：{{ syncDetail?.latestRunSummary ? formatDateTime(syncDetail.latestRunSummary.startedAt) : '-' }}
+          主库 appToken：{{ syncDetail?.source.appToken || '-' }} / 最近执行：{{ syncDetailLatestRunText }}
         </p>
       </div>
       <div class="flex gap-2">
@@ -3391,8 +3455,8 @@ watch(() => props.selectedItemId, (value) => {
             <a-table-column title="最近结果" :width="220">
               <template #cell="{ record }">
                 <div class="space-y-1">
-                  <a-tag size="small" :color="runStatusColor(record.latestRunSummary?.status)">
-                    {{ record.latestRunSummary ? runStatusLabel(record.latestRunSummary.status) : '未执行' }}
+                  <a-tag size="small" :color="runHealthColor(record.latestRunSummary)">
+                    {{ runHealthLabel(record.latestRunSummary) }}
                   </a-tag>
                   <p class="text-[10px] text-slate-500 m-0">
                     最近：{{ latestRunSummaryText(record.latestRunSummary) }}
@@ -3458,7 +3522,7 @@ watch(() => props.selectedItemId, (value) => {
       @ok="confirmCleanupCurrentItem"
     >
       <div class="space-y-4">
-        <div class="p-3 border border-rose-200 bg-rose-50 rounded space-y-2">
+        <div class="p-3 border border-rose-200 rounded bg-rose-50 space-y-2">
           <p class="text-[12px] text-rose-700 font-semibold m-0">
             该操作只清理当前同步项托管的数据，不会删除已发布的赛事/政策正式数据。
           </p>
@@ -3477,16 +3541,36 @@ watch(() => props.selectedItemId, (value) => {
               即将清理的同步托管数据
             </p>
             <div class="gap-2 grid md:grid-cols-2">
-              <p class="text-[11px] text-slate-600 m-0">external refs：{{ cleanupPreviewResult.managedDataCounts.externalRefs }}</p>
-              <p class="text-[11px] text-slate-600 m-0">搜索索引：{{ cleanupPreviewResult.managedDataCounts.searchIndex }}</p>
-              <p class="text-[11px] text-slate-600 m-0">分析结果：{{ cleanupPreviewResult.managedDataCounts.entityAnalysis }}</p>
-              <p class="text-[11px] text-slate-600 m-0">向量：{{ cleanupPreviewResult.managedDataCounts.vectors }}</p>
-              <p class="text-[11px] text-slate-600 m-0">后处理任务：{{ cleanupPreviewResult.managedDataCounts.postSyncTasks }}</p>
-              <p class="text-[11px] text-slate-600 m-0">运行样本：{{ cleanupPreviewResult.managedDataCounts.runSamples }}</p>
-              <p class="text-[11px] text-slate-600 m-0">问题单：{{ cleanupPreviewResult.managedDataCounts.issues }}</p>
-              <p class="text-[11px] text-slate-600 m-0">人设预设：{{ cleanupPreviewResult.managedDataCounts.personaPresets }}</p>
-              <p class="text-[11px] text-slate-600 m-0">未发布 release 草稿：{{ cleanupPreviewResult.managedDataCounts.unpublishedReleaseDrafts }}</p>
-              <p class="text-[11px] text-slate-600 m-0">冲突/重复被拦截：{{ cleanupPreviewResult.blockedConflictCount }}</p>
+              <p class="text-[11px] text-slate-600 m-0">
+                external refs：{{ cleanupPreviewResult.managedDataCounts.externalRefs }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                搜索索引：{{ cleanupPreviewResult.managedDataCounts.searchIndex }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                分析结果：{{ cleanupPreviewResult.managedDataCounts.entityAnalysis }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                向量：{{ cleanupPreviewResult.managedDataCounts.vectors }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                后处理任务：{{ cleanupPreviewResult.managedDataCounts.postSyncTasks }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                运行样本：{{ cleanupPreviewResult.managedDataCounts.runSamples }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                问题单：{{ cleanupPreviewResult.managedDataCounts.issues }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                人设预设：{{ cleanupPreviewResult.managedDataCounts.personaPresets }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                未发布 release 草稿：{{ cleanupPreviewResult.managedDataCounts.unpublishedReleaseDrafts }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                冲突/重复被拦截：{{ cleanupPreviewResult.blockedConflictCount }}
+              </p>
             </div>
           </section>
 
@@ -3495,12 +3579,24 @@ watch(() => props.selectedItemId, (value) => {
               Legacy 快照强制清空
             </p>
             <div class="gap-2 grid md:grid-cols-2">
-              <p class="text-[11px] text-slate-600 m-0">contest：{{ cleanupPreviewResult.legacyReleaseCleanup.contest }}</p>
-              <p class="text-[11px] text-slate-600 m-0">track：{{ cleanupPreviewResult.legacyReleaseCleanup.track }}</p>
-              <p class="text-[11px] text-slate-600 m-0">trackTimeline：{{ cleanupPreviewResult.legacyReleaseCleanup.trackTimeline }}</p>
-              <p class="text-[11px] text-slate-600 m-0">resource：{{ cleanupPreviewResult.legacyReleaseCleanup.resource }}</p>
-              <p class="text-[11px] text-slate-600 m-0">policy：{{ cleanupPreviewResult.legacyReleaseCleanup.policy }}</p>
-              <p class="text-[11px] text-slate-600 m-0">合计：{{ cleanupPreviewResult.legacyReleaseCleanup.total }}</p>
+              <p class="text-[11px] text-slate-600 m-0">
+                contest：{{ cleanupPreviewResult.legacyReleaseCleanup.contest }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                track：{{ cleanupPreviewResult.legacyReleaseCleanup.track }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                trackTimeline：{{ cleanupPreviewResult.legacyReleaseCleanup.trackTimeline }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                resource：{{ cleanupPreviewResult.legacyReleaseCleanup.resource }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                policy：{{ cleanupPreviewResult.legacyReleaseCleanup.policy }}
+              </p>
+              <p class="text-[11px] text-slate-600 m-0">
+                合计：{{ cleanupPreviewResult.legacyReleaseCleanup.total }}
+              </p>
             </div>
             <p class="text-[11px] text-slate-500 m-0">
               已发布 contest / policy 正式数据会保留：赛事 {{ cleanupPreviewResult.publishedContestDataCount }} 条，政策 {{ cleanupPreviewResult.publishedPolicyDataCount }} 条。
@@ -3509,7 +3605,7 @@ watch(() => props.selectedItemId, (value) => {
 
           <section class="space-y-2">
             <p class="text-[11px] text-slate-600 m-0">
-              请输入确认词 <span class="font-mono text-rose-700">{{ cleanupPreviewResult.confirmationToken }}</span> 后再执行危险清理。
+              请输入确认词 <span class="text-rose-700 font-mono">{{ cleanupPreviewResult.confirmationToken }}</span> 后再执行危险清理。
             </p>
             <a-input v-model="cleanupConfirmText" size="small" placeholder="请输入确认词" />
           </section>
@@ -3632,10 +3728,10 @@ watch(() => props.selectedItemId, (value) => {
                         {{ card.status }}
                       </span>
                     </div>
-                    <p class="text-[11px] text-slate-700 m-0 leading-5">
+                    <p class="text-[11px] text-slate-700 leading-5 m-0">
                       {{ card.summary }}
                     </p>
-                    <p class="text-[10px] text-slate-500 m-0 leading-5">
+                    <p class="text-[10px] text-slate-500 leading-5 m-0">
                       {{ card.hint }}
                     </p>
                   </section>
@@ -4338,8 +4434,8 @@ watch(() => props.selectedItemId, (value) => {
                     @click="openCurrentItemLogDrawer(run.id)"
                   >
                     <div class="flex flex-wrap gap-2 items-center">
-                      <a-tag size="small" :color="runStatusColor(run.status)">
-                        {{ runStatusLabel(run.status) }}
+                      <a-tag size="small" :color="runHealthColor(run)">
+                        {{ runHealthLabel(run) }}
                       </a-tag>
                       <a-tag size="small">
                         {{ triggerSourceLabel(run.triggerSource) }}
@@ -4503,8 +4599,8 @@ watch(() => props.selectedItemId, (value) => {
                 <h3 class="text-[12px] text-slate-900 font-semibold m-0">
                   本次选中执行
                 </h3>
-                <a-tag size="small" :color="runStatusColor(currentItemLogSelectedRun?.status)">
-                  {{ currentItemLogSelectedRun ? runStatusLabel(currentItemLogSelectedRun.status) : '未选择' }}
+                <a-tag size="small" :color="runHealthColor(currentItemLogSelectedRun)">
+                  {{ currentItemLogSelectedRun ? runHealthLabel(currentItemLogSelectedRun) : '未选择' }}
                 </a-tag>
               </div>
               <template v-if="currentItemLogSelectedRun">
@@ -4764,8 +4860,8 @@ watch(() => props.selectedItemId, (value) => {
                   @click="selectCurrentItemLogRun(run.id)"
                 >
                   <div class="flex flex-wrap gap-2 items-center">
-                    <a-tag size="small" :color="runStatusColor(run.status)">
-                      {{ runStatusLabel(run.status) }}
+                    <a-tag size="small" :color="runHealthColor(run)">
+                      {{ runHealthLabel(run) }}
                     </a-tag>
                     <a-tag size="small">
                       {{ triggerSourceLabel(run.triggerSource) }}

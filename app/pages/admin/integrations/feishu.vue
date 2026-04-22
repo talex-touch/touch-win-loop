@@ -313,6 +313,37 @@ function runStatusColor(status?: string | null): string {
   return 'gray'
 }
 
+interface RunHealthSummaryLike {
+  status?: string | null
+  errorCount?: number | null
+}
+
+function runHealthFailed(summary?: RunHealthSummaryLike | null): boolean {
+  return summary?.status === 'failed'
+}
+
+function runHealthWarned(summary?: RunHealthSummaryLike | null): boolean {
+  return summary?.status === 'partial_success' || Boolean(summary?.errorCount)
+}
+
+function runHealthLabel(summary?: RunHealthSummaryLike | null): string {
+  if (!summary)
+    return '未执行'
+  if (summary.status === 'success' && Number(summary.errorCount || 0) > 0)
+    return '成功但有告警'
+  return runStatusLabel(summary.status)
+}
+
+function runHealthColor(summary?: RunHealthSummaryLike | null): string {
+  if (!summary)
+    return 'gray'
+  if (runHealthFailed(summary))
+    return 'red'
+  if (runHealthWarned(summary))
+    return 'gold'
+  return runStatusColor(summary.status)
+}
+
 function triggerSourceLabel(source?: string | null): string {
   if (source === 'manual')
     return '手动'
@@ -336,7 +367,7 @@ function buildValueSourceLabel(source: BuildValueSource | undefined): string {
 function syncLatestRunSummary(sync: FeishuBitableSync): string {
   if (!sync.latestRunSummary)
     return '暂无执行记录'
-  return `${formatDateTime(sync.latestRunSummary.startedAt)} / ${runStatusLabel(sync.latestRunSummary.status)} / ${triggerSourceLabel(sync.latestRunSummary.triggerSource)}`
+  return `${formatDateTime(sync.latestRunSummary.startedAt)} / ${runHealthLabel(sync.latestRunSummary)} / ${triggerSourceLabel(sync.latestRunSummary.triggerSource)}`
 }
 
 function syncItemEntityTypeLabel(entityType?: FeishuBitableSyncItemEntityType | null): string {
@@ -348,7 +379,7 @@ function syncItemEntityTypeLabel(entityType?: FeishuBitableSyncItemEntityType | 
 function syncItemLatestRunSummary(item: FeishuBitableSyncItem): string {
   if (!item.latestRunSummary)
     return '暂无执行记录'
-  return `${formatDateTime(item.latestRunSummary.startedAt)} / ${runStatusLabel(item.latestRunSummary.status)} / ${triggerSourceLabel(item.latestRunSummary.triggerSource)}`
+  return `${formatDateTime(item.latestRunSummary.startedAt)} / ${runHealthLabel(item.latestRunSummary)} / ${triggerSourceLabel(item.latestRunSummary.triggerSource)}`
 }
 
 function syncItemScheduleStatusLabel(sync: FeishuBitableSync, item: FeishuBitableSyncItem): string {
@@ -425,6 +456,18 @@ function syncScheduleStatusColor(sync: FeishuBitableSync): string {
   return sync.enabled ? 'green' : 'gold'
 }
 
+function syncEnabledItemSummary(record: FeishuBitableSync): string {
+  return record.enabled ? `已启用 ${record.enabledItemCount}` : '主同步已禁用'
+}
+
+function syncLatestRunFailed(sync: FeishuBitableSync): boolean {
+  return runHealthFailed(sync.latestRunSummary)
+}
+
+function syncLatestRunWarned(sync: FeishuBitableSync): boolean {
+  return runHealthWarned(sync.latestRunSummary)
+}
+
 function syncProgressStageLabel(sync: FeishuBitableSync): string {
   if (sync.archivedAt)
     return '只读归档'
@@ -434,6 +477,10 @@ function syncProgressStageLabel(sync: FeishuBitableSync): string {
     return '主同步停用'
   if (!sync.enabledItemCount)
     return '待启用子项'
+  if (syncLatestRunFailed(sync))
+    return '最近运行失败'
+  if (syncLatestRunWarned(sync))
+    return '最近运行告警'
   if (sync.issueStats.open)
     return '待处理问题'
   if (!sync.latestRunSummary)
@@ -451,6 +498,10 @@ function syncProgressStageColor(sync: FeishuBitableSync): string {
   if (!sync.enabled)
     return 'gray'
   if (!sync.enabledItemCount)
+    return 'gold'
+  if (syncLatestRunFailed(sync))
+    return 'red'
+  if (syncLatestRunWarned(sync))
     return 'gold'
   if (sync.issueStats.open)
     return 'red'
@@ -470,6 +521,10 @@ function syncProgressSummary(sync: FeishuBitableSync): string {
     return '子表与配置保留，但主同步停用后不会响应事件或调度。'
   if (!sync.enabledItemCount)
     return '已有子表同步项，但还没有任何启用中的导入入口。'
+  if (syncLatestRunFailed(sync))
+    return `最近一次执行失败${sync.latestRunSummary?.errorCount ? `，错误 ${sync.latestRunSummary.errorCount} 条。` : '。'}先回到子表同步项处理异常，再继续导入。`
+  if (syncLatestRunWarned(sync))
+    return `最近一次执行仍有错误或部分成功${sync.latestRunSummary?.errorCount ? `，当前错误 ${sync.latestRunSummary.errorCount} 条。` : '。'}这条链路暂时不应视为稳定运行。`
   if (sync.issueStats.open)
     return `当前有 ${sync.issueStats.open} 个待处理问题，建议先清理映射或回填问题。`
   if (!sync.latestRunSummary)
@@ -488,6 +543,10 @@ function syncNextActionText(sync: FeishuBitableSync): string {
     return '确认配置后再重新启用主同步。'
   if (!sync.enabledItemCount)
     return '进入子表同步项，先启用至少一个可运行入口。'
+  if (syncLatestRunFailed(sync))
+    return '先打开子表同步项查看错误日志，修复后再手动重跑。'
+  if (syncLatestRunWarned(sync))
+    return '先核对错误记录和跳过原因，确认干净后再考虑启用调度。'
   if (sync.issueStats.open)
     return '先处理问题单，再继续预检或启用调度。'
   if (!sync.latestRunSummary)
@@ -805,33 +864,27 @@ async function openSyncItemLogDrawer(sync: FeishuBitableSync, item: FeishuBitabl
     return
 
   syncItemLogVisible.value = true
-  syncItemLogLoading.value = true
-  syncItemLogErrorText.value = ''
   syncItemLogSyncId.value = syncId
   syncItemLogSyncName.value = String(sync.name || '').trim()
   syncItemLogIncludeArchived.value = Boolean(sync.archivedAt)
-  syncItemLogItemDetail.value = null
+  syncItemLogItemDetail.value = {
+    ...(item as FeishuBitableSyncItemDetail),
+    issues: [],
+    recentRuns: [],
+  }
+  await refreshSyncItemLogDrawer()
+}
 
-  try {
-    const query = new URLSearchParams({
-      runLimit: '20',
-      issueLimit: '50',
-    })
-    if (syncItemLogIncludeArchived.value)
-      query.set('includeArchived', 'true')
+function openSyncItemEditor(sync: FeishuBitableSync, item: FeishuBitableSyncItem) {
+  const syncId = String(sync.id || '').trim()
+  const itemId = String(item.id || '').trim()
+  if (!syncId || !itemId)
+    return
 
-    syncItemLogItemDetail.value = await requestApi<FeishuBitableSyncItemDetail>(
-      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/items/${encodeURIComponent(itemId)}?${query.toString()}`),
-      {},
-      '子表同步项日志加载失败。',
-    )
-  }
-  catch (error: any) {
-    syncItemLogErrorText.value = String(error?.data?.message || '子表同步项日志加载失败。')
-  }
-  finally {
-    syncItemLogLoading.value = false
-  }
+  openEditSyncDrawer(syncId, {
+    selectedItemId: itemId,
+    includeArchived: Boolean(sync.archivedAt),
+  })
 }
 
 async function refreshSyncItemLogDrawer() {
@@ -907,13 +960,6 @@ function openSyncItemLogEditor() {
   openEditSyncDrawer(syncItemLogSyncId.value, {
     selectedItemId: itemId,
     includeArchived: syncItemLogIncludeArchived.value,
-  })
-}
-
-function openSyncItemEditor(sync: FeishuBitableSync, item: FeishuBitableSyncItem) {
-  openEditSyncDrawer(sync.id, {
-    selectedItemId: item.id,
-    includeArchived: Boolean(sync.archivedAt),
   })
 }
 
@@ -1673,13 +1719,13 @@ onMounted(initializePage)
                 :key="step.step"
                 class="p-3 border border-slate-200 bg-slate-50"
               >
-                <p class="text-[10px] uppercase tracking-[0.18em] text-slate-400 font-medium m-0">
+                <p class="text-[10px] text-slate-400 tracking-[0.18em] font-medium m-0 uppercase">
                   {{ step.step }}
                 </p>
                 <p class="text-[11px] text-slate-900 font-semibold m-0 mt-2">
                   {{ step.title }}
                 </p>
-                <p class="text-[10px] text-slate-500 m-0 mt-1 leading-5">
+                <p class="text-[10px] text-slate-500 leading-5 m-0 mt-1">
                   {{ step.description }}
                 </p>
               </div>
@@ -1738,6 +1784,9 @@ onMounted(initializePage)
                   <div class="flex flex-wrap gap-1">
                     <a-tag color="arcoblue" size="small">
                       {{ record.itemCount }} 个子表项
+                    </a-tag>
+                    <a-tag :color="record.enabled ? 'green' : 'gold'" size="small">
+                      {{ syncEnabledItemSummary(record) }}
                     </a-tag>
                     <a-tag :color="syncProgressStageColor(record)" size="small">
                       {{ syncProgressStageLabel(record) }}
@@ -1968,8 +2017,8 @@ onMounted(initializePage)
 
                       <template #itemLatestRun="{ record: item }">
                         <div class="space-y-1">
-                          <a-tag :color="runStatusColor(item.latestRunSummary?.status)" size="small">
-                            {{ item.latestRunSummary ? runStatusLabel(item.latestRunSummary.status) : '未执行' }}
+                          <a-tag :color="runHealthColor(item.latestRunSummary)" size="small">
+                            {{ runHealthLabel(item.latestRunSummary) }}
                           </a-tag>
                           <p class="text-[10px] text-slate-500 m-0">
                             {{ syncItemLatestRunSummary(item) }}
@@ -1991,6 +2040,17 @@ onMounted(initializePage)
                           <p class="text-[10px] text-slate-500 m-0">
                             下次：{{ formatDateTime(item.scheduleRuntime?.nextRunAt) }}
                           </p>
+                        </div>
+                      </template>
+
+                      <template #itemActions="{ record: item }">
+                        <div class="flex flex-wrap gap-2 items-center">
+                          <a-button size="mini" type="text" class="!px-0" @click="openSyncItemLogDrawer(syncRecord, item)">
+                            执行日志
+                          </a-button>
+                          <a-button size="mini" type="text" class="!px-0" @click="openSyncItemEditor(syncRecord, item)">
+                            进入子项配置
+                          </a-button>
                         </div>
                       </template>
                     </a-table>
@@ -2373,13 +2433,13 @@ onMounted(initializePage)
               :key="`create-${step.step}`"
               class="p-3 border border-slate-200 bg-white"
             >
-              <p class="text-[10px] uppercase tracking-[0.18em] text-slate-400 font-medium m-0">
+              <p class="text-[10px] text-slate-400 tracking-[0.18em] font-medium m-0 uppercase">
                 {{ step.step }}
               </p>
               <p class="text-[11px] text-slate-900 font-semibold m-0 mt-2">
                 {{ step.title }}
               </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1 leading-5">
+              <p class="text-[10px] text-slate-500 leading-5 m-0 mt-1">
                 {{ step.description }}
               </p>
             </div>
@@ -2653,15 +2713,15 @@ onMounted(initializePage)
                 <h3 class="text-[12px] text-slate-900 font-semibold m-0">
                   最近执行
                 </h3>
-                <a-tag size="small" :color="runStatusColor(syncItemLogItemDetail.latestRunSummary?.status)">
-                  {{ syncItemLogItemDetail.latestRunSummary ? runStatusLabel(syncItemLogItemDetail.latestRunSummary.status) : '未执行' }}
+                <a-tag size="small" :color="runHealthColor(syncItemLogItemDetail.latestRunSummary)">
+                  {{ runHealthLabel(syncItemLogItemDetail.latestRunSummary) }}
                 </a-tag>
               </div>
               <div v-if="syncItemLogItemDetail.recentRuns.length" class="space-y-2">
                 <div v-for="run in syncItemLogItemDetail.recentRuns" :key="run.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
                   <div class="flex flex-wrap gap-2 items-center">
-                    <a-tag :color="runStatusColor(run.status)" size="small">
-                      {{ runStatusLabel(run.status) }}
+                    <a-tag :color="runHealthColor(run)" size="small">
+                      {{ runHealthLabel(run) }}
                     </a-tag>
                     <a-tag size="small">
                       {{ triggerSourceLabel(run.triggerSource) }}
