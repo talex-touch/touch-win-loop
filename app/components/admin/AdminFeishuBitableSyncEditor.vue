@@ -3932,7 +3932,7 @@ watch(() => props.selectedItemId, (value) => {
                     最近执行
                   </p>
                   <p class="m-0 mt-1 break-all">
-                    {{ currentItem.latestRunSummary ? formatDateTime(currentItem.latestRunSummary.startedAt) : '-' }}
+                    {{ latestRunSummaryText(currentItem.latestRunSummary) }}
                   </p>
                 </div>
               </div>

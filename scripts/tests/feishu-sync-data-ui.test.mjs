@@ -157,6 +157,7 @@ it('飞书导入设计会在总览页和同步项详情里暴露阶段化流程'
   assert.match(editorSource, /最近执行失败[\s\S]*最近执行告警/, '同步项详情未区分失败态与告警态')
   assert.match(editorSource, /latestRunSummaryText\(summary\?: FeishuTaskLatestRunSummary \| null\)[\s\S]*runHealthLabel\(summary\)/, '同步项详情最近结果摘要未使用统一运行健康文案')
   assert.match(editorSource, /function latestRunSummaryText\(summary\?: FeishuTaskLatestRunSummary \| null\): string \{[\s\S]*return `\$\{formatDateTime\(summary\.startedAt\)\} \/ \$\{runHealthLabel\(summary\)\} \/ \$\{triggerSourceLabel\(summary\.triggerSource\)\}`/, '同步项详情最近结果摘要未与总览页对齐触发来源文案')
+  assert.match(editorSource, /最近执行[\s\S]*\{\{ latestRunSummaryText\(currentItem\.latestRunSummary\) \}\}/, '同步项详情顶部概览最近执行卡未复用统一运行摘要文案')
   assert.match(editorSource, /最近执行：\$\{formatDateTime\(currentItem\.value\.latestRunSummary\.startedAt\)\} \/ \$\{runHealthLabel\(currentItem\.value\.latestRunSummary\)\}/, '同步项详情执行阶段摘要未复用统一运行健康文案')
   assert.match(editorSource, /:color="runHealthColor\(record\.latestRunSummary\)"/, '同步项详情同步项列表未按运行健康状态着色')
   assert.match(editorSource, /runHealthColor\(currentItemLogSelectedRun\)/, '同步项详情日志抽屉未按运行健康状态展示选中执行')
