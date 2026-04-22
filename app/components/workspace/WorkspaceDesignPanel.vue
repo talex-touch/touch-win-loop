@@ -2,6 +2,7 @@
 import type { DesignCanvasInteractionContext, DesignCanvasSelectionState } from '~~/app/composables/useDesignCanvasSelection'
 import type { DesignLayerTreeNode } from '~~/app/composables/useDesignLayerTree'
 import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
+import type { WorkspaceDesignQuickActionItem } from './design/WorkspaceDesignSelectionQuickActions.vue'
 import type {
   AiCanvasAssistAction,
   AiCanvasAssistRequest,
@@ -116,7 +117,11 @@ import WLDesignContainer from '../wl-design/WLDesignContainer.vue'
 import WLDesignLayer from '../wl-design/WLDesignLayer.vue'
 import WLDesignLayout from '../wl-design/WLDesignLayout.vue'
 import WorkspaceDesignCanvasKitBridge from "./design/WorkspaceDesignCanvasKitBridge.client.vue";
+import WorkspaceDesignCanvasContextHud from './design/WorkspaceDesignCanvasContextHud.vue'
+import WorkspaceDesignDiagramCanvasAiPanel from './design/WorkspaceDesignDiagramCanvasAiPanel.vue'
 import WorkspaceDesignInspector from './design/WorkspaceDesignInspector.vue'
+import WorkspaceDesignSelectionQuickActions from './design/WorkspaceDesignSelectionQuickActions.vue'
+import WorkspaceDesignSidebarActionMenus from './design/WorkspaceDesignSidebarActionMenus.vue'
 import WorkspaceDesignSidebarTabs from './design/WorkspaceDesignSidebarTabs.vue'
 import WorkspaceDesignStage from './design/WorkspaceDesignStage.vue'
 import WorkspaceDesignToolbar from './design/WorkspaceDesignToolbar.vue'
@@ -248,8 +253,6 @@ const stageViewportZoom = ref(1)
 const activeSidebarTab = ref<DesignSidebarTab>('pages')
 const sidebarCollapsed = ref(false)
 const inspectorCollapsed = ref(false)
-const actionMenuOpen = ref(false)
-const actionMenuRef = ref<HTMLElement | null>(null)
 const deviceArrangementDialogVisible = ref(false)
 const outlineHighlightedAssetId = ref('')
 const canvasLibrarySearch = ref('')
@@ -829,10 +832,6 @@ function rememberStageViewportState(
   }
 }
 
-function closeActionMenu(): void {
-  actionMenuOpen.value = false
-}
-
 function closeLayerTreeMenu(): void {
   layerTreeMenuVisible.value = false
   layerTreeMenuNodeId.value = ''
@@ -840,30 +839,12 @@ function closeLayerTreeMenu(): void {
   layerTreeMenuItems.value = []
 }
 
-function toggleActionMenu(): void {
-  actionMenuOpen.value = !actionMenuOpen.value
-}
-
 function toggleSidebarCollapsed(): void {
-  closeActionMenu()
   sidebarCollapsed.value = !sidebarCollapsed.value
 }
 
 function toggleInspectorCollapsed(): void {
   inspectorCollapsed.value = !inspectorCollapsed.value
-}
-
-function handleActionMenuPointerDown(event: PointerEvent): void {
-  const target = event.target
-  if (
-    !actionMenuOpen.value
-    || !actionMenuRef.value
-    || !(target instanceof Node)
-  ) {
-    return
-  }
-  if (!actionMenuRef.value.contains(target))
-    closeActionMenu()
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -965,8 +946,6 @@ function handlePanelKeydown(event: KeyboardEvent): void {
   }
 
   if (key === 'escape') {
-    if (actionMenuOpen.value)
-      closeActionMenu()
     if (selectionState.value.editingFrameId) {
       event.preventDefault()
       designSelection.exitFrameEditing()
@@ -2135,6 +2114,92 @@ const canOpenDiagramEditor = computed(
     selectedFrames.value.length === 1
     && selectedFrame.value?.kind === 'diagram',
 )
+const canvasHudBreadcrumbs = computed(() => {
+  const pageName = normalizeString(currentPage.value?.name) || '当前 Page'
+  const editingFrameId = normalizeString(selectionState.value.editingFrameId)
+  if (!editingFrameId)
+    return [pageName, 'Page Root']
+
+  const editingFrame
+    = currentPageFrames.value.find(frame => frame.id === editingFrameId)
+      || frameOwnerFramesByDisplayId.value[
+        normalizeString(selectionState.value.displayFrameId)
+      ]
+      || null
+  return [
+    pageName,
+    normalizeString(editingFrame?.name) || 'Frame',
+  ]
+})
+const canvasHudContextLabel = computed(() => {
+  const editingFrameId = normalizeString(selectionState.value.editingFrameId)
+  if (!editingFrameId)
+    return 'Page Root 编辑上下文'
+
+  const editingFrame
+    = currentPageFrames.value.find(frame => frame.id === editingFrameId)
+      || frameOwnerFramesByDisplayId.value[
+        normalizeString(selectionState.value.displayFrameId)
+      ]
+      || null
+  const frameKind = normalizeString(editingFrame?.kind) || 'frame'
+  return `${frameKind} 编辑上下文`
+})
+const canvasHudToolLabel = computed(() => {
+  return resolveDesignToolPreset(
+    temporaryHandToolActive.value ? 'hand' : activeTool.value,
+  )?.label || ''
+})
+const selectionQuickActionTitle = computed(() => {
+  if (selectedElementIds.value.length > 0)
+    return `已选 ${selectedElementIds.value.length} 个元素`
+  if (selectedFrameIds.value.length > 0)
+    return `已选 ${selectedFrameIds.value.length} 个 Frame`
+  return ''
+})
+const selectionQuickActions = computed<WorkspaceDesignQuickActionItem[]>(() => {
+  if (selectedElementIds.value.length > 0) {
+    const elements = resolveRawSelectedElements()
+    const selectionLocked = elements.length === 0 || elements.every(element => element.locked)
+    const autoLayoutLocked = elements.some((element) => {
+      const frameId = normalizeString(element.frameId)
+      const frame = frameId ? currentPageFrameMap.value.get(frameId) || null : null
+      return normalizeString(frame?.metadata?.layout?.mode) === 'auto'
+    })
+    const canGroupElements = canGroupSelectedElements(elements)
+    const canUngroupElements = elements.length === 1 && elements[0]?.type === 'group'
+
+    return [
+      { id: 'duplicate-target', label: '复制', icon: 'content_copy', disabled: selectionLocked },
+      { id: 'delete-target', label: '删除', icon: 'delete', disabled: selectionLocked },
+      { id: 'group', label: '编组', icon: 'group_work', disabled: !canGroupElements },
+      { id: 'ungroup', label: '解组', icon: 'ungroup', disabled: !canUngroupElements },
+      { id: 'align-left', label: '左对齐', icon: 'format_align_left', disabled: autoLayoutLocked || elements.length < 2 },
+      { id: 'align-center-x', label: '居中', icon: 'format_align_center', disabled: autoLayoutLocked || elements.length < 2 },
+      { id: 'align-right', label: '右对齐', icon: 'format_align_right', disabled: autoLayoutLocked || elements.length < 2 },
+      { id: 'distribute-x', label: '横向分布', icon: 'horizontal_distribute', disabled: autoLayoutLocked || elements.length < 3 },
+      { id: 'bring-to-front', label: '置顶', icon: 'flip_to_front', disabled: selectionLocked },
+      { id: 'send-to-back', label: '置底', icon: 'flip_to_back', disabled: selectionLocked },
+      { id: 'snap-grid', label: '吸附网格', icon: 'grid_on', disabled: autoLayoutLocked || selectionLocked },
+    ]
+  }
+
+  if (selectedFrameIds.value.length > 0) {
+    return [
+      { id: 'duplicate-target', label: '复制', icon: 'content_copy', disabled: false },
+      { id: 'delete-target', label: '删除', icon: 'delete', disabled: false },
+      { id: 'align-left', label: '左对齐', icon: 'format_align_left', disabled: selectedFrameIds.value.length < 2 },
+      { id: 'align-center-x', label: '居中', icon: 'format_align_center', disabled: selectedFrameIds.value.length < 2 },
+      { id: 'align-right', label: '右对齐', icon: 'format_align_right', disabled: selectedFrameIds.value.length < 2 },
+      { id: 'distribute-x', label: '横向分布', icon: 'horizontal_distribute', disabled: selectedFrameIds.value.length < 3 },
+      { id: 'bring-to-front', label: '置顶', icon: 'flip_to_front', disabled: true },
+      { id: 'send-to-back', label: '置底', icon: 'flip_to_back', disabled: true },
+      { id: 'snap-grid', label: '吸附网格', icon: 'grid_on', disabled: false },
+    ]
+  }
+
+  return []
+})
 function renderFramePreviewMarkup(
   frameId: string,
   shellMode?: 'none' | 'builtin' | 'external',
@@ -2466,7 +2531,6 @@ onMounted(() => {
   if (!import.meta.client)
     return
   restoreCanvasAiMessagesFromStorage()
-  window.addEventListener('pointerdown', handleActionMenuPointerDown)
   window.addEventListener('blur', clearTransientInteractionState)
 })
 
@@ -2492,7 +2556,6 @@ watch(canvasAiMessages, () => {
 onBeforeUnmount(() => {
   if (!import.meta.client)
     return
-  window.removeEventListener('pointerdown', handleActionMenuPointerDown)
   window.removeEventListener('blur', clearTransientInteractionState)
   clearToolSwitchHintTimer()
   clearOutlineHighlightTimer()
@@ -3930,6 +3993,30 @@ function runSelectionCommand(command: string): void {
     historyMergeKey: 'selection-command',
   })
   replaceSelectionState(selectionSnapshot)
+}
+
+function runSelectionQuickAction(actionId: string): void {
+  if (actionId === 'duplicate-target') {
+    if (selectedElementIds.value.length > 0) {
+      duplicateSelectedElement()
+      return
+    }
+    if (selectedFrameIds.value.length > 0)
+      duplicateSelectedFrame()
+    return
+  }
+
+  if (actionId === 'delete-target') {
+    if (selectedElementIds.value.length > 0) {
+      removeSelectedElement()
+      return
+    }
+    if (selectedFrameIds.value.length > 0)
+      removeSelectedFrame()
+    return
+  }
+
+  runSelectionCommand(actionId)
 }
 
 function toggleSelectedFramesLocked(): void {
@@ -6657,166 +6744,6 @@ async function downloadDefaultPng(): Promise<void> {
               class="flex gap-2 items-center"
               :class="sidebarCollapsed ? 'w-full justify-start' : ''"
             >
-              <div
-                v-if="!sidebarCollapsed"
-                ref="actionMenuRef"
-                class="relative"
-              >
-                <button
-                  class="text-[11px] text-slate-900 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 min-w-8 transition-colors items-center justify-center hover:bg-slate-50"
-                  type="button"
-                  title="新建"
-                  aria-label="新建"
-                  @click="toggleActionMenu"
-                >
-                  <span class="material-symbols-outlined text-sm">add</span>
-                  <span class="material-symbols-outlined text-sm">arrow_drop_down</span>
-                </button>
-
-                <div
-                  v-if="actionMenuOpen"
-                  class="p-1.5 border border-slate-200/95 rounded-[12px] bg-white/80 w-[208px] shadow-none right-0 top-10 absolute z-30 backdrop-blur-xl"
-                >
-                  <div class="space-y-1">
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
-                      type="button"
-                      @click="
-                        createPage();
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">note_stack_add</span>
-                      <span>新建 Page</span>
-                    </button>
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
-                      type="button"
-                      :disabled="!currentPage"
-                      @click="
-                        createFrame('freeform');
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">dashboard</span>
-                      <span>新建自由 Frame</span>
-                    </button>
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
-                      type="button"
-                      :disabled="!currentPage"
-                      @click="
-                        createFrame('device_artboard');
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">phone_iphone</span>
-                      <span>新建设备 Frame</span>
-                    </button>
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
-                      type="button"
-                      :disabled="!currentPage"
-                      @click="
-                        createFrame('diagram');
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">account_tree</span>
-                      <span>新建 Diagram</span>
-                    </button>
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
-                      type="button"
-                      :disabled="!currentPage"
-                      @click="
-                        applyTemplateFrame(DEFAULT_TEMPLATE_KEY);
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">auto_awesome_mosaic</span>
-                      <span>插入模板稿</span>
-                    </button>
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100"
-                      type="button"
-                      :disabled="!currentPage"
-                      @click="
-                        openDeviceArrangementInsertDialog();
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">devices</span>
-                      <span>插入设备排布</span>
-                    </button>
-                  </div>
-
-                  <div class="my-2 border-t border-slate-100" />
-
-                  <div class="space-y-1">
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100 disabled:opacity-50"
-                      type="button"
-                      :disabled="!canExportDefaultFrames"
-                      @click="
-                        downloadDefaultSvg();
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">download</span>
-                      <span>{{ defaultExportSvgLabel }}</span>
-                    </button>
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100 disabled:opacity-50"
-                      type="button"
-                      :disabled="!canExportDefaultFrames"
-                      @click="
-                        void downloadDefaultPng();
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">image</span>
-                      <span>{{ defaultExportPngLabel }}</span>
-                    </button>
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100 disabled:opacity-50"
-                      type="button"
-                      :disabled="!currentPage"
-                      @click="
-                        downloadSvg();
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">article</span>
-                      <span>辅助导出 Page SVG</span>
-                    </button>
-                    <button
-                      class="text-xs text-slate-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-slate-100 disabled:opacity-50"
-                      type="button"
-                      :disabled="!currentPage"
-                      @click="
-                        void downloadPng();
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">crop_portrait</span>
-                      <span>辅助导出 Page PNG</span>
-                    </button>
-                    <button
-                      v-if="canOpenDiagramEditor"
-                      class="text-xs text-sky-700 font-semibold px-3 py-2 text-left rounded-2xl flex gap-3 w-full transition-colors items-center hover:bg-sky-50"
-                      type="button"
-                      @click="
-                        openFrameEditor(selectedFrame?.id || '');
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base">schema</span>
-                      <span>打开 Diagram 编辑态</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
               <button
                 v-if="sidebarCollapsed"
                 class="workspace-design-sidebar-toggle text-slate-500 border border-slate-200 rounded-[10px] bg-slate-50 flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-900 hover:border-slate-300 hover:bg-white"
@@ -6833,6 +6760,27 @@ async function downloadDefaultPng(): Promise<void> {
           </template>
 
           <template v-if="!sidebarCollapsed">
+            <WorkspaceDesignSidebarActionMenus
+              class="mb-4"
+              :can-create-frame="Boolean(currentPage)"
+              :can-export-default-frames="canExportDefaultFrames"
+              :can-export-page="Boolean(currentPage)"
+              :can-open-diagram-editor="canOpenDiagramEditor"
+              :default-export-svg-label="defaultExportSvgLabel"
+              :default-export-png-label="defaultExportPngLabel"
+              @create-page="createPage"
+              @create-freeform-frame="createFrame('freeform')"
+              @create-device-artboard="createFrame('device_artboard')"
+              @create-diagram="createFrame('diagram')"
+              @insert-template-frame="applyTemplateFrame(DEFAULT_TEMPLATE_KEY)"
+              @insert-device-arrangement="openDeviceArrangementInsertDialog"
+              @download-default-svg="downloadDefaultSvg"
+              @download-default-png="void downloadDefaultPng()"
+              @download-page-svg="downloadSvg()"
+              @download-page-png="void downloadPng()"
+              @open-diagram-editor="openFrameEditor(selectedFrame?.id || '')"
+            />
+
             <div
               v-if="activeSidebarTab !== 'frames'"
               class="mb-3 flex flex-wrap gap-2"
@@ -7548,6 +7496,20 @@ async function downloadDefaultPng(): Promise<void> {
 
       <template #canvas>
         <WLDesignLayer variant="stage" :padded="false">
+          <WorkspaceDesignCanvasContextHud
+            :breadcrumbs="canvasHudBreadcrumbs"
+            :context-label="canvasHudContextLabel"
+            :active-tool-label="canvasHudToolLabel"
+            :canvas-ai-status-label="canvasAiStatusLabel"
+            :canvas-ai-status-class="canvasAiStatusClass"
+            :show-diagram-entry="canOpenDiagramEditor"
+            @open-diagram-editor="openFrameEditor(selectedFrame?.id || '')"
+          />
+          <WorkspaceDesignSelectionQuickActions
+            :title="selectionQuickActionTitle"
+            :actions="selectionQuickActions"
+            @run-action="runSelectionQuickAction"
+          />
           <component
             :is="resolvedDesignStageComponent"
             :page="designEditorState.currentPage.value"
@@ -7854,139 +7816,26 @@ async function downloadDefaultPng(): Promise<void> {
               </button>
             </div>
 
-            <div class="mt-4 p-4 border border-slate-800 rounded-[24px] bg-slate-950/70">
-              <div class="flex gap-3 items-start justify-between">
-                <div>
-                  <h4 class="text-xs text-slate-300 tracking-[0.18em] font-semibold uppercase">
-                    画布 AI
-                  </h4>
-                  <p class="text-xs text-slate-400 leading-5 mt-1">
-                    生成、补全或续改结构源。AI 只回填到源文本区，仍需你手动点击“覆盖导入”。
-                  </p>
-                </div>
-                <span
-                  class="text-[10px] font-semibold px-2 py-1 border rounded-full"
-                  :class="canvasAiStatusClass"
-                >
-                  {{ canvasAiStatusLabel }}
-                </span>
-              </div>
-
-              <div class="mt-4 gap-3 grid xl:grid-cols-[220px,1fr]">
-                <label class="block space-y-1">
-                  <span class="text-xs text-slate-300 font-semibold">图类型</span>
-                  <select
-                    v-model="canvasAiTemplate"
-                    class="text-xs text-slate-100 px-3 outline-none border border-slate-700 rounded-xl bg-slate-950 h-10 w-full disabled:text-slate-500 disabled:border-slate-800 focus:border-sky-400 disabled:cursor-not-allowed"
-                    :disabled="canvasAiInputDisabled"
-                  >
-                    <option value="flowchart">流程图</option>
-                    <option value="mindmap">脑图</option>
-                    <option value="er">ER 图</option>
-                    <option value="architecture">架构图</option>
-                  </select>
-                </label>
-                <label class="block space-y-1">
-                  <span class="text-xs text-slate-300 font-semibold">AI 指令</span>
-                  <textarea
-                    v-model="canvasAiPrompt"
-                    class="text-xs text-slate-100 leading-6 px-3 py-2 outline-none border border-slate-800 rounded-[18px] bg-slate-950 min-h-[84px] w-full disabled:text-slate-500 disabled:border-slate-900 focus:border-sky-400 disabled:cursor-not-allowed"
-                    :disabled="canvasAiInputDisabled"
-                    placeholder="例如：生成一个从资料收集、评分映射、作品打磨到答辩准备的项目流程图。"
-                  />
-                </label>
-              </div>
-
-              <div class="mt-3 flex flex-wrap gap-2">
-                <button
-                  class="text-xs text-slate-950 font-semibold px-3 py-2 rounded-2xl bg-sky-500 transition-colors disabled:text-slate-300 disabled:bg-slate-700 hover:bg-sky-400 disabled:cursor-not-allowed"
-                  type="button"
-                  :title="buildCanvasAiUnavailableMessage('generate')"
-                  :disabled="canvasAiRunning || !isCanvasAiActionEnabled('generate')"
-                  @click="runCanvasAssist('generate')"
-                >
-                  AI 生成
-                </button>
-                <button
-                  class="text-xs text-slate-100 font-semibold px-3 py-2 border border-slate-700 rounded-2xl bg-slate-900 transition-colors disabled:text-slate-500 hover:bg-slate-800 disabled:cursor-not-allowed"
-                  type="button"
-                  :title="buildCanvasAiUnavailableMessage('complete')"
-                  :disabled="canvasAiRunning || !isCanvasAiActionEnabled('complete')"
-                  @click="runCanvasAssist('complete')"
-                >
-                  AI 补全
-                </button>
-                <button
-                  class="text-xs text-slate-100 font-semibold px-3 py-2 border border-slate-700 rounded-2xl bg-slate-900 transition-colors disabled:text-slate-500 hover:bg-slate-800 disabled:cursor-not-allowed"
-                  type="button"
-                  :title="buildCanvasAiUnavailableMessage('refine')"
-                  :disabled="canvasAiRunning || !isCanvasAiActionEnabled('refine')"
-                  @click="runCanvasAssist('refine')"
-                >
-                  AI 续改
-                </button>
-                <span
-                  v-if="canvasAiPreviewPending"
-                  class="text-[10px] text-emerald-200 font-semibold px-2 py-1 border border-emerald-400/40 rounded-full bg-emerald-400/10 inline-flex items-center"
-                >
-                  已生成预览，待手动导入
-                </span>
-              </div>
-
-              <p
-                v-if="canvasAiError"
-                class="text-xs text-rose-200 leading-5 mt-3 px-3 py-2 border border-rose-400/30 rounded-2xl bg-rose-400/10"
-              >
-                {{ canvasAiError }}
-              </p>
-              <p
-                v-else-if="canvasAiRuntimeError"
-                class="text-xs text-amber-200 leading-5 mt-3 px-3 py-2 border border-amber-400/30 rounded-2xl bg-amber-400/10"
-              >
-                {{ canvasAiRuntimeError }}
-              </p>
-
-              <div
-                v-if="canvasAiMessages.length > 0"
-                class="mt-4 px-3 py-3 border border-slate-800 rounded-[20px] bg-slate-950/80"
-                data-testid="workspace-canvas-ai-messages"
-              >
-                <div class="flex gap-3 items-center justify-between">
-                  <h5 class="text-[11px] text-slate-400 tracking-[0.16em] font-semibold uppercase">
-                    最近消息
-                  </h5>
-                  <span class="text-[10px] text-slate-500">
-                    最近 {{ canvasAiMessages.length }} 条
-                  </span>
-                </div>
-
-                <div class="mt-3 space-y-3">
-                  <article
-                    v-for="(message, index) in canvasAiMessages"
-                    :key="`canvas-ai-message-${index}`"
-                    class="px-3 py-3 border rounded-2xl"
-                    :class="message.role === 'assistant'
-                      ? 'border-slate-200 bg-white/95 text-slate-800'
-                      : 'border-sky-500/30 bg-sky-500/10 text-sky-100'"
-                  >
-                    <div class="text-[10px] tracking-[0.16em] font-semibold mb-2 opacity-70 uppercase">
-                      {{ message.role === 'assistant' ? 'AI' : '你' }}
-                    </div>
-                    <WorkspaceAssistantMessageContent
-                      v-if="message.role === 'assistant'"
-                      :message="message"
-                      @open-resource="emit('openResource', $event)"
-                    />
-                    <p
-                      v-else
-                      class="text-xs leading-6 whitespace-pre-wrap break-words"
-                    >
-                      {{ message.content }}
-                    </p>
-                  </article>
-                </div>
-              </div>
-            </div>
+            <WorkspaceDesignDiagramCanvasAiPanel
+              v-model:template="canvasAiTemplate"
+              v-model:prompt="canvasAiPrompt"
+              :input-disabled="canvasAiInputDisabled"
+              :running="canvasAiRunning"
+              :preview-pending="canvasAiPreviewPending"
+              :status-label="canvasAiStatusLabel"
+              :status-class="canvasAiStatusClass"
+              :error-text="canvasAiError"
+              :runtime-error-text="canvasAiRuntimeError"
+              :messages="canvasAiMessages"
+              :generate-enabled="isCanvasAiActionEnabled('generate')"
+              :complete-enabled="isCanvasAiActionEnabled('complete')"
+              :refine-enabled="isCanvasAiActionEnabled('refine')"
+              :generate-title="buildCanvasAiUnavailableMessage('generate')"
+              :complete-title="buildCanvasAiUnavailableMessage('complete')"
+              :refine-title="buildCanvasAiUnavailableMessage('refine')"
+              @run-action="runCanvasAssist"
+              @open-resource="emit('openResource', $event)"
+            />
 
             <label class="mt-4 block space-y-1">
               <span class="text-xs text-slate-300 font-semibold">源文本</span>

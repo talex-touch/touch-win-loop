@@ -208,13 +208,14 @@ function normalizeLiveKitWebhookBody(rawBody: Record<string, unknown>): Provider
   }
 
   if (eventName === 'egress_ended') {
-    const status = normalizeString(egressInfo.status).toLowerCase()
     const artifact = buildRecordingArtifactFromLiveKitEgress(egressInfo)
+    const hasArtifact = Boolean(
+      normalizeString(artifact.downloadUrl)
+      || normalizeString(artifact.localFilePath),
+    )
     return {
       provider,
-      eventType: status.includes('complete') && (normalizeString(artifact.downloadUrl) || normalizeString(artifact.localFilePath))
-        ? 'recording_ready'
-        : 'recording_failed',
+      eventType: hasArtifact ? 'recording_ready' : 'recording_failed',
       meetingId,
       roomId,
       roomName,

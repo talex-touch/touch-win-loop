@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { it } from 'vitest'
 
-const WORKSPACE_ORCHESTRATOR_FILE = resolve(process.cwd(), 'server/services/ai/workspace-orchestrator.ts')
+const WORKSPACE_AGENT_STREAM_FILE = resolve(process.cwd(), 'server/services/ai/workspace-agent-stream.ts')
 
 function toAsyncIterable(items) {
   return {
@@ -18,7 +18,7 @@ it('工作台 agent stream 只把可见文本 chunk 透传为 delta，并忽略�
   const {
     consumeWorkspaceAgentStream,
     extractWorkspaceStreamTextChunk,
-  } = await import(pathToFileURL(WORKSPACE_ORCHESTRATOR_FILE).href)
+  } = await import(pathToFileURL(WORKSPACE_AGENT_STREAM_FILE).href)
 
   assert.equal(extractWorkspaceStreamTextChunk({
     content: '',
@@ -104,7 +104,7 @@ it('工作台 agent stream 只把可见文本 chunk 透传为 delta，并忽略�
 })
 
 it('工作台 agent stream 在缺少 LangGraph 收尾时，会回退到已流出的正文，同时保留提案结果', async () => {
-  const { consumeWorkspaceAgentStream } = await import(pathToFileURL(WORKSPACE_ORCHESTRATOR_FILE).href)
+  const { consumeWorkspaceAgentStream } = await import(pathToFileURL(WORKSPACE_AGENT_STREAM_FILE).href)
 
   const result = await consumeWorkspaceAgentStream({
     stream: toAsyncIterable([

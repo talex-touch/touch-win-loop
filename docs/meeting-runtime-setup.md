@@ -117,6 +117,9 @@ pnpm meeting:asr:dev
 如果额外提供：
 
 - `MEETING_ASR_DEV_TRANSCRIBE_URL`
+- `MEETING_ASR_DEV_TRANSCRIBE_MODEL`
+- `MEETING_ASR_DEV_TRANSCRIBE_MODEL_FALLBACKS`
+- `MEETING_ASR_DEV_TRANSCRIBE_LANGUAGE`
 - `MEETING_ASR_DEV_CALLBACK_URL`
 - `MEETING_ASR_DEV_CALLBACK_SECRET`
 
@@ -125,6 +128,24 @@ pnpm meeting:asr:dev
 - `/api/internal/meetings/asr-events`
 
 这样可以在不改应用主架构的前提下，把本地联调提升到“真媒体 + 真识别结果回调”。
+
+推荐开发态默认接法：
+
+```bash
+MEETING_ASR_DEV_TRANSCRIBE_URL="https://api.groq.com/openai/v1/audio/transcriptions" \
+MEETING_ASR_DEV_TRANSCRIBE_MODEL="whisper-large-v3-turbo" \
+MEETING_ASR_DEV_TRANSCRIBE_MODEL_FALLBACKS="whisper-large-v3" \
+MEETING_ASR_DEV_TRANSCRIBE_LANGUAGE="zh" \
+MEETING_ASR_DEV_TRANSCRIBE_API_KEY="<GROQ_API_KEY>" \
+MEETING_ASR_DEV_CALLBACK_URL="http://127.0.0.1:3510/api/internal/meetings/asr-events" \
+pnpm meeting:asr:dev
+```
+
+说明：
+
+- 当前 bridge 默认模型已调整为 `whisper-large-v3-turbo`
+- 若未显式指定 fallback，且上游是 Groq，则会自动按 `whisper-large-v3-turbo -> whisper-large-v3` 回退
+- 后续若要私有化，只需要替换 bridge 背后的转写上游，不需要改后台 `provider=http` / `serviceUrl=http://127.0.0.1:8790`
 
 ## 推荐落地方式
 

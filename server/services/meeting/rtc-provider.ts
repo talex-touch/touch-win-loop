@@ -61,6 +61,13 @@ export interface RtcProviderGateway {
     meetingId: string
     mode: 'audio' | 'video'
   }) => Promise<RtcProviderRecordingSession>
+  stopRecording: (input: {
+    recordingId: string
+    roomName?: string
+  }) => Promise<RtcProviderRecordingSession>
+  deleteRoom: (input: {
+    roomName: string
+  }) => Promise<RtcProviderRoom>
   resolveRecordingArtifact: (input: {
     meetingMetadata?: Record<string, unknown>
     eventPayload?: Record<string, unknown>
@@ -498,6 +505,63 @@ function createLiveKitGateway(runtime: RuntimeSettings): RtcProviderGateway {
           outputPath,
           webhookUrl,
           mode: input.mode,
+        },
+      }
+    },
+    async stopRecording(input) {
+      assertLiveKitConfig()
+      const recordingId = normalizeString(input.recordingId)
+      if (!recordingId)
+        throw new Error('MEETING_RECORDING_ID_MISSING')
+
+      const roomName = normalizeString(input.roomName)
+      const token = createAccessToken({
+        subject: `server-recording-stop-${randomUUID().slice(0, 8)}`,
+        grants: {
+          roomRecord: true,
+          ...(roomName
+            ? {
+                roomAdmin: true,
+                room: roomName,
+              }
+            : {}),
+        },
+        expiresInSeconds: 10 * 60,
+      })
+      const response = await postJson<Record<string, unknown>>(`${serverUrl}/twirp/livekit.Egress/StopEgress`, {
+        egressId: recordingId,
+      }, token)
+      const egressInfo = normalizeRecord(response.egressInfo ?? response.egress_info ?? response)
+      return {
+        recordingId,
+        metadata: {
+          provider: 'livekit',
+          roomName,
+          egressInfo,
+        },
+      }
+    },
+    async deleteRoom(input) {
+      assertLiveKitConfig()
+      const roomName = normalizeString(input.roomName)
+      if (!roomName)
+        throw new Error('MEETING_ROOM_NAME_MISSING')
+
+      const token = createAccessToken({
+        subject: `server-room-delete-${randomUUID().slice(0, 8)}`,
+        grants: {
+          roomCreate: true,
+        },
+        expiresInSeconds: 10 * 60,
+      })
+      await postJson<Record<string, unknown>>(`${serverUrl}/twirp/livekit.RoomService/DeleteRoom`, {
+        room: roomName,
+      }, token)
+      return {
+        roomId: roomName,
+        roomName,
+        metadata: {
+          provider: 'livekit',
         },
       }
     },

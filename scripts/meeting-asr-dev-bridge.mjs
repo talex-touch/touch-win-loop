@@ -33,6 +33,31 @@ function parseJsonObject(raw) {
   return raw
 }
 
+function splitCsvLikeText(value) {
+  return String(value || '')
+    .split(/[,\n]/)
+    .map(item => normalizeText(item))
+    .filter(Boolean)
+}
+
+function dedupeTexts(items) {
+  return [...new Set(items.map(item => normalizeText(item)).filter(Boolean))]
+}
+
+function resolveTranscribeModelCandidates(primaryModel, fallbackModels, endpoint) {
+  const normalizedPrimary = normalizeText(primaryModel || 'whisper-large-v3-turbo')
+  const manualFallbacks = splitCsvLikeText(fallbackModels)
+  if (manualFallbacks.length > 0)
+    return dedupeTexts([normalizedPrimary, ...manualFallbacks])
+
+  const normalizedEndpoint = normalizeText(endpoint).toLowerCase()
+  const defaultFallbacks = normalizedEndpoint.includes('api.groq.com/openai/v1/audio/transcriptions')
+    ? ['whisper-large-v3']
+    : []
+
+  return dedupeTexts([normalizedPrimary, ...defaultFallbacks])
+}
+
 function parsePcmMimeType(rawMimeType) {
   const normalized = normalizeText(rawMimeType).toLowerCase()
   const rateMatch = normalized.match(/(?:^|[;\s])rate=(\d+)/)
@@ -159,6 +184,9 @@ const { values } = parseArgs({
     'transcribe-model': {
       type: 'string',
     },
+    'transcribe-model-fallbacks': {
+      type: 'string',
+    },
     'transcribe-language': {
       type: 'string',
     },
@@ -182,8 +210,10 @@ const logFrames = Boolean(values['log-frames'] || normalizeText(process.env.MEET
 const logTranscripts = Boolean(values['log-transcripts'] || normalizeText(process.env.MEETING_ASR_DEV_LOG_TRANSCRIPTS).toLowerCase() === 'true')
 const transcribeUrl = normalizeText(values['transcribe-url'] || process.env.MEETING_ASR_DEV_TRANSCRIBE_URL)
 const transcribeApiKey = normalizeText(values['transcribe-api-key'] || process.env.MEETING_ASR_DEV_TRANSCRIBE_API_KEY)
-const transcribeModel = normalizeText(values['transcribe-model'] || process.env.MEETING_ASR_DEV_TRANSCRIBE_MODEL || 'whisper-1')
-const transcribeLanguage = normalizeText(values['transcribe-language'] || process.env.MEETING_ASR_DEV_TRANSCRIBE_LANGUAGE)
+const transcribeModel = normalizeText(values['transcribe-model'] || process.env.MEETING_ASR_DEV_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo')
+const transcribeModelFallbacks = normalizeText(values['transcribe-model-fallbacks'] || process.env.MEETING_ASR_DEV_TRANSCRIBE_MODEL_FALLBACKS)
+const transcribeModelCandidates = resolveTranscribeModelCandidates(transcribeModel, transcribeModelFallbacks, transcribeUrl)
+const transcribeLanguage = normalizeText(values['transcribe-language'] || process.env.MEETING_ASR_DEV_TRANSCRIBE_LANGUAGE || 'zh')
 const callbackUrl = normalizeText(values['callback-url'] || process.env.MEETING_ASR_DEV_CALLBACK_URL)
 const callbackSecret = normalizeText(values['callback-secret'] || process.env.MEETING_ASR_DEV_CALLBACK_SECRET)
 const minChunkMs = toInteger(values['min-chunk-ms'] || process.env.MEETING_ASR_DEV_MIN_CHUNK_MS, 4000, 500, 60000)
@@ -232,34 +262,49 @@ function getOrCreateParticipantState(session, participantIdentity, mimeType) {
 }
 
 async function transcribeAudioChunk(input) {
-  const formData = new FormData()
-  formData.set('model', transcribeModel)
-  if (transcribeLanguage)
-    formData.set('language', transcribeLanguage)
-  formData.set(
-    'file',
-    new Blob([input.wavBuffer], { type: 'audio/wav' }),
-    `${input.sessionId}-${input.participantIdentity}-${input.eventSeq}.wav`,
-  )
+  let lastError = null
 
-  const response = await fetch(transcribeUrl, {
-    method: 'POST',
-    headers: {
-      authorization: transcribeApiKey ? `Bearer ${transcribeApiKey}` : '',
-    },
-    body: formData,
-  })
+  for (const model of transcribeModelCandidates) {
+    const formData = new FormData()
+    formData.set('model', model)
+    if (transcribeLanguage)
+      formData.set('language', transcribeLanguage)
+    formData.set(
+      'file',
+      new Blob([input.wavBuffer], { type: 'audio/wav' }),
+      `${input.sessionId}-${input.participantIdentity}-${input.eventSeq}.wav`,
+    )
 
-  if (!response.ok) {
-    const errorText = normalizeText(await response.text().catch(() => ''))
-    throw new Error(`TRANSCRIBE_HTTP_${response.status}${errorText ? `:${errorText}` : ''}`)
+    try {
+      const response = await fetch(transcribeUrl, {
+        method: 'POST',
+        headers: {
+          authorization: transcribeApiKey ? `Bearer ${transcribeApiKey}` : '',
+        },
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const errorText = normalizeText(await response.text().catch(() => ''))
+        throw new Error(`TRANSCRIBE_HTTP_${response.status}${errorText ? `:${errorText}` : ''}`)
+      }
+
+      const payload = parseJsonObject(await response.json().catch(() => ({})))
+      return {
+        text: normalizeText(payload.text),
+        language: normalizeText(payload.language || transcribeLanguage),
+        model,
+      }
+    }
+    catch (error) {
+      lastError = error
+      if (model !== transcribeModelCandidates.at(-1)) {
+        console.warn(`[meeting-asr-dev-bridge] transcribe model fallback from=${model} reason=${error instanceof Error ? normalizeText(error.message) : 'unknown_error'}`)
+      }
+    }
   }
 
-  const payload = parseJsonObject(await response.json().catch(() => ({})))
-  return {
-    text: normalizeText(payload.text),
-    language: normalizeText(payload.language || transcribeLanguage),
-  }
+  throw lastError || new Error('TRANSCRIBE_FAILED')
 }
 
 async function emitCaptionEvent(input) {
@@ -346,7 +391,7 @@ async function flushParticipantChunks(session, participant, options = {}) {
 
     if (logTranscripts) {
       console.log(
-        `[meeting-asr-dev-bridge] transcript session=${session.sessionId} participant=${participant.participantIdentity} window=${startAtMs}-${endAtMs} text=${JSON.stringify(text)}`,
+        `[meeting-asr-dev-bridge] transcript session=${session.sessionId} participant=${participant.participantIdentity} model=${transcript.model} window=${startAtMs}-${endAtMs} text=${JSON.stringify(text)}`,
       )
     }
   }
@@ -388,6 +433,7 @@ const server = createServer(async (request, response) => {
       authRequired: Boolean(apiKey),
       transcriptionEnabled,
       transcribeUrlConfigured: Boolean(transcribeUrl),
+      transcribeModels: transcribeModelCandidates,
       callbackUrlConfigured: Boolean(callbackUrl),
       minChunkMs,
     })
@@ -575,8 +621,9 @@ const server = createServer(async (request, response) => {
 server.listen(port, host, () => {
   const authLabel = apiKey ? 'enabled' : 'disabled'
   const transcriptionLabel = transcriptionEnabled ? 'enabled' : 'disabled'
+  const transcribeModelsLabel = transcribeModelCandidates.length > 0 ? transcribeModelCandidates.join(' -> ') : 'none'
   console.log(
-    `[meeting-asr-dev-bridge] listening on http://${host}:${port} (auth=${authLabel}, bodyLimit=${Math.round(bodyLimitBytes / 1024 / 1024)}MB, transcription=${transcriptionLabel}, minChunkMs=${minChunkMs})`,
+    `[meeting-asr-dev-bridge] listening on http://${host}:${port} (auth=${authLabel}, bodyLimit=${Math.round(bodyLimitBytes / 1024 / 1024)}MB, transcription=${transcriptionLabel}, models=${transcribeModelsLabel}, minChunkMs=${minChunkMs})`,
   )
 })
 

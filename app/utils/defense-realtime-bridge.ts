@@ -11,13 +11,13 @@ import type {
 } from '~/utils/defense-realtime-media-controller'
 
 export interface DefenseRealtimeProviderBridge {
-  bootstrap(): Promise<DefenseRealtimeBootstrapPayload>
-  connect(mediaController: DefenseRealtimeMediaController): Promise<void>
-  disconnect(): Promise<void>
-  interrupt(): Promise<void>
-  setAudioEnabled(enabled: boolean): Promise<void>
-  setVideoEnabled(enabled: boolean): Promise<void>
-  onEvent(listener: (event: DefenseRealtimeNormalizedEvent) => void): () => void
+  bootstrap: () => Promise<DefenseRealtimeBootstrapPayload>
+  connect: (mediaController: DefenseRealtimeMediaController) => Promise<void>
+  disconnect: () => Promise<void>
+  interrupt: () => Promise<void>
+  setAudioEnabled: (enabled: boolean) => Promise<void>
+  setVideoEnabled: (enabled: boolean) => Promise<void>
+  onEvent: (listener: (event: DefenseRealtimeNormalizedEvent) => void) => () => void
 }
 
 function normalizeString(value: unknown): string {
@@ -530,6 +530,8 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
 
   private buildQwenStartPayload(): Record<string, unknown> {
     const personaPack = this.payload.personaPack
+    const workspaceId = normalizeString(this.payload.qwen?.workspaceId)
+    const appId = normalizeString(this.payload.qwen?.appId)
     return {
       header: {
         action: 'run-task',
@@ -543,8 +545,8 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
         model: 'multimodal-dialog',
         input: {
           directive: 'Start',
-          workspace_id: normalizeString(this.payload.qwen?.workspaceId),
-          app_id: normalizeString(this.payload.qwen?.appId),
+          ...(workspaceId ? { workspace_id: workspaceId } : {}),
+          ...(appId ? { app_id: appId } : {}),
         },
         parameters: {
           upstream: {

@@ -14,7 +14,8 @@ const REALTIME_EVENTS_FILE = resolve(process.cwd(), 'server/utils/realtime-event
 const REALTIME_HUB_FILE = resolve(process.cwd(), 'server/utils/realtime-hub.ts')
 const REALTIME_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceRealtime.ts')
 const SCHEMA_FILE = resolve(process.cwd(), 'server/database/bootstrap/schema.ts')
-const MEETING_TYPES_FILE = resolve(process.cwd(), 'shared/types/meeting.ts')
+const DOMAIN_EXPORTS_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
+const DOMAIN_TYPES_FILE = resolve(process.cwd(), 'internal/shared-types/domain-legacy.ts')
 const PROJECT_MEETINGS_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceProjectMeetings.ts')
 const WORKSPACE_SHELL_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceProjectShell.ts')
 const README_FILE = resolve(process.cwd(), 'README.md')
@@ -37,22 +38,24 @@ const API_FILES = [
 ]
 
 it('会议领域模型、数据库表与实时事件已接入项目工作区', async () => {
-  const [meetingTypeSource, schemaSource, realtimeSource, realtimeHubSource, realtimeComposableSource] = await Promise.all([
-    readFile(MEETING_TYPES_FILE, 'utf8'),
+  const [domainExportsSource, meetingTypeSource, schemaSource, realtimeSource, realtimeHubSource, realtimeComposableSource] = await Promise.all([
+    readFile(DOMAIN_EXPORTS_FILE, 'utf8'),
+    readFile(DOMAIN_TYPES_FILE, 'utf8'),
     readFile(SCHEMA_FILE, 'utf8'),
     readFile(REALTIME_EVENTS_FILE, 'utf8'),
     readFile(REALTIME_HUB_FILE, 'utf8'),
     readFile(REALTIME_COMPOSABLE_FILE, 'utf8'),
   ])
 
-  assert.match(meetingTypeSource, /ProjectMeeting,/, '缺少 ProjectMeeting 领域模型导出')
-  assert.match(meetingTypeSource, /ProjectMeetingDetail,/, '缺少 ProjectMeetingDetail 领域模型导出')
-  assert.match(meetingTypeSource, /ProjectMeetingInvitee,/, '缺少 ProjectMeetingInvitee 领域模型导出')
-  assert.match(meetingTypeSource, /ProjectMeetingUtterance,/, '缺少 ProjectMeetingUtterance 领域模型导出')
-  assert.match(meetingTypeSource, /ProjectMeetingGuestShare,/, '缺少 ProjectMeetingGuestShare 领域模型导出')
-  assert.match(meetingTypeSource, /SharedProjectMeetingSnapshot,/, '缺少 SharedProjectMeetingSnapshot 领域模型导出')
-  assert.match(meetingTypeSource, /ProjectMeetingGuestJoinSession,/, '缺少 ProjectMeetingGuestJoinSession 领域模型导出')
-  assert.match(meetingTypeSource, /ProjectMeetingStatus,/, '会议状态导出缺失')
+  assert.match(domainExportsSource, /export \* from '\.\.\/\.\.\/internal\/shared-types\/domain-legacy'/, 'shared/types/domain.ts 未继续聚合会议领域类型导出')
+  assert.match(meetingTypeSource, /export interface ProjectMeeting \{/, '缺少 ProjectMeeting 领域模型导出')
+  assert.match(meetingTypeSource, /export interface ProjectMeetingDetail extends ProjectMeeting \{/, '缺少 ProjectMeetingDetail 领域模型导出')
+  assert.match(meetingTypeSource, /export interface ProjectMeetingInvitee \{/, '缺少 ProjectMeetingInvitee 领域模型导出')
+  assert.match(meetingTypeSource, /export interface ProjectMeetingUtterance \{/, '缺少 ProjectMeetingUtterance 领域模型导出')
+  assert.match(meetingTypeSource, /export interface ProjectMeetingGuestShare \{/, '缺少 ProjectMeetingGuestShare 领域模型导出')
+  assert.match(meetingTypeSource, /export interface SharedProjectMeetingSnapshot \{/, '缺少 SharedProjectMeetingSnapshot 领域模型导出')
+  assert.match(meetingTypeSource, /export interface ProjectMeetingGuestJoinSession \{/, '缺少 ProjectMeetingGuestJoinSession 领域模型导出')
+  assert.match(meetingTypeSource, /export type ProjectMeetingStatus = 'scheduled' \| 'active' \| 'ended' \| 'failed'/, '会议状态导出缺失')
   assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS project_meetings\b/, '缺少 project_meetings 表')
   assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS project_meeting_invitees\b/, '缺少 project_meeting_invitees 表')
   assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS project_meeting_participants\b/, '缺少 project_meeting_participants 表')

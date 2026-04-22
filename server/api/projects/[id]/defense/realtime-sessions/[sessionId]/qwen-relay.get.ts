@@ -7,7 +7,8 @@ import {
 } from '~~/server/utils/auth'
 import { getAiChatSessionById } from '~~/server/utils/chat-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { resolveDefenseRealtimeQwenApiKey } from '~~/server/utils/defense-realtime'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { findAuthBySessionTokenHash } from '~~/server/utils/platform-store'
 import { getProjectDefenseSessionState } from '~~/server/utils/project-defense-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
@@ -183,8 +184,9 @@ export default defineWebSocketHandler({
       return
     }
 
-    const runtime = readRuntimeSettings()
-    if (!normalizeString(runtime.defenseRealtime.qwen.apiKey) || !normalizeString(runtime.defenseRealtime.qwen.baseWsUrl)) {
+    const { runtime } = await readEffectiveRuntimeSettings()
+    const qwenApiKey = resolveDefenseRealtimeQwenApiKey(runtime)
+    if (!qwenApiKey || !normalizeString(runtime.defenseRealtime.qwen.baseWsUrl)) {
       safeClose(peer, 4503, 'qwen_config_missing')
       return
     }
@@ -220,7 +222,7 @@ export default defineWebSocketHandler({
     }
     const upstream = new UpstreamWebSocket(runtime.defenseRealtime.qwen.baseWsUrl, {
       headers: {
-        Authorization: `Bearer ${runtime.defenseRealtime.qwen.apiKey}`,
+        Authorization: `Bearer ${qwenApiKey}`,
       },
     })
     upstream.binaryType = 'arraybuffer'

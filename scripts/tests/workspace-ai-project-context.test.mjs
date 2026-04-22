@@ -6,14 +6,14 @@ import { it } from 'vitest'
 const WORKSPACE_DETAIL_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
 const WORKSPACE_STREAM_API_FILE = resolve(process.cwd(), 'server/api/ai/workspace/stream.post.ts')
 const WORKSPACE_ORCHESTRATOR_FILE = resolve(process.cwd(), 'server/services/ai/workspace-orchestrator.ts')
-const DOMAIN_LEGACY_FILE = resolve(process.cwd(), 'shared/types/domain-legacy.ts')
+const DOMAIN_TYPES_FILE = resolve(process.cwd(), 'internal/shared-types/domain-legacy.ts')
 
 it('工作台对话会把当前打开项目显式注入 AI 上下文，并用项目级进度文案替代空泛会话提示', async () => {
   const [workspaceSource, streamSource, orchestratorSource, domainSource] = await Promise.all([
     readFile(WORKSPACE_DETAIL_FILE, 'utf8'),
     readFile(WORKSPACE_STREAM_API_FILE, 'utf8'),
     readFile(WORKSPACE_ORCHESTRATOR_FILE, 'utf8'),
-    readFile(DOMAIN_LEGACY_FILE, 'utf8'),
+    readFile(DOMAIN_TYPES_FILE, 'utf8'),
   ])
 
   assert.match(domainSource, /projectTitle\?: string/, '工作台 AI 请求类型缺少 projectTitle 上下文字段')

@@ -198,6 +198,24 @@ export default defineNuxtConfig({
         maxAttempts: resolveEnvNumber('WINLOOP_MEETING_WORKER_MAX_ATTEMPTS', 5),
       },
     },
+    defenseRealtime: {
+      qwen: {
+        baseWsUrl: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_QWEN_BASE_WS_URL', 'wss://dashscope.aliyuncs.com/api-ws/v1/inference'),
+        apiKey: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_QWEN_API_KEY', ''),
+        workspaceId: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_QWEN_WORKSPACE_ID', ''),
+        appId: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_QWEN_APP_ID', ''),
+        voice: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_QWEN_VOICE', ''),
+        frameIntervalMs: resolveEnvNumber('WINLOOP_DEFENSE_REALTIME_QWEN_FRAME_INTERVAL_MS', 1000),
+      },
+      coze: {
+        baseUrl: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_COZE_BASE_URL', 'https://api.coze.cn'),
+        botId: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_COZE_BOT_ID', ''),
+        connectorId: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_COZE_CONNECTOR_ID', ''),
+        voiceId: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_COZE_VOICE_ID', ''),
+        authMode: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_COZE_AUTH_MODE', 'pat'),
+        patOrOauthSecret: resolveEnvValue('WINLOOP_DEFENSE_REALTIME_COZE_PAT_OR_OAUTH_SECRET', ''),
+      },
+    },
     secureConfig: {
       masterKey: resolveEnvValue('WINLOOP_CONFIG_MASTER_KEY', ''),
     },

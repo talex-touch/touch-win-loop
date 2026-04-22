@@ -30,6 +30,7 @@ import {
   resolveDesignPageWorkspaceBackground,
 } from '~~/shared/utils/scene-document'
 import { resolveWorkspaceCollabPresenceInitial } from '~/components/workspace/collab/presence'
+import WorkspaceDesignCanvasCollabOverlay from './WorkspaceDesignCanvasCollabOverlay.vue'
 
 const props = withDefaults(defineProps<{
   page?: DesignPageModel | null
@@ -260,6 +261,7 @@ interface ElementDragSession {
   }
   isMultiSelect: boolean
   items: ElementDragItem[]
+  previewPatches: Record<string, Partial<DesignElementModel>>
 }
 
 interface ElementResizeSession {
@@ -272,12 +274,14 @@ interface ElementResizeSession {
   historyMergeKey: string
   item: {
     elementId: string
+    label: string
     type: DesignElementModel['type']
     x: number
     y: number
     width: number
     height: number
   }
+  previewPatch: Partial<DesignElementModel> | null
 }
 
 type FrameResizeSession = {
@@ -359,6 +363,7 @@ type ElementRotationSession = {
   startClientY: number
   startPointerAngle: number
   startRotation: number
+  previewRotation: number
   startCenterX: number
   startCenterY: number
   moved: boolean
@@ -407,6 +412,8 @@ type MockupScreenDragSession = {
   startClientY: number
   startOffsetX: number
   startOffsetY: number
+  previewOffsetX: number
+  previewOffsetY: number
   moved: boolean
 }
 
@@ -451,6 +458,8 @@ const viewport = ref<ViewportState>({
   y: Number(props.viewportY || 0),
   zoom: clampCanvasZoom(props.viewportZoom),
 })
+const transientElementPatches = ref<Record<string, Partial<DesignElementModel>>>({})
+const transientFramePatches = ref<Record<string, Partial<DesignFrameModel>>>({})
 const rootClientSize = ref<RootClientSize>({
   width: 0,
   height: 0,
@@ -485,6 +494,139 @@ let zoomControlRestingTimer: ReturnType<typeof setTimeout> | null = null
 let zoomControlDormantTimer: ReturnType<typeof setTimeout> | null = null
 let suppressElementClick = false
 let suppressFrameClick = false
+let transientElementPatchFrame: number | null = null
+let transientFramePatchFrame: number | null = null
+let pendingTransientElementPatches: Record<string, Partial<DesignElementModel>> | null = null
+let pendingTransientFramePatches: Record<string, Partial<DesignFrameModel>> | null = null
+
+function cloneDesignElementPoints(points: DesignElementModel['points']) {
+  return points?.map(point => ({ ...point }))
+}
+
+function mergeElementPreviewPatch(
+  element: DesignElementModel,
+  patch: Partial<DesignElementModel> | undefined,
+): DesignElementModel {
+  if (!patch)
+    return element
+
+  return {
+    ...element,
+    ...patch,
+    points: patch.points ? cloneDesignElementPoints(patch.points) : element.points,
+    style: patch.style
+      ? {
+          ...(element.style || {}),
+          ...patch.style,
+        }
+      : element.style,
+    metadata: patch.metadata
+      ? {
+          ...(element.metadata || {}),
+          ...patch.metadata,
+        }
+      : element.metadata,
+  }
+}
+
+function mergeFramePreviewPatch(
+  frame: DesignFrameModel,
+  patch: Partial<DesignFrameModel> | undefined,
+): DesignFrameModel {
+  if (!patch)
+    return frame
+
+  return {
+    ...frame,
+    ...patch,
+    themeTokens: patch.themeTokens
+      ? {
+          ...(frame.themeTokens || {}),
+          ...patch.themeTokens,
+        }
+      : frame.themeTokens,
+    metadata: patch.metadata
+      ? {
+          ...(frame.metadata || {}),
+          ...patch.metadata,
+          device: patch.metadata.device
+            ? {
+                ...(frame.metadata?.device || {}),
+                ...patch.metadata.device,
+                screenTransform: patch.metadata.device.screenTransform
+                  ? {
+                      ...(frame.metadata?.device?.screenTransform || {}),
+                      ...patch.metadata.device.screenTransform,
+                    }
+                  : frame.metadata?.device?.screenTransform,
+              }
+            : frame.metadata?.device,
+        }
+      : frame.metadata,
+  }
+}
+
+function flushTransientElementPatches(): void {
+  if (transientElementPatchFrame !== null) {
+    cancelAnimationFrame(transientElementPatchFrame)
+    transientElementPatchFrame = null
+  }
+  transientElementPatches.value = pendingTransientElementPatches || {}
+  pendingTransientElementPatches = null
+}
+
+function flushTransientFramePatches(): void {
+  if (transientFramePatchFrame !== null) {
+    cancelAnimationFrame(transientFramePatchFrame)
+    transientFramePatchFrame = null
+  }
+  transientFramePatches.value = pendingTransientFramePatches || {}
+  pendingTransientFramePatches = null
+}
+
+function scheduleTransientElementPatches(
+  patches: Record<string, Partial<DesignElementModel>>,
+): void {
+  pendingTransientElementPatches = patches
+  if (transientElementPatchFrame !== null)
+    return
+  transientElementPatchFrame = window.requestAnimationFrame(() => {
+    transientElementPatchFrame = null
+    transientElementPatches.value = pendingTransientElementPatches || {}
+    pendingTransientElementPatches = null
+  })
+}
+
+function scheduleTransientFramePatches(
+  patches: Record<string, Partial<DesignFrameModel>>,
+): void {
+  pendingTransientFramePatches = patches
+  if (transientFramePatchFrame !== null)
+    return
+  transientFramePatchFrame = window.requestAnimationFrame(() => {
+    transientFramePatchFrame = null
+    transientFramePatches.value = pendingTransientFramePatches || {}
+    pendingTransientFramePatches = null
+  })
+}
+
+function clearTransientElementPatches(): void {
+  pendingTransientElementPatches = null
+  if (transientElementPatchFrame !== null) {
+    cancelAnimationFrame(transientElementPatchFrame)
+    transientElementPatchFrame = null
+  }
+  transientElementPatches.value = {}
+}
+
+function clearTransientFramePatches(): void {
+  pendingTransientFramePatches = null
+  if (transientFramePatchFrame !== null) {
+    cancelAnimationFrame(transientFramePatchFrame)
+    transientFramePatchFrame = null
+  }
+  transientFramePatches.value = {}
+}
 
 const resolvedPageId = computed(() => {
   return normalizeString(props.page?.id) || normalizeString(props.frames[0]?.pageId) || 'page-1'
@@ -498,12 +640,14 @@ const normalizedFrames = computed<DesignFrameModel[]>(() => {
     if (!frameId || seenIds.has(frameId))
       continue
     seenIds.add(frameId)
-    nextFrames.push(frame)
+    nextFrames.push(
+      mergeFramePreviewPatch(frame, transientFramePatches.value[frameId]),
+    )
   }
   return nextFrames
 })
 
-const compositionElements = computed<DesignElementModel[]>(() => {
+const previewPageRootElements = computed<DesignElementModel[]>(() => {
   const nextElements: DesignElementModel[] = []
   const seenIds = new Set<string>()
 
@@ -512,21 +656,61 @@ const compositionElements = computed<DesignElementModel[]>(() => {
     if (!elementId || seenIds.has(elementId))
       continue
     seenIds.add(elementId)
+    nextElements.push(
+      mergeElementPreviewPatch(
+        element,
+        transientElementPatches.value[elementId],
+      ),
+    )
+  }
+
+  return nextElements
+})
+
+const previewFrameElementsById = computed<Record<string, DesignElementModel[]>>(() => {
+  return Object.fromEntries(
+    normalizedFrames.value.map((frame) => {
+      const frameElements = props.frameElements[frame.id] || frame.elements || []
+      return [
+        frame.id,
+        frameElements
+          .map((element) => {
+            const elementId = normalizeString(element.id)
+            return mergeElementPreviewPatch(
+              {
+                ...element,
+                pageId: normalizeString(element.pageId) || frame.pageId,
+                frameId: normalizeString(element.frameId) || frame.id,
+              },
+              transientElementPatches.value[elementId],
+            )
+          })
+          .filter(element => Boolean(normalizeString(element.id))),
+      ] as const
+    }),
+  )
+})
+
+const compositionElements = computed<DesignElementModel[]>(() => {
+  const nextElements: DesignElementModel[] = []
+  const seenIds = new Set<string>()
+
+  for (const element of previewPageRootElements.value) {
+    const elementId = normalizeString(element.id)
+    if (!elementId || seenIds.has(elementId))
+      continue
+    seenIds.add(elementId)
     nextElements.push(element)
   }
 
   for (const frame of normalizedFrames.value) {
-    const frameElements = props.frameElements[frame.id] || frame.elements || []
+    const frameElements = previewFrameElementsById.value[frame.id] || []
     for (const element of frameElements) {
       const elementId = normalizeString(element.id)
       if (!elementId || seenIds.has(elementId))
         continue
       seenIds.add(elementId)
-      nextElements.push({
-        ...element,
-        pageId: normalizeString(element.pageId) || frame.pageId,
-        frameId: normalizeString(element.frameId) || frame.id,
-      })
+      nextElements.push(element)
     }
   }
 
@@ -585,7 +769,7 @@ const pageRootThemeTokens = computed<Record<string, string>>(() => {
 })
 
 const pageRootElementPreviewItems = computed<PageRootElementPreviewItem[]>(() => {
-  return (props.pageRootElements || [])
+  return previewPageRootElements.value
     .filter(element => !element.hidden)
     .map((element, index) => {
       const rect = resolveDesignElementAbsoluteRect(element)
@@ -1000,9 +1184,22 @@ const currentEditingOwnerFrame = computed(() => {
   const displayFrameId = currentEditingDisplayFrameId.value
   const ownerFrameId = normalizeString(props.selectionState.editingFrameId)
   if (displayFrameId && props.frameOwnerFrames[displayFrameId])
-    return props.frameOwnerFrames[displayFrameId] || null
-  if (ownerFrameId)
-    return normalizedFrames.value.find(frame => frame.id === ownerFrameId) || null
+    return mergeFramePreviewPatch(
+      props.frameOwnerFrames[displayFrameId]!,
+      transientFramePatches.value[normalizeString(props.frameOwnerFrames[displayFrameId]?.id)],
+    ) || null
+  if (ownerFrameId) {
+    const visibleOwnerFrame = normalizedFrames.value.find(frame => frame.id === ownerFrameId)
+    if (visibleOwnerFrame)
+      return visibleOwnerFrame
+    const rawOwnerFrame = props.frameOwnerFrames[ownerFrameId]
+    return rawOwnerFrame
+      ? mergeFramePreviewPatch(
+          rawOwnerFrame,
+          transientFramePatches.value[ownerFrameId],
+        )
+      : null
+  }
   return currentEditingDisplayFrame.value
 })
 
@@ -1012,7 +1209,13 @@ const activeMockupScreenEditingLayout = computed(() => {
     return null
 
   const displayFrame = normalizedFrames.value.find(frame => frame.id === displayFrameId) || null
-  const ownerFrame = props.frameOwnerFrames[displayFrameId] || displayFrame
+  const rawOwnerFrame = props.frameOwnerFrames[displayFrameId] || displayFrame
+  const ownerFrame = rawOwnerFrame
+    ? mergeFramePreviewPatch(
+        rawOwnerFrame,
+        transientFramePatches.value[normalizeString(rawOwnerFrame.id)],
+      )
+    : null
   if (!displayFrame || !ownerFrame || displayFrame.kind !== 'device_mockup')
     return null
 
@@ -2253,7 +2456,7 @@ function resolveElementHitItemsForFrame(
   displayFrame: DesignFrameModel,
   ownerFrame: DesignFrameModel,
 ): ElementHitItem[] {
-  const elements = props.frameElements[displayFrame.id] || displayFrame.elements || []
+  const elements = previewFrameElementsById.value[displayFrame.id] || []
   return elements.map((element) => {
     const absoluteRect = resolveDesignElementAbsoluteRect(element, displayFrame)
     const width = Math.max(12, absoluteRect.width)
@@ -2925,6 +3128,11 @@ function resolveElementGuideAdjustment(
   }
 }
 
+function snapElementMetricToGrid(value: number, minimum = Number.NEGATIVE_INFINITY): number {
+  const snapped = Math.round(value / ELEMENT_SNAP_GRID_SIZE) * ELEMENT_SNAP_GRID_SIZE
+  return Number.isFinite(minimum) ? Math.max(minimum, snapped) : snapped
+}
+
 function beginGroupEditSession(item: ElementHitItem): void {
   if (item.element.type !== 'group')
     return
@@ -3037,9 +3245,18 @@ function applyElementResizeDelta(
     height = minimumHeight
   }
 
+  const snappedWidth = snapElementMetricToGrid(width, minimumWidth)
+  const snappedHeight = snapElementMetricToGrid(height, minimumHeight)
+  if (session.direction.includes('w'))
+    x -= snappedWidth - width
+  if (session.direction.includes('n'))
+    y -= snappedHeight - height
+  width = snappedWidth
+  height = snappedHeight
+
   return {
-    x: Math.round(x),
-    y: Math.round(y),
+    x: snapElementMetricToGrid(x, 0),
+    y: snapElementMetricToGrid(y, 0),
     width: Math.max(minimumWidth, Math.round(width)),
     height: Math.max(minimumHeight, Math.round(height)),
   }
@@ -3103,23 +3320,38 @@ function stopFrameResize(pointerId?: number): void {
   frameResizeSession.value = null
 }
 
-function stopElementDrag(pointerId?: number): void {
+function stopElementDrag(
+  pointerId?: number,
+  options: { preservePreview?: boolean } = {},
+): void {
   if (typeof pointerId === 'number')
     rootRef.value?.releasePointerCapture?.(pointerId)
   elementDragSession.value = null
+  if (!options.preservePreview)
+    clearTransientElementPatches()
   clearElementGuideOverlay()
 }
 
-function stopElementResize(pointerId?: number): void {
+function stopElementResize(
+  pointerId?: number,
+  options: { preservePreview?: boolean } = {},
+): void {
   if (typeof pointerId === 'number')
     rootRef.value?.releasePointerCapture?.(pointerId)
   elementResizeSession.value = null
+  if (!options.preservePreview)
+    clearTransientElementPatches()
 }
 
-function stopElementRotation(pointerId?: number): void {
+function stopElementRotation(
+  pointerId?: number,
+  options: { preservePreview?: boolean } = {},
+): void {
   if (typeof pointerId === 'number')
     rootRef.value?.releasePointerCapture?.(pointerId)
   elementRotationSession.value = null
+  if (!options.preservePreview)
+    clearTransientElementPatches()
 }
 
 function stopCreateElementSession(pointerId?: number): void {
@@ -3134,10 +3366,15 @@ function stopSelectionDraft(pointerId?: number): void {
   selectionDraft.value = null
 }
 
-function stopMockupScreenDragSession(pointerId?: number): void {
+function stopMockupScreenDragSession(
+  pointerId?: number,
+  options: { preservePreview?: boolean } = {},
+): void {
   if (typeof pointerId === 'number')
     rootRef.value?.releasePointerCapture?.(pointerId)
   mockupScreenDragSession.value = null
+  if (!options.preservePreview)
+    clearTransientFramePatches()
 }
 
 function handleElementPointerDown(item: ElementHitItem, event: PointerEvent): void {
@@ -3223,6 +3460,7 @@ function handleElementPointerDown(item: ElementHitItem, event: PointerEvent): vo
     },
     isMultiSelect: requestedDragItems.length > 1,
     items: dragItems,
+    previewPatches: {},
   }
   clearElementGuideOverlay()
 }
@@ -3251,12 +3489,14 @@ function handleElementResizePointerDown(direction: ResizeDirection, event: Point
     historyMergeKey: `element-resize:${Date.now()}:${item.element.id}:${direction}`,
     item: {
       elementId: item.element.id,
+      label: resolveElementLabel(item.element),
       type: item.element.type,
       x: item.element.x,
       y: item.element.y,
       width: Math.max(1, item.element.width),
       height: Math.max(1, item.element.height),
     },
+    previewPatch: null,
   }
 }
 
@@ -3285,6 +3525,7 @@ function handleElementRotatePointerDown(event: PointerEvent): void {
     startClientY: event.clientY,
     startPointerAngle: Math.atan2(worldPoint.y - centerY, worldPoint.x - centerX),
     startRotation: Number(target.item.element.rotation || 0),
+    previewRotation: Number(target.item.element.rotation || 0),
     startCenterX: centerX,
     startCenterY: centerY,
     moved: false,
@@ -3545,6 +3786,8 @@ function handleStagePointerDown(event: PointerEvent): void {
         startClientY: event.clientY,
         startOffsetX: transform.offsetX,
         startOffsetY: transform.offsetY,
+        previewOffsetX: transform.offsetX,
+        previewOffsetY: transform.offsetY,
         moved: false,
       }
       return
@@ -3742,11 +3985,19 @@ function handlePointerMove(event: PointerEvent): void {
     if (!mockupDragSession.moved && (Math.abs(deltaX) > PAN_GESTURE_THRESHOLD / viewport.value.zoom || Math.abs(deltaY) > PAN_GESTURE_THRESHOLD / viewport.value.zoom))
       mockupDragSession.moved = true
 
-    emit('update-mockup-screen-transform', {
-      frameId: mockupDragSession.frameId,
-      offsetX: roundMetric(mockupDragSession.startOffsetX + deltaX),
-      offsetY: roundMetric(mockupDragSession.startOffsetY + deltaY),
-      historyMergeKey: 'mockup-screen-transform',
+    mockupDragSession.previewOffsetX = roundMetric(mockupDragSession.startOffsetX + deltaX)
+    mockupDragSession.previewOffsetY = roundMetric(mockupDragSession.startOffsetY + deltaY)
+    scheduleTransientFramePatches({
+      [mockupDragSession.frameId]: {
+        metadata: {
+          device: {
+            screenTransform: {
+              offsetX: mockupDragSession.previewOffsetX,
+              offsetY: mockupDragSession.previewOffsetY,
+            },
+          },
+        },
+      },
     })
     return
   }
@@ -3799,12 +4050,11 @@ function handlePointerMove(event: PointerEvent): void {
 
     const nextPointerAngle = Math.atan2(worldPoint.y - rotationSession.startCenterY, worldPoint.x - rotationSession.startCenterX)
     const rotationDelta = ((nextPointerAngle - rotationSession.startPointerAngle) * 180) / Math.PI
-    emit('update-element', {
-      elementId: rotationSession.elementId,
-      patch: {
-        rotation: normalizeRotation(rotationSession.startRotation + rotationDelta),
+    rotationSession.previewRotation = normalizeRotation(rotationSession.startRotation + rotationDelta)
+    scheduleTransientElementPatches({
+      [rotationSession.elementId]: {
+        rotation: rotationSession.previewRotation,
       },
-      historyMergeKey: rotationSession.historyMergeKey,
     })
     return
   }
@@ -3819,10 +4069,22 @@ function handlePointerMove(event: PointerEvent): void {
       suppressElementClick = true
     }
 
-    emit('update-element', {
-      elementId: resizeSession.item.elementId,
-      patch: applyElementResizeDelta(resizeSession, event.clientX, event.clientY),
-      historyMergeKey: resizeSession.historyMergeKey,
+    resizeSession.previewPatch = applyElementResizeDelta(
+      resizeSession,
+      event.clientX,
+      event.clientY,
+    )
+    elementGuideOverlay.value = {
+      label: resizeSession.item.label,
+      x: Number(resizeSession.previewPatch.x ?? resizeSession.item.x),
+      y: Number(resizeSession.previewPatch.y ?? resizeSession.item.y),
+      hints: [
+        `栅格吸附 ${ELEMENT_SNAP_GRID_SIZE}px`,
+        `W ${Number(resizeSession.previewPatch.width ?? resizeSession.item.width)} / H ${Number(resizeSession.previewPatch.height ?? resizeSession.item.height)}`,
+      ],
+    }
+    scheduleTransientElementPatches({
+      [resizeSession.item.elementId]: resizeSession.previewPatch,
     })
     return
   }
@@ -3843,13 +4105,13 @@ function handlePointerMove(event: PointerEvent): void {
         deltaClientX / dragSession.startZoom,
         deltaClientY / dragSession.startZoom,
       )
-      emit('update-elements', {
-        patches: dragSession.items.map(item => ({
-          elementId: item.elementId,
-          patch: resolveElementDragPatch(item, nextDelta.deltaX, nextDelta.deltaY),
-        })),
-        historyMergeKey: dragSession.historyMergeKey,
-      })
+      dragSession.previewPatches = Object.fromEntries(
+        dragSession.items.map(item => [
+          item.elementId,
+          resolveElementDragPatch(item, nextDelta.deltaX, nextDelta.deltaY),
+        ]),
+      )
+      scheduleTransientElementPatches(dragSession.previewPatches)
     }
     return
   }
@@ -3986,9 +4248,21 @@ function handlePointerUp(event: PointerEvent): void {
   }
 
   if (mockupScreenDragSession.value?.pointerId === event.pointerId) {
-    const moved = mockupScreenDragSession.value.moved
-    stopMockupScreenDragSession(event.pointerId)
-    if (moved) {
+    const session = mockupScreenDragSession.value
+    flushTransientFramePatches()
+    stopMockupScreenDragSession(event.pointerId, {
+      preservePreview: true,
+    })
+    clearTransientFramePatches()
+    if (session?.moved) {
+      emit('update-mockup-screen-transform', {
+        frameId: session.frameId,
+        offsetX: session.previewOffsetX,
+        offsetY: session.previewOffsetY,
+        historyMergeKey: 'mockup-screen-transform',
+      })
+    }
+    if (session?.moved) {
       window.setTimeout(() => {
         suppressBackgroundClick.value = false
       }, 0)
@@ -4011,9 +4285,20 @@ function handlePointerUp(event: PointerEvent): void {
   }
 
   if (elementRotationSession.value?.pointerId === event.pointerId) {
-    const moved = elementRotationSession.value.moved
-    stopElementRotation(event.pointerId)
-    if (moved) {
+    const session = elementRotationSession.value
+    flushTransientElementPatches()
+    stopElementRotation(event.pointerId, {
+      preservePreview: true,
+    })
+    clearTransientElementPatches()
+    if (session?.moved) {
+      emit('update-element', {
+        elementId: session.elementId,
+        patch: {
+          rotation: session.previewRotation,
+        },
+        historyMergeKey: session.historyMergeKey,
+      })
       window.setTimeout(() => {
         suppressBackgroundClick.value = false
         suppressElementClick = false
@@ -4023,10 +4308,19 @@ function handlePointerUp(event: PointerEvent): void {
   }
 
   if (elementResizeSession.value?.pointerId === event.pointerId) {
-    const moved = elementResizeSession.value.moved
-    stopElementResize(event.pointerId)
+    const session = elementResizeSession.value
+    flushTransientElementPatches()
+    stopElementResize(event.pointerId, {
+      preservePreview: true,
+    })
+    clearTransientElementPatches()
     clearElementGuideOverlay()
-    if (moved) {
+    if (session?.moved && session.previewPatch) {
+      emit('update-element', {
+        elementId: session.item.elementId,
+        patch: session.previewPatch,
+        historyMergeKey: session.historyMergeKey,
+      })
       window.setTimeout(() => {
         suppressBackgroundClick.value = false
         suppressElementClick = false
@@ -4036,10 +4330,31 @@ function handlePointerUp(event: PointerEvent): void {
   }
 
   if (elementDragSession.value?.pointerId === event.pointerId) {
-    const moved = elementDragSession.value.moved
-    stopElementDrag(event.pointerId)
+    const session = elementDragSession.value
+    flushTransientElementPatches()
+    stopElementDrag(event.pointerId, {
+      preservePreview: true,
+    })
+    clearTransientElementPatches()
     clearElementGuideOverlay()
-    if (moved) {
+    if (session?.moved) {
+      const patches = session.items
+        .map(item => {
+          const patch = session.previewPatches[item.elementId]
+          if (!patch)
+            return null
+          return {
+            elementId: item.elementId,
+            patch,
+          }
+        })
+        .filter((item): item is { elementId: string, patch: Partial<DesignElementModel> } => Boolean(item))
+      if (patches.length > 0) {
+        emit('update-elements', {
+          patches,
+          historyMergeKey: session.historyMergeKey,
+        })
+      }
       window.setTimeout(() => {
         suppressBackgroundClick.value = false
         suppressFrameClick = false
@@ -5140,31 +5455,7 @@ function handleKeydown(event: KeyboardEvent): void {
       </div>
     </div>
 
-    <div
-      v-for="cursor in remoteScreenCursors"
-      :key="`${cursor.userId}:${cursor.username}`"
-      class="pointer-events-none left-0 top-0 absolute z-20"
-      data-testid="workspace-design-canvaskit-collab-cursor"
-      :style="{ transform: `translate(${cursor.screenX}px, ${cursor.screenY}px)` }"
-    >
-      <div class="relative -translate-x-[3px] -translate-y-[3px]">
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path
-            d="M2 1.5L13 9L8 10.4L9.6 15.5L7.2 16.2L5.6 11.1L2 15.3V1.5Z"
-            :fill="cursor.colorToken"
-            stroke="white"
-            stroke-width="1.2"
-            stroke-linejoin="round"
-          />
-        </svg>
-        <div
-          class="text-[11px] text-white font-semibold mt-1 px-2.5 py-1 rounded-full inline-flex max-w-[160px] shadow-sm items-center"
-          :style="{ backgroundColor: cursor.colorToken }"
-        >
-          {{ cursor.label }}
-        </div>
-      </div>
-    </div>
+    <WorkspaceDesignCanvasCollabOverlay :cursors="remoteScreenCursors" />
   </div>
 </template>
 

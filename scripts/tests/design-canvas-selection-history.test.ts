@@ -224,6 +224,21 @@ describe('workspaceDesignPanel', () => {
     expect(source).toMatch(/:is="resolvedDesignStageComponent"/)
   })
 
+  it('主壳层会将上下文 HUD、快捷操作、侧栏动作和 Diagram AI 面板拆成独立组件', async () => {
+    const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
+
+    expect(source).toMatch(/import WorkspaceDesignCanvasContextHud from '\.\/design\/WorkspaceDesignCanvasContextHud\.vue'/)
+    expect(source).toMatch(/import WorkspaceDesignSelectionQuickActions from '\.\/design\/WorkspaceDesignSelectionQuickActions\.vue'/)
+    expect(source).toMatch(/import WorkspaceDesignSidebarActionMenus from '\.\/design\/WorkspaceDesignSidebarActionMenus\.vue'/)
+    expect(source).toMatch(/import WorkspaceDesignDiagramCanvasAiPanel from '\.\/design\/WorkspaceDesignDiagramCanvasAiPanel\.vue'/)
+    expect(source).toMatch(/<WorkspaceDesignCanvasContextHud/)
+    expect(source).toMatch(/<WorkspaceDesignSelectionQuickActions/)
+    expect(source).toMatch(/<WorkspaceDesignSidebarActionMenus/)
+    expect(source).toMatch(/<WorkspaceDesignDiagramCanvasAiPanel/)
+    expect(source).not.toMatch(/actionMenuOpen/)
+    expect(source).not.toMatch(/handleActionMenuPointerDown/)
+  })
+
   it('新建元素后会立即选中新元素并保留当前 editingFrameId', async () => {
     const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
 
@@ -264,6 +279,47 @@ describe('workspaceDesignPanel', () => {
     expect(source).toMatch(/historyMergeKey: 'mockup-screen-transform'/)
     expect(source).toMatch(/function handleElementDoubleClick\(/)
     expect(source).toMatch(/item\.element\.type !== 'text' && item\.element\.type !== 'caption' && item\.element\.type !== 'badge'/)
+  })
+
+  it('新 host 会在连续手势中只维护 transient preview，并在 pointerup 时统一提交', async () => {
+    const source = await readFile(DESIGN_CANVASKIT_HOST_FILE, 'utf8')
+    const pointerMoveStart = source.indexOf('function handlePointerMove(event: PointerEvent): void {')
+    const pointerUpStart = source.indexOf('function handlePointerUp(event: PointerEvent): void {')
+    const pointerLeaveStart = source.indexOf('function handlePointerLeave(')
+
+    expect(pointerMoveStart).toBeGreaterThanOrEqual(0)
+    expect(pointerUpStart).toBeGreaterThan(pointerMoveStart)
+    expect(pointerLeaveStart).toBeGreaterThan(pointerUpStart)
+
+    const pointerMoveSection = source.slice(pointerMoveStart, pointerUpStart)
+    const pointerUpSection = source.slice(pointerUpStart, pointerLeaveStart)
+
+    expect(source).toMatch(/const transientElementPatches = ref<Record<string, Partial<DesignElementModel>>>\(\{\}\)/)
+    expect(source).toMatch(/const transientFramePatches = ref<Record<string, Partial<DesignFrameModel>>>\(\{\}\)/)
+    expect(source).toMatch(/function scheduleTransientElementPatches\(/)
+    expect(source).toMatch(/function scheduleTransientFramePatches\(/)
+    expect(source).toMatch(/function clearTransientElementPatches\(\): void/)
+    expect(source).toMatch(/function clearTransientFramePatches\(\): void/)
+
+    expect(pointerMoveSection).toMatch(/mockupDragSession\.previewOffsetX =/)
+    expect(pointerMoveSection).toMatch(/scheduleTransientFramePatches\(\{/)
+    expect(pointerMoveSection).toMatch(/rotationSession\.previewRotation =/)
+    expect(pointerMoveSection).toMatch(/resizeSession\.previewPatch = applyElementResizeDelta/)
+    expect(pointerMoveSection).toMatch(/dragSession\.previewPatches = Object\.fromEntries/)
+    expect(pointerMoveSection).toMatch(/scheduleTransientElementPatches\(/)
+    expect(pointerMoveSection).not.toMatch(/emit\('update-element'/)
+    expect(pointerMoveSection).not.toMatch(/emit\('update-mockup-screen-transform'/)
+
+    expect(pointerUpSection).toMatch(/flushTransientFramePatches\(\)/)
+    expect(pointerUpSection).toMatch(/stopMockupScreenDragSession\(event\.pointerId, \{\s*preservePreview: true,/)
+    expect(pointerUpSection).toMatch(/emit\('update-mockup-screen-transform', \{/)
+    expect(pointerUpSection).toMatch(/flushTransientElementPatches\(\)/)
+    expect(pointerUpSection).toMatch(/stopElementRotation\(event\.pointerId, \{\s*preservePreview: true,/)
+    expect(pointerUpSection).toMatch(/stopElementResize\(event\.pointerId, \{\s*preservePreview: true,/)
+    expect(pointerUpSection).toMatch(/stopElementDrag\(event\.pointerId, \{\s*preservePreview: true,/)
+    expect(pointerUpSection).toMatch(/clearTransientElementPatches\(\)/)
+    expect(pointerUpSection).toMatch(/emit\('update-element', \{/)
+    expect(pointerUpSection).toMatch(/emit\('update-elements', \{/)
   })
 
   it('绘制工具首击 frame 会直接进入 editing frame 并启动创建会话', async () => {

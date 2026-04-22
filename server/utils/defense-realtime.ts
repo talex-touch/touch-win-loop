@@ -1,3 +1,4 @@
+import type { RuntimeSettings } from '~~/server/utils/env'
 import type {
   AiDefensePersona,
   AiDefenseSessionState,
@@ -9,6 +10,7 @@ import type {
   DefenseRealtimeProvider,
   DefenseRealtimeSessionMeta,
 } from '~~/shared/types/domain'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -151,4 +153,13 @@ export function buildDefenseRealtimeEventKey(event: DefenseRealtimeNormalizedEve
     normalizeString(event.createdAt),
     normalizeString(event.text),
   ].join('::')
+}
+
+export function resolveDefenseRealtimeQwenApiKey(runtime: RuntimeSettings): string {
+  const defenseRuntime = resolveAiRuntimeForChannel(runtime, 'defense')
+  const providerType = normalizeString(defenseRuntime.provider?.type || defenseRuntime.provider?.provider || defenseRuntime.ai.provider).toLowerCase()
+  if (!providerType.includes('dashscope') && !providerType.includes('bailian') && providerType !== 'qwen')
+    return ''
+
+  return normalizeString(defenseRuntime.ai.apiKey)
 }

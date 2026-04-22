@@ -1,5 +1,6 @@
 import { setResponseStatus } from 'h3'
 import { endProjectMeetingSession, finalizeProjectMeetingAsrSession } from '~~/server/services/meeting/project-meeting'
+import { getRtcProviderGateway } from '~~/server/services/meeting/rtc-provider'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
@@ -11,6 +12,41 @@ import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return {}
+  return value as Record<string, unknown>
+}
+
+function resolveMeetingRecordingId(providerMetadata: unknown): string {
+  const recordingSession = normalizeRecord(normalizeRecord(providerMetadata).recordingSession)
+  return normalizeString(recordingSession.recordingId)
+}
+
+async function teardownMeetingRtcSession(
+  detail: {
+    providerRoomName?: string | null
+    providerMetadata?: unknown
+  },
+  runtime: Awaited<ReturnType<typeof readEffectiveMeetingRuntimeSettings>>['runtime'],
+): Promise<void> {
+  const roomName = normalizeString(detail.providerRoomName)
+  const recordingId = resolveMeetingRecordingId(detail.providerMetadata)
+
+  if (!roomName && !recordingId)
+    return
+
+  const rtc = getRtcProviderGateway(runtime)
+  const tasks: Promise<unknown>[] = []
+
+  if (recordingId)
+    tasks.push(rtc.stopRecording({ recordingId, roomName }).catch(() => undefined))
+  if (roomName)
+    tasks.push(rtc.deleteRoom({ roomName }).catch(() => undefined))
+
+  await Promise.allSettled(tasks)
 }
 
 export default defineEventHandler(async (event) => {
@@ -50,13 +86,16 @@ export default defineEventHandler(async (event) => {
       })
     })
 
-    await withTransaction(event, async (db) => {
-      await finalizeProjectMeetingAsrSession(db, {
-        projectId,
-        meetingId,
-        runtime,
-      })
-    }).catch(() => undefined)
+    await Promise.allSettled([
+      withTransaction(event, async (db) => {
+        await finalizeProjectMeetingAsrSession(db, {
+          projectId,
+          meetingId,
+          runtime,
+        })
+      }),
+      teardownMeetingRtcSession(detail, runtime),
+    ])
 
     await Promise.allSettled([
       emitRealtimeEvent({

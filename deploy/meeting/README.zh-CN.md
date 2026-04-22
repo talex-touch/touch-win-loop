@@ -144,9 +144,12 @@ pnpm meeting:asr:dev
 如果你已经有一个兼容 OpenAI Audio Transcriptions 的服务，可以把这个 bridge 直接当适配器用：
 
 ```bash
-MEETING_ASR_DEV_TRANSCRIBE_URL="http://127.0.0.1:8000/v1/audio/transcriptions" \
-MEETING_ASR_DEV_TRANSCRIBE_MODEL="whisper-1" \
-MEETING_ASR_DEV_CALLBACK_URL="http://127.0.0.1:3000/api/internal/meetings/asr-events" \
+MEETING_ASR_DEV_TRANSCRIBE_URL="https://api.groq.com/openai/v1/audio/transcriptions" \
+MEETING_ASR_DEV_TRANSCRIBE_MODEL="whisper-large-v3-turbo" \
+MEETING_ASR_DEV_TRANSCRIBE_MODEL_FALLBACKS="whisper-large-v3" \
+MEETING_ASR_DEV_TRANSCRIBE_LANGUAGE="zh" \
+MEETING_ASR_DEV_TRANSCRIBE_API_KEY="<GROQ_API_KEY>" \
+MEETING_ASR_DEV_CALLBACK_URL="http://127.0.0.1:3510/api/internal/meetings/asr-events" \
 MEETING_ASR_DEV_CALLBACK_SECRET="your-asr-webhook-secret" \
 MEETING_ASR_DEV_MIN_CHUNK_MS="4000" \
 pnpm meeting:asr:dev
@@ -163,6 +166,8 @@ pnpm meeting:asr:dev
 
 - `MEETING_ASR_DEV_TRANSCRIBE_URL` 与 `MEETING_ASR_DEV_CALLBACK_URL` 需要同时配置
 - `MEETING_ASR_DEV_CALLBACK_SECRET` 要与后台 ASR 配置里的 `webhookSecret` 一致
+- bridge 默认转写模型已切到 `whisper-large-v3-turbo`
+- 若未显式指定 fallback，且上游是 Groq，则会自动按 `whisper-large-v3-turbo -> whisper-large-v3` 回退
 - 当前按“分片 final utterance”回调，不生成真正的 partial 字幕
 - 共享音频不会走这条链路，仍然只转写本地麦克风
 

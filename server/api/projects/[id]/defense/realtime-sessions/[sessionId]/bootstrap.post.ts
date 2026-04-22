@@ -10,8 +10,9 @@ import {
   normalizeDefenseRealtimeMediaMode,
   normalizeDefenseRealtimeProvider,
   normalizeDefenseRealtimeSessionMeta,
+  resolveDefenseRealtimeQwenApiKey,
 } from '~~/server/utils/defense-realtime'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
   getProjectDefenseSessionState,
   listProjectDefensePersonas,
@@ -45,7 +46,7 @@ async function createQwenTemporaryToken(apiKey: string): Promise<{ token: string
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const { runtime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
   const sessionId = normalizeString(getRouterParam(event, 'sessionId'))
@@ -125,10 +126,11 @@ export default defineEventHandler(async (event) => {
       }
 
       if (provider === 'qwen') {
-        if (!normalizeString(runtime.defenseRealtime.qwen.apiKey))
+        const qwenApiKey = resolveDefenseRealtimeQwenApiKey(runtime)
+        if (!qwenApiKey)
           throw new Error('QWEN_CONFIG_MISSING')
 
-        const tokenResult = await createQwenTemporaryToken(runtime.defenseRealtime.qwen.apiKey)
+        const tokenResult = await createQwenTemporaryToken(qwenApiKey)
         payload = {
           ...payload,
           expiresAt: tokenResult.expiresAt,
@@ -224,7 +226,7 @@ export default defineEventHandler(async (event) => {
     }
     if (error instanceof Error && error.message === 'QWEN_CONFIG_MISSING') {
       setResponseStatus(event, 503)
-      return fail('千问实时音视频未完成配置，缺少临时鉴权所需密钥。', {
+      return fail('千问实时音视频未完成配置。请在后台 AI 配置中将 defense 渠道绑定到百炼 DashScope provider，并确保该 provider 已配置可用 apiKey。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,

@@ -47,6 +47,8 @@
   - `QwenBridge`
   - `CozeBridge`
 - Qwen 已改为通过服务端 relay 建立上游 WebSocket，避免浏览器直连无法附加鉴权头的问题。
+- 当前验收主链路固定为 `qwen + audio_video`；若仅做最短路径联调，优先补齐 `WINLOOP_DEFENSE_REALTIME_QWEN_*`。
+- `nuxt runtimeConfig` 已暴露独立的 `defenseRealtime.qwen / defenseRealtime.coze` 段，不再出现“Env 写了但服务端读不到”的问题。
 - Coze 已是正式依赖，当前保留浏览器侧按需动态导入，仅作为加载时机策略，不再是“未正式接入”的降级方案。
 
 ### 1.4 答辩数据组织
