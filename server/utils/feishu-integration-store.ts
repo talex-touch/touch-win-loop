@@ -3256,7 +3256,7 @@ export async function searchFeishuSyncedData(
           'contest'::TEXT AS scope,
           COALESCE(sync.id, '') AS sync_id,
           COALESCE(sync.name, '') AS sync_name,
-          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
           COALESCE(item.name, '') AS sync_item_name,
           COALESCE(
             NULLIF(rv.snapshot_json -> 'contest' ->> 'name', ''),
@@ -3268,7 +3268,7 @@ export async function searchFeishuSyncedData(
           COALESCE(NULLIF(rv.snapshot_json -> 'contest' ->> 'externalId', ''), rv.scope_id) AS external_id,
           CONCAT(rv.id, ':contest:', COALESCE(NULLIF(rv.snapshot_json -> 'contest' ->> 'externalId', ''), rv.scope_id)) AS entity_id,
           '' AS record_id,
-          COALESCE(rv.sync_run_id, '') AS run_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
           ARRAY(
             SELECT jsonb_array_elements_text(
               CASE
@@ -3281,7 +3281,7 @@ export async function searchFeishuSyncedData(
           jsonb_build_object(
             'releaseVersionId', rv.id,
             'releaseStatus', rv.status,
-            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
             'scopeKind', rv.scope_kind,
             'scopeId', rv.scope_id,
             'snapshotType', 'contest',
@@ -3290,9 +3290,20 @@ export async function searchFeishuSyncedData(
           rv.created_at,
           rv.updated_at
         FROM release_versions rv
-        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(rv.snapshot_json -> 'contest' -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(rv.snapshot_json -> 'contest' -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
         LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
-        WHERE rv.sync_item_id IS NOT NULL
+        WHERE owner_source.sync_item_id IS NOT NULL
           AND rv.scope_kind = 'contest'
           AND rv.status NOT IN ('superseded', 'rejected')
           AND rv.snapshot_json -> 'contest' IS NOT NULL
@@ -3304,7 +3315,7 @@ export async function searchFeishuSyncedData(
           'track'::TEXT AS scope,
           COALESCE(sync.id, '') AS sync_id,
           COALESCE(sync.name, '') AS sync_name,
-          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
           COALESCE(item.name, '') AS sync_item_name,
           COALESCE(NULLIF(track_item.item ->> 'name', ''), NULLIF(track_item.item ->> 'externalId', ''), rv.scope_id) AS title,
           COALESCE(track_item.item ->> 'summary', '') AS summary,
@@ -3312,12 +3323,12 @@ export async function searchFeishuSyncedData(
           COALESCE(NULLIF(track_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
           CONCAT(rv.id, ':track:', COALESCE(NULLIF(track_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
           '' AS record_id,
-          COALESCE(rv.sync_run_id, '') AS run_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
           ARRAY[]::TEXT[] AS keywords,
           jsonb_build_object(
             'releaseVersionId', rv.id,
             'releaseStatus', rv.status,
-            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
             'scopeKind', rv.scope_kind,
             'scopeId', rv.scope_id,
             'snapshotType', 'track',
@@ -3333,9 +3344,20 @@ export async function searchFeishuSyncedData(
             ELSE '[]'::JSONB
           END
         ) AS track_item(item) ON TRUE
-        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(track_item.item -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(track_item.item -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
         LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
-        WHERE rv.sync_item_id IS NOT NULL
+        WHERE owner_source.sync_item_id IS NOT NULL
           AND rv.scope_kind = 'contest'
           AND rv.status NOT IN ('superseded', 'rejected')
       ),
@@ -3345,7 +3367,7 @@ export async function searchFeishuSyncedData(
           'track_timeline'::TEXT AS scope,
           COALESCE(sync.id, '') AS sync_id,
           COALESCE(sync.name, '') AS sync_name,
-          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
           COALESCE(item.name, '') AS sync_item_name,
           COALESCE(NULLIF(timeline_item.item ->> 'note', ''), NULLIF(timeline_item.item ->> 'nodeType', ''), NULLIF(timeline_item.item ->> 'externalId', ''), rv.scope_id) AS title,
           COALESCE(timeline_item.item ->> 'note', '') AS summary,
@@ -3353,12 +3375,12 @@ export async function searchFeishuSyncedData(
           COALESCE(NULLIF(timeline_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
           CONCAT(rv.id, ':track_timeline:', COALESCE(NULLIF(timeline_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
           '' AS record_id,
-          COALESCE(rv.sync_run_id, '') AS run_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
           ARRAY[]::TEXT[] AS keywords,
           jsonb_build_object(
             'releaseVersionId', rv.id,
             'releaseStatus', rv.status,
-            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
             'scopeKind', rv.scope_kind,
             'scopeId', rv.scope_id,
             'snapshotType', 'track_timeline',
@@ -3374,9 +3396,20 @@ export async function searchFeishuSyncedData(
             ELSE '[]'::JSONB
           END
         ) AS timeline_item(item) ON TRUE
-        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(timeline_item.item -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(timeline_item.item -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
         LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
-        WHERE rv.sync_item_id IS NOT NULL
+        WHERE owner_source.sync_item_id IS NOT NULL
           AND rv.scope_kind = 'contest'
           AND rv.status NOT IN ('superseded', 'rejected')
       ),
@@ -3386,7 +3419,7 @@ export async function searchFeishuSyncedData(
           'resource'::TEXT AS scope,
           COALESCE(sync.id, '') AS sync_id,
           COALESCE(sync.name, '') AS sync_name,
-          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
           COALESCE(item.name, '') AS sync_item_name,
           COALESCE(NULLIF(resource_item.item ->> 'title', ''), NULLIF(resource_item.item ->> 'externalId', ''), rv.scope_id) AS title,
           COALESCE(resource_item.item ->> 'summary', '') AS summary,
@@ -3394,12 +3427,12 @@ export async function searchFeishuSyncedData(
           COALESCE(NULLIF(resource_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
           CONCAT(rv.id, ':resource:', COALESCE(NULLIF(resource_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
           COALESCE(NULLIF(resource_item.item -> 'metadata' ->> 'recordId', ''), '') AS record_id,
-          COALESCE(rv.sync_run_id, '') AS run_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
           ARRAY[]::TEXT[] AS keywords,
           jsonb_build_object(
             'releaseVersionId', rv.id,
             'releaseStatus', rv.status,
-            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
             'scopeKind', rv.scope_kind,
             'scopeId', rv.scope_id,
             'snapshotType', 'resource',
@@ -3415,9 +3448,20 @@ export async function searchFeishuSyncedData(
             ELSE '[]'::JSONB
           END
         ) AS resource_item(item) ON TRUE
-        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(resource_item.item -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(resource_item.item -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
         LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
-        WHERE rv.sync_item_id IS NOT NULL
+        WHERE owner_source.sync_item_id IS NOT NULL
           AND rv.scope_kind = 'contest'
           AND rv.status NOT IN ('superseded', 'rejected')
       ),
@@ -3427,7 +3471,7 @@ export async function searchFeishuSyncedData(
           'policy'::TEXT AS scope,
           COALESCE(sync.id, '') AS sync_id,
           COALESCE(sync.name, '') AS sync_name,
-          COALESCE(item.id, '') AS sync_item_id,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
           COALESCE(item.name, '') AS sync_item_name,
           COALESCE(NULLIF(policy_item.item ->> 'meetingName', ''), NULLIF(policy_item.item ->> 'externalId', ''), rv.scope_id) AS title,
           COALESCE(policy_item.item ->> 'summary', '') AS summary,
@@ -3435,12 +3479,12 @@ export async function searchFeishuSyncedData(
           COALESCE(NULLIF(policy_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
           CONCAT(rv.id, ':policy:', COALESCE(NULLIF(policy_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
           '' AS record_id,
-          COALESCE(rv.sync_run_id, '') AS run_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
           ARRAY[]::TEXT[] AS keywords,
           jsonb_build_object(
             'releaseVersionId', rv.id,
             'releaseStatus', rv.status,
-            'syncRunId', COALESCE(rv.sync_run_id, ''),
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
             'scopeKind', rv.scope_kind,
             'scopeId', rv.scope_id,
             'snapshotType', 'policy',
@@ -3456,9 +3500,20 @@ export async function searchFeishuSyncedData(
             ELSE '[]'::JSONB
           END
         ) AS policy_item(item) ON TRUE
-        LEFT JOIN feishu_bitable_sync_items item ON item.id = rv.sync_item_id
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(policy_item.item -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(policy_item.item -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
         LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
-        WHERE rv.sync_item_id IS NOT NULL
+        WHERE owner_source.sync_item_id IS NOT NULL
           AND rv.scope_kind = 'policy_library'
           AND rv.status NOT IN ('superseded', 'rejected')
       ),

@@ -163,6 +163,24 @@ describe('feishu synced data release draft rows', () => {
     assert.match(recorder.calls[0].text, /'release_draft'::TEXT AS status/)
   })
 
+  it('release draft 行会优先按节点级 syncSource 恢复同步归属，并保留 version 级兜底', async () => {
+    const storeSource = await readFile(
+      resolve(process.cwd(), 'server/utils/feishu-integration-store.ts'),
+      'utf8',
+    )
+
+    assert.match(storeSource, /NULLIF\(rv\.snapshot_json -> 'contest' -> 'syncSource' ->> 'syncItemId', ''\)/, '竞赛 release draft 未按 contest 节点 syncSource 解析归属')
+    assert.match(storeSource, /NULLIF\(track_item\.item -> 'syncSource' ->> 'syncItemId', ''\)/, '赛道 release draft 未按 track 节点 syncSource 解析归属')
+    assert.match(storeSource, /NULLIF\(timeline_item\.item -> 'syncSource' ->> 'syncItemId', ''\)/, '赛道时间线 release draft 未按节点 syncSource 解析归属')
+    assert.match(storeSource, /NULLIF\(resource_item\.item -> 'syncSource' ->> 'syncItemId', ''\)/, '资料 release draft 未按节点 syncSource 解析归属')
+    assert.match(storeSource, /NULLIF\(policy_item\.item -> 'syncSource' ->> 'syncItemId', ''\)/, '政策 release draft 未按节点 syncSource 解析归属')
+    assert.match(storeSource, /NULLIF\(rv\.sync_item_id, ''\)/, 'release draft 查询未保留 version 级 sync_item_id 兜底')
+    assert.match(storeSource, /NULLIF\(rv\.sync_run_id, ''\)/, 'release draft 查询未保留 version 级 sync_run_id 兜底')
+    assert.match(storeSource, /LEFT JOIN feishu_bitable_sync_items item ON item\.id = owner_source\.sync_item_id/, 'release draft 查询未按节点级 owner sync item join 同步项')
+    assert.match(storeSource, /'syncRunId', COALESCE\(owner_source\.sync_run_id, ''\)/, 'release draft metadata 未改用节点级 owner sync run')
+    assert.match(storeSource, /WHERE owner_source\.sync_item_id IS NOT NULL/, 'release draft 查询未按节点级归属过滤无主快照')
+  })
+
   it('数据页显示 release draft 的业务状态文案', async () => {
     const pageSource = await readFile(
       resolve(process.cwd(), 'app/pages/admin/integrations/feishu/data.vue'),

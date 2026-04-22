@@ -34,6 +34,17 @@ describe('飞书多维同步稳定性修复', () => {
     assert.match(editorSource, /await loadCurrentItemLogDetail\(currentItem\.value\.id, result\.runId\)/, '编辑器手动执行成功后未聚焦最新 run 结果')
   })
 
+  it('共享 contest release draft 被其他子表更新后，查询仍按节点级 syncSource 保持竞赛和赛道归属稳定', async () => {
+    const storeSource = await readSource('server/utils/feishu-integration-store.ts')
+
+    assert.match(storeSource, /release_contest_rows AS[\s\S]*NULLIF\(rv\.snapshot_json -> 'contest' -> 'syncSource' ->> 'syncItemId', ''\)[\s\S]*LEFT JOIN feishu_bitable_sync_items item ON item\.id = owner_source\.sync_item_id/, '竞赛 release draft 仍未按 contest 节点归属解析同步项')
+    assert.match(storeSource, /release_track_rows AS[\s\S]*NULLIF\(track_item\.item -> 'syncSource' ->> 'syncItemId', ''\)[\s\S]*LEFT JOIN feishu_bitable_sync_items item ON item\.id = owner_source\.sync_item_id/, '赛道 release draft 仍未按 track 节点归属解析同步项')
+    assert.match(storeSource, /release_track_timeline_rows AS[\s\S]*NULLIF\(timeline_item\.item -> 'syncSource' ->> 'syncItemId', ''\)/, '赛道时间线 release draft 未跟随节点级归属')
+    assert.match(storeSource, /release_resource_rows AS[\s\S]*NULLIF\(resource_item\.item -> 'syncSource' ->> 'syncItemId', ''\)/, '资料 release draft 未跟随节点级归属')
+    assert.match(storeSource, /WHERE owner_source\.sync_item_id IS NOT NULL/, '共享 release draft 查询仍未按节点级 owner 过滤')
+    assert.match(storeSource, /COALESCE\(owner_source\.sync_run_id, ''\) AS run_id/, '共享 release draft 查询仍未按节点级 owner run 暴露 runId')
+  })
+
   it('查询存储层与编辑器问题面板会支持原因码聚合和批量处理', async () => {
     const [storeSource, typeSource, batchApiSource, editorSource] = await Promise.all([
       readSource('server/utils/feishu-integration-store.ts'),
