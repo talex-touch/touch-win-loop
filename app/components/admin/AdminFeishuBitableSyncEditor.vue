@@ -1142,7 +1142,7 @@ function formatDateTime(value?: string | null): string {
 function latestRunSummaryText(summary?: FeishuTaskLatestRunSummary | null): string {
   if (!summary)
     return '暂无执行记录'
-  return `${formatDateTime(summary.startedAt)} / ${runHealthLabel(summary)} / 错误 ${summary.errorCount}`
+  return `${formatDateTime(summary.startedAt)} / ${runHealthLabel(summary)} / ${triggerSourceLabel(summary.triggerSource)}`
 }
 
 function shouldShowPersonaZeroOutputHint(summary?: {
@@ -3029,6 +3029,75 @@ function previewActionSummary(result: FeishuBitableSyncItemPreviewResult | null)
   return `抓取 ${result.fetchedCount} / 新增 ${result.createdCount} / 更新 ${result.updatedCount} / 跳过 ${result.skippedCount} / 错误 ${result.errorCount}`
 }
 
+function previewResultTone(result: FeishuBitableSyncItemPreviewResult | null): ItemStageTone {
+  if (!result)
+    return 'gray'
+  if (result.errorCount > 0 || result.issueCounts.transformError > 0)
+    return 'red'
+  if (result.fetchedCount <= 0)
+    return 'gold'
+  if (result.issueCounts.total > 0 || result.skippedCount > 0 || result.writebackErrorCount > 0)
+    return 'gold'
+  if (result.createdCount + result.updatedCount > 0)
+    return 'green'
+  return 'blue'
+}
+
+function previewResultStatusLabel(result: FeishuBitableSyncItemPreviewResult | null): string {
+  if (!result)
+    return '尚未执行预检'
+  const tone = previewResultTone(result)
+  if (tone === 'red')
+    return '预检已阻断'
+  if (result.fetchedCount <= 0)
+    return '当前没有可执行记录'
+  if (tone === 'gold')
+    return '预检有待处理项'
+  if (tone === 'green')
+    return '可以进入手动验证'
+  return '预检结果待确认'
+}
+
+function previewResultSummary(result: FeishuBitableSyncItemPreviewResult | null): string {
+  if (!result)
+    return '先执行一次预检，确认当前草稿映射、回填和自动同步规则是否具备执行条件。'
+  if (result.errorCount > 0 || result.issueCounts.transformError > 0)
+    return `预检阶段已经出现 ${result.errorCount} 条执行错误和 ${result.issueCounts.transformError} 条 transform 异常，当前不适合继续手动执行。`
+  if (result.fetchedCount <= 0)
+    return '当前视图没有抓到任何记录，这次执行不会产生真实写入。'
+  if (result.issueCounts.externalIdMissing > 0 || result.issueCounts.missingRequiredField > 0 || result.issueCounts.sourceFieldMissing > 0 || result.issueCounts.mappingEmpty > 0)
+    return '映射仍有硬缺口，继续执行通常只会得到跳过记录或必要字段缺失。'
+  if (result.issueCounts.contestRefNotFound > 0 || result.issueCounts.trackRefNotFound > 0)
+    return '关联实体还没有对齐，部分记录即使命中也无法稳定落到目标实体。'
+  if (result.issueCounts.writebackFieldMissing > 0 || result.writebackErrorCount > 0)
+    return '业务侧可能能落库，但飞书回填列仍不完整，执行后很难在源表判断写入结果。'
+  if (result.issueCounts.personaSlotsEmpty > 0 || result.skippedCount > 0 || result.issueCounts.other > 0)
+    return '预检已经暴露出跳过或弱告警，建议先核对原因，不要直接把这次结果当成可稳定执行。'
+  if (result.createdCount + result.updatedCount > 0)
+    return `当前预检显示可处理 ${result.createdCount + result.updatedCount} 条记录，未发现阻断项。`
+  return '预检已完成，但还需要结合下方样例和诊断确认是否真的符合预期。'
+}
+
+function previewResultNextActionText(result: FeishuBitableSyncItemPreviewResult | null): string {
+  if (!result)
+    return '先执行一次预检，确认当前草稿配置是否能跑通。'
+  if (result.errorCount > 0 || result.issueCounts.transformError > 0)
+    return '先处理 transform 或预检错误，再重新预检。'
+  if (result.fetchedCount <= 0)
+    return '先检查当前子表/视图里是否真的有记录，再考虑执行。'
+  if (result.issueCounts.externalIdMissing > 0 || result.issueCounts.missingRequiredField > 0 || result.issueCounts.sourceFieldMissing > 0 || result.issueCounts.mappingEmpty > 0)
+    return '先回到“基础映射”补齐 externalId、必填字段和来源列。'
+  if (result.issueCounts.contestRefNotFound > 0 || result.issueCounts.trackRefNotFound > 0)
+    return '先补 contestExternalId / trackExternalId，或在“同步选项”里提供固定兜底 ID。'
+  if (result.issueCounts.writebackFieldMissing > 0 || result.writebackErrorCount > 0)
+    return '先刷新字段概览，再进入“回填配置”补齐状态、同步时间和 runId 等字段。'
+  if (result.issueCounts.personaSlotsEmpty > 0 || result.skippedCount > 0 || result.issueCounts.other > 0)
+    return '先用“单行模拟”核对被跳过记录和弱告警来源，再决定是否执行。'
+  if (result.createdCount + result.updatedCount > 0)
+    return '当前可以保存配置，并执行一次手动同步验证真实写入。'
+  return '先查看下方诊断和样例行，确认没有遗漏后再执行。'
+}
+
 function simulateBusinessStatusLabel(status?: FeishuBitableSimulateBusinessStatus): string {
   if (status === 'created')
     return '预计新增'
@@ -4271,6 +4340,31 @@ watch(() => props.selectedItemId, (value) => {
                 <span class="text-[10px] text-slate-500">{{ previewActionSummary(previewResult) }}</span>
               </div>
               <template v-if="previewResult">
+                <div
+                  class="p-3 border rounded space-y-2"
+                  :class="itemStageToneMeta(previewResultTone(previewResult)).panelClass"
+                >
+                  <div class="flex flex-wrap gap-2 items-center justify-between">
+                    <div>
+                      <p class="text-[11px] text-slate-900 font-semibold m-0">
+                        预检结论
+                      </p>
+                      <p class="text-[11px] text-slate-700 leading-5 m-0 mt-1">
+                        {{ previewResultSummary(previewResult) }}
+                      </p>
+                    </div>
+                    <span
+                      class="text-[10px] px-2 py-1 rounded-full"
+                      :class="itemStageToneMeta(previewResultTone(previewResult)).badgeClass"
+                    >
+                      {{ previewResultStatusLabel(previewResult) }}
+                    </span>
+                  </div>
+                  <p class="text-[10px] text-slate-500 leading-5 m-0">
+                    下一步：{{ previewResultNextActionText(previewResult) }}
+                  </p>
+                </div>
+
                 <div class="flex flex-wrap gap-2">
                   <a-tag v-if="previewResult.issueCounts.externalIdMissing" color="red">
                     externalId 缺失 {{ previewResult.issueCounts.externalIdMissing }}

@@ -156,6 +156,7 @@ it('飞书导入设计会在总览页和同步项详情里暴露阶段化流程'
   assert.match(editorSource, /runHealthWarned\(currentItem\.value\?\.latestRunSummary\)/, '同步项详情未把最近执行错误数纳入阶段判断')
   assert.match(editorSource, /最近执行失败[\s\S]*最近执行告警/, '同步项详情未区分失败态与告警态')
   assert.match(editorSource, /latestRunSummaryText\(summary\?: FeishuTaskLatestRunSummary \| null\)[\s\S]*runHealthLabel\(summary\)/, '同步项详情最近结果摘要未使用统一运行健康文案')
+  assert.match(editorSource, /function latestRunSummaryText\(summary\?: FeishuTaskLatestRunSummary \| null\): string \{[\s\S]*return `\$\{formatDateTime\(summary\.startedAt\)\} \/ \$\{runHealthLabel\(summary\)\} \/ \$\{triggerSourceLabel\(summary\.triggerSource\)\}`/, '同步项详情最近结果摘要未与总览页对齐触发来源文案')
   assert.match(editorSource, /最近执行：\$\{formatDateTime\(currentItem\.value\.latestRunSummary\.startedAt\)\} \/ \$\{runHealthLabel\(currentItem\.value\.latestRunSummary\)\}/, '同步项详情执行阶段摘要未复用统一运行健康文案')
   assert.match(editorSource, /:color="runHealthColor\(record\.latestRunSummary\)"/, '同步项详情同步项列表未按运行健康状态着色')
   assert.match(editorSource, /runHealthColor\(currentItemLogSelectedRun\)/, '同步项详情日志抽屉未按运行健康状态展示选中执行')
@@ -163,6 +164,19 @@ it('飞书导入设计会在总览页和同步项详情里暴露阶段化流程'
   assert.match(editorSource, /runHealthLabel\(currentItem\.value\.latestRunSummary\)/, '同步项详情执行摘要未展示最近执行健康状态')
   assert.match(editorSource, /先看最近运行日志与预检结果，修正后再重跑。/, '同步项详情缺少失败后的执行提示')
   assert.match(editorSource, /最近一次执行仍有错误或部分成功，先清理异常记录，再决定是否开启自动同步。/, '同步项详情缺少告警态后的下一步建议')
+})
+
+it('飞书同步项预检结果会先给出结论摘要与下一步动作', async () => {
+  const editorSource = await readFile(EDITOR_FILE, 'utf8')
+
+  assert.match(editorSource, /function previewResultTone\(result: FeishuBitableSyncItemPreviewResult \| null\): ItemStageTone \{/, '同步项详情缺少预检结论色调 helper')
+  assert.match(editorSource, /function previewResultStatusLabel\(result: FeishuBitableSyncItemPreviewResult \| null\): string \{/, '同步项详情缺少预检结论标题 helper')
+  assert.match(editorSource, /function previewResultSummary\(result: FeishuBitableSyncItemPreviewResult \| null\): string \{/, '同步项详情缺少预检结论摘要 helper')
+  assert.match(editorSource, /function previewResultNextActionText\(result: FeishuBitableSyncItemPreviewResult \| null\): string \{/, '同步项详情缺少预检下一步 helper')
+  assert.match(editorSource, /预检结论/, '同步项详情未展示预检结论区块')
+  assert.match(editorSource, /\{\{ previewResultSummary\(previewResult\) \}\}/, '同步项详情未展示预检结论摘要')
+  assert.match(editorSource, /下一步：\{\{ previewResultNextActionText\(previewResult\) \}\}/, '同步项详情未展示预检后的下一步动作')
+  assert.match(editorSource, /当前可以保存配置，并执行一次手动同步验证真实写入。/, '同步项详情缺少预检通过后的动作文案')
 })
 
 it('飞书集成页与资料管理页会补齐同步数据查询入口', async () => {
