@@ -93,13 +93,13 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 <template>
   <section
     data-testid="workspace-final-review-workbench"
-    class="workspace-final-review-workbench"
+    class="workspace-final-review-workbench wl-workbench"
   >
-    <section class="workspace-final-review-workbench__hero">
+    <section class="workspace-final-review-workbench__hero wl-workbench-surface wl-workbench-surface--shell">
       <div class="space-y-3">
-        <span class="workspace-final-review-workbench__eyebrow">终审驾驶舱</span>
+        <span class="workspace-final-review-workbench__eyebrow wl-workbench-eyebrow">终审驾驶舱</span>
         <div class="space-y-1.5">
-          <h1 class="workspace-final-review-workbench__title">
+          <h1 class="workspace-final-review-workbench__title wl-workbench-title-hero">
             {{ contestName || '未选择竞赛' }}
             <span class="workspace-final-review-workbench__title-separator">/</span>
             {{ trackName || '未选择赛道' }}
@@ -111,29 +111,29 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
       </div>
 
       <div class="workspace-final-review-workbench__stats">
-        <article class="workspace-final-review-workbench__stat">
-          <span class="workspace-final-review-workbench__stat-label">Readiness</span>
+        <article class="workspace-final-review-workbench__stat wl-workbench-surface wl-workbench-surface--card">
+          <span class="workspace-final-review-workbench__stat-label wl-workbench-eyebrow">Readiness</span>
           <strong class="workspace-final-review-workbench__stat-value">{{ readinessPercentLabel }}</strong>
           <p class="workspace-final-review-workbench__stat-note">
             {{ readinessCaption }}
           </p>
         </article>
-        <article class="workspace-final-review-workbench__stat">
-          <span class="workspace-final-review-workbench__stat-label">资料数</span>
+        <article class="workspace-final-review-workbench__stat wl-workbench-surface wl-workbench-surface--card">
+          <span class="workspace-final-review-workbench__stat-label wl-workbench-eyebrow">资料数</span>
           <strong class="workspace-final-review-workbench__stat-value">{{ resourceCount }}</strong>
           <p class="workspace-final-review-workbench__stat-note">
             已关联到研发工作台的送审资料。
           </p>
         </article>
-        <article class="workspace-final-review-workbench__stat">
-          <span class="workspace-final-review-workbench__stat-label">有效共享</span>
+        <article class="workspace-final-review-workbench__stat wl-workbench-surface wl-workbench-surface--card">
+          <span class="workspace-final-review-workbench__stat-label wl-workbench-eyebrow">有效共享</span>
           <strong class="workspace-final-review-workbench__stat-value">{{ activeShareCount }}</strong>
           <p class="workspace-final-review-workbench__stat-note">
             当前未撤销、仍可供评审访问的共享链接。
           </p>
         </article>
-        <article class="workspace-final-review-workbench__stat">
-          <span class="workspace-final-review-workbench__stat-label">未解决 Issue</span>
+        <article class="workspace-final-review-workbench__stat wl-workbench-surface wl-workbench-surface--card">
+          <span class="workspace-final-review-workbench__stat-label wl-workbench-eyebrow">未解决 Issue</span>
           <strong class="workspace-final-review-workbench__stat-value">{{ unresolvedIssueCount }}</strong>
           <p class="workspace-final-review-workbench__stat-note">
             优先清空 critical / high 再进入终审提交。
@@ -145,14 +145,14 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
     <section class="workspace-final-review-workbench__primary-grid">
       <article
         data-testid="workspace-final-review-checklist"
-        class="workspace-final-review-workbench__panel"
+        class="workspace-final-review-workbench__panel wl-workbench-surface wl-workbench-surface--panel"
       >
         <header class="workspace-final-review-workbench__panel-header">
           <div>
-            <p class="workspace-final-review-workbench__panel-eyebrow">
+            <p class="workspace-final-review-workbench__panel-eyebrow wl-workbench-eyebrow">
               审查清单
             </p>
-            <h2 class="workspace-final-review-workbench__panel-title">
+            <h2 class="workspace-final-review-workbench__panel-title wl-workbench-title-panel">
               终审前置项
             </h2>
           </div>
@@ -197,14 +197,14 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
       <article
         data-testid="workspace-final-review-risk-panel"
-        class="workspace-final-review-workbench__panel"
+        class="workspace-final-review-workbench__panel wl-workbench-surface wl-workbench-surface--panel"
       >
         <header class="workspace-final-review-workbench__panel-header">
           <div>
-            <p class="workspace-final-review-workbench__panel-eyebrow">
+            <p class="workspace-final-review-workbench__panel-eyebrow wl-workbench-eyebrow">
               风险面板
             </p>
-            <h2 class="workspace-final-review-workbench__panel-title">
+            <h2 class="workspace-final-review-workbench__panel-title wl-workbench-title-panel">
               当前最需要补的风险
             </h2>
           </div>
@@ -216,7 +216,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
           </div>
 
           <div class="space-y-2">
-            <p class="workspace-final-review-workbench__subheading">
+            <p class="workspace-final-review-workbench__subheading wl-workbench-eyebrow">
               高优先级未解决问题
             </p>
             <ul v-if="visibleIssues.length > 0" class="workspace-final-review-workbench__issue-list">
@@ -242,7 +242,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
           </div>
 
           <div class="space-y-2">
-            <p class="workspace-final-review-workbench__subheading">
+            <p class="workspace-final-review-workbench__subheading wl-workbench-eyebrow">
               证据缺口
             </p>
             <ul v-if="evidenceGaps.length > 0" class="workspace-final-review-workbench__evidence-list">
@@ -263,14 +263,14 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
       <article
         data-testid="workspace-final-review-actions"
-        class="workspace-final-review-workbench__panel"
+        class="workspace-final-review-workbench__panel wl-workbench-surface wl-workbench-surface--panel"
       >
         <header class="workspace-final-review-workbench__panel-header">
           <div>
-            <p class="workspace-final-review-workbench__panel-eyebrow">
+            <p class="workspace-final-review-workbench__panel-eyebrow wl-workbench-eyebrow">
               终审动作
             </p>
-            <h2 class="workspace-final-review-workbench__panel-title">
+            <h2 class="workspace-final-review-workbench__panel-title wl-workbench-title-panel">
               明确动作入口
             </h2>
           </div>
@@ -297,13 +297,13 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
     </section>
 
     <section class="workspace-final-review-workbench__secondary-grid">
-      <article class="workspace-final-review-workbench__panel">
+      <article class="workspace-final-review-workbench__panel wl-workbench-surface wl-workbench-surface--panel">
         <header class="workspace-final-review-workbench__panel-header">
           <div>
-            <p class="workspace-final-review-workbench__panel-eyebrow">
+            <p class="workspace-final-review-workbench__panel-eyebrow wl-workbench-eyebrow">
               送审资料与共享
             </p>
-            <h2 class="workspace-final-review-workbench__panel-title">
+            <h2 class="workspace-final-review-workbench__panel-title wl-workbench-title-panel">
               当前送审面
             </h2>
           </div>
@@ -314,7 +314,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
         <div class="workspace-final-review-workbench__overview-grid">
           <section class="space-y-2">
-            <p class="workspace-final-review-workbench__subheading">
+            <p class="workspace-final-review-workbench__subheading wl-workbench-eyebrow">
               项目资料
             </p>
             <ul v-if="visibleResources.length > 0" class="workspace-final-review-workbench__compact-list">
@@ -333,7 +333,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
           </section>
 
           <section class="space-y-2">
-            <p class="workspace-final-review-workbench__subheading">
+            <p class="workspace-final-review-workbench__subheading wl-workbench-eyebrow">
               共享链接
             </p>
             <ul v-if="visibleShares.length > 0" class="workspace-final-review-workbench__compact-list">
@@ -353,13 +353,13 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
         </div>
       </article>
 
-      <article class="workspace-final-review-workbench__panel">
+      <article class="workspace-final-review-workbench__panel wl-workbench-surface wl-workbench-surface--panel">
         <header class="workspace-final-review-workbench__panel-header">
           <div>
-            <p class="workspace-final-review-workbench__panel-eyebrow">
+            <p class="workspace-final-review-workbench__panel-eyebrow wl-workbench-eyebrow">
               提交草案摘要
             </p>
-            <h2 class="workspace-final-review-workbench__panel-title">
+            <h2 class="workspace-final-review-workbench__panel-title wl-workbench-title-panel">
               当前主叙事
             </h2>
           </div>
@@ -367,7 +367,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
         <div class="space-y-4">
           <section class="space-y-1.5">
-            <p class="workspace-final-review-workbench__subheading">
+            <p class="workspace-final-review-workbench__subheading wl-workbench-eyebrow">
               标题
             </p>
             <p class="workspace-final-review-workbench__draft-text">
@@ -376,7 +376,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
           </section>
 
           <section class="space-y-1.5">
-            <p class="workspace-final-review-workbench__subheading">
+            <p class="workspace-final-review-workbench__subheading wl-workbench-eyebrow">
               问题定义
             </p>
             <p class="workspace-final-review-workbench__draft-text">
@@ -385,7 +385,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
           </section>
 
           <section class="space-y-1.5">
-            <p class="workspace-final-review-workbench__subheading">
+            <p class="workspace-final-review-workbench__subheading wl-workbench-eyebrow">
               摘要
             </p>
             <p class="workspace-final-review-workbench__draft-text">
@@ -400,19 +400,12 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 <style scoped>
 .workspace-final-review-workbench {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
   min-height: 0;
 }
 
 .workspace-final-review-workbench__hero {
-  border: 1px solid #d7e3f5;
-  border-radius: 12px;
-  padding: 20px 22px;
-  background: #ffffff;
   display: grid;
-  gap: 18px;
+  gap: var(--wl-workbench-gap-lg);
 }
 
 .workspace-final-review-workbench__eyebrow,
@@ -420,23 +413,14 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 .workspace-final-review-workbench__stat-label,
 .workspace-final-review-workbench__subheading {
   display: block;
-  color: #5272a3;
-  font-size: 11px;
-  line-height: 1.4;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .workspace-final-review-workbench__title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 28px;
-  line-height: 1.1;
   font-weight: 700;
 }
 
 .workspace-final-review-workbench__title-separator {
-  color: #7c94b8;
+  color: var(--wl-workbench-text-faint);
   font-weight: 500;
   margin: 0 2px;
 }
@@ -444,26 +428,23 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 .workspace-final-review-workbench__summary {
   margin: 0;
   max-width: 66ch;
-  color: #4d6285;
-  font-size: 14px;
+  color: var(--wl-workbench-text-muted);
+  font-size: var(--wl-workbench-body-size);
   line-height: 1.7;
 }
 
 .workspace-final-review-workbench__stats {
   display: grid;
-  gap: 12px;
+  gap: var(--wl-workbench-gap-sm);
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .workspace-final-review-workbench__stat,
 .workspace-final-review-workbench__panel {
-  border: 1px solid #dbe5f3;
-  border-radius: 12px;
-  background: #ffffff;
+  min-width: 0;
 }
 
 .workspace-final-review-workbench__stat {
-  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -478,15 +459,15 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 .workspace-final-review-workbench__stat-note {
   margin: 0;
-  color: #5b708f;
-  font-size: 12px;
+  color: var(--wl-workbench-text-muted);
+  font-size: var(--wl-workbench-meta-size);
   line-height: 1.6;
 }
 
 .workspace-final-review-workbench__primary-grid,
 .workspace-final-review-workbench__secondary-grid {
   display: grid;
-  gap: 16px;
+  gap: var(--wl-workbench-gap-md);
 }
 
 .workspace-final-review-workbench__primary-grid {
@@ -497,29 +478,21 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
 }
 
-.workspace-final-review-workbench__panel {
-  padding: 18px;
-}
-
 .workspace-final-review-workbench__panel-header {
   display: flex;
-  gap: 12px;
+  gap: var(--wl-workbench-gap-sm);
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: var(--wl-workbench-gap-md);
 }
 
 .workspace-final-review-workbench__panel-title {
   margin: 4px 0 0;
-  color: #12213b;
-  font-size: 18px;
-  line-height: 1.2;
-  font-weight: 700;
 }
 
 .workspace-final-review-workbench__panel-meta {
-  color: #5d7394;
-  font-size: 12px;
+  color: var(--wl-workbench-text-muted);
+  font-size: var(--wl-workbench-meta-size);
   line-height: 1;
 }
 
@@ -535,13 +508,13 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 .workspace-final-review-workbench__list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--wl-workbench-gap-sm);
 }
 
 .workspace-final-review-workbench__list-item {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--wl-workbench-gap-sm);
   align-items: flex-start;
 }
 
@@ -571,8 +544,8 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 .workspace-final-review-workbench__draft-text,
 .workspace-final-review-workbench__empty {
   margin: 0;
-  color: #5b708f;
-  font-size: 13px;
+  color: var(--wl-workbench-text-muted);
+  font-size: var(--wl-workbench-body-size);
   line-height: 1.7;
 }
 
@@ -581,7 +554,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
   align-items: center;
   min-height: 24px;
   padding: 0 9px;
-  border-radius: 8px;
+  border-radius: var(--wl-workbench-radius-control);
   border: 1px solid transparent;
   font-size: 11px;
   line-height: 1;
@@ -589,12 +562,12 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 }
 
 .workspace-final-review-workbench__risk-summary {
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
+  border: 1px solid var(--wl-workbench-border-soft);
+  border-radius: var(--wl-workbench-radius-panel);
   padding: 14px 15px;
-  background: #f8fafc;
+  background: var(--wl-workbench-surface-muted);
   color: #324764;
-  font-size: 13px;
+  font-size: var(--wl-workbench-body-size);
   line-height: 1.8;
 }
 
@@ -602,16 +575,16 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 .workspace-final-review-workbench__evidence-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--wl-workbench-gap-xs);
 }
 
 .workspace-final-review-workbench__issue-item,
 .workspace-final-review-workbench__evidence-item,
 .workspace-final-review-workbench__compact-item {
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
+  border-radius: var(--wl-workbench-radius-panel);
+  border: 1px solid var(--wl-workbench-border-soft);
   padding: 12px 13px;
-  background: #ffffff;
+  background: var(--wl-workbench-surface);
 }
 
 .workspace-final-review-workbench__issue-severity {
@@ -619,7 +592,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
   align-items: center;
   min-height: 22px;
   padding: 0 8px;
-  border-radius: 8px;
+  border-radius: var(--wl-workbench-radius-control);
   background: #eff6ff;
   color: #1d4ed8;
   font-size: 10px;
@@ -631,13 +604,13 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 .workspace-final-review-workbench__action-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--wl-workbench-gap-xs);
 }
 
 .workspace-final-review-workbench__action,
 .workspace-final-review-workbench__inline-action {
-  border: 1px solid #d9e2ef;
-  background: #ffffff;
+  border: 1px solid var(--wl-workbench-border);
+  background: var(--wl-workbench-surface);
   color: #264061;
   cursor: pointer;
   transition:
@@ -648,7 +621,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 .workspace-final-review-workbench__action {
   min-height: 44px;
-  border-radius: 8px;
+  border-radius: var(--wl-workbench-radius-control);
   padding: 0 14px;
   font-size: 13px;
   line-height: 1;
@@ -658,8 +631,8 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 .workspace-final-review-workbench__action:hover,
 .workspace-final-review-workbench__inline-action:hover {
-  border-color: #cbd5e1;
-  background: #f8fafc;
+  border-color: var(--wl-workbench-border-strong);
+  background: var(--wl-workbench-surface-muted);
 }
 
 .workspace-final-review-workbench__action--primary {
@@ -686,23 +659,23 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 .workspace-final-review-workbench__inline-action {
   min-height: 32px;
-  border-radius: 8px;
+  border-radius: var(--wl-workbench-radius-control);
   padding: 0 12px;
-  font-size: 12px;
+  font-size: var(--wl-workbench-meta-size);
   line-height: 1;
   font-weight: 600;
 }
 
 .workspace-final-review-workbench__overview-grid {
   display: grid;
-  gap: 14px;
+  gap: var(--wl-workbench-gap-sm);
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .workspace-final-review-workbench__compact-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--wl-workbench-gap-xs);
 }
 
 .workspace-final-review-workbench__compact-item {
@@ -720,7 +693,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 
 .workspace-final-review-workbench__compact-item span {
   color: #617593;
-  font-size: 12px;
+  font-size: var(--wl-workbench-meta-size);
   line-height: 1.5;
 }
 

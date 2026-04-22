@@ -486,14 +486,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 <template>
   <section
     data-testid="workspace-defense-workbench"
-    class="workspace-defense-workbench"
+    class="workspace-defense-workbench wl-workbench"
   >
-    <section class="workspace-defense-workbench__hero">
+    <section class="workspace-defense-workbench__hero wl-workbench-surface wl-workbench-surface--shell">
       <div class="workspace-defense-workbench__hero-copy">
-        <p class="workspace-defense-workbench__eyebrow">
+        <p class="workspace-defense-workbench__eyebrow wl-workbench-eyebrow">
           比赛状态驾驶舱
         </p>
-        <h1 class="workspace-defense-workbench__title">
+        <h1 class="workspace-defense-workbench__title wl-workbench-title-hero">
           {{ contestName || '未绑定比赛' }}
           <span class="workspace-defense-workbench__title-separator">/</span>
           {{ trackName || '未绑定赛道' }}
@@ -519,9 +519,9 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
         <article
           v-for="item in heroStats"
           :key="item.id"
-          class="workspace-defense-workbench__stat"
+          class="workspace-defense-workbench__stat wl-workbench-surface wl-workbench-surface--card"
         >
-          <p class="workspace-defense-workbench__stat-label">
+          <p class="workspace-defense-workbench__stat-label wl-workbench-eyebrow">
             {{ item.label }}
           </p>
           <strong class="workspace-defense-workbench__stat-value">{{ item.value }}</strong>
@@ -562,14 +562,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
     <section class="workspace-defense-workbench__dashboard-grid">
       <article
         data-testid="workspace-defense-status-panel"
-        class="workspace-defense-workbench__panel"
+        class="workspace-defense-workbench__panel wl-workbench-surface wl-workbench-surface--panel"
       >
         <header class="workspace-defense-workbench__panel-header">
           <div>
-            <p class="workspace-defense-workbench__panel-eyebrow">
+            <p class="workspace-defense-workbench__panel-eyebrow wl-workbench-eyebrow">
               比赛状态
             </p>
-            <h2 class="workspace-defense-workbench__panel-title">
+            <h2 class="workspace-defense-workbench__panel-title wl-workbench-title-panel">
               比赛时钟
             </h2>
           </div>
@@ -619,14 +619,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
       <article
         data-testid="workspace-defense-persona-stage"
-        class="workspace-defense-workbench__panel"
+        class="workspace-defense-workbench__panel wl-workbench-surface wl-workbench-surface--panel"
       >
         <header class="workspace-defense-workbench__panel-header">
           <div>
-            <p class="workspace-defense-workbench__panel-eyebrow">
+            <p class="workspace-defense-workbench__panel-eyebrow wl-workbench-eyebrow">
               评委阵列
             </p>
-            <h2 class="workspace-defense-workbench__panel-title">
+            <h2 class="workspace-defense-workbench__panel-title wl-workbench-title-panel">
               答辩席状态
             </h2>
           </div>
@@ -663,14 +663,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
     <section
       data-testid="workspace-defense-realtime-console"
-      class="workspace-defense-workbench__panel workspace-defense-workbench__panel--wide workspace-defense-workbench__realtime"
+      class="workspace-defense-workbench__panel workspace-defense-workbench__panel--wide workspace-defense-workbench__realtime wl-workbench-surface wl-workbench-surface--panel"
     >
       <header class="workspace-defense-workbench__panel-header">
         <div>
-          <p class="workspace-defense-workbench__panel-eyebrow">
+          <p class="workspace-defense-workbench__panel-eyebrow wl-workbench-eyebrow">
             实时答辩控制台
           </p>
-          <h2 class="workspace-defense-workbench__panel-title">
+          <h2 class="workspace-defense-workbench__panel-title wl-workbench-title-panel">
             Provider / 音视频 / 诊断
           </h2>
         </div>
@@ -764,7 +764,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
             :key="item.id"
             class="workspace-defense-workbench__status-card"
           >
-            <p class="workspace-defense-workbench__stat-label">
+            <p class="workspace-defense-workbench__stat-label wl-workbench-eyebrow">
               {{ item.label }}
             </p>
             <strong class="workspace-defense-workbench__status-value">{{ item.value }}</strong>
@@ -805,14 +805,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
     <section class="workspace-defense-workbench__content-grid">
       <article
         data-testid="workspace-defense-scorecard"
-        class="workspace-defense-workbench__panel"
+        class="workspace-defense-workbench__panel wl-workbench-surface wl-workbench-surface--panel"
       >
         <header class="workspace-defense-workbench__panel-header">
           <div>
-            <p class="workspace-defense-workbench__panel-eyebrow">
+            <p class="workspace-defense-workbench__panel-eyebrow wl-workbench-eyebrow">
               最新评分
             </p>
-            <h2 class="workspace-defense-workbench__panel-title">
+            <h2 class="workspace-defense-workbench__panel-title wl-workbench-title-panel">
               评分卡
             </h2>
           </div>
@@ -846,14 +846,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
       <article
         data-testid="workspace-defense-rounds"
-        class="workspace-defense-workbench__panel"
+        class="workspace-defense-workbench__panel wl-workbench-surface wl-workbench-surface--panel"
       >
         <header class="workspace-defense-workbench__panel-header">
           <div>
-            <p class="workspace-defense-workbench__panel-eyebrow">
+            <p class="workspace-defense-workbench__panel-eyebrow wl-workbench-eyebrow">
               最近轮次
             </p>
-            <h2 class="workspace-defense-workbench__panel-title">
+            <h2 class="workspace-defense-workbench__panel-title wl-workbench-title-panel">
               答辩时间线
             </h2>
           </div>
@@ -895,14 +895,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
       <article
         data-testid="workspace-defense-summary"
-        class="workspace-defense-workbench__panel workspace-defense-workbench__panel--wide"
+        class="workspace-defense-workbench__panel workspace-defense-workbench__panel--wide wl-workbench-surface wl-workbench-surface--panel"
       >
         <header class="workspace-defense-workbench__panel-header">
           <div>
-            <p class="workspace-defense-workbench__panel-eyebrow">
+            <p class="workspace-defense-workbench__panel-eyebrow wl-workbench-eyebrow">
               会话总结
             </p>
-            <h2 class="workspace-defense-workbench__panel-title">
+            <h2 class="workspace-defense-workbench__panel-title wl-workbench-title-panel">
               总结与动作项
             </h2>
           </div>
@@ -914,7 +914,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
           </p>
 
           <div v-if="summary.actionItems.length > 0" class="workspace-defense-workbench__summary-group">
-            <p class="workspace-defense-workbench__summary-label">
+            <p class="workspace-defense-workbench__summary-label wl-workbench-eyebrow">
               动作项
             </p>
             <ul class="workspace-defense-workbench__summary-list">
@@ -925,7 +925,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
           </div>
 
           <div v-if="summary.evidenceGaps.length > 0" class="workspace-defense-workbench__summary-group">
-            <p class="workspace-defense-workbench__summary-label">
+            <p class="workspace-defense-workbench__summary-label wl-workbench-eyebrow">
               证据缺口
             </p>
             <ul class="workspace-defense-workbench__summary-list workspace-defense-workbench__summary-list--warning">
@@ -945,19 +945,13 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
 <style scoped>
 .workspace-defense-workbench {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  min-height: 0;
 }
 
 .workspace-defense-workbench__hero {
-  border: 1px solid #dbe4f2;
-  border-radius: 12px;
-  padding: 24px;
-  background: #ffffff;
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
-  gap: 20px;
+  gap: var(--wl-workbench-gap-lg);
 }
 
 .workspace-defense-workbench__eyebrow,
@@ -965,23 +959,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__stat-label,
 .workspace-defense-workbench__summary-label {
   margin: 0;
-  color: #607596;
-  font-size: 11px;
-  line-height: 1.4;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .workspace-defense-workbench__title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 34px;
-  line-height: 1.08;
   font-weight: 750;
 }
 
 .workspace-defense-workbench__title-separator {
-  color: #a0afc6;
+  color: var(--wl-workbench-text-faint);
   margin: 0 6px;
 }
 
@@ -992,16 +977,16 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__score-summary,
 .workspace-defense-workbench__summary-text {
   margin: 0;
-  color: #60718c;
-  font-size: 13px;
+  color: var(--wl-workbench-text-muted);
+  font-size: var(--wl-workbench-body-size);
   line-height: 1.8;
 }
 
 .workspace-defense-workbench__meta-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 16px;
+  gap: var(--wl-workbench-gap-xs);
+  margin-top: var(--wl-workbench-gap-md);
 }
 
 .workspace-defense-workbench__meta-pill {
@@ -1009,25 +994,26 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
   align-items: center;
   min-height: 32px;
   padding: 0 12px;
-  border-radius: 8px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  color: #334155;
-  font-size: 12px;
+  border-radius: var(--wl-workbench-radius-control);
+  background: var(--wl-workbench-surface-muted);
+  border: 1px solid var(--wl-workbench-border-soft);
+  color: var(--wl-workbench-text-secondary);
+  font-size: var(--wl-workbench-meta-size);
   font-weight: 600;
 }
 
 .workspace-defense-workbench__hero-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--wl-workbench-gap-sm);
 }
 
 .workspace-defense-workbench__stat {
-  padding: 14px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--wl-workbench-surface-muted);
+  border-color: var(--wl-workbench-border-soft);
 }
 
 .workspace-defense-workbench__stat-value {
@@ -1042,16 +1028,16 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--wl-workbench-gap-xs);
 }
 
 .workspace-defense-workbench__action {
   min-height: 38px;
   padding: 0 16px;
-  border-radius: 8px;
-  border: 1px solid #dbe4f2;
-  background: #ffffff;
-  color: #334155;
+  border-radius: var(--wl-workbench-radius-control);
+  border: 1px solid var(--wl-workbench-border);
+  background: var(--wl-workbench-surface);
+  color: var(--wl-workbench-text-secondary);
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
@@ -1062,8 +1048,8 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__action:hover {
-  border-color: #cbd5e1;
-  background: #f8fafc;
+  border-color: var(--wl-workbench-border-strong);
+  background: var(--wl-workbench-surface-muted);
 }
 
 .workspace-defense-workbench__action--primary {
@@ -1075,23 +1061,23 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__content-grid {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 16px;
+  gap: var(--wl-workbench-gap-md);
 }
 
 .workspace-defense-workbench__dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-  gap: 16px;
+  gap: var(--wl-workbench-gap-md);
 }
 
 .workspace-defense-workbench__realtime {
-  background: #ffffff;
+  background: var(--wl-workbench-surface);
 }
 
 .workspace-defense-workbench__realtime-shell {
   display: grid;
   grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
-  gap: 16px;
+  gap: var(--wl-workbench-gap-md);
 }
 
 .workspace-defense-workbench__realtime-controls,
@@ -1104,7 +1090,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__realtime-header-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--wl-workbench-gap-xs);
 }
 
 .workspace-defense-workbench__field {
@@ -1115,8 +1101,8 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
 .workspace-defense-workbench__field-label {
   margin: 0;
-  color: #607596;
-  font-size: 11px;
+  color: var(--wl-workbench-text-eyebrow);
+  font-size: var(--wl-workbench-eyebrow-size);
   line-height: 1.4;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1124,27 +1110,27 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
 .workspace-defense-workbench__field-control {
   min-height: 42px;
-  border-radius: 8px;
-  border: 1px solid #dbe4f2;
-  background: #ffffff;
+  border-radius: var(--wl-workbench-radius-control);
+  border: 1px solid var(--wl-workbench-border);
+  background: var(--wl-workbench-surface);
   color: #12304f;
   padding: 0 12px;
-  font-size: 13px;
+  font-size: var(--wl-workbench-body-size);
   font-weight: 600;
 }
 
 .workspace-defense-workbench__toggle-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--wl-workbench-gap-xs);
 }
 
 .workspace-defense-workbench__toggle {
   min-height: 38px;
   padding: 0 14px;
-  border-radius: 8px;
-  border: 1px solid #dbe4f2;
-  background: #ffffff;
+  border-radius: var(--wl-workbench-radius-control);
+  border: 1px solid var(--wl-workbench-border);
+  background: var(--wl-workbench-surface);
   color: #475569;
   font-size: 12px;
   font-weight: 700;
@@ -1158,17 +1144,17 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__preview {
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  padding: 12px;
+  border-radius: var(--wl-workbench-radius-panel);
+  border: 1px solid var(--wl-workbench-border-soft);
+  background: var(--wl-workbench-surface-muted);
+  padding: var(--wl-workbench-card-padding-compact);
 }
 
 .workspace-defense-workbench__preview-surface {
   min-height: 188px;
-  border-radius: 8px;
-  border: 1px dashed #cbd5e1;
-  background: #ffffff;
+  border-radius: var(--wl-workbench-radius-control);
+  border: 1px dashed var(--wl-workbench-border-strong);
+  background: var(--wl-workbench-surface);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1179,10 +1165,10 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__status-card {
-  padding: 14px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  padding: var(--wl-workbench-card-padding);
+  border-radius: var(--wl-workbench-radius-panel);
+  background: var(--wl-workbench-surface-muted);
+  border: 1px solid var(--wl-workbench-border-soft);
 }
 
 .workspace-defense-workbench__status-value {
@@ -1195,20 +1181,20 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__realtime-alert {
-  border-radius: 10px;
+  border-radius: var(--wl-workbench-radius-panel);
   border: 1px solid rgba(231, 146, 98, 0.32);
   background: rgba(255, 246, 239, 0.95);
   color: #9a4b17;
   padding: 12px 14px;
-  font-size: 13px;
+  font-size: var(--wl-workbench-body-size);
   line-height: 1.7;
 }
 
 .workspace-defense-workbench__realtime-log {
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  background: #ffffff;
-  padding: 14px;
+  border-radius: var(--wl-workbench-radius-panel);
+  border: 1px solid var(--wl-workbench-border-soft);
+  background: var(--wl-workbench-surface);
+  padding: var(--wl-workbench-card-padding);
 }
 
 .workspace-defense-workbench__realtime-log-list {
@@ -1230,10 +1216,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 .workspace-defense-workbench__panel {
-  border: 1px solid #dbe4f2;
-  border-radius: 12px;
-  padding: 20px;
-  background: #ffffff;
+  min-width: 0;
 }
 
 .workspace-defense-workbench__panel--wide {
@@ -1244,26 +1227,22 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--wl-workbench-gap-sm);
   margin-bottom: 14px;
 }
 
 .workspace-defense-workbench__panel-title {
   margin: 4px 0 0;
-  color: #10223a;
-  font-size: 20px;
-  line-height: 1.25;
-  font-weight: 700;
 }
 
 .workspace-defense-workbench__clock-hero {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 18px;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
+  padding: var(--wl-workbench-panel-padding);
+  border-radius: var(--wl-workbench-radius-panel);
+  border: 1px solid var(--wl-workbench-border-soft);
+  background: var(--wl-workbench-surface-muted);
 }
 
 .workspace-defense-workbench__clock-hero[data-tone='live'] {
@@ -1286,8 +1265,8 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__schedule-label,
 .workspace-defense-workbench__persona-meta {
   margin: 0;
-  color: #5f7493;
-  font-size: 11px;
+  color: var(--wl-workbench-text-eyebrow);
+  font-size: var(--wl-workbench-eyebrow-size);
   line-height: 1.5;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1312,8 +1291,8 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__schedule-note,
 .workspace-defense-workbench__timeline-meta {
   margin: 0;
-  color: #60718c;
-  font-size: 12px;
+  color: var(--wl-workbench-text-muted);
+  font-size: var(--wl-workbench-meta-size);
   line-height: 1.7;
 }
 
@@ -1332,17 +1311,17 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__timeline-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--wl-workbench-gap-sm);
   margin-top: 14px;
 }
 
 .workspace-defense-workbench__schedule-item,
 .workspace-defense-workbench__persona-card,
 .workspace-defense-workbench__timeline-item {
-  padding: 14px;
-  border-radius: 10px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  padding: var(--wl-workbench-card-padding);
+  border-radius: var(--wl-workbench-radius-panel);
+  background: var(--wl-workbench-surface);
+  border: 1px solid var(--wl-workbench-border-soft);
 }
 
 .workspace-defense-workbench__schedule-item[data-state='active'],
@@ -1378,7 +1357,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
   align-items: center;
   min-height: 26px;
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--wl-workbench-radius-control);
   background: #eff6ff;
   color: #1d4ed8;
   font-size: 11px;
@@ -1389,14 +1368,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__score-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--wl-workbench-gap-sm);
 }
 
 .workspace-defense-workbench__score-item {
-  padding: 14px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  padding: var(--wl-workbench-card-padding);
+  border-radius: var(--wl-workbench-radius-panel);
+  background: var(--wl-workbench-surface-muted);
+  border: 1px solid var(--wl-workbench-border-soft);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1427,14 +1406,14 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 .workspace-defense-workbench__round-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--wl-workbench-gap-sm);
 }
 
 .workspace-defense-workbench__round {
-  padding: 14px;
-  border-radius: 10px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  padding: var(--wl-workbench-card-padding);
+  border-radius: var(--wl-workbench-radius-panel);
+  background: var(--wl-workbench-surface);
+  border: 1px solid var(--wl-workbench-border-soft);
 }
 
 .workspace-defense-workbench__round-topline {
@@ -1458,7 +1437,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
   min-width: 36px;
   height: 28px;
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--wl-workbench-radius-control);
   background: #eff6ff;
   color: #1d4ed8;
   font-size: 12px;
@@ -1507,14 +1486,6 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 }
 
 @media (max-width: 767px) {
-  .workspace-defense-workbench__hero {
-    padding: 20px;
-  }
-
-  .workspace-defense-workbench__title {
-    font-size: 28px;
-  }
-
   .workspace-defense-workbench__hero-stats,
   .workspace-defense-workbench__score-grid {
     grid-template-columns: minmax(0, 1fr);

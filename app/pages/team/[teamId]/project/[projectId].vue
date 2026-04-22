@@ -13025,7 +13025,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  background: #f8fafc;
+  background: var(--wl-workbench-stage-bg);
 }
 
 .workspace-defense-shell__sidebar {
@@ -13042,14 +13042,14 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 16px;
+  padding: var(--wl-workbench-stage-padding);
 }
 
 .workspace-final-review-shell {
   position: relative;
   min-width: 0;
   min-height: 0;
-  background: #f8fafc;
+  background: var(--wl-workbench-stage-bg);
 }
 
 .workspace-final-review-stage {
@@ -13057,7 +13057,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 16px 56px;
+  padding: var(--wl-workbench-stage-padding) var(--wl-workbench-stage-inline-padding);
 }
 
 .workspace-final-review-edge {
@@ -13286,7 +13286,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
 
 @media (max-width: 960px) {
   .workspace-final-review-stage {
-    padding: 18px 58px;
+    padding: var(--wl-workbench-stage-padding) var(--wl-workbench-stage-inline-padding-compact);
   }
 }
 

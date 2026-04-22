@@ -55,6 +55,49 @@
   --wl-danger-700: #be123c;
 
   --wl-shadow-card: 0 10px 28px rgba(15, 23, 42, 0.05);
+
+  --wl-workbench-stage-bg: #f8fafc;
+  --wl-workbench-surface: #ffffff;
+  --wl-workbench-surface-muted: #f8fafc;
+  --wl-workbench-surface-subtle: #f7faff;
+  --wl-workbench-surface-accent: #eff6ff;
+  --wl-workbench-border: #dbe4f2;
+  --wl-workbench-border-soft: #e2e8f0;
+  --wl-workbench-border-strong: #cbd5e1;
+  --wl-workbench-shadow: none;
+
+  --wl-workbench-gap-xs: 10px;
+  --wl-workbench-gap-sm: 12px;
+  --wl-workbench-gap-md: 16px;
+  --wl-workbench-gap-lg: 20px;
+  --wl-workbench-shell-padding: 20px;
+  --wl-workbench-shell-padding-mobile: 16px;
+  --wl-workbench-panel-padding: 18px;
+  --wl-workbench-panel-padding-mobile: 16px;
+  --wl-workbench-card-padding: 14px;
+  --wl-workbench-card-padding-compact: 12px;
+  --wl-workbench-stage-padding: 16px;
+  --wl-workbench-stage-inline-padding: 48px;
+  --wl-workbench-stage-inline-padding-compact: 20px;
+
+  --wl-workbench-radius-shell: 10px;
+  --wl-workbench-radius-panel: 10px;
+  --wl-workbench-radius-control: 8px;
+  --wl-workbench-radius-pill: 999px;
+
+  --wl-workbench-title-hero-size: clamp(28px, 3vw, 32px);
+  --wl-workbench-title-hero-line: 1.08;
+  --wl-workbench-title-panel-size: 18px;
+  --wl-workbench-title-panel-line: 1.25;
+  --wl-workbench-eyebrow-size: 11px;
+  --wl-workbench-body-size: 13px;
+  --wl-workbench-meta-size: 12px;
+
+  --wl-workbench-text-primary: #0f172a;
+  --wl-workbench-text-secondary: #334155;
+  --wl-workbench-text-muted: #60718c;
+  --wl-workbench-text-eyebrow: #607596;
+  --wl-workbench-text-faint: #94a3b8;
   color-scheme: light;
 }
 
