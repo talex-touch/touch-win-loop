@@ -64,11 +64,6 @@ const showAdminBadge = computed(() => {
   return canEnterAdmin.value && route.path.startsWith('/admin')
 })
 
-const isDashboardHome = computed(() => {
-  const normalizedPath = route.path.replace(/\/+$/, '') || '/'
-  return normalizedPath === '/dashboard'
-})
-
 const isWorkspaceFullscreen = computed(() => {
   const normalizedPath = route.path.replace(/\/+$/, '') || '/'
   return /^\/team\/[^/]+\/project\/[^/]+$/.test(normalizedPath)
@@ -200,7 +195,6 @@ watch(() => route.fullPath, async () => {
         <div
           ref="shellScrollRef"
           class="dashboard-scrollbar flex-1 min-h-0 overflow-y-auto"
-          :class="isDashboardHome ? 'p-0' : 'p-4 md:p-8'"
         >
           <slot />
         </div>
@@ -219,6 +213,10 @@ watch(() => route.fullPath, async () => {
   width: 100%;
   height: 100dvh;
   min-height: 0;
+}
+
+.dashboard-scrollbar {
+  padding: 0 !important;
 }
 
 .dashboard-scrollbar::-webkit-scrollbar {

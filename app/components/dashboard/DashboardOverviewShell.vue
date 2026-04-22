@@ -83,14 +83,14 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-4">
     <section
-      class="p-6 border border-slate-200 rounded-2xl bg-white"
+      class="px-4 py-4 border border-slate-200 rounded-xl bg-white"
       :data-testid="overviewSectionTestId"
     >
-      <div class="flex flex-wrap gap-3 items-center justify-between">
+      <div class="flex flex-wrap gap-2.5 items-center justify-between">
         <div>
-          <h2 class="text-2xl text-slate-900 font-bold">
+          <h2 class="text-xl text-slate-900 font-bold">
             {{ title }}
           </h2>
           <p v-if="description" class="text-sm text-slate-500 mt-1">
@@ -100,13 +100,13 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
 
         <div
           v-if="hasHeaderActions"
-          class="flex flex-wrap gap-3 items-center justify-end"
+          class="flex flex-wrap gap-2 items-center justify-end"
         >
           <slot name="header-actions">
             <button
               v-if="primaryActionLabel"
               :data-testid="primaryActionTestId"
-              class="text-sm text-white font-semibold px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="text-sm text-white font-semibold px-3.5 py-2 rounded-md bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
               :disabled="primaryActionDisabled"
               type="button"
               @click="emit('primaryAction')"
@@ -117,23 +117,23 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
         </div>
       </div>
 
-      <div v-if="hasSummary" class="mt-4 space-y-3">
+      <div v-if="hasSummary" class="mt-3 space-y-2.5">
         <slot name="summary">
-          <p v-if="summaryText" class="text-xs text-slate-500">
+          <p v-if="summaryText" class="text-sm text-slate-500">
             {{ summaryText }}
           </p>
 
-          <div v-if="summaryStats.length > 0" class="gap-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+          <div v-if="summaryStats.length > 0" class="gap-2.5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
             <article
               v-for="item in summaryStats"
               :key="item.label"
-              class="p-4 border rounded-xl"
+              class="px-3 py-3 border rounded-lg"
               :class="summaryStatClass(item.tone)"
             >
-              <p class="text-[11px] font-medium opacity-80">
+              <p class="text-[12px] font-medium opacity-80">
                 {{ item.label }}
               </p>
-              <p class="text-sm leading-6 font-semibold mt-2">
+              <p class="text-sm leading-5 font-semibold mt-1.5">
                 {{ item.value }}
               </p>
             </article>
@@ -152,7 +152,7 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
 
     <section
       v-if="noticeText"
-      class="text-sm p-4 border rounded-xl"
+      class="text-sm px-4 py-3 border rounded-lg"
       :class="noticeClass"
       :data-testid="noticeTestId"
     >
@@ -163,11 +163,11 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
       <slot name="lead" />
     </section>
 
-    <section v-if="loading" class="gap-4 grid grid-cols-1 xl:grid-cols-2">
+    <section v-if="loading" class="gap-3 grid grid-cols-1 xl:grid-cols-2">
       <div
         v-for="index in loadingCardCount"
         :key="`${loadingKeyPrefix}-${index}`"
-        class="p-5 border border-slate-200 rounded-xl bg-white animate-pulse"
+        class="p-4 border border-slate-200 rounded-lg bg-white animate-pulse"
       >
         <div class="rounded bg-slate-200 h-5 w-1/2" />
         <div class="mt-3 rounded bg-slate-100 h-4 w-2/3" />
@@ -175,7 +175,7 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
       </div>
     </section>
 
-    <section v-else-if="errorText" class="p-5 border border-rose-200 rounded-xl bg-rose-50">
+    <section v-else-if="errorText" class="px-4 py-3 border border-rose-200 rounded-lg bg-rose-50">
       <p class="text-sm text-rose-700">
         {{ errorText }}
       </p>
@@ -188,8 +188,8 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
       </button>
     </section>
 
-    <section v-else-if="empty" class="p-8 text-center border border-slate-300 rounded-2xl border-dashed bg-white">
-      <h3 class="text-lg text-slate-900 font-semibold">
+    <section v-else-if="empty" class="px-4 py-6 text-center border border-slate-300 rounded-xl border-dashed bg-white">
+      <h3 class="text-base text-slate-900 font-semibold">
         {{ emptyTitle }}
       </h3>
       <p v-if="emptyDescription" class="text-sm text-slate-500 mt-2">
@@ -198,7 +198,7 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
       <button
         v-if="primaryActionLabel"
         :data-testid="emptyActionTestId"
-        class="text-sm text-white font-semibold mt-4 px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+        class="text-sm text-white font-semibold mt-4 px-3.5 py-2 rounded-md bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
         :disabled="primaryActionDisabled"
         type="button"
         @click="emit('primaryAction')"
@@ -207,8 +207,8 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
       </button>
     </section>
 
-    <div v-else-if="hasAside" class="gap-8 grid grid-cols-12">
-      <div class="col-span-12 space-y-8 lg:col-span-8">
+    <div v-else-if="hasAside" class="gap-5 grid grid-cols-12">
+      <div class="col-span-12 space-y-5 lg:col-span-8">
         <slot />
       </div>
       <div class="col-span-12 lg:col-span-4">

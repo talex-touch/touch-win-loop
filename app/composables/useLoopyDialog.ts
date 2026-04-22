@@ -46,6 +46,7 @@ function toModelMessages(messages: ChatMessage[]): ChatMessage[] {
     .map(message => ({
       role: message.role,
       content: message.content,
+      metadata: message.metadata,
     }))
 }
 
@@ -116,6 +117,7 @@ export function useLoopyDialog(input: {
       const restoredMessages = payload.data.messages.map(item => ({
         role: item.role,
         content: item.content,
+        metadata: item.metadata,
       })) as ChatMessage[]
 
       messages.value = restoredMessages.length > 0
@@ -271,12 +273,14 @@ export function useLoopyDialog(input: {
     chatLoading.value = true
 
     let assistantBuffer = ''
+    let assistantMetadata: Record<string, unknown> | undefined
     const renderAssistantMessage = () => {
       const nextMessages = [...pendingMessages]
       if (assistantBuffer) {
         nextMessages.push({
           role: 'assistant',
           content: assistantBuffer,
+          metadata: assistantMetadata,
         })
       }
       messages.value = nextMessages
@@ -362,6 +366,7 @@ export function useLoopyDialog(input: {
           if (eventType === 'done') {
             const result = toJsonPayload(data.result) as Partial<AiWorkspaceResult>
             assistantBuffer = normalizeText(result.assistantReply) || assistantBuffer
+            assistantMetadata = result.knowledge ? { knowledge: result.knowledge } : undefined
             if (result.sessionId)
               activeSessionId.value = normalizeText(result.sessionId)
             statusText.value = '已完成回答。'

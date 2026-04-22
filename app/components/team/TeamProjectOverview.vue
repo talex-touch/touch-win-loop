@@ -62,10 +62,10 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
   <section
     v-if="projects.length === 0"
     data-testid="team-project-empty-state"
-    class="p-5 border border-slate-200 rounded-2xl border-dashed bg-white"
+    class="p-4 border border-slate-200 rounded-xl border-dashed bg-white"
   >
     <div class="flex gap-3 items-start">
-      <div class="text-slate-500 rounded-2xl bg-slate-100 flex shrink-0 h-11 w-11 items-center justify-center">
+      <div class="text-slate-500 rounded-xl bg-slate-100 flex shrink-0 h-10 w-10 items-center justify-center">
         <span class="material-symbols-outlined text-[20px]">inventory_2</span>
       </div>
       <div>
@@ -85,7 +85,7 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
       :key="project.id"
       data-testid="team-project-card"
       :data-project-id="project.id"
-      class="border rounded-2xl bg-white relative overflow-hidden"
+      class="border rounded-xl bg-white relative overflow-hidden"
       :style="{
         borderColor: project.accentBorder,
         background: `linear-gradient(135deg, ${project.accentSoft} 0%, #ffffff 70%, ${project.accentSoft} 100%)`,
@@ -98,13 +98,13 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
           opacity: 0.34,
         }"
       />
-      <div class="p-4 relative">
+      <div class="p-3.5 relative">
         <button class="text-left w-full block" type="button" @click="openProject(project)">
           <div class="flex gap-3 items-start justify-between">
             <div class="flex gap-3 min-w-0 items-start">
               <div
                 data-testid="team-project-icon-badge"
-                class="rounded-2xl flex shrink-0 h-10 w-10 items-center justify-center"
+                class="rounded-xl flex shrink-0 h-9 w-9 items-center justify-center"
                 :style="{
                   color: project.accentText,
                   backgroundColor: project.accentSoft,
@@ -115,7 +115,7 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
 
               <div class="min-w-0">
                 <div class="flex flex-wrap gap-2 items-center">
-                  <h3 class="text-[15px] text-slate-900 font-semibold truncate">
+                  <h3 class="text-sm text-slate-900 font-semibold truncate">
                     {{ project.title }}
                   </h3>
                 </div>
@@ -166,12 +166,12 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
           </div>
         </button>
 
-        <div class="mt-4 pt-3 border-t border-white/80 flex gap-3 items-center justify-between">
+        <div class="mt-3 pt-2.5 border-t border-white/80 flex gap-2 items-center justify-between">
           <div class="flex flex-1 flex-wrap gap-2 min-w-0 items-center">
             <a-trigger trigger="hover" position="bl">
               <button
                 data-testid="team-project-member-summary-trigger"
-                class="text-[11px] text-slate-600 px-2.5 py-1.5 rounded-full bg-white/80 flex gap-2 min-w-0 transition-colors items-center hover:bg-white"
+                class="text-[11px] text-slate-600 px-2 py-1.5 rounded-md bg-white/80 flex gap-2 min-w-0 transition-colors items-center hover:bg-white"
                 type="button"
               >
                 <span data-testid="team-project-member-avatar-stack" class="flex items-center">
@@ -206,7 +206,7 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
               <template #content>
                 <div
                   data-testid="team-project-member-summary-popover"
-                  class="p-3 border border-slate-200 rounded-2xl bg-white w-72 shadow-sm"
+                  class="p-3 border border-slate-200 rounded-xl bg-white w-72 shadow-sm"
                 >
                   <div class="text-xs text-slate-900 font-semibold">
                     项目席位
@@ -251,7 +251,7 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
             <a-trigger trigger="hover" position="bottom">
               <button
                 data-testid="team-project-contest-summary-trigger"
-                class="text-[11px] text-slate-600 px-2.5 py-1.5 rounded-full bg-white/80 flex gap-1 max-w-full min-w-0 transition-colors items-center hover:bg-white"
+                class="text-[11px] text-slate-600 px-2 py-1.5 rounded-md bg-white/80 flex gap-1 max-w-full min-w-0 transition-colors items-center hover:bg-white"
                 type="button"
               >
                 <span class="truncate">{{ project.contestSummary }}</span>
@@ -260,7 +260,7 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
               <template #content>
                 <div
                   data-testid="team-project-contest-summary-popover"
-                  class="p-3 border border-slate-200 rounded-2xl bg-white w-72 shadow-sm"
+                  class="p-3 border border-slate-200 rounded-xl bg-white w-72 shadow-sm"
                 >
                   <div class="text-xs text-slate-900 font-semibold">
                     绑定比赛
@@ -295,7 +295,7 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
               <template #content>
                 <div
                   data-testid="team-project-updated-at-popover"
-                  class="p-3 border border-slate-200 rounded-2xl bg-white shadow-sm"
+                  class="p-3 border border-slate-200 rounded-xl bg-white shadow-sm"
                 >
                   <div class="text-xs text-slate-900 font-semibold">
                     最后更新时间
@@ -323,7 +323,7 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
               </button>
 
               <template #content>
-                <div class="p-2 border border-slate-200 rounded-2xl bg-white w-44">
+                <div class="p-2 border border-slate-200 rounded-xl bg-white w-44">
                   <button
                     class="text-[12px] text-slate-700 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
                     type="button"

@@ -251,39 +251,39 @@ function onUserUpdated(user: AuthUser) {
 
 <style scoped>
 .dashboard-sidebar {
-  width: 15.75rem;
+  width: 14.5rem;
   flex-shrink: 0;
   flex-direction: column;
   border-right: 1px solid #e7ecf5;
   background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
-  font-size: 1rem;
+  font-size: 0.875rem;
 }
 
 .dashboard-sidebar__inner {
   display: flex;
   min-height: 100%;
   flex-direction: column;
-  gap: 1rem;
-  padding: 1rem 0.875rem 0.875rem;
+  gap: 0.75rem;
+  padding: 0.75rem 0.625rem 0.625rem;
 }
 
 .dashboard-sidebar__brand-panel {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0 0.625rem 0.875rem;
+  gap: 0.375rem;
+  padding: 0 0.5rem 0.75rem;
   border-bottom: 1px solid #eef3f8;
   text-align: center;
 }
 
 .dashboard-sidebar__brand-mark-shell {
   display: flex;
-  width: 4rem;
-  height: 4rem;
+  width: 3rem;
+  height: 3rem;
   align-items: center;
   justify-content: center;
-  border-radius: 1.125rem;
+  border-radius: 0.875rem;
   background: radial-gradient(
     circle at 50% 35%,
     rgba(255, 255, 255, 0.98) 0%,
@@ -293,7 +293,7 @@ function onUserUpdated(user: AuthUser) {
 }
 
 .dashboard-sidebar__brand-mark {
-  --winloop-brand-mark-size: 2.45rem;
+  --winloop-brand-mark-size: 1.9rem;
 }
 
 .dashboard-sidebar__brand-copy {
@@ -304,8 +304,8 @@ function onUserUpdated(user: AuthUser) {
 
 .dashboard-sidebar__brand-title {
   margin: 0;
-  font-size: 1.25rem;
-  line-height: 1.05;
+  font-size: 1rem;
+  line-height: 1.1;
   font-weight: 700;
   letter-spacing: -0.04em;
   color: #0f172a;
@@ -313,7 +313,7 @@ function onUserUpdated(user: AuthUser) {
 
 .dashboard-sidebar__brand-subtitle {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   line-height: 1.4;
   font-weight: 600;
   color: #98a3b7;
@@ -323,16 +323,16 @@ function onUserUpdated(user: AuthUser) {
   display: flex;
   flex-direction: column;
   gap: 0.1875rem;
-  padding: 0 0.25rem;
+  padding: 0 0.125rem;
 }
 
 .dashboard-sidebar__nav-item {
   display: flex;
-  min-height: 2.75rem;
+  min-height: 2.5rem;
   align-items: center;
-  gap: 0.625rem;
-  border-radius: 0.75rem;
-  padding: 0.625rem 0.75rem;
+  gap: 0.5rem;
+  border-radius: 0.625rem;
+  padding: 0.5rem 0.75rem;
   color: #6a7890;
   text-decoration: none;
   transition:
@@ -358,18 +358,18 @@ function onUserUpdated(user: AuthUser) {
 
 .dashboard-sidebar__nav-icon {
   display: flex;
-  width: 1.375rem;
-  min-width: 1.375rem;
+  width: 1.25rem;
+  min-width: 1.25rem;
   align-items: center;
   justify-content: center;
 }
 
 .dashboard-sidebar__nav-brand {
-  --winloop-brand-mark-size: 1.125rem;
+  --winloop-brand-mark-size: 1rem;
 }
 
 .dashboard-sidebar__nav-glyph {
-  font-size: 1.125rem;
+  font-size: 1rem;
   line-height: 1;
   font-variation-settings:
     'FILL' 0,
@@ -378,7 +378,7 @@ function onUserUpdated(user: AuthUser) {
 }
 
 .dashboard-sidebar__nav-label {
-  font-size: 1rem;
+  font-size: 0.875rem;
   line-height: 1.3;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -388,21 +388,21 @@ function onUserUpdated(user: AuthUser) {
   display: flex;
   margin-top: auto;
   flex-direction: column;
-  gap: 0.625rem;
-  padding: 0.5rem 0.25rem 0;
+  gap: 0.5rem;
+  padding: 0.375rem 0.125rem 0;
 }
 
 .dashboard-sidebar__topic-card {
   border: 1px solid #edf1f7;
-  border-radius: 1rem;
+  border-radius: 0.875rem;
   background: #ffffff;
-  padding: 0.8125rem 0.8125rem 0.875rem;
+  padding: 0.625rem 0.75rem;
 }
 
 .dashboard-sidebar__topic-heading {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.375rem;
   font-size: 0.75rem;
   line-height: 1;
   font-weight: 700;
@@ -410,18 +410,18 @@ function onUserUpdated(user: AuthUser) {
 }
 
 .dashboard-sidebar__topic-heading-icon {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   line-height: 1;
   color: #4f7dff;
 }
 
 .dashboard-sidebar__topic-list {
   display: flex;
-  margin: 0.625rem 0 0;
+  margin: 0.5rem 0 0;
   padding: 0;
   list-style: none;
   flex-direction: column;
-  gap: 0.625rem;
+  gap: 0.5rem;
 }
 
 .dashboard-sidebar__topic-item {
@@ -431,14 +431,14 @@ function onUserUpdated(user: AuthUser) {
 }
 
 .dashboard-sidebar__topic-prefix {
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   line-height: 1;
   font-weight: 700;
   color: #2563eb;
 }
 
 .dashboard-sidebar__topic-label {
-  font-size: 1rem;
+  font-size: 0.875rem;
   line-height: 1.35;
   font-weight: 600;
   color: #52627c;
@@ -447,17 +447,17 @@ function onUserUpdated(user: AuthUser) {
 .dashboard-sidebar__account-card {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
+  gap: 0.5rem;
   border: 1px solid #edf1f7;
-  border-radius: 1rem;
+  border-radius: 0.875rem;
   background: #ffffff;
-  padding: 0.625rem 0.75rem;
+  padding: 0.5rem 0.625rem;
 }
 
 .dashboard-sidebar__account-avatar {
   display: flex;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2rem;
+  height: 2rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
@@ -469,7 +469,7 @@ function onUserUpdated(user: AuthUser) {
 .dashboard-sidebar__account-avatar--fallback {
   background: #0f172a;
   color: #ffffff;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   line-height: 1;
   font-weight: 700;
 }
@@ -482,7 +482,7 @@ function onUserUpdated(user: AuthUser) {
 .dashboard-sidebar__account-name-row {
   display: flex;
   align-items: center;
-  gap: 0.3125rem;
+  gap: 0.25rem;
 }
 
 .dashboard-sidebar__account-name {
@@ -491,7 +491,7 @@ function onUserUpdated(user: AuthUser) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 1rem;
+  font-size: 0.875rem;
   line-height: 1.2;
   font-weight: 700;
   color: #0f172a;
@@ -511,11 +511,11 @@ function onUserUpdated(user: AuthUser) {
 }
 
 .dashboard-sidebar__account-tier {
-  margin: 0.25rem 0 0;
+  margin: 0.1875rem 0 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   line-height: 1.35;
   font-weight: 600;
   color: #97a3b8;
@@ -523,13 +523,13 @@ function onUserUpdated(user: AuthUser) {
 
 .dashboard-sidebar__account-action {
   display: inline-flex;
-  width: 1.875rem;
-  height: 1.875rem;
+  width: 1.75rem;
+  height: 1.75rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 0.75rem;
+  border-radius: 0.625rem;
   background: transparent;
   color: #7f8ca2;
   cursor: pointer;
@@ -544,7 +544,7 @@ function onUserUpdated(user: AuthUser) {
 }
 
 .dashboard-sidebar__account-action-icon {
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   line-height: 1;
 }
 

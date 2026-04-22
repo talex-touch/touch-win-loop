@@ -267,17 +267,17 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-6">
-    <section class="border border-slate-200 rounded-[28px] bg-white shadow-sm overflow-hidden">
-      <div class="p-6 bg-[radial-gradient(circle_at_top_right,_rgba(14,165,233,0.12),_transparent_28%),radial-gradient(circle_at_bottom_left,_rgba(16,185,129,0.10),_transparent_32%)] lg:p-8">
-        <div class="flex flex-wrap gap-4 items-start justify-between">
-          <div class="space-y-3">
-            <div class="text-xs flex flex-wrap gap-2">
-              <span class="text-white font-semibold px-3 py-1 rounded-full bg-slate-900">综合数据分析</span>
-              <span class="text-slate-700 font-semibold px-3 py-1 rounded-full bg-slate-100">M2 持续扩展</span>
+  <div class="space-y-4">
+    <section class="border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden">
+      <div class="px-4 py-4 bg-[radial-gradient(circle_at_top_right,_rgba(14,165,233,0.12),_transparent_28%),radial-gradient(circle_at_bottom_left,_rgba(16,185,129,0.10),_transparent_32%)] lg:px-5 lg:py-5">
+        <div class="flex flex-wrap gap-3 items-start justify-between">
+          <div class="space-y-2.5">
+            <div class="text-[11px] flex flex-wrap gap-2">
+              <span class="text-white font-semibold px-2.5 py-1 rounded-md bg-slate-900">综合数据分析</span>
+              <span class="text-slate-700 font-semibold px-2.5 py-1 rounded-md bg-slate-100">M2 持续扩展</span>
             </div>
             <div>
-              <h2 class="text-3xl text-slate-950 tracking-tight font-extrabold">
+              <h2 class="text-2xl text-slate-950 tracking-tight font-extrabold">
                 竞赛、作品与行为数据一体化分析
               </h2>
               <p class="text-sm text-slate-600 leading-6 mt-2 max-w-3xl">
@@ -293,14 +293,14 @@ onMounted(() => {
 
           <NuxtLink
             to="/dashboard"
-            class="text-sm text-slate-700 font-semibold px-4 py-2 border border-slate-200 rounded-xl bg-white transition-colors hover:bg-slate-50"
+            class="text-sm text-slate-700 font-semibold px-3.5 py-2 border border-slate-200 rounded-lg bg-white transition-colors hover:bg-slate-50"
           >
             返回 Dashboard
           </NuxtLink>
         </div>
 
-        <div class="mt-6 gap-4 grid xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-          <div class="space-y-4">
+        <div class="mt-5 gap-3 grid xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+          <div class="space-y-3">
             <div>
               <div class="text-xs text-slate-500 tracking-[0.24em] font-semibold mb-3 uppercase">
                 时间范围
@@ -309,7 +309,7 @@ onMounted(() => {
                 <button
                   v-for="item in rangeOptions"
                   :key="item.value"
-                  class="text-xs font-semibold px-3 py-2 border rounded-full transition-colors"
+                  class="text-[13px] font-semibold px-3 py-1.5 border rounded-full transition-colors"
                   :class="filters.rangePreset === item.value ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
                   @click="handleRangePresetChange(item.value)"
                 >
@@ -323,7 +323,7 @@ onMounted(() => {
                 <span class="text-xs text-slate-500 tracking-[0.18em] font-semibold mb-2 block uppercase">工作区</span>
                 <select
                   :value="filters.workspaceId"
-                  class="text-sm text-slate-700 px-3 outline-none border border-slate-200 rounded-xl bg-white min-h-[42px] w-full transition-colors focus:border-blue-500"
+                  class="text-sm text-slate-700 px-3 outline-none border border-slate-200 rounded-lg bg-white min-h-[38px] w-full transition-colors focus:border-blue-500"
                   :disabled="optionsLoading"
                   @change="handleWorkspaceChange(String(($event.target as HTMLSelectElement).value || ''))"
                 >
@@ -340,7 +340,7 @@ onMounted(() => {
                 <span class="text-xs text-slate-500 tracking-[0.18em] font-semibold mb-2 block uppercase">项目</span>
                 <select
                   :value="filters.projectId"
-                  class="text-sm text-slate-700 px-3 outline-none border border-slate-200 rounded-xl bg-white min-h-[42px] w-full transition-colors focus:border-blue-500"
+                  class="text-sm text-slate-700 px-3 outline-none border border-slate-200 rounded-lg bg-white min-h-[38px] w-full transition-colors focus:border-blue-500"
                   :disabled="optionsLoading"
                   @change="handleProjectChange(String(($event.target as HTMLSelectElement).value || ''))"
                 >
@@ -357,7 +357,7 @@ onMounted(() => {
                 <span class="text-xs text-slate-500 tracking-[0.18em] font-semibold mb-2 block uppercase">竞赛</span>
                 <select
                   :value="filters.contestId"
-                  class="text-sm text-slate-700 px-3 outline-none border border-slate-200 rounded-xl bg-white min-h-[42px] w-full transition-colors focus:border-blue-500"
+                  class="text-sm text-slate-700 px-3 outline-none border border-slate-200 rounded-lg bg-white min-h-[38px] w-full transition-colors focus:border-blue-500"
                   :disabled="optionsLoading"
                   @change="handleContestChange(String(($event.target as HTMLSelectElement).value || ''))"
                 >
@@ -372,7 +372,7 @@ onMounted(() => {
             </div>
           </div>
 
-          <div class="p-4 border border-slate-200 rounded-2xl bg-slate-50">
+          <div class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <div class="text-xs text-slate-500 tracking-[0.24em] font-semibold mb-3 uppercase">
               当前筛选
             </div>
@@ -402,11 +402,11 @@ onMounted(() => {
       </div>
     </section>
 
-    <section v-if="overviewLoading" class="text-sm text-slate-500 p-4 border border-slate-200 rounded-2xl bg-white">
+    <section v-if="overviewLoading" class="text-sm text-slate-500 p-4 border border-slate-200 rounded-xl bg-white">
       正在加载综合分析总览...
     </section>
 
-    <section v-if="overviewError" class="text-sm text-rose-700 p-4 border border-rose-200 rounded-2xl bg-rose-50">
+    <section v-if="overviewError" class="text-sm text-rose-700 p-4 border border-rose-200 rounded-xl bg-rose-50">
       <div class="flex flex-wrap gap-3 items-center justify-between">
         <span>{{ overviewError }}</span>
         <button class="font-semibold hover:underline" @click="handleRetry">
@@ -419,13 +419,13 @@ onMounted(() => {
       <article
         v-for="item in overview.metricCards"
         :key="item.id"
-        class="p-4 border rounded-2xl"
+        class="p-4 border rounded-xl"
         :class="metricToneClasses(item.tone)"
       >
         <div class="text-xs tracking-[0.18em] font-semibold uppercase">
           {{ item.label }}
         </div>
-        <div class="text-3xl font-extrabold mt-3">
+        <div class="text-2xl font-extrabold mt-2.5">
           {{ item.value }}
         </div>
         <p class="text-xs leading-5 mt-2 opacity-90">
@@ -438,12 +438,12 @@ onMounted(() => {
       <article
         v-for="item in highlightCards"
         :key="item.id"
-        class="p-5 border border-slate-200 rounded-2xl bg-white"
+        class="p-4 border border-slate-200 rounded-xl bg-white"
       >
         <div class="text-xs text-slate-500 tracking-[0.18em] font-semibold uppercase">
           {{ item.title }}
         </div>
-        <div class="text-2xl text-slate-950 font-bold mt-3">
+        <div class="text-xl text-slate-950 font-bold mt-2.5">
           {{ item.value }}
         </div>
         <p class="text-sm text-slate-500 leading-6 mt-2">
@@ -452,14 +452,14 @@ onMounted(() => {
       </article>
     </section>
 
-    <section class="gap-6 grid xl:grid-cols-[minmax(0,1fr)_340px]">
-      <div class="p-6 border border-slate-200 rounded-[28px] bg-white">
-        <div class="flex flex-wrap gap-4 items-start justify-between">
+    <section class="gap-4 grid xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div class="px-4 py-4 border border-slate-200 rounded-xl bg-white">
+        <div class="flex flex-wrap gap-3 items-start justify-between">
           <div>
             <div class="text-xs text-slate-500 tracking-[0.24em] font-semibold uppercase">
               详细分析
             </div>
-            <h3 class="text-2xl text-slate-950 font-bold mt-2">
+            <h3 class="text-xl text-slate-950 font-bold mt-1.5">
               {{ viewOptions.find(item => item.value === activeView)?.label || activeView }}
             </h3>
             <p class="text-sm text-slate-600 leading-6 mt-2 max-w-2xl">
@@ -471,7 +471,7 @@ onMounted(() => {
             <button
               v-for="item in viewOptions"
               :key="item.value"
-              class="text-xs font-semibold px-3 py-2 border rounded-full transition-colors"
+              class="text-[13px] font-semibold px-3 py-1.5 border rounded-full transition-colors"
               :class="activeView === item.value ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
               @click="handleViewChange(item.value)"
             >
@@ -480,11 +480,11 @@ onMounted(() => {
           </div>
         </div>
 
-        <div v-if="detailLoading" class="text-sm text-slate-500 mt-6 p-4 border border-slate-200 rounded-2xl bg-slate-50">
+        <div v-if="detailLoading" class="text-sm text-slate-500 mt-5 p-4 border border-slate-200 rounded-xl bg-slate-50">
           正在加载 {{ viewOptions.find(item => item.value === activeView)?.label || activeView }}...
         </div>
 
-        <div v-else-if="detailError" class="text-sm text-rose-700 mt-6 p-4 border border-rose-200 rounded-2xl bg-rose-50">
+        <div v-else-if="detailError" class="text-sm text-rose-700 mt-5 p-4 border border-rose-200 rounded-xl bg-rose-50">
           <div class="flex flex-wrap gap-3 items-center justify-between">
             <span>{{ detailError }}</span>
             <button class="font-semibold hover:underline" @click="handleRetry">
@@ -493,8 +493,8 @@ onMounted(() => {
           </div>
         </div>
 
-        <div v-else-if="activeView === 'overview'" class="mt-6 gap-4 grid lg:grid-cols-2">
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+        <div v-else-if="activeView === 'overview'" class="mt-5 gap-3 grid lg:grid-cols-2">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <h4 class="text-slate-950 font-bold">
               趋势热点
             </h4>
@@ -502,7 +502,7 @@ onMounted(() => {
               <div
                 v-for="item in overview.trendSeries.points.slice(0, 4)"
                 :key="item.label"
-                class="p-4 rounded-xl bg-white"
+                class="p-3.5 rounded-lg bg-white"
               >
                 <div class="flex gap-3 items-center justify-between">
                   <span class="text-slate-900 font-semibold">{{ item.label }}</span>
@@ -515,7 +515,7 @@ onMounted(() => {
             </div>
           </article>
 
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <h4 class="text-slate-950 font-bold">
               能力画像
             </h4>
@@ -536,8 +536,8 @@ onMounted(() => {
           </article>
         </div>
 
-        <div v-else-if="activeView === 'trends'" class="mt-6 gap-4 grid lg:grid-cols-2">
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+        <div v-else-if="activeView === 'trends'" class="mt-5 gap-3 grid lg:grid-cols-2">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <h4 class="text-slate-950 font-bold">
               热门技术关键词
             </h4>
@@ -545,7 +545,7 @@ onMounted(() => {
               <div
                 v-for="item in trendAnalysis.keywordSeries.points"
                 :key="item.label"
-                class="p-4 rounded-xl bg-white"
+                class="p-3.5 rounded-lg bg-white"
               >
                 <div class="flex gap-3 items-center justify-between">
                   <div>
@@ -570,7 +570,7 @@ onMounted(() => {
             </div>
           </article>
 
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <h4 class="text-slate-950 font-bold">
               热度领先竞赛
             </h4>
@@ -578,7 +578,7 @@ onMounted(() => {
               <div
                 v-for="item in trendAnalysis.contests"
                 :key="item.contestId"
-                class="p-4 rounded-xl bg-white"
+                class="p-3.5 rounded-lg bg-white"
               >
                 <div class="flex gap-3 items-start justify-between">
                   <div class="min-w-0">
@@ -589,7 +589,7 @@ onMounted(() => {
                       {{ item.signalSummary }}
                     </p>
                   </div>
-                  <span class="text-sm text-white font-bold px-3 py-2 rounded-xl bg-slate-900">
+                  <span class="text-sm text-white font-bold px-2.5 py-1.5 rounded-lg bg-slate-900">
                     {{ item.hotScore }}
                   </span>
                 </div>
@@ -607,8 +607,8 @@ onMounted(() => {
           </article>
         </div>
 
-        <div v-else-if="activeView === 'awards'" class="mt-6 space-y-4">
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+        <div v-else-if="activeView === 'awards'" class="mt-5 space-y-3">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <h4 class="text-slate-950 font-bold">
               高频获奖特征
             </h4>
@@ -616,7 +616,7 @@ onMounted(() => {
               <div
                 v-for="item in awardAnalysis.featureTags"
                 :key="item.label"
-                class="p-4 rounded-xl bg-white"
+                class="p-3.5 rounded-lg bg-white"
               >
                 <div class="flex gap-3 items-center justify-between">
                   <span class="text-slate-900 font-semibold">{{ item.label }}</span>
@@ -629,7 +629,7 @@ onMounted(() => {
             </div>
           </article>
 
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <h4 class="text-slate-950 font-bold">
               样本案例
             </h4>
@@ -637,7 +637,7 @@ onMounted(() => {
               <div
                 v-for="item in awardAnalysis.samples"
                 :key="`${item.source}-${item.title}`"
-                class="p-4 rounded-xl bg-white"
+                class="p-3.5 rounded-lg bg-white"
               >
                 <div class="flex gap-3 items-start justify-between">
                   <div>
@@ -663,8 +663,8 @@ onMounted(() => {
           </article>
         </div>
 
-        <div v-else-if="activeView === 'profile'" class="mt-6 gap-4 grid lg:grid-cols-[320px_minmax(0,1fr)]">
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+        <div v-else-if="activeView === 'profile'" class="mt-5 gap-3 grid lg:grid-cols-[300px_minmax(0,1fr)]">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <h4 class="text-slate-950 font-bold">
               能力雷达
             </h4>
@@ -689,14 +689,14 @@ onMounted(() => {
               <div
                 v-for="(item, index) in profileAnalysis.gapNotes"
                 :key="`${index}-${item}`"
-                class="text-sm text-slate-600 leading-6 p-3 rounded-xl bg-white"
+                class="text-sm text-slate-600 leading-6 p-3 rounded-lg bg-white"
               >
                 {{ item }}
               </div>
             </div>
           </article>
 
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <h4 class="text-slate-950 font-bold">
               项目匹配度
             </h4>
@@ -704,7 +704,7 @@ onMounted(() => {
               <div
                 v-for="item in profileAnalysis.projects"
                 :key="item.projectId"
-                class="p-4 rounded-xl bg-white"
+                class="p-3.5 rounded-lg bg-white"
               >
                 <div class="flex flex-wrap gap-3 items-start justify-between">
                   <div>
@@ -729,8 +729,8 @@ onMounted(() => {
           </article>
         </div>
 
-        <div v-else-if="activeView === 'difficulty'" class="mt-6 gap-4 grid xl:grid-cols-[minmax(0,1fr)_320px]">
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+        <div v-else-if="activeView === 'difficulty'" class="mt-5 gap-3 grid xl:grid-cols-[minmax(0,1fr)_300px]">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <div class="flex flex-wrap gap-3 items-center justify-between">
               <h4 class="text-slate-950 font-bold">
                 题目难度与完成率
@@ -744,7 +744,7 @@ onMounted(() => {
               <div
                 v-for="item in difficultyAnalysis.tracks"
                 :key="`${item.contestId}-${item.trackId}`"
-                class="p-4 rounded-xl bg-white"
+                class="p-3.5 rounded-lg bg-white"
               >
                 <div class="flex flex-wrap gap-3 items-start justify-between">
                   <div class="min-w-0">
@@ -756,7 +756,7 @@ onMounted(() => {
                     </div>
                   </div>
                   <div class="text-right">
-                    <div class="text-xl text-slate-950 font-bold">
+                    <div class="text-lg text-slate-950 font-bold">
                       {{ item.difficultyScore }}
                     </div>
                     <span class="text-xs font-semibold px-3 py-1 rounded-full" :class="difficultyLevelClasses(item.difficultyLevel)">
@@ -766,11 +766,11 @@ onMounted(() => {
                 </div>
 
                 <div class="mt-4 gap-3 grid md:grid-cols-3">
-                  <div class="p-3 rounded-xl bg-slate-50">
+                  <div class="p-3 rounded-lg bg-slate-50">
                     <div class="text-xs text-slate-500 tracking-[0.16em] font-semibold uppercase">
                       完成率
                     </div>
-                    <div class="text-2xl text-slate-950 font-bold mt-2">
+                    <div class="text-xl text-slate-950 font-bold mt-2">
                       {{ item.completionRate }}%
                     </div>
                     <div class="mt-3 rounded-full bg-slate-200 h-2 overflow-hidden">
@@ -781,11 +781,11 @@ onMounted(() => {
                     </div>
                   </div>
 
-                  <div class="p-3 rounded-xl bg-slate-50">
+                  <div class="p-3 rounded-lg bg-slate-50">
                     <div class="text-xs text-slate-500 tracking-[0.16em] font-semibold uppercase">
                       规则复杂度
                     </div>
-                    <div class="text-2xl text-slate-950 font-bold mt-2">
+                    <div class="text-xl text-slate-950 font-bold mt-2">
                       {{ item.rubricDimensionCount + item.evidenceRequirementCount }}
                     </div>
                     <div class="text-xs text-slate-500 mt-2">
@@ -793,11 +793,11 @@ onMounted(() => {
                     </div>
                   </div>
 
-                  <div class="p-3 rounded-xl bg-slate-50">
+                  <div class="p-3 rounded-lg bg-slate-50">
                     <div class="text-xs text-slate-500 tracking-[0.16em] font-semibold uppercase">
                       工作量压力
                     </div>
-                    <div class="text-2xl text-slate-950 font-bold mt-2">
+                    <div class="text-xl text-slate-950 font-bold mt-2">
                       {{ item.workloadPressure }}
                     </div>
                     <div class="text-xs text-slate-500 mt-2">
@@ -825,7 +825,7 @@ onMounted(() => {
           </article>
 
           <div class="space-y-4">
-            <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+            <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
               <h4 class="text-slate-950 font-bold">
                 项目进度分布
               </h4>
@@ -848,7 +848,7 @@ onMounted(() => {
               </div>
             </article>
 
-            <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+            <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
               <h4 class="text-slate-950 font-bold">
                 常见卡点
               </h4>
@@ -856,7 +856,7 @@ onMounted(() => {
                 <div
                   v-for="item in difficultyAnalysis.bottlenecks"
                   :key="item.id"
-                  class="p-4 border rounded-2xl"
+                  class="p-3.5 border rounded-xl"
                   :class="bottleneckSeverityClasses(item.severity)"
                 >
                   <div class="flex gap-3 items-center justify-between">
@@ -876,8 +876,8 @@ onMounted(() => {
           </div>
         </div>
 
-        <div v-else-if="activeView === 'preparation'" class="mt-6 gap-4 grid lg:grid-cols-[minmax(0,1fr)_320px]">
-          <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+        <div v-else-if="activeView === 'preparation'" class="mt-5 gap-3 grid lg:grid-cols-[minmax(0,1fr)_300px]">
+          <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <h4 class="text-slate-950 font-bold">
               备赛时间轴
             </h4>
@@ -885,7 +885,7 @@ onMounted(() => {
               <div
                 v-for="item in preparationAnalysis.timeline"
                 :key="item.id"
-                class="p-4 rounded-xl bg-white"
+                class="p-3.5 rounded-lg bg-white"
               >
                 <div class="flex flex-wrap gap-3 items-center justify-between">
                   <div class="text-slate-900 font-semibold">
@@ -908,7 +908,7 @@ onMounted(() => {
           </article>
 
           <div class="space-y-4">
-            <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+            <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
               <h4 class="text-slate-950 font-bold">
                 阶段分布
               </h4>
@@ -928,7 +928,7 @@ onMounted(() => {
               </div>
             </article>
 
-            <article class="p-5 border border-slate-200 rounded-2xl bg-slate-50">
+            <article class="p-4 border border-slate-200 rounded-xl bg-slate-50">
               <h4 class="text-slate-950 font-bold">
                 即将到来的节点
               </h4>
@@ -936,7 +936,7 @@ onMounted(() => {
                 <div
                   v-for="item in preparationAnalysis.upcomingContests"
                   :key="`${item.contestId}-${item.stage}`"
-                  class="p-4 rounded-xl bg-white"
+                  class="p-3.5 rounded-lg bg-white"
                 >
                   <div class="text-slate-900 font-semibold">
                     {{ item.contestName }}
@@ -957,7 +957,7 @@ onMounted(() => {
       </div>
 
       <aside class="space-y-6">
-        <section class="p-5 border border-slate-200 rounded-[28px] bg-white">
+        <section class="p-4 border border-slate-200 rounded-xl bg-white">
           <h3 class="text-lg text-slate-950 font-bold">
             当前建议
           </h3>
@@ -966,7 +966,7 @@ onMounted(() => {
           </p>
         </section>
 
-        <section class="p-5 border border-slate-200 rounded-[28px] bg-white">
+        <section class="p-4 border border-slate-200 rounded-xl bg-white">
           <h3 class="text-lg text-slate-950 font-bold">
             数据缺口提示
           </h3>
@@ -974,7 +974,7 @@ onMounted(() => {
             <article
               v-for="item in activeDataGaps"
               :key="item.id"
-              class="p-4 border rounded-2xl"
+              class="p-3.5 border rounded-xl"
               :class="gapToneClasses(item.level)"
             >
               <div class="font-semibold">

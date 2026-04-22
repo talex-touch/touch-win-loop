@@ -19,13 +19,13 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <div class="col-span-12 space-y-6 lg:col-span-4 xl:space-y-8">
+  <div class="col-span-12 space-y-4 lg:col-span-4 xl:space-y-5">
     <section class="db-appear" style="animation-delay: 360ms;">
-      <div class="mb-4">
+      <div class="mb-3">
         <p class="db-eyebrow db-eyebrow-tight">
           Quick Actions
         </p>
-        <h3 class="text-2xl text-slate-900 tracking-[-0.03em] font-black">
+        <h3 class="text-xl text-slate-900 tracking-[-0.03em] font-black">
           工作台快捷访问
         </h3>
       </div>
@@ -35,12 +35,12 @@ withDefaults(defineProps<{
           v-for="item in quickActions"
           :key="item.id"
           :to="item.to"
-          class="db-panel db-hover-lift db-focus-ring group px-4 py-4"
+          class="db-panel db-hover-lift db-focus-ring group px-3.5 py-3"
         >
-          <div class="text-slate-500 rounded-2xl bg-[var(--db-bg)] flex h-11 w-11 transition-colors items-center justify-center group-hover:text-[var(--db-primary)]">
-            <span class="material-symbols-outlined text-[20px]">{{ item.icon }}</span>
+          <div class="text-slate-500 rounded-xl bg-[var(--db-bg)] flex h-10 w-10 transition-colors items-center justify-center group-hover:text-[var(--db-primary)]">
+            <span class="material-symbols-outlined text-[18px]">{{ item.icon }}</span>
           </div>
-          <div class="mt-4">
+          <div class="mt-3">
             <p class="text-sm text-slate-900 font-semibold">
               {{ item.label }}
             </p>
@@ -52,43 +52,43 @@ withDefaults(defineProps<{
       </div>
     </section>
 
-    <section class="db-panel db-panel-elevated db-appear text-white px-5 py-5 overflow-hidden" style="animation-delay: 400ms; background: linear-gradient(145deg, #1f4fd3 0%, #3772ff 52%, #2aa7dc 100%);">
-      <div class="flex gap-4 items-start justify-between">
+    <section class="db-panel db-panel-elevated db-appear text-white px-4 py-4 overflow-hidden" style="animation-delay: 400ms; background: linear-gradient(145deg, #1f4fd3 0%, #3772ff 52%, #2aa7dc 100%);">
+      <div class="flex gap-3 items-start justify-between">
         <div>
           <p class="text-xs text-white/70 tracking-[0.16em] font-semibold uppercase">
             Skill Snapshot
           </p>
-          <h4 class="text-xl tracking-[-0.03em] font-black mt-2">
+          <h4 class="text-lg tracking-[-0.03em] font-black mt-1.5">
             个人竞争力分析
           </h4>
         </div>
-        <span class="rounded-2xl bg-white/[0.16] flex h-11 w-11 items-center justify-center">
-          <span class="material-symbols-outlined text-[22px]">track_changes</span>
+        <span class="rounded-xl bg-white/[0.16] flex h-9 w-9 items-center justify-center">
+          <span class="material-symbols-outlined text-[20px]">track_changes</span>
         </span>
       </div>
 
-      <p class="text-sm text-white/[0.82] leading-7 mt-3">
+      <p class="text-sm text-white/[0.82] leading-6 mt-2">
         您在“算法竞赛”类目下的全国排名超过了 88% 的用户，建议增加在“大数据分析”方向的投入。
       </p>
 
-      <div v-if="loading" class="mt-5 space-y-4">
+      <div v-if="loading" class="mt-4 space-y-3">
         <div
           v-for="index in 2"
           :key="`dashboard-skill-skeleton-${index}`"
           class="space-y-2"
         >
-          <div class="db-skeleton rounded-2xl h-5 w-2/5" style="background: rgba(255, 255, 255, 0.18);" />
+          <div class="db-skeleton rounded-xl h-5 w-2/5" style="background: rgba(255, 255, 255, 0.18);" />
           <div class="db-skeleton rounded-full h-2.5 w-full" style="background: rgba(255, 255, 255, 0.2);" />
         </div>
       </div>
 
-      <div v-else-if="skillMetrics.length === 0" class="text-sm text-white/80 mt-5 px-4 py-4 border border-white/[0.18] rounded-[18px] bg-white/10">
+      <div v-else-if="skillMetrics.length === 0" class="text-sm text-white/80 mt-4 px-3 py-3 border border-white/[0.18] rounded-xl bg-white/10">
         暂无可展示的能力评分数据。
       </div>
 
-      <div v-else class="mt-5 space-y-4">
+      <div v-else class="mt-4 space-y-3">
         <div v-for="metric in skillMetrics" :key="metric.id">
-          <div class="text-xs font-bold mb-2 flex justify-between">
+          <div class="text-[12px] font-bold mb-2 flex justify-between">
             <span>{{ metric.label }}</span>
             <span>{{ metric.score }}/100</span>
           </div>
@@ -98,22 +98,22 @@ withDefaults(defineProps<{
         </div>
       </div>
 
-      <button class="db-btn text-[var(--db-primary)] mt-6 bg-white/90 w-full" type="button" title="即将开放" disabled>
+      <button class="db-btn text-sm text-[var(--db-primary)] font-semibold mt-4 px-4 py-2.5 rounded-lg bg-white/90 w-full" type="button" title="即将开放" disabled>
         查看完整画像
       </button>
     </section>
 
-    <section class="db-panel db-appear px-5 py-5" style="animation-delay: 440ms;">
+    <section class="db-panel db-appear px-4 py-4" style="animation-delay: 440ms;">
       <div class="flex gap-3 items-center justify-between">
         <div>
           <p class="db-eyebrow db-eyebrow-tight">
             Weekly Schedule
           </p>
-          <h3 class="text-xl text-slate-900 tracking-[-0.03em] font-black">
+          <h3 class="text-lg text-slate-900 tracking-[-0.03em] font-black">
             本周日程
           </h3>
         </div>
-        <span class="db-chip db-chip-muted">
+        <span class="db-chip db-chip-muted text-[11px] font-semibold px-2.5 py-1 rounded-md">
           {{ scheduleItems.length }} 项
         </span>
       </div>
@@ -126,7 +126,7 @@ withDefaults(defineProps<{
         />
       </div>
 
-      <div v-else-if="scheduleItems.length === 0" class="db-panel db-panel-muted text-sm text-slate-500 mt-4 px-4 py-5">
+      <div v-else-if="scheduleItems.length === 0" class="db-panel db-panel-muted text-sm text-slate-500 mt-4 px-3 py-4">
         本周暂无关键日程提醒。
       </div>
 
@@ -134,11 +134,11 @@ withDefaults(defineProps<{
         <article
           v-for="item in scheduleItems"
           :key="item.id"
-          class="db-hover-lift px-4 py-3 border border-[var(--db-border)] rounded-[18px] bg-[var(--db-bg-alt)] flex gap-3"
+          class="db-hover-lift px-3 py-3 border border-[var(--db-border)] rounded-xl bg-[var(--db-bg-alt)] flex gap-2.5"
         >
-          <div class="px-3 py-2 border border-[var(--db-border)] rounded-[16px] bg-white flex shrink-0 flex-col min-w-[60px] items-center justify-center">
+          <div class="px-2.5 py-1.5 border border-[var(--db-border)] rounded-lg bg-white flex shrink-0 flex-col min-w-[54px] items-center justify-center">
             <span class="text-[10px] text-[var(--db-subtle)] tracking-[0.12em] font-bold uppercase">{{ item.month }}</span>
-            <span class="text-lg text-slate-900 tracking-[-0.02em] font-black mt-1">{{ item.day }}</span>
+            <span class="text-base text-slate-900 tracking-[-0.02em] font-black mt-1">{{ item.day }}</span>
           </div>
           <div class="min-w-0">
             <p class="text-sm text-slate-900 leading-6 font-semibold">

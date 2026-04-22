@@ -1014,7 +1014,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-4">
     <DashboardOverviewShell
       :title="activeWorkspace?.workspace.name || 'Team 项目台'"
       description="当前 Team 的项目与配额概览。"
@@ -1042,10 +1042,10 @@ onMounted(async () => {
 
     <section
       v-if="shouldRenderIntegratedPanels"
-      class="gap-8 grid grid-cols-12"
+      class="gap-5 grid grid-cols-12"
       data-testid="team-dashboard-integrated-panels"
     >
-      <div class="col-span-12 space-y-8 lg:col-span-8">
+      <div class="col-span-12 space-y-5 lg:col-span-8">
         <DashboardPlatformPanel
           :portal-cards="portalCards"
           :platform-contests="platformContests"
@@ -1055,15 +1055,15 @@ onMounted(async () => {
           :has-platform-portal="hasPlatformPortal"
         />
 
-        <div v-if="overviewError" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-2xl bg-rose-50">
+        <div v-if="overviewError" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-xl bg-rose-50">
           {{ overviewError }}
         </div>
 
-        <div v-else-if="overviewLoading" class="gap-4 grid grid-cols-1 md:grid-cols-2">
+        <div v-else-if="overviewLoading" class="gap-3 grid grid-cols-1 md:grid-cols-2">
           <div
             v-for="index in 4"
             :key="`team-dashboard-overview-skeleton-${index}`"
-            class="border border-slate-200 rounded-2xl bg-white h-48 animate-pulse"
+            class="border border-slate-200 rounded-xl bg-white h-40 animate-pulse"
           />
         </div>
 

@@ -55,7 +55,7 @@ function openDrawer() {
       :class="[
         isRailVariant
           ? ['notification-bell-button--rail', isRailActive ? 'notification-bell-button--rail-active' : '']
-          : 'border border-slate-200 rounded-xl bg-white shadow-sm hover:bg-slate-50',
+          : 'border border-slate-200 rounded-xl bg-white hover:bg-slate-50',
         !isRailVariant && props.compact ? 'h-8 w-8' : '',
         !isRailVariant && !props.compact ? 'h-10 w-10' : '',
       ]"
