@@ -15,7 +15,7 @@ const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 const router = useRouter()
 
-const SCOPE_OPTIONS: Array<{ value: FeishuBitableSyncItemEntityType, label: string }> = [
+const ALL_SCOPE_OPTIONS: Array<{ value: FeishuBitableSyncItemEntityType, label: string }> = [
   { value: 'contest', label: '竞赛' },
   { value: 'track', label: '赛道' },
   { value: 'track_timeline', label: '赛道时间线' },
@@ -182,7 +182,7 @@ function readQueryValue(value: unknown): string {
 }
 
 function normalizeScope(value: string): FeishuBitableSyncItemEntityType | '' {
-  return SCOPE_OPTIONS.some(item => item.value === value as FeishuBitableSyncItemEntityType)
+  return ALL_SCOPE_OPTIONS.some(item => item.value === value as FeishuBitableSyncItemEntityType)
     ? value as FeishuBitableSyncItemEntityType
     : ''
 }
@@ -192,8 +192,34 @@ function formatDateTime(value?: string | null): string {
 }
 
 function scopeLabel(scope?: FeishuBitableSyncItemEntityType | ''): string {
-  return SCOPE_OPTIONS.find(item => item.value === scope)?.label || (scope || '-')
+  return ALL_SCOPE_OPTIONS.find(item => item.value === scope)?.label || (scope || '-')
 }
+
+const syncItemFilterOptions = computed(() => {
+  if (!filters.syncId)
+    return resultPayload.value.syncItemOptions
+  return resultPayload.value.syncItemOptions.filter(item => item.syncId === filters.syncId)
+})
+
+const scopeOptions = computed(() => {
+  const visibleScopes = new Set<FeishuBitableSyncItemEntityType>()
+
+  for (const item of syncItemFilterOptions.value) {
+    if (item.entityType)
+      visibleScopes.add(item.entityType)
+  }
+
+  for (const item of resultPayload.value.items) {
+    if (filters.syncId && item.syncId !== filters.syncId)
+      continue
+    visibleScopes.add(item.scope)
+  }
+
+  if (filters.scope)
+    visibleScopes.add(filters.scope)
+
+  return ALL_SCOPE_OPTIONS.filter(item => visibleScopes.has(item.value))
+})
 
 function statusLabel(status?: string): string {
   if (status === 'release_draft')
@@ -362,6 +388,16 @@ async function onPageChange(page: number) {
   await applyFilters(page)
 }
 
+watch(syncItemFilterOptions, (options) => {
+  if (filters.syncItemId && !options.some(item => item.id === filters.syncItemId))
+    filters.syncItemId = ''
+})
+
+watch(scopeOptions, (options) => {
+  if (filters.scope && !options.some(item => item.value === filters.scope))
+    filters.scope = ''
+})
+
 watch(() => route.fullPath, () => {
   syncFiltersFromRoute()
   void loadData()
@@ -387,12 +423,12 @@ watch(() => route.fullPath, () => {
           </a-option>
         </a-select>
         <a-select v-model="filters.syncItemId" size="small" allow-clear placeholder="同步项">
-          <a-option v-for="item in resultPayload.syncItemOptions" :key="item.id" :value="item.id">
+          <a-option v-for="item in syncItemFilterOptions" :key="item.id" :value="item.id">
             {{ item.syncName ? `${item.syncName} / ${item.name}` : item.name }}
           </a-option>
         </a-select>
         <a-select v-model="filters.scope" size="small" allow-clear placeholder="实体类型">
-          <a-option v-for="item in SCOPE_OPTIONS" :key="item.value" :value="item.value">
+          <a-option v-for="item in scopeOptions" :key="item.value" :value="item.value">
             {{ item.label }}
           </a-option>
         </a-select>

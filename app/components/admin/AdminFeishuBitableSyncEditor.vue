@@ -21,6 +21,7 @@ import type {
   FeishuFieldDiagnosticItem,
   FeishuFieldInspectionItem,
   FeishuSyncIssue,
+  FeishuSyncIssueBatchHandleResult,
   FeishuSyncRunSamplePage,
   FeishuSyncRunSampleRecord,
   FeishuSyncRunSampleType,
@@ -91,6 +92,7 @@ interface SyncWritebackFormState {
 type SyncWritebackFieldKey = keyof Pick<SyncWritebackFormState, 'status' | 'syncedAt' | 'errorMessage' | 'reasonCode' | 'entityId' | 'runId' | 'triggerSource'>
 type SaveCurrentItemContext = 'main' | 'mapping' | 'writeback' | 'autoSync'
 type SyncIssueCategoryKey = 'mapping' | 'relation' | 'writeback' | 'source'
+type SyncIssueFilterStatus = '' | 'open' | 'resolved' | 'ignored'
 type ItemStageTone = 'green' | 'gold' | 'gray' | 'red' | 'blue'
 type AutoSyncFilteredSample = NonNullable<NonNullable<FeishuBitableSyncItemRun['diagnostics']>['autoSync']['filteredSamples']>[number]
 type BusinessSkipSample = NonNullable<NonNullable<FeishuBitableSyncItemRun['diagnostics']>['businessSkipSamples']>[number]
@@ -98,6 +100,11 @@ interface CurrentItemLogRunSampleState {
   loading: boolean
   errorText: string
   pageData: FeishuSyncRunSamplePage
+}
+
+interface SyncIssueFilterState {
+  status: SyncIssueFilterStatus
+  reasonCode: string
 }
 
 const props = withDefaults(defineProps<{
@@ -339,6 +346,13 @@ const SYNC_ISSUE_CATEGORY_META: Record<SyncIssueCategoryKey, { label: string, co
   source: { label: '数据源内容', color: 'gray' },
 }
 
+const SYNC_ISSUE_STATUS_FILTER_OPTIONS: Array<SelectOption<SyncIssueFilterStatus>> = [
+  { value: 'open', label: '待处理' },
+  { value: 'resolved', label: '已解决' },
+  { value: 'ignored', label: '已忽略' },
+  { value: '', label: '全部状态' },
+]
+
 const SYNC_ISSUE_CATEGORY_BY_CODE: Record<string, SyncIssueCategoryKey> = {
   EXTERNAL_ID_MISSING: 'mapping',
   MISSING_REQUIRED_FIELD: 'mapping',
@@ -399,7 +413,7 @@ const loadingFieldInspection = ref(false)
 const creatingItem = ref(false)
 const itemToggleMutating = reactive<Record<string, boolean>>({})
 const issueActionMutating = reactive<Record<string, boolean>>({})
-const editorRootRef = ref<HTMLElement | null>(null)
+const batchIssueActionMutating = reactive<Record<string, boolean>>({})
 const addItemDrawerVisible = ref(false)
 const itemDrawerVisible = ref(false)
 const quickStartGuideVisible = ref(false)
@@ -437,6 +451,14 @@ const currentItemLogErrorText = ref('')
 const currentItemLogItemDetail = ref<FeishuBitableSyncItemDetail | null>(null)
 const currentItemLogSelectedRunId = ref('')
 const simulateSourceFieldPage = ref(1)
+const currentItemIssueFilters = reactive<SyncIssueFilterState>({
+  status: 'open',
+  reasonCode: '',
+})
+const currentItemLogIssueFilters = reactive<SyncIssueFilterState>({
+  status: 'open',
+  reasonCode: '',
+})
 const currentItemLogRunSamples = reactive<Record<FeishuSyncRunSampleType, CurrentItemLogRunSampleState>>({
   auto_sync_filtered: createEmptyRunSampleState(),
   business_skipped: createEmptyRunSampleState(),
@@ -537,6 +559,22 @@ const syncItems = computed(() => syncDetail.value?.items || [])
 const activeOptionFieldGroups = computed(() => optionFieldGroups(itemForm.entityType))
 const newItemTableName = computed(() => availableTables.value.find(item => item.tableId === newItemForm.tableId)?.name || '')
 const newItemViewName = computed(() => newItemViews.value.find(item => item.viewId === newItemForm.viewId)?.name || '')
+const currentItemRelationGuardText = computed(() => buildManualRunRelationGuardText(
+  currentItem.value?.entityType || itemForm.entityType,
+  currentItem.value?.mapping || {},
+  currentItem.value?.options || {},
+))
+const currentItemDraftRelationGuardText = computed(() => buildManualRunRelationGuardText(
+  itemForm.entityType,
+  parseJsonTextLoose(itemForm.mappingText),
+  parseJsonTextLoose(itemForm.optionsText),
+))
+const currentItemFilteredIssues = computed(() => filterSyncIssues(currentItem.value?.issues || [], currentItemIssueFilters))
+const currentItemIssueReasonOptions = computed(() => syncIssueReasonOptions(currentItem.value))
+const currentItemBatchOpenIssueCount = computed(() => filteredOpenIssueCount(currentItem.value, currentItemIssueFilters))
+const currentItemLogFilteredIssues = computed(() => filterSyncIssues(currentItemLogItemDetail.value?.issues || [], currentItemLogIssueFilters))
+const currentItemLogIssueReasonOptions = computed(() => syncIssueReasonOptions(currentItemLogItemDetail.value))
+const currentItemLogBatchOpenIssueCount = computed(() => filteredOpenIssueCount(currentItemLogItemDetail.value, currentItemLogIssueFilters))
 const missingRequiredMappingLabels = computed(() => {
   return listRequiredSyncItemFieldGroups(itemForm.entityType)
     .filter((group) => {
@@ -658,6 +696,11 @@ const itemStageCards = computed(() => {
     executionStatus = '同步项未启用'
     executionHint = '先启用当前同步项，再继续预检和手动执行。'
   }
+  else if (currentItemDraftRelationGuardText.value) {
+    executionTone = 'gold'
+    executionStatus = '关联映射待补齐'
+    executionHint = currentItemDraftRelationGuardText.value
+  }
   else if (currentItemLatestRunFailed.value) {
     executionTone = 'red'
     executionStatus = '最近执行失败'
@@ -768,6 +811,8 @@ const itemNextStepHint = computed(() => {
     return '先刷新字段概览，再进入“回填配置”选择回填列。'
   if (writebackForm.enabled && !selectedWritebackFieldCount.value)
     return '进入“回填配置”，至少补齐状态、同步时间、实体 ID 和 runId。'
+  if (currentItemDraftRelationGuardText.value)
+    return currentItemDraftRelationGuardText.value
   if (syncExecutionDisabled.value)
     return '保存当前配置后，先启用主同步，再决定是否开放手动执行。'
   if (!itemForm.isEnabled)
@@ -823,7 +868,7 @@ const syncDetailLatestRunText = computed(() => {
 })
 const syncEnvironmentLabel = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.label || '未标记')
 const syncEnvironmentTagColor = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.tagColor || 'gray')
-const selectPopupContainer = computed(() => editorRootRef.value)
+const selectPopupContainer = computed(() => 'body')
 const mappingSelectPopupContainer = computed(() => 'body')
 const writebackSelectPopupContainer = computed(() => 'body')
 const autoSyncSelectPopupContainer = computed(() => 'body')
@@ -1569,6 +1614,47 @@ function syncIssueSuggestion(code?: string | null, message?: string | null): str
   return '优先核对飞书源记录内容，再结合当前映射配置确认字段是否缺值。'
 }
 
+function filterSyncIssues(
+  issues: FeishuSyncIssue[] = [],
+  filters: SyncIssueFilterState,
+): FeishuSyncIssue[] {
+  return sortedSyncIssues(issues).filter((issue) => {
+    if (filters.status && issue.status !== filters.status)
+      return false
+    if (filters.reasonCode && normalizeSyncIssueCode(issue.reasonCode) !== normalizeSyncIssueCode(filters.reasonCode))
+      return false
+    return true
+  })
+}
+
+function syncIssueReasonOptions(detail?: FeishuBitableSyncItemDetail | null): Array<SelectOption<string> & { helper: string }> {
+  const options = (detail?.issueReasonStats || [])
+    .filter(item => toText(item.reasonCode))
+    .map(item => ({
+      value: item.reasonCode,
+      label: item.reasonCode,
+      helper: `待处理 ${item.openCount} / 总计 ${item.totalCount}`,
+    }))
+
+  if (!options.some(item => item.value === ''))
+    options.unshift({ value: '', label: '全部原因码', helper: '不过滤原因码' })
+
+  return options
+}
+
+function filteredOpenIssueCount(detail: FeishuBitableSyncItemDetail | null | undefined, filters: SyncIssueFilterState): number {
+  if (!detail)
+    return 0
+  if (filters.status && filters.status !== 'open')
+    return 0
+  if (!filters.reasonCode)
+    return Math.max(0, Number(detail.issueStats.open || 0) || 0)
+  return Math.max(
+    0,
+    Number(detail.issueReasonStats.find(item => normalizeSyncIssueCode(item.reasonCode) === normalizeSyncIssueCode(filters.reasonCode))?.openCount || 0) || 0,
+  )
+}
+
 function quickStartStepText(step: string): string {
   return String(step || '').replace(/^\d+\.\s*/, '')
 }
@@ -1839,6 +1925,8 @@ async function handleSyncIssueAction(issue: FeishuSyncIssue, action: 'resolve' |
     )
 
     await loadSyncDetail()
+    if (activeItemId.value)
+      await loadItemDetail(activeItemId.value)
     if (currentItemLogVisible.value)
       await refreshCurrentItemLogDrawer()
     emit('updated')
@@ -1849,6 +1937,58 @@ async function handleSyncIssueAction(issue: FeishuSyncIssue, action: 'resolve' |
   }
   finally {
     issueActionMutating[issueId] = false
+  }
+}
+
+function batchIssueActionKey(target: 'current' | 'log', action: 'resolve' | 'ignore'): string {
+  return `${target}:${action}`
+}
+
+async function handleBatchSyncIssueAction(target: 'current' | 'log', action: 'resolve' | 'ignore') {
+  const detail = target === 'log' ? currentItemLogItemDetail.value : currentItem.value
+  const filters = target === 'log' ? currentItemLogIssueFilters : currentItemIssueFilters
+  const itemId = toText(detail?.id || currentItem.value?.id)
+  const pendingCount = filteredOpenIssueCount(detail, filters)
+
+  if (!normalizedSyncId.value || !itemId)
+    return
+  if (!pendingCount) {
+    setError('当前筛选下没有可批量处理的待处理问题。')
+    return
+  }
+
+  const actionKey = batchIssueActionKey(target, action)
+  batchIssueActionMutating[actionKey] = true
+  clearFeedback()
+  try {
+    const result = await requestApi<FeishuSyncIssueBatchHandleResult>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(itemId)}/issues/batch-handle`),
+      {
+        method: 'POST',
+        body: {
+          action,
+          status: 'open',
+          reasonCode: toText(filters.reasonCode) || undefined,
+        },
+      },
+      action === 'resolve' ? '关联问题批量标记失败。' : '关联问题批量忽略失败。',
+    )
+
+    await loadSyncDetail()
+    if (activeItemId.value)
+      await loadItemDetail(activeItemId.value)
+    if (currentItemLogVisible.value)
+      await refreshCurrentItemLogDrawer()
+    emit('updated')
+    setSuccess(action === 'resolve'
+      ? `已批量标记 ${result.affectedCount} 条关联问题为已解决。`
+      : `已批量忽略 ${result.affectedCount} 条关联问题。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || (action === 'resolve' ? '关联问题批量标记失败。' : '关联问题批量忽略失败。')))
+  }
+  finally {
+    batchIssueActionMutating[actionKey] = false
   }
 }
 
@@ -2108,8 +2248,13 @@ async function openItemDrawer(itemId: string, emitChange = true) {
   const nextId = String(itemId || '').trim()
   if (!nextId)
     return
-  if (activeItemId.value && activeItemId.value !== nextId)
+  if (activeItemId.value && activeItemId.value !== nextId) {
     closeNestedConfigDrawers()
+    currentItemIssueFilters.status = 'open'
+    currentItemIssueFilters.reasonCode = ''
+    currentItemLogIssueFilters.status = 'open'
+    currentItemLogIssueFilters.reasonCode = ''
+  }
   activeItemId.value = nextId
   itemDrawerVisible.value = true
   if (emitChange)
@@ -2317,6 +2462,25 @@ function pickMappingFromRaw(raw: Record<string, unknown>) {
     contestExternalIdField,
     trackExternalIdField,
   }
+}
+
+function buildManualRunRelationGuardText(
+  entityType: FeishuBitableSyncItemEntityType,
+  mappingRaw: Record<string, unknown>,
+  optionsRaw: Record<string, unknown>,
+): string {
+  const mapping = pickMappingFromRaw(mappingRaw)
+  const defaultContestId = toText(optionsRaw.contestId)
+  const hasContestLink = Boolean(mapping.contestExternalIdField || mapping.computedMap.contestExternalId || defaultContestId)
+  const hasTrackLink = Boolean(mapping.trackExternalIdField || mapping.computedMap.trackExternalId)
+
+  if ((entityType === 'track' || entityType === 'track_timeline' || entityType === 'resource') && !hasContestLink)
+    return '当前同步项缺少 contestExternalId 映射，也没有默认 contestId 兜底。请先在“映射配置”补齐 contestExternalId，或在“同步选项”里设置默认 contestId 后再手动执行。'
+
+  if (entityType === 'track_timeline' && !hasTrackLink)
+    return '当前同步项缺少 trackExternalId 映射。请先在“映射配置”补齐对应赛道字段后再手动执行。'
+
+  return ''
 }
 
 function loadMappingWizardFromJson() {
@@ -2840,10 +3004,24 @@ async function runCurrentItem() {
   }
   if (!normalizedSyncId.value || !currentItem.value)
     return
+  if (currentItemRelationGuardText.value) {
+    setError(currentItemRelationGuardText.value)
+    return
+  }
   runningItem.value = true
   clearFeedback()
   try {
-    await requestApi(
+    const result = await requestApi<{
+      runId: string
+      status: 'success' | 'partial_success' | 'failed'
+      fetchedCount: number
+      createdCount: number
+      updatedCount: number
+      skippedCount: number
+      errorCount: number
+      writebackSuccessCount: number
+      writebackErrorCount: number
+    }>(
       endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/run`),
       {
         method: 'POST',
@@ -2854,9 +3032,9 @@ async function runCurrentItem() {
     if (activeItemId.value)
       await loadItemDetail(activeItemId.value)
     if (currentItemLogVisible.value)
-      await refreshCurrentItemLogDrawer()
+      await loadCurrentItemLogDetail(currentItem.value.id, result.runId)
     emit('updated')
-    setSuccess('同步执行完成。')
+    setSuccess(`同步执行完成，已刷新最近运行结果。抓取 ${result.fetchedCount} / 新增 ${result.createdCount} / 更新 ${result.updatedCount} / 跳过 ${result.skippedCount} / 错误 ${result.errorCount}。`)
   }
   catch (error: any) {
     setError(String(error?.data?.message || '同步执行失败。'))
@@ -3221,6 +3399,22 @@ watch(() => simulateResult.value?.locator.recordId || '', () => {
   simulateSourceFieldPage.value = 1
 })
 
+watch(currentItemIssueReasonOptions, (options) => {
+  const currentReasonCode = toText(currentItemIssueFilters.reasonCode)
+  if (!currentReasonCode)
+    return
+  if (!options.some(item => normalizeSyncIssueCode(item.value) === normalizeSyncIssueCode(currentReasonCode)))
+    currentItemIssueFilters.reasonCode = ''
+})
+
+watch(currentItemLogIssueReasonOptions, (options) => {
+  const currentReasonCode = toText(currentItemLogIssueFilters.reasonCode)
+  if (!currentReasonCode)
+    return
+  if (!options.some(item => normalizeSyncIssueCode(item.value) === normalizeSyncIssueCode(currentReasonCode)))
+    currentItemLogIssueFilters.reasonCode = ''
+})
+
 watch(() => props.syncId, () => {
   void loadSyncDetail()
 }, { immediate: true })
@@ -3240,7 +3434,7 @@ watch(() => props.selectedItemId, (value) => {
 </script>
 
 <template>
-  <div ref="editorRootRef" class="space-y-4" :class="embedded ? 'pb-4' : ''">
+  <div class="space-y-4" :class="embedded ? 'pb-4' : ''">
     <div class="flex flex-wrap gap-3 items-start justify-between">
       <div class="space-y-1">
         <div class="flex gap-2 items-center">
@@ -3766,6 +3960,10 @@ watch(() => props.selectedItemId, (value) => {
                   </a-button>
                 </div>
               </div>
+
+              <a-alert v-if="currentItemRelationGuardText" type="warning" :show-icon="true">
+                {{ currentItemRelationGuardText }}
+              </a-alert>
 
               <div class="p-3 border border-slate-200 rounded bg-slate-50 space-y-3">
                 <div class="flex flex-wrap gap-2 items-center justify-between">
@@ -4573,8 +4771,47 @@ watch(() => props.selectedItemId, (value) => {
                     </a-tag>
                   </div>
                 </div>
-                <div v-if="currentItem.issues.length" class="space-y-2">
-                  <div v-for="issue in sortedSyncIssues(currentItem.issues)" :key="issue.id" class="px-3 py-2 border border-slate-200 rounded">
+                <div class="flex flex-wrap gap-2 items-center justify-between">
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <a-select v-model="currentItemIssueFilters.status" size="small" :popup-container="selectPopupContainer" class="w-[124px]">
+                      <a-option v-for="option in SYNC_ISSUE_STATUS_FILTER_OPTIONS" :key="`current-issue-status-${option.value || 'all'}`" :value="option.value">
+                        {{ option.label }}
+                      </a-option>
+                    </a-select>
+                    <a-select v-model="currentItemIssueFilters.reasonCode" size="small" allow-clear :popup-container="selectPopupContainer" class="min-w-[220px] max-w-[320px]">
+                      <a-option v-for="option in currentItemIssueReasonOptions" :key="`current-issue-reason-${option.value || 'all'}`" :value="option.value">
+                        <div class="flex flex-col">
+                          <span>{{ option.label }}</span>
+                          <span class="text-[10px] text-slate-400">{{ option.helper }}</span>
+                        </div>
+                      </a-option>
+                    </a-select>
+                  </div>
+                  <div class="flex flex-wrap gap-2 items-center justify-end">
+                    <a-button
+                      size="mini"
+                      :disabled="currentItemBatchOpenIssueCount <= 0"
+                      :loading="batchIssueActionMutating[batchIssueActionKey('current', 'resolve')]"
+                      @click="handleBatchSyncIssueAction('current', 'resolve')"
+                    >
+                      全部标记已解决
+                    </a-button>
+                    <a-button
+                      size="mini"
+                      status="warning"
+                      :disabled="currentItemBatchOpenIssueCount <= 0"
+                      :loading="batchIssueActionMutating[batchIssueActionKey('current', 'ignore')]"
+                      @click="handleBatchSyncIssueAction('current', 'ignore')"
+                    >
+                      全部忽略
+                    </a-button>
+                  </div>
+                </div>
+                <p class="text-[10px] text-slate-500 m-0">
+                  当前范围：仅处理这个同步项下符合筛选条件的待处理问题；本次可批量处理 {{ currentItemBatchOpenIssueCount }} 条。
+                </p>
+                <div v-if="currentItemFilteredIssues.length" class="space-y-2">
+                  <div v-for="issue in currentItemFilteredIssues" :key="issue.id" class="px-3 py-2 border border-slate-200 rounded">
                     <div class="flex flex-wrap gap-2 items-center">
                       <a-tag size="small" :color="syncIssueStatusColor(issue.status)">
                         {{ syncIssueStatusLabel(issue.status) }}
@@ -4602,7 +4839,7 @@ watch(() => props.selectedItemId, (value) => {
                     </p>
                   </div>
                 </div>
-                <a-empty v-else description="暂无问题单" />
+                <a-empty v-else :description="currentItem.issues.length ? '当前筛选下暂无问题单' : '暂无问题单'" />
               </div>
             </section>
 
@@ -4991,11 +5228,53 @@ watch(() => props.selectedItemId, (value) => {
                 </a-tag>
               </div>
             </div>
-            <div v-if="currentItemLogItemDetail.issues.length" class="space-y-2">
-              <div v-for="issue in sortedSyncIssues(currentItemLogItemDetail.issues)" :key="issue.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
+              <div class="flex flex-wrap gap-2 items-center">
+                <a-select v-model="currentItemLogIssueFilters.status" size="small" :popup-container="selectPopupContainer" class="w-[124px]">
+                  <a-option v-for="option in SYNC_ISSUE_STATUS_FILTER_OPTIONS" :key="`log-issue-status-${option.value || 'all'}`" :value="option.value">
+                    {{ option.label }}
+                  </a-option>
+                </a-select>
+                <a-select v-model="currentItemLogIssueFilters.reasonCode" size="small" allow-clear :popup-container="selectPopupContainer" class="min-w-[220px] max-w-[320px]">
+                  <a-option v-for="option in currentItemLogIssueReasonOptions" :key="`log-issue-reason-${option.value || 'all'}`" :value="option.value">
+                    <div class="flex flex-col">
+                      <span>{{ option.label }}</span>
+                      <span class="text-[10px] text-slate-400">{{ option.helper }}</span>
+                    </div>
+                  </a-option>
+                </a-select>
+              </div>
+              <div class="flex flex-wrap gap-2 items-center justify-end">
+                <a-button
+                  size="mini"
+                  :disabled="currentItemLogBatchOpenIssueCount <= 0"
+                  :loading="batchIssueActionMutating[batchIssueActionKey('log', 'resolve')]"
+                  @click="handleBatchSyncIssueAction('log', 'resolve')"
+                >
+                  全部标记已解决
+                </a-button>
+                <a-button
+                  size="mini"
+                  status="warning"
+                  :disabled="currentItemLogBatchOpenIssueCount <= 0"
+                  :loading="batchIssueActionMutating[batchIssueActionKey('log', 'ignore')]"
+                  @click="handleBatchSyncIssueAction('log', 'ignore')"
+                >
+                  全部忽略
+                </a-button>
+              </div>
+            </div>
+            <p class="text-[10px] text-slate-500 m-0">
+              当前范围：仅处理这个同步项下符合筛选条件的待处理问题；本次可批量处理 {{ currentItemLogBatchOpenIssueCount }} 条。
+            </p>
+            <div v-if="currentItemLogFilteredIssues.length" class="space-y-2">
+              <div v-for="issue in currentItemLogFilteredIssues" :key="issue.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
                 <div class="flex flex-wrap gap-2 items-center">
                   <a-tag size="small" :color="syncIssueStatusColor(issue.status)">
                     {{ syncIssueStatusLabel(issue.status) }}
+                  </a-tag>
+                  <a-tag size="small">
+                    {{ issue.reasonCode || '未标记原因' }}
                   </a-tag>
                   <a-tag size="small" :color="syncIssueCategoryColor(issue.reasonCode, issue.message)">
                     归因：{{ syncIssueCategoryLabel(issue.reasonCode, issue.message) }}
@@ -5021,7 +5300,7 @@ watch(() => props.selectedItemId, (value) => {
                 </p>
               </div>
             </div>
-            <a-empty v-else description="暂无问题单" />
+            <a-empty v-else :description="currentItemLogItemDetail.issues.length ? '当前筛选下暂无问题单' : '暂无问题单'" />
           </section>
         </template>
       </div>

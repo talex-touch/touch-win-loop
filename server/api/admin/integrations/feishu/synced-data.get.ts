@@ -69,7 +69,7 @@ export default defineEventHandler(async (event) => {
     const [searchResult, syncs, syncItemOptions] = await Promise.all([
       searchFeishuSyncedData(db, input),
       listFeishuBitableSyncs(db, { includeArchived: true }),
-      listFeishuSyncedDataSyncItemOptions(db, { syncId: input.syncId }),
+      listFeishuSyncedDataSyncItemOptions(db),
     ])
 
     const syncOptions: FeishuSyncedDataSyncOption[] = syncs.map(sync => ({

@@ -1,14 +1,18 @@
 import { setResponseStatus } from 'h3'
+import { getFeishuSyncItemManualRunBlockReason } from '~~/server/services/feishu/bitable-sync'
 import { runWorkflow } from '~~/server/services/workflow/workflow-orchestrator'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { getFeishuBitableSyncItemById } from '~~/server/utils/feishu-integration-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
+  const syncId = String(getRouterParam(event, 'id') || '').trim()
   const syncItemId = String(getRouterParam(event, 'itemId') || '').trim()
 
   const canWrite = await checkPlatformPermission(event, user, 'contest.write')
@@ -23,15 +27,45 @@ export default defineEventHandler(async (event) => {
     }, 40462)
   }
 
-  if (!syncItemId) {
+  if (!syncId || !syncItemId) {
     setResponseStatus(event, 400)
-    return fail('syncItemId 不能为空。', {
+    return fail('syncId 与 syncItemId 不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40163)
+  }
+
+  const syncItem = await withClient(event, async (db) => {
+    return getFeishuBitableSyncItemById(db, syncItemId)
+  })
+  if (!syncItem || syncItem.syncId !== syncId) {
+    setResponseStatus(event, 404)
+    return fail('子表同步项不存在。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40463)
+  }
+
+  const manualRunBlockedReason = getFeishuSyncItemManualRunBlockReason({
+    entityType: syncItem.entityType,
+    mapping: syncItem.mapping,
+    options: syncItem.options,
+  })
+  if (manualRunBlockedReason) {
+    setResponseStatus(event, 400)
+    return fail(manualRunBlockedReason, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40168)
   }
 
   const summary = await runWorkflow({

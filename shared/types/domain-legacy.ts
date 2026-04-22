@@ -4465,6 +4465,16 @@ export interface FeishuSyncIssue {
   updatedAt: string
 }
 
+export interface FeishuSyncIssueReasonStat {
+  reasonCode: string
+  openCount: number
+  totalCount: number
+}
+
+export interface FeishuSyncIssueBatchHandleResult {
+  affectedCount: number
+}
+
 export interface FeishuFieldInspectionItem {
   fieldName: string
   sampleValues: string[]
@@ -5015,6 +5025,7 @@ export interface FeishuBitableSyncItemDetail extends FeishuBitableSyncItem {
   recentRuns: FeishuBitableSyncItemRun[]
   issues: FeishuSyncIssue[]
   issueStats: FeishuTaskIssueStats
+  issueReasonStats: FeishuSyncIssueReasonStat[]
 }
 
 export interface FeishuBitableSyncItemRun {
@@ -5130,6 +5141,7 @@ export interface FeishuSyncedDataSyncItemOption {
   name: string
   syncId: string
   syncName: string
+  entityType: FeishuBitableSyncItemEntityType
 }
 
 export interface FeishuSyncedDataRecord {

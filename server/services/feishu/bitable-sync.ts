@@ -891,6 +891,28 @@ function normalizeOptions(raw: unknown, mappingDefaults: Record<string, unknown>
   }
 }
 
+export function getFeishuSyncItemManualRunBlockReason(input: {
+  entityType: FeishuBitableSyncItemEntityType
+  mapping: unknown
+  options?: unknown
+}): string {
+  const mapping = normalizeMapping(input.mapping, input.options, input.entityType)
+  const options = normalizeOptions(input.options, mapping.defaults)
+
+  if (
+    (input.entityType === 'track' || input.entityType === 'track_timeline' || input.entityType === 'resource')
+    && !hasMappingValue(mapping, 'contestExternalId')
+    && !toText(options.contestId)
+  ) {
+    return '当前同步项缺少 contestExternalId 映射，也没有默认 contestId 兜底。请先在“映射配置”补齐 contestExternalId，或在“同步选项”里设置默认 contestId 后再手动执行。'
+  }
+
+  if (input.entityType === 'track_timeline' && !hasMappingValue(mapping, 'trackExternalId'))
+    return '当前同步项缺少 trackExternalId 映射。请先在“映射配置”补齐对应赛道字段后再手动执行。'
+
+  return ''
+}
+
 function normalizeAutoSyncConfig(raw: unknown): NormalizedAutoSync {
   const source = parseJsonObject(raw)
   const normalizeList = (value: unknown, fallback: string[] = []): string[] => {
@@ -2828,7 +2850,7 @@ async function executeRecords(
   })
   const writebackRecords: Array<{ recordId: string, fields: Record<string, unknown> }> = []
   const activePersonaExternalIds = new Set<string>()
-  const seenBusinessExternalIds = new Set<string>()
+  const successfulBusinessExternalIds = new Set<string>()
 
   for (const [recordIndex, record] of input.records.entries()) {
     try {
@@ -2865,8 +2887,8 @@ async function executeRecords(
       for (const externalId of result.activeExternalIds || [])
         activePersonaExternalIds.add(externalId)
 
-      if (input.entityType !== 'persona' && result.reasonCode !== 'EXTERNAL_ID_MISSING' && toText(result.externalId))
-        seenBusinessExternalIds.add(toText(result.externalId))
+      if (input.entityType !== 'persona' && result.status !== 'skipped' && toText(result.externalId))
+        successfulBusinessExternalIds.add(toText(result.externalId))
 
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
         recordBusinessSkipDiagnostics(summary.diagnostics, record, result, resultSkippedCount)
@@ -2935,13 +2957,14 @@ async function executeRecords(
     && Boolean(input.authoritativePrune)
     && input.entityType !== 'persona'
     && summary.errorCount === 0
+    && successfulBusinessExternalIds.size > 0
 
   if (authoritativePrune) {
     await cleanupFeishuManagedReleaseDrafts(db, {
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
       entityType: input.entityType,
-      preserveExternalIds: [...seenBusinessExternalIds],
+      preserveExternalIds: [...successfulBusinessExternalIds],
     })
   }
 

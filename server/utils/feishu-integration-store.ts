@@ -34,6 +34,7 @@ import type {
   FeishuSyncedDataResult,
   FeishuSyncedDataSyncItemOption,
   FeishuSyncIssue,
+  FeishuSyncIssueReasonStat,
   FeishuSyncIssueResolution,
   FeishuSyncIssueStatus,
   FeishuSyncRunMode,
@@ -247,6 +248,12 @@ interface FeishuSyncIssueRow {
 interface FeishuSyncIssueStatsRow {
   status: FeishuSyncIssueStatus
   issue_count: number | string
+}
+
+interface FeishuSyncIssueReasonStatRow {
+  reason_code: string | null
+  open_count: number | string
+  total_count: number | string
 }
 
 interface FeishuContestAdminDirectoryRow {
@@ -757,6 +764,14 @@ function toIssue(row: FeishuSyncIssueRow): FeishuSyncIssue {
     resolvedAt: row.resolved_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function toIssueReasonStat(row: FeishuSyncIssueReasonStatRow): FeishuSyncIssueReasonStat {
+  return {
+    reasonCode: toText(row.reason_code),
+    openCount: Math.max(0, Number(row.open_count || 0) || 0),
+    totalCount: Math.max(0, Number(row.total_count || 0) || 0),
   }
 }
 
@@ -2577,7 +2592,7 @@ export async function getFeishuBitableSyncItemDetail(
   const runLimit = Math.max(1, Math.min(100, Number(input.runLimit || 20)))
   const issueLimit = Math.max(1, Math.min(200, Number(input.issueLimit || 50)))
 
-  const [recentRuns, issues, issueStatsResult] = await Promise.all([
+  const [recentRuns, issues, issueStatsResult, issueReasonStatsResult] = await Promise.all([
     listFeishuBitableSyncItemRuns(db, {
       syncItemId: input.syncItemId,
       limit: runLimit,
@@ -2593,6 +2608,20 @@ export async function getFeishuBitableSyncItemDetail(
        GROUP BY status`,
       [input.syncItemId],
     ),
+    db.query<FeishuSyncIssueReasonStatRow>(
+      `SELECT
+         reason_code,
+         COUNT(*) FILTER (WHERE status = 'open')::INTEGER AS open_count,
+         COUNT(*)::INTEGER AS total_count
+       FROM feishu_sync_issues
+       WHERE sync_item_id = $1
+       GROUP BY reason_code
+       ORDER BY
+         COUNT(*) FILTER (WHERE status = 'open') DESC,
+         COUNT(*) DESC,
+         reason_code ASC`,
+      [input.syncItemId],
+    ),
   ])
 
   return {
@@ -2600,6 +2629,7 @@ export async function getFeishuBitableSyncItemDetail(
     recentRuns,
     issues,
     issueStats: toTaskIssueStats(issueStatsResult.rows),
+    issueReasonStats: issueReasonStatsResult.rows.map(toIssueReasonStat).filter(item => item.reasonCode),
   }
 }
 
@@ -3590,12 +3620,14 @@ export async function listFeishuSyncedDataSyncItemOptions(
     sync_item_name: string
     sync_id: string | null
     sync_name: string | null
+    entity_type: FeishuBitableSyncItemEntityType
   }>(
     `SELECT
       item.id AS sync_item_id,
       item.name AS sync_item_name,
       sync.id AS sync_id,
-      sync.name AS sync_name
+      sync.name AS sync_name,
+      item.entity_type
      FROM feishu_bitable_sync_items item
      LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
      WHERE ($1::TEXT = '' OR item.sync_id = $1)
@@ -3608,6 +3640,7 @@ export async function listFeishuSyncedDataSyncItemOptions(
     name: toText(row.sync_item_name),
     syncId: toText(row.sync_id),
     syncName: toText(row.sync_name),
+    entityType: row.entity_type,
   }))
 }
 
@@ -3848,6 +3881,7 @@ export async function listFeishuSyncIssues(
   input: {
     syncItemId?: string
     status?: FeishuSyncIssueStatus
+    reasonCode?: string
     limit?: number
   } = {},
 ): Promise<FeishuSyncIssue[]> {
@@ -3861,6 +3895,11 @@ export async function listFeishuSyncIssues(
   if (input.status) {
     values.push(input.status)
     where.push(`status = $${values.length}`)
+  }
+  const reasonCode = toText(input.reasonCode)
+  if (reasonCode) {
+    values.push(reasonCode)
+    where.push(`reason_code = $${values.length}`)
   }
   const limit = Math.max(1, Math.min(500, Number(input.limit || 100)))
   values.push(limit)
@@ -3937,6 +3976,60 @@ export async function resolveFeishuSyncIssue(
 
   const row = result.rows[0]
   return row ? toIssue(row) : null
+}
+
+export async function resolveFeishuSyncIssuesByFilter(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    status?: FeishuSyncIssueStatus
+    reasonCode?: string
+    resolution: FeishuSyncIssueResolution
+    resolutionPayload?: Record<string, unknown>
+  },
+): Promise<number> {
+  const syncItemId = toText(input.syncItemId)
+  if (!syncItemId)
+    return 0
+
+  const status = input.status || 'open'
+  const reasonCode = toText(input.reasonCode)
+  const values: unknown[] = [
+    input.actorUserId,
+    syncItemId,
+    input.resolution,
+    JSON.stringify(parseJsonObject(input.resolutionPayload)),
+    status,
+  ]
+  const where = [
+    'sync_item_id = $2',
+    'status = $5',
+  ]
+
+  if (reasonCode) {
+    values.push(reasonCode)
+    where.push(`reason_code = $${values.length}`)
+  }
+
+  const result = await db.query<{ affected_count: string }>(
+    `WITH updated AS (
+      UPDATE feishu_sync_issues
+      SET
+        status = CASE WHEN $3 = 'ignored' THEN 'ignored' ELSE 'resolved' END,
+        resolution = $3,
+        resolution_payload = $4::JSONB,
+        resolved_by_user_id = $1,
+        resolved_at = NOW(),
+        updated_at = NOW()
+      WHERE ${where.join(' AND ')}
+      RETURNING 1
+    )
+    SELECT COUNT(*)::TEXT AS affected_count FROM updated`,
+    values,
+  )
+
+  return Math.max(0, Number(result.rows[0]?.affected_count || 0) || 0)
 }
 
 export async function listActiveFeishuBitableSyncItemsBySource(
