@@ -7,6 +7,7 @@ import type {
   PlatformRole,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import type { ContextMenuAnchorPoint, ContextMenuItem } from '~/types/ui-context-menu'
 import { resolveWorkspaceOptions } from '~/composables/team-ui'
 import { readActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 import { useAdminRouteTabs } from '~/composables/useAdminRouteTabs'
@@ -37,6 +38,11 @@ const activeWorkspaceId = ref('')
 const adminSearchQuery = ref('')
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const isFullscreen = ref(false)
+const routeTabContextMenuVisible = ref(false)
+const routeTabContextMenuTabId = ref('')
+const routeTabContextMenuAnchorPoint = ref<ContextMenuAnchorPoint | null>(null)
+const routeTabContextMenuAnchorEl = ref<HTMLElement | null>(null)
+const routeTabContextMenuRestoreFocusEl = ref<HTMLElement | null>(null)
 
 const navItems: AdminNavItem[] = [
   { key: 'admin-home', to: '/admin', label: '管理首页', icon: 'i-heroicons-outline-home', section: 'core' },
@@ -136,12 +142,74 @@ const {
   appendRouteTab,
   openRouteTab,
   closeRouteTab,
+  closeTabsToLeft,
+  closeTabsToRight,
+  closeOtherTabs,
+  closeAllTabs,
 } = useAdminRouteTabs({
   route,
   navItems,
 })
 
 const showRouteTabs = computed(() => adminRouteTabs.value.length > 0)
+
+const routeTabContextSnapshot = computed(() => {
+  const index = adminRouteTabs.value.findIndex(tab => tab.id === routeTabContextMenuTabId.value)
+  if (index < 0)
+    return null
+
+  const tab = adminRouteTabs.value[index]
+  if (!tab)
+    return null
+
+  return {
+    tab,
+    index,
+    leftCount: index,
+    rightCount: Math.max(adminRouteTabs.value.length - index - 1, 0),
+  }
+})
+
+const routeTabContextMenuItems = computed<ContextMenuItem[]>(() => {
+  const snapshot = routeTabContextSnapshot.value
+  if (!snapshot)
+    return []
+
+  return [
+    {
+      key: 'closeSelf',
+      label: '关闭标签页',
+      icon: 'close',
+      disabled: adminRouteTabs.value.length === 0,
+    },
+    {
+      key: 'closeLeft',
+      label: '关闭左侧标签页',
+      icon: 'keyboard_double_arrow_left',
+      disabled: snapshot.leftCount === 0,
+    },
+    {
+      key: 'closeRight',
+      label: '关闭右侧标签页',
+      icon: 'keyboard_double_arrow_right',
+      disabled: snapshot.rightCount === 0,
+    },
+    {
+      key: 'closeOthers',
+      label: '关闭其他标签页',
+      icon: 'tab_close_right',
+      disabled: adminRouteTabs.value.length <= 1,
+    },
+    {
+      key: 'closeAll',
+      label: '关闭全部标签页',
+      icon: 'tab_close',
+      tone: 'danger',
+      separatorBefore: true,
+      disabled: adminRouteTabs.value.length === 0,
+    },
+  ]
+})
 
 function onMenuItemClick(key: string | number): void {
   const target = visibleNavItems.value.find(item => item.key === String(key))
@@ -167,6 +235,93 @@ async function submitAdminSearch() {
 function focusAdminSearch() {
   searchInputRef.value?.focus()
   searchInputRef.value?.select()
+}
+
+function isRouteTabKeyboardContextMenuEvent(event: KeyboardEvent): boolean {
+  return event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')
+}
+
+function openRouteTabContextMenu(payload: {
+  tabId: string
+  anchorPoint?: ContextMenuAnchorPoint | null
+  anchorEl?: HTMLElement | null
+  restoreFocusEl?: HTMLElement | null
+}) {
+  const target = adminRouteTabs.value.find(tab => tab.id === payload.tabId)
+  if (!target)
+    return
+
+  routeTabContextMenuTabId.value = target.id
+  routeTabContextMenuAnchorPoint.value = payload.anchorPoint || null
+  routeTabContextMenuAnchorEl.value = payload.anchorEl || null
+  routeTabContextMenuRestoreFocusEl.value = payload.restoreFocusEl || null
+  routeTabContextMenuVisible.value = true
+}
+
+function closeRouteTabContextMenu(options?: { restoreFocus?: boolean }) {
+  const shouldRestoreFocus = Boolean(options?.restoreFocus)
+  const focusEl = routeTabContextMenuRestoreFocusEl.value
+
+  routeTabContextMenuVisible.value = false
+  routeTabContextMenuTabId.value = ''
+  routeTabContextMenuAnchorPoint.value = null
+  routeTabContextMenuAnchorEl.value = null
+  routeTabContextMenuRestoreFocusEl.value = null
+
+  if (shouldRestoreFocus && focusEl)
+    nextTick(() => focusEl.focus())
+}
+
+function handleRouteTabContextMenuFromPointer(tabId: string, event: MouseEvent) {
+  event.preventDefault()
+  openRouteTabContextMenu({
+    tabId,
+    anchorPoint: {
+      x: event.clientX,
+      y: event.clientY,
+    },
+    restoreFocusEl: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+  })
+}
+
+function handleRouteTabContextMenuFromKeyboard(tabId: string, event: KeyboardEvent) {
+  if (!isRouteTabKeyboardContextMenuEvent(event))
+    return
+
+  event.preventDefault()
+  openRouteTabContextMenu({
+    tabId,
+    anchorEl: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+    restoreFocusEl: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+  })
+}
+
+async function handleRouteTabContextMenuSelect(key: string) {
+  const targetTabId = routeTabContextMenuTabId.value
+  if (!targetTabId)
+    return
+
+  try {
+    switch (key) {
+      case 'closeSelf':
+        await closeRouteTab(targetTabId)
+        return
+      case 'closeLeft':
+        await closeTabsToLeft(targetTabId)
+        return
+      case 'closeRight':
+        await closeTabsToRight(targetTabId)
+        return
+      case 'closeOthers':
+        await closeOtherTabs(targetTabId)
+        return
+      case 'closeAll':
+        await closeAllTabs()
+    }
+  }
+  finally {
+    closeRouteTabContextMenu()
+  }
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
@@ -290,6 +445,7 @@ if (import.meta.client) {
   watch(() => route.fullPath, (fullPath) => {
     if (isEmbedMode.value)
       return
+    closeRouteTabContextMenu()
     appendRouteTab(route.path, fullPath)
   })
 }
@@ -454,7 +610,9 @@ if (import.meta.client) {
                 :aria-selected="activeRouteTabId === tab.id ? 'true' : 'false'"
                 :tabindex="activeRouteTabId === tab.id ? 0 : -1"
                 @click="openRouteTab(tab.id)"
+                @contextmenu="handleRouteTabContextMenuFromPointer(tab.id, $event)"
                 @keydown.enter="openRouteTab(tab.id)"
+                @keydown="handleRouteTabContextMenuFromKeyboard(tab.id, $event)"
               >
                 <span class="admin-route-tab-label">{{ tab.label }}</span>
               </button>
@@ -475,6 +633,16 @@ if (import.meta.client) {
         </a-layout-content>
       </a-layout>
     </a-layout>
+
+    <UiContextMenu
+      :visible="routeTabContextMenuVisible"
+      :items="routeTabContextMenuItems"
+      :anchor-point="routeTabContextMenuAnchorPoint"
+      :anchor-el="routeTabContextMenuAnchorEl"
+      test-id="admin-route-tab-context-menu"
+      @select="handleRouteTabContextMenuSelect"
+      @close="closeRouteTabContextMenu({ restoreFocus: true })"
+    />
 
     <UserSettingsDialog
       v-model:visible="profileDialogVisible"

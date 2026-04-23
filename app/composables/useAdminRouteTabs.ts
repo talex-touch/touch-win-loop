@@ -54,6 +54,50 @@ function resolveContestModuleLabel(segment: string): string {
   return map[segment] || segment
 }
 
+function buildNormalizedAdminRouteTabs(
+  source: Array<Partial<AdminRouteTab>>,
+  resolveLabel: (path: string) => string,
+): AdminRouteTab[] {
+  const result: AdminRouteTab[] = []
+  const indexByPath = new Map<string, number>()
+
+  for (const item of source) {
+    if (!item || typeof item !== 'object')
+      continue
+
+    const candidate = item as Partial<AdminRouteTab>
+    const path = normalizeAdminRoutePath(String(candidate.path || ''))
+    if (!path)
+      continue
+
+    const fullPathText = String(candidate.fullPath || '').trim()
+    const fullPath = fullPathText.startsWith('/admin') ? fullPathText : path
+
+    const nextTab: AdminRouteTab = {
+      id: String(candidate.id || createTabId()),
+      path,
+      fullPath,
+      label: resolveLabel(path),
+    }
+
+    const duplicatedIndex = indexByPath.get(path)
+    if (duplicatedIndex !== undefined) {
+      result.splice(duplicatedIndex, 1)
+      for (const [key, value] of indexByPath.entries()) {
+        if (value > duplicatedIndex)
+          indexByPath.set(key, value - 1)
+      }
+    }
+
+    indexByPath.set(path, result.length)
+    result.push(nextTab)
+  }
+
+  if (result.length <= MAX_ADMIN_ROUTE_TAB_COUNT)
+    return result
+  return result.slice(-MAX_ADMIN_ROUTE_TAB_COUNT)
+}
+
 export function useAdminRouteTabs(input: {
   route: { path: string, fullPath: string }
   navItems: AdminNavRouteItem[]
@@ -120,44 +164,38 @@ export function useAdminRouteTabs(input: {
     if (!Array.isArray(source))
       return []
 
-    const result: AdminRouteTab[] = []
-    const indexByPath = new Map<string, number>()
+    return buildNormalizedAdminRouteTabs(source as Array<Partial<AdminRouteTab>>, resolveRouteTabLabel)
+  }
 
-    for (const item of source) {
-      if (!item || typeof item !== 'object')
-        continue
+  function commitAdminRouteTabs(nextTabs: Array<Partial<AdminRouteTab>>): AdminRouteTab[] {
+    const normalized = buildNormalizedAdminRouteTabs(nextTabs, resolveRouteTabLabel)
+    adminRouteTabs.value = normalized
+    persistAdminRouteTabs()
+    return normalized
+  }
 
-      const candidate = item as Partial<AdminRouteTab>
-      const path = normalizeAdminRoutePath(String(candidate.path || ''))
-      if (!path)
-        continue
+  async function navigateAfterTabMutation(
+    nextTabs: AdminRouteTab[],
+    preferredPath?: string,
+  ): Promise<void> {
+    const normalizedPreferredPath = normalizeAdminRoutePath(String(preferredPath || ''))
+    const activePath = activeRoutePath.value
+    if (activePath && nextTabs.some(tab => tab.path === activePath))
+      return
 
-      const fullPathText = String(candidate.fullPath || '').trim()
-      const fullPath = fullPathText.startsWith('/admin') ? fullPathText : path
+    const preferredTab = normalizedPreferredPath
+      ? nextTabs.find(tab => tab.path === normalizedPreferredPath) || null
+      : null
+    const fallbackTab = preferredTab || nextTabs[nextTabs.length - 1] || null
 
-      const nextTab: AdminRouteTab = {
-        id: String(candidate.id || createTabId()),
-        path,
-        fullPath,
-        label: resolveRouteTabLabel(path),
-      }
-
-      const duplicatedIndex = indexByPath.get(path)
-      if (duplicatedIndex !== undefined) {
-        result.splice(duplicatedIndex, 1)
-        for (const [key, value] of indexByPath.entries()) {
-          if (value > duplicatedIndex)
-            indexByPath.set(key, value - 1)
-        }
-      }
-
-      indexByPath.set(path, result.length)
-      result.push(nextTab)
+    if (fallbackTab) {
+      if (fallbackTab.fullPath !== input.route.fullPath)
+        await navigateTo(fallbackTab.fullPath)
+      return
     }
 
-    if (result.length <= MAX_ADMIN_ROUTE_TAB_COUNT)
-      return result
-    return result.slice(-MAX_ADMIN_ROUTE_TAB_COUNT)
+    if (input.route.path !== '/admin')
+      await navigateTo('/admin')
   }
 
   function restoreAdminRouteTabs(): void {
@@ -193,21 +231,18 @@ export function useAdminRouteTabs(input: {
         return
       current.fullPath = normalizedFullPath
       current.label = resolveRouteTabLabel(normalizedPath)
-      persistAdminRouteTabs()
+      commitAdminRouteTabs(adminRouteTabs.value)
       return
     }
 
-    adminRouteTabs.value.push({
+    const nextTabs = [...adminRouteTabs.value, {
       id: createTabId(),
       path: normalizedPath,
       fullPath: normalizedFullPath,
       label: resolveRouteTabLabel(normalizedPath),
-    })
+    }]
 
-    if (adminRouteTabs.value.length > MAX_ADMIN_ROUTE_TAB_COUNT)
-      adminRouteTabs.value.splice(0, adminRouteTabs.value.length - MAX_ADMIN_ROUTE_TAB_COUNT)
-
-    persistAdminRouteTabs()
+    commitAdminRouteTabs(nextTabs)
   }
 
   const activeRoutePath = computed(() => normalizeAdminRoutePath(input.route.path))
@@ -230,20 +265,47 @@ export function useAdminRouteTabs(input: {
     if (index < 0)
       return
 
+    const preferredFallbackPath = adminRouteTabs.value[index - 1]?.path || adminRouteTabs.value[index + 1]?.path || '/admin'
+    const nextTabs = adminRouteTabs.value.filter(item => item.id !== tabId)
+    const normalizedTabs = commitAdminRouteTabs(nextTabs)
+    await navigateAfterTabMutation(normalizedTabs, preferredFallbackPath)
+  }
+
+  async function closeTabsToLeft(tabId: string) {
+    const index = adminRouteTabs.value.findIndex(item => item.id === tabId)
+    if (index <= 0)
+      return
+
     const target = adminRouteTabs.value[index]
-    const isActive = Boolean(target && target.path === activeRoutePath.value)
-    adminRouteTabs.value.splice(index, 1)
-    persistAdminRouteTabs()
+    const nextTabs = adminRouteTabs.value.slice(index)
+    const normalizedTabs = commitAdminRouteTabs(nextTabs)
+    await navigateAfterTabMutation(normalizedTabs, target?.path || '/admin')
+  }
 
-    if (!isActive)
+  async function closeTabsToRight(tabId: string) {
+    const index = adminRouteTabs.value.findIndex(item => item.id === tabId)
+    if (index < 0 || index >= adminRouteTabs.value.length - 1)
       return
 
-    const fallback = adminRouteTabs.value[index - 1] || adminRouteTabs.value[index] || null
-    if (fallback) {
-      await navigateTo(fallback.fullPath)
+    const target = adminRouteTabs.value[index]
+    const nextTabs = adminRouteTabs.value.slice(0, index + 1)
+    const normalizedTabs = commitAdminRouteTabs(nextTabs)
+    await navigateAfterTabMutation(normalizedTabs, target?.path || '/admin')
+  }
+
+  async function closeOtherTabs(tabId: string) {
+    const target = adminRouteTabs.value.find(item => item.id === tabId)
+    if (!target)
       return
-    }
-    await navigateTo('/admin')
+
+    const normalizedTabs = commitAdminRouteTabs([target])
+    await navigateAfterTabMutation(normalizedTabs, target.path)
+  }
+
+  async function closeAllTabs() {
+    commitAdminRouteTabs([])
+    if (input.route.path !== '/admin')
+      await navigateTo('/admin')
   }
 
   return {
@@ -253,5 +315,9 @@ export function useAdminRouteTabs(input: {
     appendRouteTab,
     openRouteTab,
     closeRouteTab,
+    closeTabsToLeft,
+    closeTabsToRight,
+    closeOtherTabs,
+    closeAllTabs,
   }
 }
