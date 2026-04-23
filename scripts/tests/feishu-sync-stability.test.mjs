@@ -31,7 +31,7 @@ describe('飞书多维同步稳定性修复', () => {
     assert.match(editorSource, /const currentItemRelationGuardText = computed\(\(\) => buildManualRunRelationGuardText\(/, '编辑器未计算当前同步项的关联阻断提示')
     assert.match(editorSource, /<a-alert v-if="currentItemRelationGuardText" type="warning" :show-icon="true">/, '编辑器未展示运行前关联阻断提示')
     assert.match(editorSource, /if \(currentItemRelationGuardText\.value\) \{\s+setError\(currentItemRelationGuardText\.value\)\s+return\s+\}/, '编辑器手动执行前未先给出本地阻断反馈')
-    assert.match(editorSource, /await loadCurrentItemLogDetail\(currentItem\.value\.id, result\.runId\)/, '编辑器手动执行成功后未聚焦最新 run 结果')
+    assert.match(editorSource, /const itemId = currentItem\.value\.id[\s\S]*currentItemLogVisible\.value = true[\s\S]*await loadCurrentItemLogDetail\(itemId, result\.runId\)/, '编辑器手动执行成功后未用本次同步项和 runId 打开日志')
   })
 
   it('共享 contest release draft 被其他子表更新后，查询仍按节点级 syncSource 保持竞赛和赛道归属稳定', async () => {

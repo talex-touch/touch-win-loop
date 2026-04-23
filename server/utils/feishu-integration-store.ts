@@ -207,6 +207,7 @@ interface FeishuSyncedDataMetricsRow {
   latest_run_source_row_total: number | string | null
   latest_run_auto_filtered_total: number | string | null
   latest_run_business_skipped_total: number | string | null
+  latest_run_duplicate_external_id_total: number | string | null
 }
 
 interface FeishuSyncRunSampleRow {
@@ -715,6 +716,7 @@ function createDefaultFeishuSyncedDataMetrics(effectiveEntityTotal = 0): FeishuS
     latestRunSourceRowTotal: 0,
     latestRunAutoFilteredTotal: 0,
     latestRunBusinessSkippedTotal: 0,
+    latestRunDuplicateExternalIdTotal: 0,
     rawCountBasis: 'latest_run_per_sync_item',
   }
 }
@@ -728,6 +730,7 @@ function toFeishuSyncedDataMetrics(
     latestRunSourceRowTotal: Math.max(0, Math.trunc(Number(row?.latest_run_source_row_total || 0) || 0)),
     latestRunAutoFilteredTotal: Math.max(0, Math.trunc(Number(row?.latest_run_auto_filtered_total || 0) || 0)),
     latestRunBusinessSkippedTotal: Math.max(0, Math.trunc(Number(row?.latest_run_business_skipped_total || 0) || 0)),
+    latestRunDuplicateExternalIdTotal: Math.max(0, Math.trunc(Number(row?.latest_run_duplicate_external_id_total || 0) || 0)),
     rawCountBasis: 'latest_run_per_sync_item',
   }
 }
@@ -3641,7 +3644,14 @@ export async function searchFeishuSyncedData(
               THEN (latest_runs.diagnostics_json ->> 'businessSkippedCount')::INTEGER
             ELSE 0
           END
-        ), 0)::INTEGER AS latest_run_business_skipped_total
+        ), 0)::INTEGER AS latest_run_business_skipped_total,
+        COALESCE(SUM(
+          CASE
+            WHEN COALESCE(latest_runs.diagnostics_json ->> 'sourceDuplicateExternalIdCount', '') ~ '^[0-9]+$'
+              THEN (latest_runs.diagnostics_json ->> 'sourceDuplicateExternalIdCount')::INTEGER
+            ELSE 0
+          END
+        ), 0)::INTEGER AS latest_run_duplicate_external_id_total
       FROM latest_runs`,
       rawMetricValues,
     )
@@ -3649,7 +3659,7 @@ export async function searchFeishuSyncedData(
   }
 
   const rawMetricNotice = rawMetricAvailable
-    ? '下方列表展示的是当前仍然可见的有效业务实体；最近运行源行数按“各同步项最近一次运行”聚合，规则过滤和业务跳过不会进入该列表。已发布版本会保留，但不会再和当前草稿/索引重复计数。'
+    ? '下方列表展示的是当前仍然可见的有效业务实体；最近运行源行数按“各同步项最近一次运行”聚合，规则过滤、业务跳过和重复 externalId 折叠不会进入该列表。已发布版本会保留，但不会再和当前草稿/索引重复计数。'
     : '当前列表仍按精确筛选结果展示，但“最近运行源行数”只支持按 syncId / syncItemId / scope 这类同步级筛选聚合；检测到关键词、externalId 或 recordId 细粒度筛选，已隐藏该指标。'
 
   return {

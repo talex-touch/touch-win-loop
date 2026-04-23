@@ -1461,6 +1461,28 @@ function buildSummaryBase(input: {
   }
 }
 
+function recordDuplicateExternalIdDiagnostics(
+  diagnostics: FeishuBitableSyncRunDiagnostics,
+  recordsByExternalId: Map<string, string[]>,
+): void {
+  const duplicates = [...recordsByExternalId.entries()]
+    .map(([externalId, recordIds]) => ({
+      externalId,
+      count: recordIds.length,
+      recordIds,
+    }))
+    .filter(item => item.count > 1)
+    .sort((left, right) => right.count - left.count || left.externalId.localeCompare(right.externalId))
+
+  diagnostics.processedUniqueExternalIdCount = recordsByExternalId.size
+  diagnostics.sourceDuplicateExternalIdCount = duplicates.reduce((total, item) => total + Math.max(0, item.count - 1), 0)
+  diagnostics.sourceDuplicateExternalIdSamples = duplicates.slice(0, SYNC_RUN_DIAGNOSTIC_PREVIEW_LIMIT).map(item => ({
+    externalId: item.externalId,
+    count: item.count,
+    recordIds: item.recordIds.slice(0, SYNC_RUN_DIAGNOSTIC_PREVIEW_LIMIT),
+  }))
+}
+
 function normalizeMissingFieldKey(raw: string): string {
   const field = toText(raw)
   if (!field)
@@ -2851,6 +2873,7 @@ async function executeRecords(
   const writebackRecords: Array<{ recordId: string, fields: Record<string, unknown> }> = []
   const activePersonaExternalIds = new Set<string>()
   const successfulBusinessExternalIds = new Set<string>()
+  const processedRecordIdsByExternalId = new Map<string, string[]>()
 
   for (const [recordIndex, record] of input.records.entries()) {
     try {
@@ -2887,8 +2910,13 @@ async function executeRecords(
       for (const externalId of result.activeExternalIds || [])
         activePersonaExternalIds.add(externalId)
 
-      if (input.entityType !== 'persona' && result.status !== 'skipped' && toText(result.externalId))
-        successfulBusinessExternalIds.add(toText(result.externalId))
+      if (input.entityType !== 'persona' && result.status !== 'skipped' && toText(result.externalId)) {
+        const successfulExternalId = toText(result.externalId)
+        successfulBusinessExternalIds.add(successfulExternalId)
+        const recordIds = processedRecordIdsByExternalId.get(successfulExternalId) || []
+        recordIds.push(record.recordId)
+        processedRecordIdsByExternalId.set(successfulExternalId, recordIds)
+      }
 
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
         recordBusinessSkipDiagnostics(summary.diagnostics, record, result, resultSkippedCount)
@@ -2952,6 +2980,8 @@ async function executeRecords(
       })
     }
   }
+
+  recordDuplicateExternalIdDiagnostics(summary.diagnostics, processedRecordIdsByExternalId)
 
   const authoritativePrune = !input.dryRun
     && Boolean(input.authoritativePrune)

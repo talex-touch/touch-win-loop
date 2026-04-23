@@ -23,6 +23,7 @@ describe('版本审批与赛道同步新流程', () => {
     assert.match(componentSource, /deliverableTypes（提交内容）/, '赛道映射缺少提交内容字段')
     assert.match(configSource, /if \(entityType === 'track'\) \{[\s\S]*timelineText:\s*''[\s\S]*deliverableTypes:\s*''/, '赛道默认模板未补齐时间节点与提交内容')
     assert.match(serviceSource, /const trackTimelines = buildTrackReleaseTimelines\(input\.externalId, timelineText\)/, '赛道同步未从 timelineText 构造赛道时间节点')
+    assert.match(serviceSource, /recordDuplicateExternalIdDiagnostics[\s\S]*sourceDuplicateExternalIdCount/, '赛道同步运行未记录重复 externalId 业务折叠诊断')
   })
 
   it('release-store 已实现双人审批、随机领取二审和替换发布', async () => {
@@ -36,6 +37,7 @@ describe('版本审批与赛道同步新流程', () => {
     const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
 
     assert.match(releaseStoreSource, /export async function claimRandomPendingSecondReviewRelease\(/, '缺少随机领取二审任务能力')
+    assert.match(releaseStoreSource, /function upsertSnapshotItem<T extends \{ externalId: string \}>[\s\S]*current\.externalId === item\.externalId/, 'release 草稿仍应按 externalId 合并同一业务实体')
     assert.match(releaseStoreSource, /COALESCE\(first_review_by_user_id, ''\) <> \$1/, '二审领取未排除初审人')
     assert.match(releaseStoreSource, /RELEASE_SECOND_REVIEW_NOT_CLAIMED/, '二审审批未要求先领取任务')
     assert.match(releaseStoreSource, /second_review_claimed/, '审批日志未记录二审领取')

@@ -4794,6 +4794,13 @@ export interface FeishuBitableSyncRunDiagnostics {
   processedCount: number
   autoSyncFilteredCount: number
   businessSkippedCount: number
+  processedUniqueExternalIdCount?: number
+  sourceDuplicateExternalIdCount?: number
+  sourceDuplicateExternalIdSamples?: Array<{
+    externalId: string
+    count: number
+    recordIds: string[]
+  }>
   skipReasonCounts: Record<string, number>
   missingRequiredFieldCounts: Record<string, number>
   autoSync: FeishuBitableAutoSyncRunDiagnostics
@@ -5232,6 +5239,7 @@ export interface FeishuSyncedDataMetrics {
   latestRunSourceRowTotal: number
   latestRunAutoFilteredTotal: number
   latestRunBusinessSkippedTotal: number
+  latestRunDuplicateExternalIdTotal: number
   rawCountBasis: 'latest_run_per_sync_item'
 }
 

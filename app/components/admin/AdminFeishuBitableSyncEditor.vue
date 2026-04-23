@@ -1244,6 +1244,23 @@ function syncRunBusinessSkipText(run?: FeishuBitableSyncItemRun | null): string 
   return `业务跳过 ${businessSkippedCount}；原因：${reasonText || '-'}${missingText ? `；缺失字段：${missingText}` : ''}。`
 }
 
+function syncRunDuplicateExternalIdText(run?: FeishuBitableSyncItemRun | null): string {
+  const diagnostics = run?.diagnostics
+  if (!diagnostics)
+    return ''
+  const duplicateCount = Math.max(0, Number(diagnostics.sourceDuplicateExternalIdCount) || 0)
+  if (duplicateCount <= 0)
+    return ''
+  const processedCount = Math.max(0, Number(diagnostics.processedCount) || 0)
+  const uniqueCount = Math.max(0, Number(diagnostics.processedUniqueExternalIdCount) || 0)
+  return `业务去重/覆盖 ${duplicateCount}；处理记录 ${processedCount}，唯一 externalId ${uniqueCount}。重复 externalId 会合并为同一个业务实体，不按错误处理。`
+}
+
+function syncRunDuplicateExternalIdSamples(run?: FeishuBitableSyncItemRun | null): Array<{ externalId: string, count: number, recordIds: string[] }> {
+  const samples = run?.diagnostics?.sourceDuplicateExternalIdSamples
+  return Array.isArray(samples) ? samples : []
+}
+
 function syncRunAutoSyncMatchText(run?: FeishuBitableSyncItemRun | null): string {
   const autoSync = run?.diagnostics?.autoSync
   if (!autoSync?.enabled)
@@ -3008,6 +3025,7 @@ async function runCurrentItem() {
     setError(currentItemRelationGuardText.value)
     return
   }
+  const itemId = currentItem.value.id
   runningItem.value = true
   clearFeedback()
   try {
@@ -3022,17 +3040,17 @@ async function runCurrentItem() {
       writebackSuccessCount: number
       writebackErrorCount: number
     }>(
-      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/run`),
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(itemId)}/run`),
       {
         method: 'POST',
       },
       '同步执行失败。',
     )
     await loadSyncDetail()
-    if (activeItemId.value)
-      await loadItemDetail(activeItemId.value)
-    if (currentItemLogVisible.value)
-      await loadCurrentItemLogDetail(currentItem.value.id, result.runId)
+    activeItemId.value = itemId
+    await loadItemDetail(itemId)
+    currentItemLogVisible.value = true
+    await loadCurrentItemLogDetail(itemId, result.runId)
     emit('updated')
     setSuccess(`同步执行完成，已刷新最近运行结果。抓取 ${result.fetchedCount} / 新增 ${result.createdCount} / 更新 ${result.updatedCount} / 跳过 ${result.skippedCount} / 错误 ${result.errorCount}。`)
   }
@@ -4959,12 +4977,18 @@ watch(() => props.selectedItemId, (value) => {
                   <a-tag size="small" color="orange">
                     业务跳过 {{ currentItemLogSelectedRun.diagnostics.businessSkippedCount || 0 }}
                   </a-tag>
+                  <a-tag size="small" color="cyan">
+                    业务去重/覆盖 {{ currentItemLogSelectedRun.diagnostics.sourceDuplicateExternalIdCount || 0 }}
+                  </a-tag>
                 </div>
                 <p v-if="syncRunRuleFilterText(currentItemLogSelectedRun)" class="text-[10px] text-amber-600 m-0">
                   {{ syncRunRuleFilterText(currentItemLogSelectedRun) }}
                 </p>
                 <p v-if="syncRunBusinessSkipText(currentItemLogSelectedRun)" class="text-[10px] text-orange-600 m-0">
                   {{ syncRunBusinessSkipText(currentItemLogSelectedRun) }}
+                </p>
+                <p v-if="syncRunDuplicateExternalIdText(currentItemLogSelectedRun)" class="text-[10px] text-cyan-700 m-0">
+                  {{ syncRunDuplicateExternalIdText(currentItemLogSelectedRun) }}
                 </p>
                 <p
                   v-if="syncRunHintText(currentItemLogItemDetail.entityType, currentItemLogSelectedRun)"
@@ -4987,6 +5011,23 @@ watch(() => props.selectedItemId, (value) => {
                   <p v-if="syncRunAutoSyncMatchText(currentItemLogSelectedRun)" class="text-[10px] text-slate-600 m-0">
                     {{ syncRunAutoSyncMatchText(currentItemLogSelectedRun) }}
                   </p>
+                  <div v-if="syncRunDuplicateExternalIdSamples(currentItemLogSelectedRun).length" class="space-y-2">
+                    <p class="text-[10px] text-slate-700 font-medium m-0">
+                      重复 externalId / 业务折叠样本
+                    </p>
+                    <div
+                      v-for="sample in syncRunDuplicateExternalIdSamples(currentItemLogSelectedRun)"
+                      :key="`duplicate-external-id-${sample.externalId}`"
+                      class="p-2 border border-cyan-100 bg-white space-y-1"
+                    >
+                      <p class="text-[10px] text-slate-700 m-0">
+                        externalId：{{ sample.externalId }}；源行 {{ sample.count }} 条；合并后只保留 1 个当前业务实体。
+                      </p>
+                      <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
+                        recordIds：{{ sample.recordIds.join(' / ') }}
+                      </p>
+                    </div>
+                  </div>
                   <div
                     v-if="(currentItemLogSelectedRun.diagnostics.autoSyncFilteredCount || 0) > 0 || currentItemLogRunSampleState('auto_sync_filtered').loading || currentItemLogRunSampleState('auto_sync_filtered').errorText || currentItemLogRunSampleHasFallback('auto_sync_filtered', currentItemLogSelectedRun)"
                     class="space-y-2"

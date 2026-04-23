@@ -57,6 +57,7 @@ function createEmptyResultPayload(): FeishuSyncedDataResult {
       latestRunSourceRowTotal: 0,
       latestRunAutoFilteredTotal: 0,
       latestRunBusinessSkippedTotal: 0,
+      latestRunDuplicateExternalIdTotal: 0,
       rawCountBasis: 'latest_run_per_sync_item',
     },
     rawMetricAvailable: true,
@@ -118,6 +119,13 @@ const summaryMetricCards = computed(() => {
         value: resultPayload.value.metrics.latestRunBusinessSkippedTotal,
         tone: 'text-orange-700',
         helper: '进入业务处理但被校验跳过的记录。',
+      },
+      {
+        key: 'duplicate',
+        label: '业务去重/覆盖',
+        value: resultPayload.value.metrics.latestRunDuplicateExternalIdTotal,
+        tone: 'text-cyan-700',
+        helper: '同一 externalId 多行进入处理后按业务实体合并。',
       },
     )
   }
@@ -450,7 +458,7 @@ watch(() => route.fullPath, () => {
         同一业务实体的历史更新会在这里折叠为当前结果；`track / resource` 等会先合并进草稿快照再展开，规则过滤和业务跳过不会进入下方列表。
       </p>
       <p class="text-[11px] text-slate-500 mb-0 mt-1">
-        “当前有效实体数（当前仍可见）”代表业务实体视角的去重结果，不等于最近一次抓取的源行数；已发布版本会保留，但不会再和当前草稿/索引重复计数。
+        “当前有效实体数（当前仍可见）”代表业务实体视角的去重结果，不等于最近一次抓取的源行数；重复 externalId 会按业务实体合并覆盖，已发布版本会保留但不会再和当前草稿/索引重复计数。
       </p>
       <p class="text-[11px] text-slate-500 mb-0 mt-1">
         当前筛选：{{ currentFilterSummary }} / 当前有效实体数：{{ resultPayload.metrics.effectiveEntityTotal }}
