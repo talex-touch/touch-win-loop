@@ -88,6 +88,14 @@ function metadataRecord(resource: Resource): Record<string, unknown> {
   return metadata as Record<string, unknown>
 }
 
+function metadataFlag(resource: Resource | null | undefined, key: string): boolean {
+  if (!resource)
+    return false
+  const metadata = metadataRecord(resource)
+  const value = metadata[key]
+  return value === true || String(value || '').trim().toLowerCase() === 'true'
+}
+
 function normalizeMetadataString(resource: Resource, key: string): string {
   const metadata = metadataRecord(resource)
   return String(metadata[key] || '').trim()
@@ -158,9 +166,29 @@ export function isDesignCanvasResource(resource: Resource | null | undefined): b
   return resolveCollabPurpose(resource) === 'design'
 }
 
+export function isDeviceArrangementResource(resource: Resource | null | undefined): boolean {
+  if (!resource)
+    return false
+  return metadataFlag(resource, 'deviceArrangement')
+    || String(resource.metadata?.mimeType || '').trim().toLowerCase() === 'application/vnd.winloop.device-arrangement+json'
+}
+
+export function isLegacyDeviceArrangementResource(resource: Resource | null | undefined): boolean {
+  if (!resource)
+    return false
+  if (isDeviceArrangementResource(resource))
+    return false
+  return resolveCollabPurpose(resource) === 'design'
+    && resource.resourceKind === 'draw'
+    && String(resource.metadata?.designMode || '').trim().toLowerCase() === 'device_arrangement'
+}
+
 export function resolveCollabResourceLabel(resource: Resource | null | undefined): string {
   if (!isCollabResource(resource))
     return COLLAB_GENERIC_RESOURCE_LABEL
+
+  if (isDeviceArrangementResource(resource))
+    return '设备排布'
 
   const kind = resource?.resourceKind === 'markdown' || resource?.resourceKind === 'draw'
     ? resource.resourceKind
@@ -169,6 +197,8 @@ export function resolveCollabResourceLabel(resource: Resource | null | undefined
 }
 
 export function resolveCollabResourceIcon(resource: Resource | null | undefined): string {
+  if (isDeviceArrangementResource(resource))
+    return 'devices'
   const purpose = resolveCollabPurpose(resource)
   if (purpose === 'workflow')
     return 'flowsheet'

@@ -80,6 +80,7 @@ import {
   useWorkspaceMainTabs,
 } from '~/composables/useWorkspaceMainTabs'
 import {
+  isDeviceArrangementResource,
   resolveCollabPurpose,
   resolveCollabResourceLabel,
 } from '~/utils/workspace-left-sidebar-helpers'
@@ -1226,6 +1227,7 @@ function resolveTabFromId(tabId: WorkspaceMainTabId): WorkspaceMainTab | null {
       resource?.title || '',
       resolvePreviewModeFromResource(resource),
       resolveCollabPurposeFromResource(resource),
+      resource,
     )
   }
 
@@ -1267,7 +1269,9 @@ function resolveResourceTabTitle(mode: WorkspacePreviewMode, title: string, purp
   return '资料预览'
 }
 
-function resolveResourceTabIcon(mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = ''): string {
+function resolveResourceTabIcon(mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = '', resource?: Resource | null): string {
+  if (mode === 'binary' && isDeviceArrangementResource(resource))
+    return 'devices'
   if (mode === 'markdown')
     return 'edit_note'
   if (mode === 'draw' && purpose === 'workflow')
@@ -1279,12 +1283,12 @@ function resolveResourceTabIcon(mode: WorkspacePreviewMode, purpose: CollabPurpo
   return 'description'
 }
 
-function buildResourceTab(resourceId: string, title: string, mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = ''): WorkspaceMainTab {
+function buildResourceTab(resourceId: string, title: string, mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = '', resource?: Resource | null): WorkspaceMainTab {
   return {
     id: createResourceTabId(resourceId),
     kind: 'resource',
     title: resolveResourceTabTitle(mode, title, purpose),
-    icon: resolveResourceTabIcon(mode, purpose),
+    icon: resolveResourceTabIcon(mode, purpose, resource),
     closeable: true,
     resourceId,
     previewMode: mode,
@@ -1301,6 +1305,7 @@ function previewTabFromProps(): WorkspaceMainTab | null {
     props.previewResourceTitle,
     normalizePreviewModeValue(props.previewMode),
     resolveCollabPurposeFromResource(previewResource),
+    previewResource,
   )
 }
 
@@ -1330,6 +1335,12 @@ const activeDesignResourceId = computed(() => {
 })
 const isActiveDesignResource = computed(() => Boolean(activeDesignResourceId.value))
 const activeDesignPanelTitle = computed(() => String(activeResourceTab.value?.title || '').trim() || '设计稿')
+const activeDeviceArrangementResourceId = computed(() => {
+  return activeResourceTab.value?.previewMode === 'binary' && isDeviceArrangementResource(activeResource.value)
+    ? String(activeResourceTab.value.resourceId || '').trim()
+    : ''
+})
+const isActiveDeviceArrangementResource = computed(() => Boolean(activeDeviceArrangementResourceId.value))
 
 const breadcrumbItems = computed(() => {
   if (activeResourceTab.value) {
@@ -3090,6 +3101,14 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         @update-collab-cursor="onCollabCursorUpdate"
         @activate-resource="emitActivatePreviewResource($event)"
         @open-resource="emit('openResource', $event)"
+      />
+
+      <WorkspaceDeviceArrangementPanel
+        v-else-if="isActiveDeviceArrangementResource"
+        class="h-full min-h-0 w-full"
+        :project-id="props.activeProjectId"
+        :resource-id="activeDeviceArrangementResourceId"
+        :resource-title="activeResource?.title || '设备排布'"
       />
 
       <WorkspaceResourcePreviewTab

@@ -209,7 +209,9 @@ import {
   serializeDrawioCollabValue,
 } from '~/utils/workspace-drawio'
 import {
+  isDeviceArrangementResource,
   isDesignCanvasResource,
+  isLegacyDeviceArrangementResource,
   resolveCollabPurpose,
   resolveCollabResourceIcon,
   resolveCollabResourceLabel,
@@ -7146,8 +7148,6 @@ async function createCollabResource(
       purpose?: 'notes' | 'freeform' | 'design' | 'workflow'
       parentResourceId?: string | null
       title?: string
-      initialDrawValue?: string
-      designMode?: 'blank' | 'device_arrangement'
     },
 ) {
   const projectId = String(activeProjectId.value || '').trim()
@@ -7161,27 +7161,13 @@ async function createCollabResource(
   const requestedTitle = typeof resourceInput === 'string'
     ? ''
     : String(resourceInput.title || '').trim()
-  const initialDrawValue = typeof resourceInput === 'string'
-    ? ''
-    : String(resourceInput.initialDrawValue || '')
-  const designMode = typeof resourceInput === 'string'
-    ? 'blank'
-    : (resourceInput.designMode || 'blank')
-  const designCreationPayload = designMode === 'device_arrangement'
-    ? {
-        title: '设备排布',
-        drawMode: 'composition',
-        sceneSourceType: 'image_mockup',
-        templateKey: 'device-showcase',
-        editorEngine: 'canvaskit_wasm',
-      }
-    : {
-        title: '设计稿',
-        drawMode: 'composition',
-        sceneSourceType: 'image_mockup',
-        templateKey: 'device-showcase',
-        editorEngine: 'canvaskit_wasm',
-      }
+  const designCreationPayload = {
+    title: '设计稿',
+    drawMode: 'composition',
+    sceneSourceType: 'image_mockup',
+    templateKey: 'device-showcase',
+    editorEngine: 'canvaskit_wasm',
+  }
   if (!projectId)
     return
 
@@ -7196,7 +7182,7 @@ async function createCollabResource(
         ...(purpose === 'design'
           ? {
               ...designCreationPayload,
-              title: requestedTitle || (designMode === 'device_arrangement' ? '设备排布' : '设计稿'),
+              title: requestedTitle || '设计稿',
             }
           : {}),
         parentResourceId: parentResourceId || undefined,
@@ -7207,7 +7193,7 @@ async function createCollabResource(
 
     const createdResource = response.data?.resource
     const snapshot = response.data?.snapshot
-    if (createdResource?.id) {
+      if (createdResource?.id) {
       await openProjectCollabResource(createdResource.id, snapshot || null, {
         surface: purpose === 'design'
           ? 'design'
@@ -7215,14 +7201,6 @@ async function createCollabResource(
             ? 'flow'
             : 'preview',
       })
-      if (initialDrawValue) {
-        await nextTick()
-        updateCollabDrawContent(initialDrawValue)
-        statusLine.value = designMode === 'device_arrangement'
-          ? '已创建设备排布，静态导出稿已生成。'
-          : `已创建${resourceLabel}，初始内容已写入。`
-        return
-      }
       statusLine.value = `已创建${resourceLabel}，协作模式已打开。`
       return
     }
@@ -7231,6 +7209,36 @@ async function createCollabResource(
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, `创建${resourceLabel}失败，请稍后重试。`)
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
+async function createDeviceArrangement(): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId)
+    return
+
+  resourceMutating.value = true
+  try {
+    const response = await unsafeFetch<ApiResponse<{ resource: Resource }>>(endpoint(`/projects/${projectId}/device-arrangements`), {
+      method: 'POST',
+      body: {
+        title: '设备排布',
+      },
+    })
+    await refreshProjectResourceContext()
+    const createdResourceId = String(response.data?.resource?.id || '').trim()
+    if (createdResourceId) {
+      await openProjectResourcePreview(createdResourceId, { forceReload: true })
+      statusLine.value = '已创建设备排布。'
+      return
+    }
+    statusLine.value = '设备排布已创建。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '创建设备排布失败，请稍后重试。')
   }
   finally {
     resourceMutating.value = false
@@ -7866,17 +7874,46 @@ function removeProjectResourceOpenTab(resourceId: string): void {
   openMainTabs.value = openMainTabs.value.filter(tabId => tabId !== targetTabId)
 }
 
+async function migrateLegacyDeviceArrangement(resourceId: string): Promise<string> {
+  const projectId = normalizeString(activeProjectId.value)
+  const targetResourceId = normalizeString(resourceId)
+  if (!projectId || !targetResourceId)
+    return ''
+
+  const response = await unsafeFetch<ApiResponse<{ resource: Resource }>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/device-arrangement-migration`), {
+    method: 'POST',
+  })
+  await refreshProjectResourceContext()
+  return normalizeString(response.data?.resource?.id)
+}
+
 async function resolveProjectResourceOpenTarget(resourceId: string): Promise<ProjectResourceOpenTarget | null> {
   const targetResourceId = normalizeString(resourceId)
   if (!targetResourceId)
     return null
 
-  const targetResource = resources.value.find(item => item.id === targetResourceId) || null
+  let targetResource = resources.value.find(item => item.id === targetResourceId) || null
   if (!targetResource)
     return { resourceId: targetResourceId, surface: 'binary' }
 
+  if (isLegacyDeviceArrangementResource(targetResource)) {
+    try {
+      const migratedResourceId = await migrateLegacyDeviceArrangement(targetResourceId)
+      if (migratedResourceId)
+        return { resourceId: migratedResourceId, surface: 'binary' }
+    }
+    catch (error) {
+      statusLine.value = resolveApiErrorMessage(error, '旧设备排布迁移失败，请稍后重试。')
+      return null
+    }
+    targetResource = resources.value.find(item => item.id === targetResourceId) || targetResource
+  }
+
   if (isWorkflowCanvasResource(targetResource))
     return { resourceId: targetResourceId, surface: 'flow' }
+
+  if (isDeviceArrangementResource(targetResource))
+    return { resourceId: targetResourceId, surface: 'binary' }
 
   if (isDesignCanvasResource(targetResource))
     return { resourceId: targetResourceId, surface: 'design' }
@@ -7986,6 +8023,8 @@ async function openProjectResourcePreview(resourceId: string, options: OpenPrevi
   const requestId = Number(options.requestId || ++projectResourcePreviewRequestId)
   const resolvedResourceId = target.resourceId
   const targetTabId = createResourceTabId(resolvedResourceId)
+  const resolvedResource = resources.value.find(item => item.id === resolvedResourceId) || null
+  const isTargetDeviceArrangement = isDeviceArrangementResource(resolvedResource)
 
   if (
     options.forceReload !== true
@@ -8007,6 +8046,9 @@ async function openProjectResourcePreview(resourceId: string, options: OpenPrevi
   if (options.openTab !== false)
     openPreviewSignal.value += 1
   previewStatusPayload.value = null
+
+  if (isTargetDeviceArrangement)
+    return
 
   await fetchResourcePreviewStatus(resolvedResourceId, false, { requestId })
   if (
@@ -12243,6 +12285,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 @create-meeting="createProjectMeeting"
                 @select-meeting="selectProjectMeeting"
                 @create-collab-resource="createCollabResource"
+                @create-device-arrangement="createDeviceArrangement"
                 @reload-issues="loadProjectIssues"
                 @open-resource="openProjectResourcePreview"
                 @rename-project-resource="renameProjectResource"

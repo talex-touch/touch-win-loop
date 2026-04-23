@@ -156,11 +156,6 @@ interface PendingImagePlacement {
   assetId?: string
   mimeType?: string
 }
-interface DeviceArrangementDialogPayload {
-  title: string
-  initialDrawValue: string
-  designMode: 'device_arrangement'
-}
 
 const props = withDefaults(
   defineProps<{
@@ -253,7 +248,6 @@ const stageViewportZoom = ref(1)
 const activeSidebarTab = ref<DesignSidebarTab>('pages')
 const sidebarCollapsed = ref(false)
 const inspectorCollapsed = ref(false)
-const deviceArrangementDialogVisible = ref(false)
 const outlineHighlightedAssetId = ref('')
 const canvasLibrarySearch = ref('')
 const canvasLibraryItems = ref<CanvasLibraryItem[]>([])
@@ -1383,16 +1377,6 @@ const compositionModel = computed<CompositionModel>(() => {
   return draftDocument.value.sourceModel.kind === 'composition'
     ? draftDocument.value.sourceModel
     : (createDefaultDesignSceneDocument().sourceModel as CompositionModel)
-})
-
-const isDeviceArrangementDocument = computed(() => {
-  return normalizeString(
-    (compositionModel.value.metadata as Record<string, unknown> | undefined)?.designMode,
-  ) === 'device_arrangement'
-})
-
-const deviceArrangementScreenshotCount = computed(() => {
-  return (compositionModel.value.frames || []).filter(frame => frame.kind === 'device_mockup').length
 })
 
 const pages = computed(() => compositionModel.value.pages || [])
@@ -2685,16 +2669,6 @@ function commitDocument(
   syncModelValue(serialized)
 }
 
-function updateDeviceArrangementDocument(value: string): void {
-  const nextDocument = parseSceneDocumentString(String(value || ''), {
-    fallbackDrawMode: 'composition',
-    fallbackSourceType: 'image_mockup',
-  })
-  commitDocument(nextDocument, {
-    historyMergeKey: 'device-arrangement',
-  })
-}
-
 function mutateCompositionDocument(
   mutator: (composition: CompositionModel) => CompositionModel,
 ): void {
@@ -2811,16 +2785,6 @@ watch(frameSidebarTreeRows, (rows) => {
   if (!rows.some(row => row.node.id === layerTreeMenuNodeId.value))
     closeLayerTreeMenu()
 })
-
-watch(isDeviceArrangementDocument, (nextValue) => {
-  if (nextValue) {
-    if (activeSidebarTab.value !== 'arrangement')
-      activeSidebarTab.value = 'arrangement'
-    return
-  }
-  if (activeSidebarTab.value === 'arrangement')
-    activeSidebarTab.value = 'pages'
-}, { immediate: true })
 
 watch(
   [
@@ -2956,177 +2920,6 @@ function createFrame(
     diagramEditorFrameId.value = nextFrame.id
     syncDiagramEditorFromFrame(nextFrame)
   }
-}
-
-function createDeviceArrangementInsertionId(sourceId: unknown, prefix: string, fallback: string): string {
-  const normalized = normalizeString(sourceId)
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return `${prefix}-${normalized || fallback}`
-}
-
-function openDeviceArrangementInsertDialog(): void {
-  if (!currentPage.value)
-    return
-  deviceArrangementDialogVisible.value = true
-}
-
-function insertDeviceArrangementFromDialog(payload: DeviceArrangementDialogPayload): void {
-  const targetPage = currentPage.value
-  if (!targetPage || !payload.initialDrawValue)
-    return
-
-  const sourceDocument = parseSceneDocumentString(payload.initialDrawValue, {
-    fallbackDrawMode: 'composition',
-    fallbackSourceType: 'image_mockup',
-  })
-  if (sourceDocument.sourceModel.kind !== 'composition')
-    return
-
-  const sourceComposition = sourceDocument.sourceModel
-  const sourcePages = sourceComposition.pages || []
-  const exportPageId = normalizeString(sourceComposition.currentPageId)
-    || sourcePages[0]?.id
-    || ''
-  const prefix = `device-arrangement-${Date.now()}`
-  const assetIdMap = new Map<string, string>()
-  const frameIdMap = new Map<string, string>()
-  const elementIdMap = new Map<string, string>()
-  const pageIdMap = new Map<string, string>([[exportPageId, targetPage.id]])
-
-  for (const page of sourcePages) {
-    if (page.id === exportPageId)
-      continue
-    pageIdMap.set(page.id, createDeviceArrangementInsertionId(page.id, prefix, 'page'))
-  }
-  for (const asset of sourceComposition.assets || [])
-    assetIdMap.set(asset.id, createDeviceArrangementInsertionId(asset.id, prefix, 'asset'))
-  for (const frame of sourceComposition.frames || [])
-    frameIdMap.set(frame.id, createDeviceArrangementInsertionId(frame.id, prefix, 'frame'))
-  for (const element of sourceComposition.elements || [])
-    elementIdMap.set(element.id, createDeviceArrangementInsertionId(element.id, prefix, 'element'))
-
-  const targetFrameCount = (compositionModel.value.frames || [])
-    .filter(frame => frame.pageId === targetPage.id)
-    .length
-  const insertionOffset = {
-    x: 120 + targetFrameCount * 48,
-    y: 120 + targetFrameCount * 36,
-  }
-
-  const insertedExportFrameIds: string[] = []
-  const nextAssets: DesignAssetModel[] = (sourceComposition.assets || []).map(asset => ({
-    ...asset,
-    id: assetIdMap.get(asset.id) || createDeviceArrangementInsertionId(asset.id, prefix, 'asset'),
-    metadata: asset.metadata ? { ...asset.metadata } : undefined,
-  }))
-  const nextFrames = (sourceComposition.frames || [])
-    .map((frame): DesignFrameModel | null => {
-      const nextPageId = pageIdMap.get(frame.pageId)
-      const nextFrameId = frameIdMap.get(frame.id)
-      if (!nextPageId || !nextFrameId)
-        return null
-
-      const isExportFrame = frame.pageId === exportPageId
-      if (isExportFrame)
-        insertedExportFrameIds.push(nextFrameId)
-      const deviceMetadata = frame.metadata?.device
-        ? {
-            ...frame.metadata.device,
-            shellAssetId: frame.metadata.device.shellAssetId
-              ? assetIdMap.get(frame.metadata.device.shellAssetId) || frame.metadata.device.shellAssetId
-              : undefined,
-            mockupSourceFrameId: frame.metadata.device.mockupSourceFrameId
-              ? frameIdMap.get(frame.metadata.device.mockupSourceFrameId) || frame.metadata.device.mockupSourceFrameId
-              : undefined,
-          }
-        : undefined
-      return {
-        ...frame,
-        id: nextFrameId,
-        pageId: nextPageId,
-        x: frame.x + (isExportFrame ? insertionOffset.x : 0),
-        y: frame.y + (isExportFrame ? insertionOffset.y : 0),
-        elements: (frame.elements || []).map(element => ({
-          ...element,
-          id: elementIdMap.get(element.id) || createDeviceArrangementInsertionId(element.id, prefix, 'element'),
-          pageId: nextPageId,
-          frameId: nextFrameId,
-          parentId: element.parentId ? elementIdMap.get(element.parentId) || element.parentId : undefined,
-          metadata: element.metadata ? { ...element.metadata } : undefined,
-        })),
-        themeTokens: frame.themeTokens ? { ...frame.themeTokens } : undefined,
-        metadata: frame.metadata
-          ? {
-              ...frame.metadata,
-              ...(deviceMetadata ? { device: deviceMetadata } : {}),
-            }
-          : undefined,
-      } satisfies DesignFrameModel
-    })
-    .filter((frame): frame is DesignFrameModel => Boolean(frame))
-
-  const nextElements = (sourceComposition.elements || [])
-    .map((element): DesignElementModel | null => {
-      const nextPageId = pageIdMap.get(element.pageId)
-      if (!nextPageId)
-        return null
-      const isPageRootOnExportPage = element.pageId === exportPageId && !element.frameId
-      return {
-        ...element,
-        id: elementIdMap.get(element.id) || createDeviceArrangementInsertionId(element.id, prefix, 'element'),
-        pageId: nextPageId,
-        frameId: element.frameId ? frameIdMap.get(element.frameId) || element.frameId : undefined,
-        parentId: element.parentId ? elementIdMap.get(element.parentId) || element.parentId : undefined,
-        x: element.x + (isPageRootOnExportPage ? insertionOffset.x : 0),
-        y: element.y + (isPageRootOnExportPage ? insertionOffset.y : 0),
-        style: element.style ? { ...element.style } : undefined,
-        metadata: element.metadata ? { ...element.metadata } : undefined,
-      } satisfies DesignElementModel
-    })
-    .filter((element): element is DesignElementModel => Boolean(element))
-
-  const sourceExtraPages = sourcePages
-    .filter(page => page.id !== exportPageId)
-    .map(page => ({
-      ...page,
-      id: pageIdMap.get(page.id) || createDeviceArrangementInsertionId(page.id, prefix, 'page'),
-      name: `${page.name || '截图源'} ${targetFrameCount + 1}`,
-      frameIds: (sourceComposition.frames || [])
-        .filter(frame => frame.pageId === page.id)
-        .map(frame => frameIdMap.get(frame.id) || '')
-        .filter(Boolean),
-      viewport: page.viewport ? { ...page.viewport } : undefined,
-      metadata: page.metadata ? { ...page.metadata } : undefined,
-    }))
-
-  const exportFrameIds = nextFrames
-    .filter(frame => frame.pageId === targetPage.id)
-    .map(frame => frame.id)
-
-  mutateCompositionDocument(composition => ({
-    ...composition,
-    pages: [
-      ...(composition.pages || []).map((page) => {
-        if (page.id !== targetPage.id)
-          return page
-        return {
-          ...page,
-          frameIds: [...(page.frameIds || []), ...exportFrameIds],
-        }
-      }),
-      ...sourceExtraPages,
-    ],
-    currentPageId: targetPage.id,
-    frames: [...(composition.frames || []), ...nextFrames],
-    elements: [...(composition.elements || []), ...nextElements],
-    assets: [...(composition.assets || []), ...nextAssets],
-  }))
-  setSelectedFrames(insertedExportFrameIds, {
-    primaryFrameId: insertedExportFrameIds[insertedExportFrameIds.length - 1] || '',
-  })
-  deviceArrangementDialogVisible.value = false
 }
 
 function duplicateSelectedFrame(): void {
@@ -6691,14 +6484,6 @@ async function downloadDefaultPng(): Promise<void> {
     @keydown.capture="handlePanelKeydown"
     @keyup.capture="handlePanelKeyup"
   >
-    <WorkspaceDeviceArrangementCreateDialog
-      :visible="deviceArrangementDialogVisible"
-      :active-project-id="projectId"
-      mode="insert"
-      @close="deviceArrangementDialogVisible = false"
-      @insert="insertDeviceArrangementFromDialog"
-    />
-
     <WLDesignLayout
       :gap="0"
       :collapsed-left-width="36"
@@ -6733,7 +6518,6 @@ async function downloadDefaultPng(): Promise<void> {
             <div class="workspace-design-sidebar-tabs-inline flex flex-1 min-w-0 justify-center">
               <WorkspaceDesignSidebarTabs
                 :active-tab="activeSidebarTab"
-                :show-arrangement="isDeviceArrangementDocument"
                 @update:active-tab="activeSidebarTab = $event"
               />
             </div>
@@ -6773,7 +6557,6 @@ async function downloadDefaultPng(): Promise<void> {
               @create-device-artboard="createFrame('device_artboard')"
               @create-diagram="createFrame('diagram')"
               @insert-template-frame="applyTemplateFrame(DEFAULT_TEMPLATE_KEY)"
-              @insert-device-arrangement="openDeviceArrangementInsertDialog"
               @download-default-svg="downloadDefaultSvg"
               @download-default-png="void downloadDefaultPng()"
               @download-page-svg="downloadSvg()"
@@ -6785,15 +6568,7 @@ async function downloadDefaultPng(): Promise<void> {
               v-if="activeSidebarTab !== 'frames'"
               class="mb-3 flex flex-wrap gap-2"
             >
-              <template v-if="activeSidebarTab === 'arrangement'">
-                <span
-                  class="text-[11px] text-slate-600 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white/72"
-                >
-                  {{ deviceArrangementScreenshotCount }} 设备
-                </span>
-              </template>
-
-              <template v-else-if="activeSidebarTab === 'pages'">
+              <template v-if="activeSidebarTab === 'pages'">
                 <span
                   class="text-[11px] text-slate-600 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white/72"
                 >
@@ -6821,18 +6596,7 @@ async function downloadDefaultPng(): Promise<void> {
             </div>
 
             <div
-              v-if="activeSidebarTab === 'arrangement'"
-            >
-              <WorkspaceDeviceArrangementSidebar
-                :model-value="props.modelValue"
-                :project-id="props.projectId"
-                :resource-title="props.designPanelTitle"
-                @update-document="updateDeviceArrangementDocument"
-              />
-            </div>
-
-            <div
-              v-else-if="activeSidebarTab === 'pages'"
+              v-if="activeSidebarTab === 'pages'"
               class="space-y-2"
               data-testid="workspace-design-sidebar-pages"
             >

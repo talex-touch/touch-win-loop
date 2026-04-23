@@ -21,7 +21,6 @@ const emit = defineEmits<{
   createDeviceArtboard: []
   createDiagram: []
   insertTemplateFrame: []
-  insertDeviceArrangement: []
   downloadDefaultSvg: []
   downloadDefaultPng: []
   downloadPageSvg: []
@@ -77,7 +76,6 @@ const emit = defineEmits<{
           <span>Diagram</span>
         </button>
       </div>
-
       <div class="flex flex-wrap gap-2">
         <button
           class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-dashed border-slate-200 bg-white/72 px-2.5 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -87,15 +85,6 @@ const emit = defineEmits<{
         >
           <span class="material-symbols-outlined text-sm">auto_awesome_mosaic</span>
           <span>模板稿</span>
-        </button>
-        <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-dashed border-slate-200 bg-white/72 px-2.5 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-          type="button"
-          :disabled="!props.canCreateFrame"
-          @click="emit('insertDeviceArrangement')"
-        >
-          <span class="material-symbols-outlined text-sm">devices</span>
-          <span>设备排布</span>
         </button>
       </div>
     </section>

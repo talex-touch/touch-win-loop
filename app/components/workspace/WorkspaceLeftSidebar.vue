@@ -40,8 +40,6 @@ interface CreateCollabResourcePayload {
   purpose?: 'notes' | 'freeform' | 'design' | 'workflow'
   parentResourceId?: string | null
   title?: string
-  initialDrawValue?: string
-  designMode?: 'blank' | 'device_arrangement'
 }
 
 const props = withDefaults(defineProps<{
@@ -180,6 +178,7 @@ const emit = defineEmits<{
   'createMeeting': [value: { mode: ProjectMeetingMode }]
   'selectMeeting': [meetingId: string]
   'createCollabResource': [payload: CreateCollabResourcePayload]
+  'createDeviceArrangement': []
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
   'patchProjectResourceTree': [payload: { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> }]
@@ -450,6 +449,7 @@ watch(activeModule, (value) => {
             @load-contests="emit('loadContests')"
             @run-ai-filter="emit('runAiFilter')"
             @create-collab-resource="emit('createCollabResource', $event)"
+            @create-device-arrangement="emit('createDeviceArrangement')"
             @reload-issues="emit('reloadIssues')"
             @add-resource-from-library="emit('addResourceFromLibrary', $event)"
             @patch-project-resource-tree="emit('patchProjectResourceTree', $event)"

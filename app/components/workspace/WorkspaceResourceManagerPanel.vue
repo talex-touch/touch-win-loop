@@ -23,10 +23,6 @@ import {
   COLLAB_NOTES_RESOURCE_LABEL,
   COLLAB_WORKFLOW_RESOURCE_LABEL,
 } from '~~/shared/utils/collab-resource'
-import {
-  buildDeviceArrangementSceneDocument,
-  serializeSceneDocument,
-} from '~~/shared/utils/scene-document'
 import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 import {
   isProjectUploadTaskSidebarVisible,
@@ -86,8 +82,6 @@ interface CreateCollabResourcePayload {
   purpose?: 'notes' | 'freeform' | 'design' | 'workflow'
   parentResourceId?: string | null
   title?: string
-  initialDrawValue?: string
-  designMode?: 'blank' | 'device_arrangement'
 }
 
 interface WorkspaceLinkedContestResourceCategoryGroup {
@@ -188,6 +182,7 @@ const emit = defineEmits<{
   'openMemberManagementPanel': []
   'openFlowPanel': []
   'createCollabResource': [payload: CreateCollabResourcePayload]
+  'createDeviceArrangement': []
   'openDefenseMode': []
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
@@ -1575,16 +1570,7 @@ function openDeviceArrangementFromMenu() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
   projectResourceAddMenuOpen.value = false
-  emit('createCollabResource', {
-    kind: 'draw',
-    purpose: 'design',
-    parentResourceId: null,
-    title: '设备排布',
-    initialDrawValue: serializeSceneDocument(buildDeviceArrangementSceneDocument({
-      title: '设备排布',
-    })),
-    designMode: 'device_arrangement',
-  })
+  emit('createDeviceArrangement')
 }
 
 function openWorkflowCanvasFromMenu() {

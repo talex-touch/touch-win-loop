@@ -1391,6 +1391,17 @@ CREATE TABLE IF NOT EXISTS project_resource_collab_docs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_resource_device_arrangements (
+  resource_id TEXT PRIMARY KEY REFERENCES project_resources(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  document_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  preview_svg TEXT NOT NULL DEFAULT '',
+  revision BIGINT NOT NULL DEFAULT 1,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS project_knowledge_sources (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -3319,6 +3330,7 @@ CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_document ON proje
 CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_stage ON project_resource_document_tasks(stage, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_resource_collab_docs_project_resource ON project_resource_collab_docs(project_id, resource_id);
 CREATE INDEX IF NOT EXISTS idx_project_resource_collab_docs_project_updated ON project_resource_collab_docs(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resource_device_arrangements_project_updated ON project_resource_device_arrangements(project_id, updated_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_knowledge_sources_project_scope_entity
   ON project_knowledge_sources(project_id, scope_type, COALESCE(source_resource_id, ''), COALESCE(linked_contest_resource_id, ''));
 CREATE INDEX IF NOT EXISTS idx_project_knowledge_sources_project_status
