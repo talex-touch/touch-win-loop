@@ -5,17 +5,59 @@ definePageMeta({
   layout: 'dashboard',
 })
 
+type ContestListResponse = ApiResponse<Contest[]> & {
+  pagination?: {
+    total?: number
+    page?: number
+    pageSize?: number
+  }
+}
+
+interface ContestVisual {
+  icon: 'sparkles' | 'document' | 'beaker' | 'academic'
+  tone: 'blue' | 'violet' | 'emerald' | 'indigo'
+}
+
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 
 const loading = ref(false)
 const contests = ref<Contest[]>([])
+const totalContests = ref(0)
 const search = ref('')
 const discipline = ref('')
 const level = ref<ContestLevel | ''>('')
 const deliverableType = ref('')
 const timelineStatus = ref('')
 const sort = ref('composite')
+const viewMode = ref<'grid' | 'list'>('grid')
+
+const contestVisuals: ContestVisual[] = [
+  { icon: 'sparkles', tone: 'blue' },
+  { icon: 'document', tone: 'violet' },
+  { icon: 'beaker', tone: 'emerald' },
+  { icon: 'academic', tone: 'indigo' },
+]
+
+const disciplineOptions = [
+  { label: '学科门类', value: '' },
+  { label: '工学', value: '工学' },
+  { label: '理学', value: '理学' },
+  { label: '管理学', value: '管理学' },
+  { label: '社会科学', value: '社会科学' },
+  { label: '艺术学', value: '艺术学' },
+]
+
+const deliverableOptions = [
+  { label: '交付物类型', value: '' },
+  { label: '方案书', value: '方案书' },
+  { label: '演示视频', value: '演示视频' },
+  { label: '原型系统', value: '原型系统' },
+  { label: '商业计划书', value: '商业计划书' },
+  { label: '答辩 PPT', value: '答辩 PPT' },
+  { label: '技术文档', value: '技术文档' },
+  { label: '调研报告', value: '调研报告' },
+]
 
 const statusOptions = [
   { label: '全部时间状态', value: '' },
@@ -32,6 +74,10 @@ const levelOptions: Array<{ label: string, value: ContestLevel | '' }> = [
   { label: '行业级', value: 'industry' },
 ]
 
+const displayedContestCount = computed(() => {
+  return totalContests.value || contests.value.length
+})
+
 async function loadContests() {
   loading.value = true
   try {
@@ -44,116 +90,782 @@ async function loadContests() {
         timelineStatus: timelineStatus.value,
         sort: sort.value,
         page: 1,
-        pageSize: 50,
+        pageSize: 100,
       },
-    }) as ApiResponse<Contest[]>
-    contests.value = response.data
+    }) as ContestListResponse
+    contests.value = Array.isArray(response.data) ? response.data : []
+    totalContests.value = Number(response.pagination?.total || contests.value.length)
   }
   finally {
     loading.value = false
   }
 }
 
+function resolveContestVisual(index: number): ContestVisual {
+  return contestVisuals[index % contestVisuals.length]
+}
+
+function trimText(value: string | undefined, fallback = '待补充') {
+  const normalized = String(value || '').trim()
+  return normalized || fallback
+}
+
+function formatDateToken(value: string | undefined) {
+  const normalized = String(value || '').trim()
+  const matched = normalized.match(/(\d{4})-(\d{2})-(\d{2})/)
+  if (!matched)
+    return normalized || '待补充'
+  return `${matched[2]}.${matched[3]}`
+}
+
+function formatRegistrationWindow(value: string | undefined) {
+  const normalized = String(value || '').trim()
+  const dates = normalized.match(/\d{4}-\d{2}-\d{2}/g)
+  if (!dates || dates.length < 2)
+    return normalized || '待补充'
+  return `${formatDateToken(dates[0])} - ${formatDateToken(dates[1])}`
+}
+
+function resolveMissingFieldCount(contest: Contest) {
+  const requiredFields = [
+    contest.organizer,
+    contest.registrationWindow,
+    contest.submissionDeadline,
+    contest.summary,
+    contest.participantRequirements,
+    contest.teamRule,
+  ]
+  return requiredFields.filter(item => !String(item || '').trim()).length
+}
+
 onMounted(loadContests)
 </script>
 
 <template>
-  <div class="mx-auto p-4 max-w-6xl space-y-4">
-    <div class="flex flex-col gap-1">
-      <h1 class="text-xl text-slate-900 font-semibold">
-        竞赛总库
-      </h1>
-      <p class="text-sm text-slate-500">
-        支持按学科、级别、交付物和时间状态快速筛选。
-      </p>
-    </div>
-
-    <div class="p-3 border border-slate-200 rounded-lg bg-white gap-2 grid grid-cols-1 lg:grid-cols-6 md:grid-cols-3">
-      <input
-        v-model="search"
-        class="dense-input lg:col-span-2"
-        placeholder="搜索竞赛名称/主办方/关键词"
-      >
-      <input
-        v-model="discipline"
-        class="dense-input"
-        placeholder="学科门类"
-      >
-      <select v-model="level" class="dense-input">
-        <option v-for="item in levelOptions" :key="item.label" :value="item.value">
-          {{ item.label }}
-        </option>
-      </select>
-      <input
-        v-model="deliverableType"
-        class="dense-input"
-        placeholder="交付物类型"
-      >
-      <select v-model="timelineStatus" class="dense-input">
-        <option v-for="item in statusOptions" :key="item.label" :value="item.value">
-          {{ item.label }}
-        </option>
-      </select>
-      <select v-model="sort" class="dense-input">
-        <option value="composite">
-          综合排序
-        </option>
-        <option value="hot">
-          热度优先
-        </option>
-        <option value="deadline">
-          时间临近
-        </option>
-      </select>
-      <button class="dense-btn" @click="loadContests">
-        应用筛选
-      </button>
-    </div>
-
-    <div v-if="loading" class="gap-3 grid grid-cols-1 md:grid-cols-2">
-      <article
-        v-for="index in 6"
-        :key="`contest-skeleton-${index}`"
-        class="p-4 border border-slate-200 rounded-lg bg-white animate-pulse"
-      >
-        <div class="flex gap-2 items-start justify-between">
-          <div class="rounded bg-slate-200 h-4 w-2/3" />
-          <div class="rounded bg-slate-200 h-5 w-14" />
+  <main class="contest-library-page">
+    <div class="contest-library-shell">
+      <section class="contest-library-hero">
+        <div class="contest-library-heading">
+          <div class="contest-library-title-row">
+            <h1>赛事总库</h1>
+            <span>national</span>
+          </div>
+          <p>支持按学科、级别、交付物和时间状态快速筛选。</p>
         </div>
-        <div class="mt-3 rounded bg-slate-200 h-3 w-1/2" />
-        <div class="mt-3 space-y-2">
-          <div class="rounded bg-slate-200 h-3 w-11/12" />
-          <div class="rounded bg-slate-200 h-3 w-9/12" />
-        </div>
-      </article>
-    </div>
 
-    <div v-else class="gap-3 grid grid-cols-1 md:grid-cols-2">
-      <NuxtLink
-        v-for="contest in contests"
-        :key="contest.id"
-        :to="`/contests/${contest.id}`"
-        class="p-4 border border-slate-200 rounded-lg bg-white transition hover:border-slate-400"
+        <div class="contest-library-art" aria-hidden="true">
+          <img src="/assets/contests/library-hero-art.png" alt="">
+        </div>
+      </section>
+
+      <section class="contest-filter-panel" aria-label="赛事筛选">
+        <div class="contest-filter-grid">
+          <label class="contest-field contest-field--search">
+            <span class="sr-only">搜索赛事</span>
+            <span class="contest-field__icon i-heroicons-outline-magnifying-glass" />
+            <input
+              v-model="search"
+              class="contest-control contest-control--with-icon"
+              placeholder="搜索赛事名称/主办方/关键词"
+              @keydown.enter="loadContests"
+            >
+          </label>
+
+          <label class="contest-field">
+            <span class="sr-only">学科门类</span>
+            <select v-model="discipline" class="contest-control">
+              <option v-for="item in disciplineOptions" :key="item.label" :value="item.value">
+                {{ item.label }}
+              </option>
+            </select>
+            <span class="contest-field__chevron i-heroicons-outline-chevron-down" />
+          </label>
+
+          <label class="contest-field">
+            <span class="sr-only">级别</span>
+            <select v-model="level" class="contest-control">
+              <option v-for="item in levelOptions" :key="item.label" :value="item.value">
+                {{ item.label }}
+              </option>
+            </select>
+            <span class="contest-field__chevron i-heroicons-outline-chevron-down" />
+          </label>
+
+          <label class="contest-field">
+            <span class="sr-only">交付物类型</span>
+            <select v-model="deliverableType" class="contest-control">
+              <option v-for="item in deliverableOptions" :key="item.label" :value="item.value">
+                {{ item.label }}
+              </option>
+            </select>
+            <span class="contest-field__chevron i-heroicons-outline-chevron-down" />
+          </label>
+
+          <label class="contest-field">
+            <span class="sr-only">时间状态</span>
+            <select v-model="timelineStatus" class="contest-control">
+              <option v-for="item in statusOptions" :key="item.label" :value="item.value">
+                {{ item.label }}
+              </option>
+            </select>
+            <span class="contest-field__chevron i-heroicons-outline-chevron-down" />
+          </label>
+
+          <label class="contest-field contest-field--sort">
+            <span class="sr-only">排序方式</span>
+            <select v-model="sort" class="contest-control">
+              <option value="composite">
+                综合排序
+              </option>
+              <option value="hot">
+                热度优先
+              </option>
+              <option value="deadline">
+                时间临近
+              </option>
+            </select>
+            <span class="contest-field__chevron i-heroicons-outline-chevron-down" />
+          </label>
+
+          <button class="contest-filter-button" type="button" :disabled="loading" @click="loadContests">
+            {{ loading ? '筛选中' : '应用筛选' }}
+          </button>
+        </div>
+      </section>
+
+      <section class="contest-result-toolbar" aria-label="赛事结果">
+        <p>共 <strong>{{ displayedContestCount }}</strong> 项赛事</p>
+        <div class="contest-view-toggle" aria-label="切换赛事展示方式">
+          <button
+            type="button"
+            :class="{ 'is-active': viewMode === 'grid' }"
+            aria-label="网格视图"
+            @click="viewMode = 'grid'"
+          >
+            <span class="i-heroicons-solid-squares-2x2" />
+          </button>
+          <button
+            type="button"
+            :class="{ 'is-active': viewMode === 'list' }"
+            aria-label="列表视图"
+            @click="viewMode = 'list'"
+          >
+            <span class="i-heroicons-solid-list-bullet" />
+          </button>
+        </div>
+      </section>
+
+      <section
+        v-if="loading"
+        class="contest-grid contest-grid--cards"
+        aria-label="赛事加载中"
       >
-        <div class="flex gap-2 items-start justify-between">
-          <h2 class="text-base text-slate-900 leading-snug font-semibold">
-            {{ contest.name }}
-          </h2>
-          <span class="text-xs text-slate-600 px-2 py-1 rounded bg-slate-100 whitespace-nowrap">{{ contest.level }}</span>
-        </div>
-        <p class="text-sm text-slate-600 mt-2">
-          主办方：{{ contest.organizer || '待补充' }}
-        </p>
-        <div class="text-xs text-slate-500 mt-2 flex flex-wrap gap-x-3 gap-y-1">
-          <span>报名窗口：{{ contest.registrationWindow || '待补充' }}</span>
-          <span>提交截止：{{ contest.submissionDeadline || '待补充' }}</span>
-          <span>赛道数：{{ contest.tracks.length }}</span>
-        </div>
-      </NuxtLink>
+        <article
+          v-for="index in 8"
+          :key="`contest-skeleton-${index}`"
+          class="contest-card contest-card--skeleton"
+        >
+          <div class="contest-card__head">
+            <span class="contest-skeleton-icon" />
+            <div class="contest-card__copy">
+              <span class="contest-skeleton-line contest-skeleton-line--title" />
+              <span class="contest-skeleton-line" />
+              <span class="contest-skeleton-line contest-skeleton-line--short" />
+            </div>
+          </div>
+          <div class="contest-card__footer">
+            <span class="contest-skeleton-line contest-skeleton-line--footer" />
+            <span class="contest-skeleton-line contest-skeleton-line--footer" />
+            <span class="contest-skeleton-line contest-skeleton-line--footer" />
+          </div>
+        </article>
+      </section>
 
-      <div v-if="contests.length === 0" class="text-sm text-slate-500 p-6 text-center border border-slate-300 rounded-lg border-dashed bg-white md:col-span-2">
-        当前筛选条件下暂无赛事
-      </div>
+      <section
+        v-else-if="contests.length > 0"
+        class="contest-grid"
+        :class="viewMode === 'grid' ? 'contest-grid--cards' : 'contest-grid--list'"
+        aria-label="赛事列表"
+      >
+        <NuxtLink
+          v-for="(contest, index) in contests"
+          :key="contest.id"
+          :to="`/contests/${contest.id}`"
+          class="contest-card"
+          :class="[
+            `contest-card--${resolveContestVisual(index).tone}`,
+            { 'contest-card--list': viewMode === 'list' },
+          ]"
+        >
+          <div class="contest-card__head">
+            <span class="contest-card__icon">
+              <span v-if="resolveContestVisual(index).icon === 'sparkles'" class="i-heroicons-solid-sparkles" />
+              <span v-else-if="resolveContestVisual(index).icon === 'document'" class="i-heroicons-solid-document-text" />
+              <span v-else-if="resolveContestVisual(index).icon === 'beaker'" class="i-heroicons-solid-beaker" />
+              <span v-else class="i-heroicons-solid-academic-cap" />
+            </span>
+
+            <div class="contest-card__copy">
+              <h2>{{ contest.name }}</h2>
+              <p class="contest-card__organizer">
+                主办方：{{ trimText(contest.organizer) }}
+              </p>
+              <p class="contest-card__time">
+                报名时间：{{ formatRegistrationWindow(contest.registrationWindow) }}
+              </p>
+            </div>
+          </div>
+
+          <div class="contest-card__footer">
+            <span>待补充 <strong>{{ resolveMissingFieldCount(contest) }}</strong></span>
+            <span>提交截止 <strong>{{ formatDateToken(contest.submissionDeadline) }}</strong></span>
+            <span>赛道数 <strong>{{ contest.tracks.length }}</strong></span>
+            <span class="contest-card__arrow">
+              <span class="i-heroicons-solid-arrow-right" />
+            </span>
+          </div>
+        </NuxtLink>
+      </section>
+
+      <section v-else class="contest-empty-state">
+        <span class="i-heroicons-outline-inbox" />
+        <p>当前筛选条件下暂无赛事</p>
+      </section>
     </div>
-  </div>
+  </main>
 </template>
+
+<style scoped>
+.contest-library-page {
+  min-height: calc(100vh - 64px);
+  padding: 30px 32px 40px;
+  color: #172033;
+  background:
+    radial-gradient(circle at 78% 4%, rgba(79, 125, 245, 0.14), transparent 28%),
+    linear-gradient(180deg, #f8fbff 0%, #f6f8fc 42%, #f5f7fb 100%);
+}
+
+.contest-library-shell {
+  width: min(100%, 1680px);
+  margin: 0 auto;
+}
+
+.contest-library-hero {
+  position: relative;
+  min-height: 116px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  overflow: hidden;
+  padding: 8px 2px 26px;
+}
+
+.contest-library-heading {
+  position: relative;
+  z-index: 1;
+}
+
+.contest-library-title-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.contest-library-title-row h1 {
+  margin: 0;
+  color: #101a33;
+  font-size: 31px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.contest-library-title-row span {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #3b6de9;
+  background: #eef4ff;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.contest-library-heading p {
+  margin: 16px 0 0;
+  color: #8b99b2;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.contest-library-art {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  width: min(58vw, 930px);
+  height: 210px;
+  overflow: hidden;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+
+.contest-library-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: right top;
+  opacity: 0.9;
+}
+
+.contest-filter-panel {
+  border: 1px solid #e7edf8;
+  border-radius: 16px;
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 36px rgba(42, 75, 138, 0.05);
+}
+
+.contest-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.65fr) repeat(4, minmax(150px, 1fr));
+  gap: 16px 20px;
+}
+
+.contest-field {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.contest-field--sort {
+  max-width: 240px;
+}
+
+.contest-control {
+  width: 100%;
+  height: 44px;
+  border: 2px solid #edf1f8;
+  border-radius: 9px;
+  padding: 0 42px 0 18px;
+  color: #263653;
+  background: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  outline: none;
+  appearance: none;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.contest-control::placeholder {
+  color: #a7b2c5;
+}
+
+.contest-control:focus {
+  border-color: #9cb8fb;
+  box-shadow: 0 0 0 4px rgba(74, 119, 232, 0.1);
+}
+
+.contest-control--with-icon {
+  padding-left: 50px;
+}
+
+.contest-field__icon,
+.contest-field__chevron {
+  position: absolute;
+  top: 50%;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.contest-field__icon {
+  left: 17px;
+  width: 23px;
+  height: 23px;
+  color: #a7b2c5;
+}
+
+.contest-field__chevron {
+  right: 17px;
+  width: 18px;
+  height: 18px;
+  color: #9ba9bf;
+}
+
+.contest-filter-button {
+  width: min(100%, 236px);
+  height: 44px;
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  background: linear-gradient(90deg, #87a6f4 0%, #3d78e8 100%);
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(61, 120, 232, 0.2);
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.contest-filter-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.contest-filter-button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 26px rgba(61, 120, 232, 0.26);
+}
+
+.contest-result-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 18px 8px 14px;
+}
+
+.contest-result-toolbar p {
+  margin: 0;
+  color: #91a0b6;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.contest-result-toolbar strong {
+  color: #7d8fa8;
+}
+
+.contest-view-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 2px solid #dbe5f5;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.contest-view-toggle button {
+  display: inline-grid;
+  width: 48px;
+  height: 42px;
+  place-items: center;
+  border: 0;
+  color: #8ea0b8;
+  background: transparent;
+  cursor: pointer;
+}
+
+.contest-view-toggle button.is-active {
+  color: #2f72ec;
+  background: #eaf2ff;
+  box-shadow: inset 0 0 0 1px #b9cffb;
+}
+
+.contest-view-toggle span {
+  width: 21px;
+  height: 21px;
+}
+
+.contest-grid {
+  display: grid;
+  gap: 20px;
+}
+
+.contest-grid--cards {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.contest-grid--list {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.contest-card {
+  display: flex;
+  min-height: 212px;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  border: 1px solid #e8edf7;
+  border-radius: 16px;
+  padding: 26px 24px 18px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 12px 28px rgba(36, 65, 118, 0.05);
+  text-decoration: none;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.contest-card:hover {
+  border-color: rgba(74, 119, 232, 0.34);
+  box-shadow: 0 18px 32px rgba(49, 84, 147, 0.09);
+  transform: translateY(-1px);
+}
+
+.contest-card--list {
+  min-height: 140px;
+  padding: 22px 24px 18px;
+}
+
+.contest-card__head {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.contest-card__copy {
+  min-width: 0;
+}
+
+.contest-card__icon {
+  display: inline-grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 999px;
+}
+
+.contest-card__icon span {
+  width: 23px;
+  height: 23px;
+}
+
+.contest-card--blue .contest-card__icon {
+  color: #3477ed;
+  background: #e8f0ff;
+  box-shadow: inset 0 0 0 2px #c7d9ff;
+}
+
+.contest-card--violet .contest-card__icon {
+  color: #7c54e9;
+  background: #f0ebff;
+}
+
+.contest-card--emerald .contest-card__icon {
+  color: #1bbf7a;
+  background: #e8fbf1;
+}
+
+.contest-card--indigo .contest-card__icon {
+  color: #4c78f4;
+  background: #e9efff;
+}
+
+.contest-card h2 {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 2px 0 16px;
+  color: #172033;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.contest-card__organizer,
+.contest-card__time {
+  margin: 0;
+  color: #8390a7;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.55;
+}
+
+.contest-card__organizer {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.contest-card__time {
+  margin-top: 8px;
+  white-space: nowrap;
+}
+
+.contest-card__footer {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  margin-top: 18px;
+  border-top: 1px solid #edf1f7;
+  padding-top: 17px;
+  color: #8c9ab1;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.contest-card__footer strong {
+  color: #8795ad;
+  font-weight: 900;
+}
+
+.contest-card__arrow {
+  display: inline-grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-left: auto;
+  border-radius: 999px;
+  color: #3d78e8;
+  background: #f3f7ff;
+}
+
+.contest-card__arrow span {
+  width: 22px;
+  height: 22px;
+}
+
+.contest-card--skeleton {
+  pointer-events: none;
+}
+
+.contest-skeleton-icon,
+.contest-skeleton-line {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #edf2f9 0%, #f7f9fd 42%, #edf2f9 100%);
+  background-size: 220% 100%;
+  animation: contest-skeleton 1.3s ease-in-out infinite;
+}
+
+.contest-skeleton-icon {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+}
+
+.contest-skeleton-line {
+  width: 80%;
+  height: 13px;
+  margin-top: 13px;
+}
+
+.contest-skeleton-line--title {
+  width: 92%;
+  height: 20px;
+  margin-top: 0;
+}
+
+.contest-skeleton-line--short {
+  width: 62%;
+}
+
+.contest-skeleton-line--footer {
+  width: 76px;
+  height: 12px;
+  margin-top: 0;
+}
+
+.contest-empty-state {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  border: 1px dashed #cfd9ea;
+  border-radius: 16px;
+  color: #8998af;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.contest-empty-state span {
+  width: 38px;
+  height: 38px;
+  margin-bottom: 10px;
+  color: #9fb0c8;
+}
+
+.contest-empty-state p {
+  margin: 0;
+}
+
+@keyframes contest-skeleton {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: -220% 50%;
+  }
+}
+
+@media (max-width: 1480px) {
+  .contest-grid--cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1180px) {
+  .contest-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .contest-field--search,
+  .contest-field--sort {
+    max-width: none;
+  }
+
+  .contest-filter-button {
+    width: 100%;
+  }
+
+  .contest-grid--cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .contest-library-page {
+    padding: 22px 16px 28px;
+  }
+
+  .contest-library-hero {
+    min-height: 132px;
+  }
+
+  .contest-library-art {
+    right: -390px;
+    opacity: 0.45;
+  }
+
+  .contest-library-title-row h1 {
+    font-size: 27px;
+  }
+
+  .contest-filter-grid,
+  .contest-grid--cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .contest-result-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .contest-card,
+  .contest-card--list {
+    min-height: 0;
+    padding: 22px 18px 16px;
+  }
+
+  .contest-card__head {
+    gap: 14px;
+  }
+
+  .contest-card__footer {
+    flex-wrap: wrap;
+    gap: 10px 14px;
+  }
+}
+</style>

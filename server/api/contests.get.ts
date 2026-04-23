@@ -34,5 +34,12 @@ export default defineApiHandler(async ({ event, ok }) => {
     })
   })
 
-  return ok(contestResult.items)
+  return {
+    ...ok(contestResult.items),
+    pagination: {
+      total: contestResult.total,
+      page: contestResult.page,
+      pageSize: contestResult.pageSize,
+    },
+  }
 })
