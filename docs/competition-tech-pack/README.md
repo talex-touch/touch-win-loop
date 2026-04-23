@@ -19,6 +19,11 @@
 - [答辩与会议实时智能技术文档](./06-defense-meeting-realtime-ai.md)
 - [数据集成与后台运营技术文档](./07-data-integration-admin-ops.md)
 - [部署、安全与可观测性技术文档](./08-deployment-security-observability.md)
+- [AI 深描与高级架构技术文档](./09-ai-advanced-architecture.md)
+- [比赛答辩逐页讲稿](./10-defense-presentation-script.md)
+- [评委版技术白皮书（强化版）](./11-judge-technical-whitepaper-plus.md)
+- [正式申报材料源稿](./12-application-material.md)
+- [正式申报材料 Word 版](./exports/WinLoop-正式申报材料.docx)
 
 ## 图像索引
 
@@ -38,20 +43,28 @@
 | F12 | 答辩实时智能体 | [paper](./figures/paper/F12-defense-realtime-agent.png) | [ppt](./figures/ppt/F12-defense-realtime-agent-ppt.png) | 06-defense-meeting-realtime-ai.md |
 | F13 | 飞书数据同步闭环 | [paper](./figures/paper/F13-feishu-sync-loop.png) | [ppt](./figures/ppt/F13-feishu-sync-loop-ppt.png) | 07-data-integration-admin-ops.md |
 | F14 | 部署与可观测闭环 | [paper](./figures/paper/F14-deployment-observability.png) | [ppt](./figures/ppt/F14-deployment-observability-ppt.png) | 08-deployment-security-observability.md |
+| F15 | AI 提供商治理与多模型路由 | [paper](./figures/paper/F15-ai-provider-routing-governance.png) | [ppt](./figures/ppt/F15-ai-provider-routing-governance-ppt.png) | 09-ai-advanced-architecture.md |
+| F16 | 项目知识上下文与可信引用链路 | [paper](./figures/paper/F16-knowledge-context-citation-chain.png) | [ppt](./figures/ppt/F16-knowledge-context-citation-chain-ppt.png) | 09-ai-advanced-architecture.md |
+| F17 | DeepAgent 长任务恢复与检查点 | [paper](./figures/paper/F17-deepagent-checkpoint-recovery.png) | [ppt](./figures/ppt/F17-deepagent-checkpoint-recovery-ppt.png) | 09-ai-advanced-architecture.md |
+| F18 | 多模态视觉投影与统一语义空间 | [paper](./figures/paper/F18-multimodal-semantic-projection.png) | [ppt](./figures/ppt/F18-multimodal-semantic-projection-ppt.png) | 09-ai-advanced-architecture.md |
+| F19 | 答辩智能体实时音视频推理链路 | [paper](./figures/paper/F19-defense-realtime-inference-chain.png) | [ppt](./figures/ppt/F19-defense-realtime-inference-chain-ppt.png) | 09-ai-advanced-architecture.md |
+| F20 | 上下文感知工作台助手融合架构 | [paper](./figures/paper/F20-contextual-assistant-fusion.png) | [ppt](./figures/ppt/F20-contextual-assistant-fusion-ppt.png) | 09-ai-advanced-architecture.md |
+| F21 | AI 观测与治理闭环 | [paper](./figures/paper/F21-ai-observability-governance.png) | [ppt](./figures/ppt/F21-ai-observability-governance-ppt.png) | 09-ai-advanced-architecture.md |
 
 ## 目录说明
 
 - `figures/paper/`：白底科研机制图，适合技术文章、论文式材料和申报书。
 - `figures/ppt/`：16:9 深色路演图，适合直接插入比赛 PPT。
-- `figures/source/`：HTML 源文件和生成脚本，便于后续维护。
+- `figures/source/`：图片模型提示词索引、历史草稿和生成辅助文件。
 - `figures/figure-manifest.md`：每张图的主题、用途和代码依据。
 
 ## 生成与维护
 
-如需重新生成，请在仓库根目录执行：
+当前资料包中的最终 PNG 已切换为图片模型生成结果；`figures/source/model-prompt-notes.md` 记录了主题映射与提示词原则。历史生成脚本仍保留在目录中，仅作为草稿辅助，不再代表最终图片来源。补充的 AI 深描文档与 F15-F21 图组以当前目录中的归档结果为准。
+
+正式申报材料的 Word 导出脚本为：
 
 ```bash
-node "docs/competition-tech-pack/generate-tech-pack.mjs"
+"/Users/talexdreamsoul/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3" \
+  "docs/competition-tech-pack/export-application-docx.py"
 ```
-
-脚本只写入 `docs/competition-tech-pack/`，不修改应用运行时代码、数据库或 git 状态。
