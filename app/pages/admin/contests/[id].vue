@@ -119,6 +119,7 @@ const defaultModulePath = computed(() => {
   return workspaceModules.value[0]?.path
     || workspaceRootPath.value
 })
+const releaseWorkbenchPath = computed(() => `/admin/contests/${contestId.value}/releases`)
 
 async function switchModule(moduleKey: WorkspaceModuleKey) {
   const targetPath = workspaceModules.value.find(item => item.key === moduleKey)?.path
@@ -128,7 +129,6 @@ async function switchModule(moduleKey: WorkspaceModuleKey) {
 }
 
 const loading = ref(false)
-const actionLoading = ref(false)
 const errorText = ref('')
 const successText = ref('')
 const detail = ref<ContestDetailPayload | null>(null)
@@ -141,7 +141,7 @@ async function loadData() {
   errorText.value = ''
   try {
     const [detailData, checkData] = await Promise.all([
-      requestApi<ContestDetailPayload>(endpoint(`/contests/${contestId.value}`), {}, '数据加载失败。'),
+      requestApi<ContestDetailPayload>(endpoint(`/admin/contests/${contestId.value}`), {}, '数据加载失败。'),
       requestApi<PublishCheckResult>(endpoint(`/admin/contests/${contestId.value}/publish-check`), {}, '数据加载失败。'),
     ])
     detail.value = detailData
@@ -154,48 +154,6 @@ async function loadData() {
   }
   finally {
     loading.value = false
-  }
-}
-
-async function publishContest() {
-  actionLoading.value = true
-  errorText.value = ''
-  successText.value = ''
-  try {
-    await requestApi<unknown>(
-      endpoint(`/admin/contests/${contestId.value}/publish`),
-      { method: 'POST' },
-      '发布失败。',
-    )
-    successText.value = '赛事已发布。'
-    await loadData()
-  }
-  catch (error: any) {
-    errorText.value = String(error?.data?.message || '发布失败。')
-  }
-  finally {
-    actionLoading.value = false
-  }
-}
-
-async function archiveContest() {
-  actionLoading.value = true
-  errorText.value = ''
-  successText.value = ''
-  try {
-    await requestApi<unknown>(
-      endpoint(`/admin/contests/${contestId.value}/archive`),
-      { method: 'POST' },
-      '下架失败。',
-    )
-    successText.value = '赛事已下架。'
-    await loadData()
-  }
-  catch (error: any) {
-    errorText.value = String(error?.data?.message || '下架失败。')
-  }
-  finally {
-    actionLoading.value = false
   }
 }
 
@@ -228,17 +186,17 @@ watch(contestId, async (value, oldValue) => {
           <p class="text-xs text-slate-500 mt-1">
             赛事 ID：{{ contestId }}，统一通过 Tabs 进入各模块。
           </p>
+          <p class="text-xs text-amber-600 mt-2">
+            当前工作区以版本流为准。手工修改或飞书同步都会先生成待审核版本，审核通过并发布后前台才更新。
+          </p>
         </div>
         <div class="flex gap-2 items-center">
           <NuxtLink class="dense-btn" to="/admin/contests">
             返回赛事列表
           </NuxtLink>
-          <button class="dense-btn" :disabled="actionLoading" @click="publishContest">
-            发布
-          </button>
-          <button class="dense-btn" :disabled="actionLoading" @click="archiveContest">
-            下架
-          </button>
+          <NuxtLink class="dense-btn" :to="releaseWorkbenchPath">
+            审核/版本
+          </NuxtLink>
         </div>
       </div>
 

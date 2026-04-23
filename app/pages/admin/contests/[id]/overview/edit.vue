@@ -21,6 +21,15 @@ type ApiRequestError = Error & {
   }
 }
 
+interface ContestDraftSaveResult {
+  scopeId: string
+  unchanged: boolean
+  version?: {
+    id: string
+    versionNumber: number
+  } | null
+}
+
 function createApiRequestError(message: string): ApiRequestError {
   const error = new Error(message) as ApiRequestError
   error.data = { message }
@@ -178,7 +187,7 @@ async function loadData() {
   errorText.value = ''
   try {
     const [detailData, disciplineData] = await Promise.all([
-      requestApi<ContestDetailPayload>(endpoint(`/contests/${contestId.value}`), {}, '基础信息加载失败。'),
+      requestApi<ContestDetailPayload>(endpoint(`/admin/contests/${contestId.value}`), {}, '基础信息加载失败。'),
       requestApi<DisciplineDictionaryItem[]>(endpoint('/admin/dictionaries/disciplines'), {}, '基础信息加载失败。'),
     ])
 
@@ -214,11 +223,12 @@ async function save() {
   errorText.value = ''
   successText.value = ''
   try {
-    await requestApi<unknown>(
+    const result = await requestApi<ContestDraftSaveResult>(
       endpoint(`/admin/contests/${contestId.value}`),
       {
         method: 'PATCH',
         body: {
+          sourceModule: 'overview',
           name: form.name.trim(),
           level: form.level,
           organizer: form.organizer.trim(),
@@ -238,7 +248,9 @@ async function save() {
       },
       '基础信息保存失败。',
     )
-    successText.value = '基础信息已保存。'
+    successText.value = result.unchanged
+      ? '本次保存无内容变化，未生成新版本。'
+      : `已生成待审核版本 V${result.version?.versionNumber || '-'}，需完成双人审核并发布后前台才会更新。`
   }
   catch (error: any) {
     errorText.value = String(error?.data?.message || '保存失败。')
@@ -262,10 +274,13 @@ onMounted(loadData)
           <p class="text-xs text-slate-500 mt-1">
             赛事 ID：{{ contestId }}
           </p>
+          <p class="text-xs text-amber-600 mt-2">
+            保存不会直接改动前台，系统会生成新的待审核版本，需经两位不同审核人通过并发布后才可见。
+          </p>
         </div>
         <div class="flex gap-2 items-center">
           <a-button type="primary" size="small" :loading="saving" @click="save">
-            保存
+            生成待审核版本
           </a-button>
         </div>
       </div>
@@ -283,7 +298,7 @@ onMounted(loadData)
           检测到 AI 草稿：{{ moduleDraft.title || '基础信息草稿' }}
         </p>
         <p class="mt-1">
-          更新时间：{{ draftUpdatedAt }}。应用后不会自动写库，需要手动点击“保存”。
+          更新时间：{{ draftUpdatedAt }}。应用后不会自动写库，需要手动点击“生成待审核版本”。
         </p>
         <div class="mt-2 flex gap-2 items-center">
           <a-button size="mini" type="outline" @click="applyAiDraft">

@@ -7,6 +7,7 @@ import type {
   ContestReleaseTimelineSnapshot,
   ContestReleaseTrackSnapshot,
   ContestReleaseTrackTimelineSnapshot,
+  ContestWorkflowTimelineItem,
   PolicyLibraryItemSnapshot,
   PolicyLibraryReleaseSnapshot,
   ReleaseReviewLog,
@@ -181,6 +182,30 @@ function actionLabel(action: ReleaseReviewLog['action']): string {
   return '发布'
 }
 
+function timelineSourceLabel(source: ContestWorkflowTimelineItem['source']): string {
+  if (source === 'feishu')
+    return '飞书同步'
+  if (source === 'review')
+    return '审核'
+  if (source === 'publish')
+    return '发布'
+  if (source === 'repair')
+    return '回补'
+  return '人工'
+}
+
+function timelineSourceColor(source: ContestWorkflowTimelineItem['source']): string {
+  if (source === 'feishu')
+    return 'arcoblue'
+  if (source === 'review')
+    return 'gold'
+  if (source === 'publish')
+    return 'green'
+  if (source === 'repair')
+    return 'purple'
+  return 'gray'
+}
+
 function diffSummaryText(version: ReleaseVersion): string {
   return `新增 ${version.diffSummary.createdCount} / 更新 ${version.diffSummary.updatedCount} / 移除 ${version.diffSummary.removedCount}`
 }
@@ -218,6 +243,13 @@ const detailPolicySnapshot = computed(() => {
   if (!detail.value || detail.value.version.scopeKind !== 'policy_library')
     return null
   return toPolicySnapshot(detail.value.version.snapshot)
+})
+
+const detailWorkflowTimeline = computed(() => detail.value?.workflowTimeline || [])
+const canPublishCurrentDetail = computed(() => {
+  if (!detail.value || detail.value.version.status !== 'approved')
+    return false
+  return detail.value.publishCheck?.canPublish !== false
 })
 
 async function loadVersions() {
@@ -336,7 +368,12 @@ function contestSummaryRows(contest: ContestReleaseContestSnapshot | null) {
     { label: '竞赛编号', value: contest.externalId || '-' },
     { label: '竞赛名称', value: contest.name || '-' },
     { label: '级别', value: contest.level || '-' },
+    { label: '主办方', value: contest.organizer || '-' },
+    { label: '协办/承办', value: contest.coOrganizer || '-' },
     { label: '官网地址', value: contest.officialUrl || '-' },
+    { label: '届次', value: contest.currentSeason || '-' },
+    { label: '参赛对象', value: contest.participantRequirements || '-' },
+    { label: '组队规则', value: contest.teamRule || '-' },
     { label: '学科门类', value: (contest.disciplines || []).join('、') || '-' },
     { label: '关键词', value: (contest.keywords || []).join('、') || '-' },
     { label: '适配人群', value: (contest.recommendedFor || []).join('、') || '-' },
@@ -564,14 +601,6 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
                   >
                     二审通过
                   </button>
-                  <button
-                    v-if="record.status === 'approved'"
-                    class="dense-btn"
-                    :disabled="actionLoading"
-                    @click="mutateVersion(record.id, 'publish')"
-                  >
-                    发布替换
-                  </button>
                 </div>
               </template>
             </a-table-column>
@@ -637,6 +666,40 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
         </section>
 
         <section v-if="detailContestSnapshot" class="space-y-3">
+          <div v-if="detail.publishCheck" class="p-3 border border-slate-200 rounded">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
+              <h3 class="text-sm text-slate-900 font-semibold">
+                发布校验
+              </h3>
+              <a-tag size="small" :color="detail.publishCheck.canPublish ? 'green' : 'red'">
+                完整度 {{ detail.publishCheck.completion }}%
+              </a-tag>
+            </div>
+            <div v-if="detail.publishCheck.blockers.length" class="mt-3 space-y-2">
+              <div v-for="item in detail.publishCheck.blockers" :key="item.code" class="p-2 border border-rose-200 rounded bg-rose-50">
+                <p class="text-xs text-rose-700 font-medium">
+                  {{ item.message }}
+                </p>
+                <p class="text-[11px] text-rose-500 mt-1">
+                  blocker / {{ item.field || item.code }}
+                </p>
+              </div>
+            </div>
+            <div v-else class="text-xs text-emerald-700 mt-3">
+              当前版本已满足发布前置条件。
+            </div>
+            <div v-if="detail.publishCheck.warnings.length" class="mt-3 space-y-2">
+              <div v-for="item in detail.publishCheck.warnings" :key="item.code" class="p-2 border border-amber-200 rounded bg-amber-50">
+                <p class="text-xs text-amber-700 font-medium">
+                  {{ item.message }}
+                </p>
+                <p class="text-[11px] text-amber-500 mt-1">
+                  warning / {{ item.field || item.code }}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div class="p-3 border border-slate-200 rounded">
             <h3 class="text-sm text-slate-900 font-semibold">
               竞赛库快照
@@ -699,6 +762,36 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
 
         <section class="p-3 border border-slate-200 rounded">
           <h3 class="text-sm text-slate-900 font-semibold">
+            流程时间线
+          </h3>
+          <div v-if="detailWorkflowTimeline.length" class="mt-3 space-y-2">
+            <div v-for="item in detailWorkflowTimeline" :key="item.id" class="p-2 border border-slate-200 rounded">
+              <div class="flex flex-wrap gap-2 items-center justify-between">
+                <div class="flex flex-wrap gap-2 items-center">
+                  <a-tag size="small" :color="timelineSourceColor(item.source)">
+                    {{ timelineSourceLabel(item.source) }}
+                  </a-tag>
+                  <p class="text-slate-900 font-medium">
+                    {{ item.title }}
+                  </p>
+                </div>
+                <p class="text-slate-500">
+                  {{ formatDateTime(item.createdAt) }}
+                </p>
+              </div>
+              <p class="text-slate-500 mt-1">
+                actor={{ item.actorUserId || '-' }} · version={{ item.versionNumber ? `V${item.versionNumber}` : '-' }} · syncRun={{ item.syncRunId || '-' }}
+              </p>
+              <p v-if="item.description" class="text-slate-600 mt-1">
+                {{ item.description }}
+              </p>
+            </div>
+          </div>
+          <a-empty v-else description="暂无流程时间线" />
+        </section>
+
+        <section class="p-3 border border-slate-200 rounded">
+          <h3 class="text-sm text-slate-900 font-semibold">
             审批日志
           </h3>
           <div v-if="detail.logs.length" class="mt-3 space-y-2">
@@ -753,12 +846,15 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
             <button
               v-if="detail.version.status === 'approved'"
               class="dense-btn"
-              :disabled="actionLoading"
+              :disabled="actionLoading || !canPublishCurrentDetail"
               @click="mutateVersion(detail.version.id, 'publish')"
             >
               发布替换
             </button>
           </div>
+          <p v-if="detail.version.status === 'approved' && detail.publishCheck && !detail.publishCheck.canPublish" class="text-xs text-amber-700">
+            当前版本仍存在发布阻断项，建议先驳回并补齐后再进入发布。
+          </p>
         </section>
       </div>
 

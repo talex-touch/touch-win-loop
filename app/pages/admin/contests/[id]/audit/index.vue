@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import type { ApiResponse, ContestAuditLog } from '~~/shared/types/domain'
+import type { ApiResponse, ContestWorkflowTimelineItem } from '~~/shared/types/domain'
 
 definePageMeta({
   layout: 'admin',
 })
 
 interface AuditPagePayload {
-  items: ContestAuditLog[]
+  items: ContestWorkflowTimelineItem[]
   total: number
   page: number
   pageSize: number
@@ -24,7 +24,7 @@ const contestId = computed(() => {
 
 const loading = ref(false)
 const errorText = ref('')
-const logs = ref<ContestAuditLog[]>([])
+const logs = ref<ContestWorkflowTimelineItem[]>([])
 const actionFilter = ref('')
 const page = ref(1)
 const pageSize = ref(20)
@@ -47,7 +47,7 @@ async function loadLogs() {
   catch (error: any) {
     logs.value = []
     total.value = 0
-    errorText.value = String(error?.data?.message || '审计日志加载失败。')
+    errorText.value = String(error?.data?.message || '流程时间线加载失败。')
   }
   finally {
     loading.value = false
@@ -63,6 +63,30 @@ function formatTime(value?: string): string {
   return date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
 }
 
+function sourceLabel(source: ContestWorkflowTimelineItem['source']): string {
+  if (source === 'feishu')
+    return '飞书同步'
+  if (source === 'review')
+    return '审核'
+  if (source === 'publish')
+    return '发布'
+  if (source === 'repair')
+    return '回补'
+  return '人工'
+}
+
+function sourceColor(source: ContestWorkflowTimelineItem['source']): string {
+  if (source === 'feishu')
+    return 'arcoblue'
+  if (source === 'review')
+    return 'gold'
+  if (source === 'publish')
+    return 'green'
+  if (source === 'repair')
+    return 'purple'
+  return 'gray'
+}
+
 watch([page, pageSize], () => {
   void loadLogs()
 })
@@ -76,10 +100,10 @@ onMounted(loadLogs)
       <div class="flex gap-2 items-center justify-between">
         <div>
           <h1 class="text-lg text-slate-900 font-semibold">
-            审计历史
+            流程时间线
           </h1>
           <p class="text-xs text-slate-500 mt-1">
-            只保留最近 7 天，读操作与 AI 调用会自动压缩去重。
+            合并展示飞书同步、人工编辑、审核与发布事件，帮助追踪每次版本演进。
           </p>
         </div>
         <button class="dense-btn" @click="loadLogs">
@@ -94,7 +118,7 @@ onMounted(loadLogs)
           v-model="actionFilter"
           size="small"
           allow-clear
-          placeholder="按 action 模糊筛选，如 ai.invoke / read.admin / resource.patch"
+          placeholder="按动作/来源模糊筛选，如 sync_generated / published / contest.patch"
           @press-enter="() => { page = 1; loadLogs() }"
         />
         <button class="dense-btn" @click="() => { page = 1; loadLogs() }">
@@ -111,7 +135,7 @@ onMounted(loadLogs)
 
     <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
       <div v-if="logs.length === 0" class="text-sm text-slate-500">
-        当前筛选下暂无审计日志。
+        当前筛选下暂无流程事件。
       </div>
       <div v-else class="space-y-2">
         <article
@@ -120,15 +144,26 @@ onMounted(loadLogs)
           class="p-3 border border-slate-200 rounded"
         >
           <div class="flex flex-wrap gap-2 items-center justify-between">
-            <p class="text-xs text-slate-900 font-semibold">
-              {{ item.action }}
-            </p>
+            <div class="flex flex-wrap gap-2 items-center">
+              <a-tag size="small" :color="sourceColor(item.source)">
+                {{ sourceLabel(item.source) }}
+              </a-tag>
+              <p class="text-xs text-slate-900 font-semibold">
+                {{ item.title }}
+              </p>
+            </div>
             <p class="text-xs text-slate-500">
               {{ formatTime(item.createdAt) }}
             </p>
           </div>
           <p class="text-xs text-slate-500 mt-1">
-            actor={{ item.actorUserId || '-' }} · contest={{ item.contestId || '-' }} · resource={{ item.resourceId || '-' }}
+            action={{ item.action }} · actor={{ item.actorUserId || '-' }} · version={{ item.versionNumber ? `V${item.versionNumber}` : '-' }}
+          </p>
+          <p v-if="item.description" class="text-xs text-slate-600 mt-1">
+            {{ item.description }}
+          </p>
+          <p class="text-xs text-slate-500 mt-1">
+            syncItemId={{ item.syncItemId || '-' }} · syncRunId={{ item.syncRunId || '-' }} · recordId={{ item.recordId || '-' }}
           </p>
           <pre class="text-[11px] text-slate-700 mt-2 p-2 rounded bg-slate-50 overflow-x-auto">{{ JSON.stringify(item.payload || {}, null, 2) }}</pre>
         </article>

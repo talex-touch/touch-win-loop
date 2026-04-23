@@ -193,10 +193,15 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
   contest: [
     { key: 'externalId', label: 'externalId（主键）' },
     { key: 'name', label: 'name（竞赛名称）' },
+    { key: 'organizer', label: 'organizer（主办方）' },
+    { key: 'coOrganizer', label: 'coOrganizer（协办/承办）' },
     { key: 'level', label: 'level（级别）' },
     { key: 'disciplines', label: 'disciplines（学科门类）' },
     { key: 'officialUrl', label: 'officialUrl（官网地址）' },
     { key: 'summary', label: 'summary（竞赛简介）' },
+    { key: 'participantRequirements', label: 'participantRequirements（参赛对象）' },
+    { key: 'teamRule', label: 'teamRule（组队规则）' },
+    { key: 'currentSeason', label: 'currentSeason（当前届次）' },
     { key: 'keywords', label: 'keywords（关键词）' },
     { key: 'timelineText', label: 'timelineText（时间节点）' },
     { key: 'recommendedFor', label: 'recommendedFor（适配人群）' },
@@ -3961,6 +3966,9 @@ watch(() => props.selectedItemId, (value) => {
                   </p>
                   <p class="text-[11px] text-emerald-700 m-0 mt-1">
                     预检会直接使用当前 Drawer 里的草稿配置，你可以先改映射、自动同步规则和回填，再决定要不要保存。
+                  </p>
+                  <p class="text-[11px] text-slate-500 m-0 mt-1">
+                    当前预检只会检查结构性缺失，比如 contestExternalId / trackExternalId 映射或默认 contestId 是否存在；如果编号本身选错了，请结合执行日志里的“业务去重/覆盖”和重复 externalId 样本排查。
                   </p>
                 </div>
                 <div class="flex gap-2">
