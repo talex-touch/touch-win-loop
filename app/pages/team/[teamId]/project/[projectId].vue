@@ -728,6 +728,7 @@ let chatMessagesRequestId = 0
 let chatSessionsRequestId = 0
 let defenseSessionDetailRequestId = 0
 let projectExportJobsRequestId = 0
+const skippedLegacyDeviceArrangementResourceIds = new Set<string>()
 const activeChatStreamAbortController = ref<AbortController | null>(null)
 const deletingChatSessionId = ref('')
 const chatMessagesLoading = ref(false)
@@ -7887,6 +7888,31 @@ async function migrateLegacyDeviceArrangement(resourceId: string): Promise<strin
   return normalizeString(response.data?.resource?.id)
 }
 
+async function tryMigrateLegacyDeviceArrangement(resource: Resource | null, resourceId: string): Promise<string> {
+  const targetResourceId = normalizeString(resourceId)
+  if (!targetResourceId || skippedLegacyDeviceArrangementResourceIds.has(targetResourceId))
+    return ''
+
+  const shouldAttemptMigration = isLegacyDeviceArrangementResource(resource)
+    || (isDesignCanvasResource(resource) && resource?.resourceKind === 'draw')
+  if (!shouldAttemptMigration)
+    return ''
+
+  try {
+    const migratedResourceId = await migrateLegacyDeviceArrangement(targetResourceId)
+    skippedLegacyDeviceArrangementResourceIds.delete(targetResourceId)
+    return migratedResourceId
+  }
+  catch (error) {
+    const statusCode = resolveApiStatusCode(error)
+    if (statusCode === 409) {
+      skippedLegacyDeviceArrangementResourceIds.add(targetResourceId)
+      return ''
+    }
+    throw error
+  }
+}
+
 async function resolveProjectResourceOpenTarget(resourceId: string): Promise<ProjectResourceOpenTarget | null> {
   const targetResourceId = normalizeString(resourceId)
   if (!targetResourceId)
@@ -7896,9 +7922,12 @@ async function resolveProjectResourceOpenTarget(resourceId: string): Promise<Pro
   if (!targetResource)
     return { resourceId: targetResourceId, surface: 'binary' }
 
-  if (isLegacyDeviceArrangementResource(targetResource)) {
+  if (isDeviceArrangementResource(targetResource))
+    return { resourceId: targetResourceId, surface: 'binary' }
+
+  if (isLegacyDeviceArrangementResource(targetResource) || isDesignCanvasResource(targetResource)) {
     try {
-      const migratedResourceId = await migrateLegacyDeviceArrangement(targetResourceId)
+      const migratedResourceId = await tryMigrateLegacyDeviceArrangement(targetResource, targetResourceId)
       if (migratedResourceId)
         return { resourceId: migratedResourceId, surface: 'binary' }
     }
@@ -7911,9 +7940,6 @@ async function resolveProjectResourceOpenTarget(resourceId: string): Promise<Pro
 
   if (isWorkflowCanvasResource(targetResource))
     return { resourceId: targetResourceId, surface: 'flow' }
-
-  if (isDeviceArrangementResource(targetResource))
-    return { resourceId: targetResourceId, surface: 'binary' }
 
   if (isDesignCanvasResource(targetResource))
     return { resourceId: targetResourceId, surface: 'design' }

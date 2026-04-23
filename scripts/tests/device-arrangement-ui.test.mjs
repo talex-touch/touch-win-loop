@@ -77,5 +77,8 @@ it('独立设备排布编辑器提供模板、手动 transform、批量导出与
 
   assert.match(projectPage, /device-arrangement-migration/, '项目页未接入旧设备排布迁移 API')
   assert.match(projectPage, /isLegacyDeviceArrangementResource/, '项目页未识别旧设备排布资源')
+  assert.match(projectPage, /resolveApiStatusCode\(error\)/, '项目页未区分旧设备排布迁移的 409 回退')
+  assert.match(projectPage, /statusCode === 409/, '项目页未把非设备排布设计稿静默回退')
+  assert.match(projectPage, /isLegacyDeviceArrangementResource\(targetResource\) \|\| isDesignCanvasResource\(targetResource\)/, '项目页未对历史设计稿尝试旧设备排布迁移')
   assert.match(projectPage, /return \{ resourceId: migratedResourceId, surface: 'binary' \}/, '旧设备排布迁移后未切到新资源打开')
 })
