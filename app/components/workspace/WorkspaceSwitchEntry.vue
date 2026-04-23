@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ApiResponse, WorkspaceWithQuota } from '~~/shared/types/domain'
+import type { ApiResponse, BillingCycle, BillingPlan, WorkspaceWithQuota } from '~~/shared/types/domain'
 
 interface CreateWorkspaceResponse {
   team: WorkspaceWithQuota['workspace']
@@ -38,6 +38,10 @@ const creatingWorkspace = ref(false)
 const createWorkspaceName = ref('')
 const createError = ref('')
 const internalWorkspaceOptions = ref<WorkspaceWithQuota[]>([])
+const billingPlans = ref<BillingPlan[]>([])
+const billingPlansLoading = ref(false)
+const createSelectedPlanId = ref('')
+const createBillingCycle = ref<BillingCycle>('monthly')
 
 const currentWorkspace = computed(() => {
   return internalWorkspaceOptions.value.find(item => item.workspace.id === props.modelValue)
@@ -58,6 +62,22 @@ function workspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type']) {
     return '个人空间'
   return 'Team 空间'
 }
+
+function formatPlanPrice(cents: number): string {
+  return `¥${(Math.max(0, Number(cents || 0)) / 100).toFixed(2)}`
+}
+
+function cycleLabel(cycle: BillingCycle): string {
+  if (cycle === 'yearly')
+    return '年付'
+  if (cycle === 'quarterly')
+    return '季付'
+  return '月付'
+}
+
+const selectedCreatePlan = computed(() => {
+  return billingPlans.value.find(plan => plan.id === createSelectedPlanId.value) || billingPlans.value[0] || null
+})
 
 function upsertWorkspaceOption(option: WorkspaceWithQuota) {
   const filtered = internalWorkspaceOptions.value.filter(item => item.workspace.id !== option.workspace.id)
@@ -113,6 +133,7 @@ function openCreateDialog() {
   closePopup()
   createError.value = ''
   createDialogVisible.value = true
+  void loadBillingPlans()
 }
 
 function closeCreateDialog() {
@@ -140,6 +161,16 @@ async function submitCreateWorkspace() {
       },
     })
 
+    if (createSelectedPlanId.value) {
+      await authApiFetch<ApiResponse<unknown>>(`/teams/${response.data.team.id}/billing/checkout`, {
+        method: 'POST',
+        body: {
+          planId: createSelectedPlanId.value,
+          billingCycle: createBillingCycle.value,
+        },
+      })
+    }
+
     const workspaceOption: WorkspaceWithQuota = {
       workspace: response.data.team,
       quota: response.data.quota
@@ -162,6 +193,25 @@ async function submitCreateWorkspace() {
   }
   finally {
     creatingWorkspace.value = false
+  }
+}
+
+async function loadBillingPlans(): Promise<void> {
+  if (billingPlansLoading.value || billingPlans.value.length > 0)
+    return
+  billingPlansLoading.value = true
+  try {
+    const response = await authApiFetch<ApiResponse<BillingPlan[]>>('/billing/plans')
+    billingPlans.value = response.data || []
+    createSelectedPlanId.value = billingPlans.value.find(plan => plan.planTier === 'business_team')?.id
+      || billingPlans.value[0]?.id
+      || ''
+  }
+  catch {
+    billingPlans.value = []
+  }
+  finally {
+    billingPlansLoading.value = false
   }
 }
 
@@ -296,6 +346,45 @@ onBeforeUnmount(() => {
           @keydown.enter.prevent="submitCreateWorkspace"
         >
       </label>
+
+      <div class="space-y-2" data-testid="workspace-create-business-checkout">
+        <div class="flex items-center justify-between">
+          <span class="text-sm text-slate-700 font-medium">套餐</span>
+          <span class="text-[0.6875rem] text-slate-500">模拟支付</span>
+        </div>
+        <p v-if="billingPlansLoading" class="text-xs text-slate-500">
+          正在加载套餐...
+        </p>
+        <div v-else class="grid gap-2">
+          <button
+            v-for="plan in billingPlans"
+            :key="plan.id"
+            type="button"
+            class="text-left px-3 py-2 border rounded-lg transition-colors"
+            :class="createSelectedPlanId === plan.id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'"
+            @click="createSelectedPlanId = plan.id"
+          >
+            <span class="text-[0.6875rem] text-slate-500">{{ plan.planTier === 'business_team' ? 'Business' : 'Personal' }}</span>
+            <strong class="text-sm text-slate-900 block mt-0.5">{{ plan.name }}</strong>
+            <span class="text-xs text-slate-500">{{ formatPlanPrice(plan.basePriceCents) }} / {{ cycleLabel(createBillingCycle) }} · 席位 {{ plan.includedSeats }} · AI {{ plan.includedAiQuota }}</span>
+          </button>
+        </div>
+        <div class="flex gap-1.5">
+          <button
+            v-for="cycle in ['monthly', 'quarterly', 'yearly']"
+            :key="cycle"
+            type="button"
+            class="text-xs px-2.5 py-1 border rounded-full"
+            :class="createBillingCycle === cycle ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600'"
+            @click="createBillingCycle = cycle as BillingCycle"
+          >
+            {{ cycleLabel(cycle as BillingCycle) }}
+          </button>
+        </div>
+        <p v-if="selectedCreatePlan" class="text-[0.6875rem] text-slate-500">
+          点击创建后会自动进入结算确认，并由 mock provider 立即支付成功。
+        </p>
+      </div>
 
       <p v-if="createError" class="text-xs text-rose-600">
         {{ createError }}

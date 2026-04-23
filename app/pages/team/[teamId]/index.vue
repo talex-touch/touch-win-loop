@@ -135,6 +135,11 @@ const createDialogHelperText = computed(() => {
     : `新项目会创建到「${activeWorkspaceName.value}」项目台下，创建后可继续补充竞赛绑定、图标与详细资料。`
 })
 const activeWorkspaceRoles = computed(() => activeWorkspace.value?.workspace.roles || [])
+const canManageTeamBilling = computed(() => {
+  return me.value?.user.isPlatformAdmin
+    || activeWorkspaceRoles.value.includes('owner')
+    || activeWorkspaceRoles.value.includes('admin')
+})
 const canManageContest = computed(() => {
   return platformPermissions.value.some(item =>
     ['contest.read_internal', 'contest.write', 'contest.publish', 'contest.archive'].includes(item),
@@ -230,6 +235,15 @@ const portalCards = computed(() => {
       icon: 'attach_money',
     })
   }
+  if (canManageTeamBilling.value && activeWorkspaceId.value) {
+    cards.push({
+      id: 'team-billing',
+      title: 'Team 结算',
+      desc: '选择 Business 套餐，确认费用并完成模拟支付。',
+      to: `/team/${activeWorkspaceId.value}/billing`,
+      icon: 'receipt_long',
+    })
+  }
   if (canManageRoles.value) {
     cards.push({
       id: 'role-admin',
@@ -270,6 +284,14 @@ const teamQuickActions = computed(() => {
       label: '席位计费',
       icon: 'payments',
       to: '/admin/billing',
+    })
+  }
+  if (canManageTeamBilling.value && activeWorkspaceId.value) {
+    items.push({
+      id: 'team-billing',
+      label: 'Team 结算',
+      icon: 'receipt_long',
+      to: `/team/${activeWorkspaceId.value}/billing`,
     })
   }
 

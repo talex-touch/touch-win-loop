@@ -1342,6 +1342,45 @@ CREATE TABLE IF NOT EXISTS project_resource_documents (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_resource_review_jobs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  project_resource_id TEXT NOT NULL REFERENCES project_resources(id) ON DELETE CASCADE,
+  document_id TEXT NOT NULL REFERENCES project_resource_documents(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'succeeded', 'failed')),
+  prompt TEXT NOT NULL DEFAULT '',
+  page_total INTEGER NOT NULL DEFAULT 0,
+  page_reviewed INTEGER NOT NULL DEFAULT 0,
+  result_summary TEXT NOT NULL DEFAULT '',
+  error_message TEXT NOT NULL DEFAULT '',
+  provider TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_resource_review_findings (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES project_resource_review_jobs(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  project_resource_id TEXT NOT NULL REFERENCES project_resources(id) ON DELETE CASCADE,
+  document_id TEXT NOT NULL REFERENCES project_resource_documents(id) ON DELETE CASCADE,
+  page_number INTEGER NOT NULL DEFAULT 1,
+  severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info', 'low', 'medium', 'high')),
+  category TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  comment TEXT NOT NULL DEFAULT '',
+  quote TEXT NOT NULL DEFAULT '',
+  source_block_ids JSONB NOT NULL DEFAULT '[]'::JSONB,
+  locator_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  bbox_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS project_resource_collab_docs (
   resource_id TEXT PRIMARY KEY REFERENCES project_resources(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -2511,6 +2550,21 @@ CREATE TABLE IF NOT EXISTS workspace_billing (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS workspace_billing_orders (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  plan_id TEXT NOT NULL REFERENCES billing_plans(id) ON DELETE RESTRICT,
+  billing_cycle TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_cycle IN ('monthly', 'quarterly', 'yearly')),
+  amount_cents INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'cancelled', 'failed')),
+  provider TEXT NOT NULL DEFAULT 'mock' CHECK (provider IN ('mock')),
+  estimate_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  paid_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS project_seat_quotas (
   project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -3257,6 +3311,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_project_resource_shares_share_key ON proje
 CREATE INDEX IF NOT EXISTS idx_project_resource_documents_project_status ON project_resource_documents(project_id, parse_status);
 CREATE INDEX IF NOT EXISTS idx_project_resource_documents_resource ON project_resource_documents(project_resource_id);
 CREATE INDEX IF NOT EXISTS idx_project_resource_documents_preview_status ON project_resource_documents(project_id, preview_status, queued_at);
+CREATE INDEX IF NOT EXISTS idx_project_resource_review_jobs_resource_created ON project_resource_review_jobs(project_resource_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resource_review_jobs_status ON project_resource_review_jobs(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resource_review_findings_job_page ON project_resource_review_findings(job_id, page_number);
 CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_status_created ON project_resource_document_tasks(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_document ON project_resource_document_tasks(document_id);
 CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_stage ON project_resource_document_tasks(stage, status, updated_at DESC);
@@ -4425,6 +4482,8 @@ CREATE INDEX IF NOT EXISTS idx_contest_trends_contest_year ON contest_trends(con
 CREATE INDEX IF NOT EXISTS idx_contest_audit_logs_contest_created ON contest_audit_logs(contest_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_audit_logs_action_created ON contest_audit_logs(action, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_billing_plan ON workspace_billing(plan_id);
+CREATE INDEX IF NOT EXISTS idx_workspace_billing_orders_workspace_created ON workspace_billing_orders(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_billing_orders_plan ON workspace_billing_orders(plan_id);
 `
 
 const PROJECT_RESOURCE_TREE_SCHEMA_SQL = `

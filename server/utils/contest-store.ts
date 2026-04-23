@@ -28,6 +28,7 @@ import type {
   Track,
   TrackTimeline,
   WorkspaceBillingEstimate,
+  WorkspaceBillingOrder,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
@@ -599,6 +600,23 @@ interface BillingPlanRow {
   updated_at: string
 }
 
+interface WorkspaceBillingOrderRow {
+  id: string
+  workspace_id: string
+  plan_id: string
+  plan_code: string
+  plan_name: string
+  billing_cycle: 'monthly' | 'quarterly' | 'yearly'
+  amount_cents: number
+  status: WorkspaceBillingOrder['status']
+  provider: 'mock'
+  estimate_json: unknown
+  created_by_user_id: string | null
+  paid_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
@@ -867,6 +885,29 @@ function mapBillingPlan(row: BillingPlanRow): BillingPlan {
     minChargedProjectSeats: Math.max(0, Number(row.min_charged_project_seats || 0)),
     chargeAllProjectSeats: Boolean(row.charge_all_project_seats),
     isActive: Boolean(row.is_active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapWorkspaceBillingOrder(row: WorkspaceBillingOrderRow): WorkspaceBillingOrder {
+  const amountCents = Math.max(0, Number(row.amount_cents || 0))
+  const estimate = normalizeRecord(row.estimate_json)
+  return {
+    id: row.id,
+    teamId: row.workspace_id,
+    workspaceId: row.workspace_id,
+    planId: row.plan_id,
+    planCode: normalizeString(row.plan_code),
+    planName: normalizeString(row.plan_name),
+    billingCycle: row.billing_cycle || 'monthly',
+    amountCents,
+    amountYuan: Number((amountCents / 100).toFixed(2)),
+    status: row.status || 'pending',
+    provider: 'mock',
+    estimate: Object.keys(estimate).length > 0 ? estimate as WorkspaceBillingEstimate : null,
+    createdByUserId: row.created_by_user_id,
+    paidAt: row.paid_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -4549,6 +4590,163 @@ export async function setWorkspaceBillingPlan(
       updated_at = EXCLUDED.updated_at`,
     [input.workspaceId, input.planId, input.billingCycle || 'monthly'],
   )
+}
+
+async function getActiveBillingPlanById(db: Queryable, planId: string): Promise<BillingPlan | null> {
+  await ensureDefaultBillingPlans(db)
+  const result = await db.query<BillingPlanRow>(
+    `SELECT
+      id,
+      code,
+      name,
+      plan_tier,
+      base_price_cents,
+      included_seats,
+      extra_seat_price_cents,
+      included_ai_quota,
+      included_projects,
+      projects_unlimited,
+      extra_project_slot_price_cents,
+      default_project_seat_limit,
+      project_seat_price_cents,
+      min_charged_project_seats,
+      charge_all_project_seats,
+      is_enabled AS is_active,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM billing_plans
+     WHERE id = $1
+       AND is_enabled = TRUE
+     LIMIT 1`,
+    [planId],
+  )
+  return result.rows[0] ? mapBillingPlan(result.rows[0]) : null
+}
+
+export async function createWorkspaceBillingMockCheckout(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    planId: string
+    billingCycle?: 'monthly' | 'quarterly' | 'yearly'
+    actorUserId: string
+  },
+): Promise<{ order: WorkspaceBillingOrder, estimate: WorkspaceBillingEstimate }> {
+  const plan = await getActiveBillingPlanById(db, input.planId)
+  if (!plan)
+    throw new Error('BILLING_PLAN_NOT_FOUND')
+
+  const billingCycle = input.billingCycle || 'monthly'
+  await setWorkspaceBillingPlan(db, {
+    workspaceId: input.workspaceId,
+    planId: plan.id,
+    billingCycle,
+  })
+  const estimate = await estimateWorkspaceBilling(db, { workspaceId: input.workspaceId })
+  if (!estimate)
+    throw new Error('WORKSPACE_BILLING_ESTIMATE_NOT_FOUND')
+
+  const now = new Date().toISOString()
+  const orderId = randomUUID()
+  await db.query(
+    `INSERT INTO workspace_billing_orders (
+      id,
+      workspace_id,
+      plan_id,
+      billing_cycle,
+      amount_cents,
+      status,
+      provider,
+      estimate_json,
+      created_by_user_id,
+      paid_at,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, $4, $5,
+      'paid', 'mock', $6::JSONB, $7,
+      $8, $8, $8
+    )`,
+    [
+      orderId,
+      input.workspaceId,
+      plan.id,
+      billingCycle,
+      Math.max(0, Number(estimate.estimatedAmountCents || 0)),
+      JSON.stringify(estimate),
+      input.actorUserId,
+      now,
+    ],
+  )
+
+  const order = await getWorkspaceBillingOrderById(db, {
+    workspaceId: input.workspaceId,
+    orderId,
+  })
+  if (!order)
+    throw new Error('WORKSPACE_BILLING_ORDER_NOT_FOUND')
+
+  return { order, estimate }
+}
+
+export async function getWorkspaceBillingOrderById(
+  db: Queryable,
+  input: { workspaceId: string, orderId: string },
+): Promise<WorkspaceBillingOrder | null> {
+  const result = await db.query<WorkspaceBillingOrderRow>(
+    `SELECT
+      o.id,
+      o.workspace_id,
+      o.plan_id,
+      p.code AS plan_code,
+      p.name AS plan_name,
+      o.billing_cycle,
+      o.amount_cents,
+      o.status,
+      o.provider,
+      o.estimate_json,
+      o.created_by_user_id,
+      o.paid_at::TEXT,
+      o.created_at::TEXT,
+      o.updated_at::TEXT
+     FROM workspace_billing_orders o
+     JOIN billing_plans p ON p.id = o.plan_id
+     WHERE o.workspace_id = $1
+       AND o.id = $2
+     LIMIT 1`,
+    [input.workspaceId, input.orderId],
+  )
+  return result.rows[0] ? mapWorkspaceBillingOrder(result.rows[0]) : null
+}
+
+export async function listWorkspaceBillingOrders(
+  db: Queryable,
+  input: { workspaceId: string, limit?: number },
+): Promise<WorkspaceBillingOrder[]> {
+  const result = await db.query<WorkspaceBillingOrderRow>(
+    `SELECT
+      o.id,
+      o.workspace_id,
+      o.plan_id,
+      p.code AS plan_code,
+      p.name AS plan_name,
+      o.billing_cycle,
+      o.amount_cents,
+      o.status,
+      o.provider,
+      o.estimate_json,
+      o.created_by_user_id,
+      o.paid_at::TEXT,
+      o.created_at::TEXT,
+      o.updated_at::TEXT
+     FROM workspace_billing_orders o
+     JOIN billing_plans p ON p.id = o.plan_id
+     WHERE o.workspace_id = $1
+     ORDER BY o.created_at DESC
+     LIMIT $2`,
+    [input.workspaceId, Math.max(1, Math.min(50, Number(input.limit || 10)))],
+  )
+  return result.rows.map(mapWorkspaceBillingOrder)
 }
 
 export async function patchWorkspaceBillingAddons(

@@ -1711,6 +1711,49 @@ export interface DocumentAnalysis {
   pages: DocumentPageAnalysis[]
 }
 
+export type ProjectResourceReviewJobStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
+export type ProjectResourceReviewSeverity = 'info' | 'low' | 'medium' | 'high'
+
+export interface ProjectResourceReviewFinding {
+  id: string
+  jobId: string
+  projectId: string
+  resourceId: string
+  documentId: string
+  pageNumber: number
+  severity: ProjectResourceReviewSeverity
+  category: string
+  title: string
+  comment: string
+  quote: string
+  sourceBlockIds: string[]
+  locator: ProjectKnowledgeCitationLocator
+  bbox?: DocumentBBox | null
+  confidence: number
+  createdAt: string
+}
+
+export interface ProjectResourceReviewJob {
+  id: string
+  projectId: string
+  resourceId: string
+  documentId: string
+  status: ProjectResourceReviewJobStatus
+  prompt: string
+  pageTotal: number
+  pageReviewed: number
+  resultSummary: string
+  errorMessage: string
+  provider: string
+  model: string
+  createdByUserId?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+  findings: ProjectResourceReviewFinding[]
+}
+
 export interface ResourceDocument {
   id: string
   contestId: string
@@ -4214,6 +4257,27 @@ export interface WorkspaceBillingEstimate {
   estimatedAmountYuan: number
   aiQuotaTotal: number
   includedAiQuota: number
+  updatedAt: string
+}
+
+export type WorkspaceBillingOrderStatus = 'pending' | 'paid' | 'cancelled' | 'failed'
+
+export interface WorkspaceBillingOrder {
+  id: string
+  teamId: string
+  workspaceId: string
+  planId: string
+  planCode: string
+  planName: string
+  billingCycle: BillingCycle
+  amountCents: number
+  amountYuan: number
+  status: WorkspaceBillingOrderStatus
+  provider: 'mock'
+  estimate: WorkspaceBillingEstimate | null
+  createdByUserId?: string | null
+  paidAt?: string | null
+  createdAt: string
   updatedAt: string
 }
 

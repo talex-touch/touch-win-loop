@@ -1,4 +1,5 @@
 import type { Queryable } from '~~/server/utils/db'
+import type { DocumentAnalysis } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
 
@@ -142,6 +143,27 @@ function normalizeRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     return {}
   return value as Record<string, unknown>
+}
+
+function normalizeDocumentAnalysis(value: unknown): DocumentAnalysis | null {
+  const source = normalizeRecord(value)
+  const pages = Array.isArray(source.pages) ? source.pages : []
+  if (pages.length === 0)
+    return null
+  return {
+    version: normalizeString(source.version) || 'v1',
+    source: normalizeString(source.source) || 'unknown',
+    pages: pages.map((pageItem, index) => {
+      const page = normalizeRecord(pageItem)
+      return {
+        page: Math.max(1, toNumber(page.page, index + 1)),
+        width: Math.max(0, toNumber(page.width, 1)),
+        height: Math.max(0, toNumber(page.height, 1)),
+        blocks: Array.isArray(page.blocks) ? page.blocks as DocumentAnalysis['pages'][number]['blocks'] : [],
+        fields: Array.isArray(page.fields) ? page.fields as DocumentAnalysis['pages'][number]['fields'] : [],
+      }
+    }),
+  }
 }
 
 function toNumber(value: unknown, fallback = 0): number {
@@ -543,6 +565,90 @@ export async function getProjectResourceDocumentByResourceId(
   )
 
   return result.rows[0] ? mapDocument(result.rows[0]) : null
+}
+
+export async function getProjectResourceDocumentAnalysisByResourceId(
+  db: Queryable,
+  input: { projectId: string, resourceId: string },
+): Promise<{ document: ProjectResourceDocument, analysis: DocumentAnalysis | null } | null> {
+  const result = await db.query<ProjectResourceDocumentRow & { analysis_json: unknown }>(
+    `SELECT
+      id,
+      project_id,
+      project_resource_id,
+      object_key,
+      source_object_key,
+      preview_object_key,
+      storage_provider,
+      source_storage_provider,
+      preview_storage_provider,
+      file_name,
+      source_file_name,
+      preview_file_name,
+      mime_type,
+      source_mime_type,
+      preview_mime_type,
+      file_size::TEXT,
+      source_file_size::TEXT,
+      preview_file_size::TEXT,
+      page_count,
+      parse_status,
+      parse_error,
+      preview_status,
+      preview_stage,
+      preview_progress_percent,
+      preview_eta_seconds,
+      preview_error,
+      queued_at::TEXT,
+      started_at::TEXT,
+      finished_at::TEXT,
+      last_attempt_duration_ms,
+      total_attempt_duration_ms,
+      created_at::TEXT,
+      updated_at::TEXT,
+      analysis_json
+     FROM project_resource_documents
+     WHERE project_id = $1
+       AND project_resource_id = $2
+     LIMIT 1`,
+    [input.projectId, input.resourceId],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    return null
+
+  return {
+    document: mapDocument(row),
+    analysis: normalizeDocumentAnalysis(row.analysis_json),
+  }
+}
+
+export async function updateProjectResourceDocumentAnalysis(
+  db: Queryable,
+  input: {
+    documentId: string
+    analysis: DocumentAnalysis
+    pageCount: number
+    actorUserId: string
+  },
+): Promise<void> {
+  await db.query(
+    `UPDATE project_resource_documents
+     SET analysis_json = $2::JSONB,
+         page_count = $3,
+         parse_status = 'succeeded',
+         parse_error = '',
+         updated_by_user_id = $4,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      input.documentId,
+      JSON.stringify(input.analysis),
+      Math.max(0, Math.trunc(Number(input.pageCount || input.analysis.pages.length || 0))),
+      input.actorUserId,
+    ],
+  )
 }
 
 export async function getProjectDocumentTaskById(

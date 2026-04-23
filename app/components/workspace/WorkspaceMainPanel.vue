@@ -3100,6 +3100,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
         :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
         :preview-resource-id="props.previewResourceId"
+        :project-id="props.activeProjectId"
         :preview-status="previewStatus"
         :preview-status-loading="previewStatusLoading"
         :preview-pdf-url="previewPdfUrl"

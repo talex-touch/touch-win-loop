@@ -68,8 +68,9 @@ it('设计画布支持设备排布独立 tab、插入设备排布，并使用页
     readFile(DESIGN_INSPECTOR_FILE, 'utf8'),
     readFile(resolve(process.cwd(), 'app/components/workspace/design/WorkspaceDesignSidebarTabs.vue'), 'utf8'),
   ])
+  const actionMenus = await readFile(resolve(process.cwd(), 'app/components/workspace/design/WorkspaceDesignSidebarActionMenus.vue'), 'utf8')
 
-  assert.match(designPanel, />\s*插入设备排布\s*<\/span>/, '设计画布 Action 菜单缺少插入设备排布入口')
+  assert.match(actionMenus, />\s*设备排布\s*<\/span>/, '设计画布 Action 菜单缺少插入设备排布入口')
   assert.match(designPanel, /insertDeviceArrangementFromDialog/, '设计画布未接入设备排布插入处理')
   assert.match(designPanel, /isDeviceArrangementDocument/, '设计画布未识别设备排布文档模式')
   assert.match(designPanel, /WorkspaceDeviceArrangementSidebar/, '设计画布未挂载设备排布独立 tab 内容')
@@ -96,6 +97,8 @@ it('设备排布侧栏支持实时预览、内置模版与逐截图设备选择'
   assert.match(sidebar, /data-testid="workspace-device-arrangement-apply-all-devices"/, '设备排布侧栏缺少批量套用入口')
   assert.match(sidebar, /deviceChoiceKey/, '设备排布侧栏未为截图持久化独立设备选择状态')
   assert.match(sidebar, /data-testid="workspace-device-arrangement-effects"/, '设备排布侧栏缺少阴影、间距和倾斜快捷设置')
+  assert.match(sidebar, /data-testid="workspace-device-arrangement-manual-transform"/, '设备排布侧栏缺少逐截图手动位置、缩放、旋转控制')
+  assert.match(sidebar, /data-testid="workspace-device-arrangement-batch-export"/, '设备排布侧栏缺少批量导出尺寸提示')
 })
 
 it('设备排布插入弹层复用逐截图设备、内置模版与效果预设', async () => {
@@ -106,6 +109,8 @@ it('设备排布插入弹层复用逐截图设备、内置模版与效果预设'
   assert.match(dialog, /data-testid="workspace-device-arrangement-item-device-select"/, '设备排布弹层未提供逐截图设备选择')
   assert.match(dialog, /data-testid="workspace-device-arrangement-apply-all-devices"/, '设备排布弹层缺少批量套用入口')
   assert.match(dialog, /data-testid="workspace-device-arrangement-effects"/, '设备排布弹层缺少效果快捷设置')
+  assert.match(dialog, /data-testid="workspace-device-arrangement-manual-transform"/, '设备排布弹层缺少逐截图手动 transform 控制')
+  assert.match(dialog, /data-testid="workspace-device-arrangement-batch-export"/, '设备排布弹层缺少批量导出尺寸提示')
 })
 
 it('设备排布截图优先资产化，并在失败时回退内嵌图片', async () => {

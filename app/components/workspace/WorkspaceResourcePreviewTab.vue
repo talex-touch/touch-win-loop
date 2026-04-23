@@ -6,10 +6,12 @@ import type {
   AiWorkspaceDocumentDraft,
   AiWorkspaceInlineCompletionAcceptResult,
   AiWorkspaceInlineCompletionResult,
+  ApiResponse,
   ProjectResourceCommentAnchor,
   ProjectResourceCommentImageNodeAnchor,
   ProjectResourceCommentTextSelectionAnchor,
   ProjectResourceCommentThread,
+  ProjectResourceReviewJob,
   ResourcePreviewStatus,
   WorkspaceFontSizePreset,
   WorkspaceTabSpacingPreset,
@@ -42,6 +44,7 @@ const props = withDefaults(defineProps<{
   fontSizePreset?: WorkspaceFontSizePreset | ''
   tabSpacingPreset?: WorkspaceTabSpacingPreset | ''
   previewResourceId?: string
+  projectId?: string
   previewStatus?: WorkspacePreviewStatusPayload | null
   previewStatusLoading?: boolean
   previewPdfUrl?: string
@@ -100,6 +103,7 @@ const props = withDefaults(defineProps<{
   fontSizePreset: '',
   tabSpacingPreset: '',
   previewResourceId: '',
+  projectId: '',
   previewStatus: null,
   previewStatusLoading: false,
   previewPdfUrl: '',
@@ -173,7 +177,14 @@ const richTextEditorRef = ref<{
 const commentsPanelRef = ref<{
   scrollToCommentThread: (threadId: string) => void
 } | null>(null)
+const runtime = useRuntimeConfig()
+const { endpoint } = useApiEndpoint(runtime)
 const markdownCommentsCollapsed = ref(false)
+const reviewJob = ref<ProjectResourceReviewJob | null>(null)
+const reviewLoading = ref(false)
+const reviewError = ref('')
+const reviewPrompt = ref('')
+const reviewPanelVisible = ref(false)
 const markdownPlaceholder = `输入正文或标题，${COLLAB_NOTES_RESOURCE_LABEL}会实时同步`
 const isMarkdownCollabReady = computed(() => {
   if (props.activePreviewMode !== 'markdown')
@@ -184,6 +195,19 @@ const isDrawCollabReady = computed(() => {
   if (props.activePreviewMode !== 'draw')
     return false
   return Boolean(String(props.previewResourceId || '').trim() && !props.collabPreviewLoading && !props.collabPreviewError)
+})
+const canReviewBinaryDocument = computed(() => {
+  return props.activePreviewMode === 'binary'
+    && props.previewStatus?.status === 'succeeded'
+    && Boolean(String(props.projectId || '').trim() && String(props.previewResourceId || '').trim())
+})
+const reviewFindingsByPage = computed(() => {
+  const groups = new Map<number, NonNullable<ProjectResourceReviewJob['findings']>>()
+  for (const finding of reviewJob.value?.findings || []) {
+    const page = Math.max(1, Number(finding.pageNumber || 1))
+    groups.set(page, [...(groups.get(page) || []), finding])
+  }
+  return [...groups.entries()].sort((left, right) => left[0] - right[0])
 })
 
 function expandMarkdownCommentsPanel(): void {
@@ -222,6 +246,87 @@ watch(() => [props.activePreviewMode, props.previewResourceId], ([previewMode]) 
   if (previewMode !== 'markdown')
     emit('markdownOutlineChange', [])
 }, { immediate: true })
+
+watch(
+  () => [props.projectId, props.previewResourceId, props.activePreviewMode, props.previewStatus?.status] as const,
+  () => {
+    reviewJob.value = null
+    reviewError.value = ''
+    if (canReviewBinaryDocument.value)
+      void loadLatestReviewJob()
+  },
+  { immediate: true },
+)
+
+async function requestReviewApi<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(endpoint(path), {
+    credentials: 'include',
+    ...init,
+    headers: {
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init.headers || {}),
+    },
+  })
+  const result = (await response.json().catch(() => null)) as ApiResponse<T> | null
+  if (!response.ok || !result || result.code !== 0)
+    throw new Error(String(result?.message || '请求失败。'))
+  return result.data
+}
+
+async function loadLatestReviewJob(): Promise<void> {
+  const projectId = String(props.projectId || '').trim()
+  const resourceId = String(props.previewResourceId || '').trim()
+  if (!projectId || !resourceId)
+    return
+  try {
+    const payload = await requestReviewApi<{ latest: ProjectResourceReviewJob | null }>(
+      `/projects/${projectId}/resources/${resourceId}/review-jobs`,
+    )
+    reviewJob.value = payload.latest
+  }
+  catch {
+    reviewJob.value = null
+  }
+}
+
+async function createReviewJob(): Promise<void> {
+  const projectId = String(props.projectId || '').trim()
+  const resourceId = String(props.previewResourceId || '').trim()
+  if (!projectId || !resourceId)
+    return
+  reviewLoading.value = true
+  reviewError.value = ''
+  reviewPanelVisible.value = true
+  try {
+    reviewJob.value = await requestReviewApi<ProjectResourceReviewJob>(
+      `/projects/${projectId}/resources/${resourceId}/review-jobs`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt: reviewPrompt.value,
+        }),
+      },
+    )
+  }
+  catch (error) {
+    reviewError.value = error instanceof Error ? error.message : '页级审稿失败。'
+  }
+  finally {
+    reviewLoading.value = false
+  }
+}
+
+function focusReviewPage(pageNumber: number): void {
+  const page = Math.max(1, Number(pageNumber || 1))
+  if (!import.meta.client)
+    return
+  const iframe = document.querySelector<HTMLIFrameElement>('iframe[title="资料预览"]')
+  if (!iframe)
+    return
+  const currentSrc = String(iframe.getAttribute('src') || props.previewPdfUrl || '')
+  const base = currentSrc.split('#')[0]
+  iframe.setAttribute('src', `${base}#page=${page}`)
+}
 
 function handleMarkdownSelectionChange(value: {
   line: number
@@ -384,11 +489,77 @@ defineExpose({
           </div>
 
           <template v-else-if="props.previewStatus?.status === 'succeeded'">
-            <iframe
-              class="border-0 bg-white h-full w-full"
-              :src="props.previewPdfUrl"
-              title="资料预览"
-            />
+            <div class="workspace-resource-preview-tab__binary">
+              <div class="workspace-resource-preview-tab__review-toolbar">
+                <div>
+                  <strong>资料预览</strong>
+                  <span v-if="reviewJob">已生成 {{ reviewJob.findings.length }} 条页级意见</span>
+                  <span v-else>可针对 PDF/PPT 预览生成逐页意见</span>
+                </div>
+                <div class="workspace-resource-preview-tab__review-actions">
+                  <button type="button" @click="reviewPanelVisible = !reviewPanelVisible">
+                    {{ reviewPanelVisible ? '收起意见' : '查看意见' }}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="workspace-resource-page-review-create"
+                    :disabled="!canReviewBinaryDocument || reviewLoading"
+                    @click="createReviewJob"
+                  >
+                    {{ reviewLoading ? '审稿中...' : 'AI 页审稿' }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="workspace-resource-preview-tab__binary-body">
+                <iframe
+                  class="border-0 bg-white h-full w-full"
+                  :src="props.previewPdfUrl"
+                  title="资料预览"
+                />
+
+                <aside
+                  v-if="reviewPanelVisible"
+                  class="workspace-resource-preview-tab__review-panel"
+                  data-testid="workspace-resource-page-review-panel"
+                >
+                  <label class="workspace-resource-preview-tab__review-prompt">
+                    <span>审稿要求</span>
+                    <textarea
+                      v-model="reviewPrompt"
+                      rows="3"
+                      placeholder="例如：重点检查每页表达、证据链、视觉层级与结论是否清晰。"
+                    />
+                  </label>
+                  <p v-if="reviewError" class="workspace-resource-preview-tab__review-error">
+                    {{ reviewError }}
+                  </p>
+                  <p v-if="reviewJob?.resultSummary" class="workspace-resource-preview-tab__review-summary">
+                    {{ reviewJob.resultSummary }}
+                  </p>
+                  <div v-if="reviewFindingsByPage.length" class="workspace-resource-preview-tab__review-pages">
+                    <section v-for="[pageNumber, findings] in reviewFindingsByPage" :key="pageNumber">
+                      <button type="button" @click="focusReviewPage(pageNumber)">
+                        第 {{ pageNumber }} 页
+                      </button>
+                      <article v-for="finding in findings" :key="finding.id">
+                        <div>
+                          <strong>{{ finding.title }}</strong>
+                          <span>{{ finding.severity }} · {{ finding.category }}</span>
+                        </div>
+                        <p>{{ finding.comment }}</p>
+                        <blockquote v-if="finding.quote">
+                          {{ finding.quote }}
+                        </blockquote>
+                      </article>
+                    </section>
+                  </div>
+                  <div v-else class="workspace-resource-preview-tab__review-empty">
+                    暂无页级意见，点击“AI 页审稿”生成。
+                  </div>
+                </aside>
+              </div>
+            </div>
           </template>
 
           <div v-else class="px-6 flex flex-col h-full items-center justify-center">
@@ -496,5 +667,179 @@ defineExpose({
 .workspace-resource-preview-tab__comments-expand:hover {
   background: var(--workspace-preview-comments-bg-hover);
   color: var(--workspace-preview-comments-text-hover);
+}
+
+.workspace-resource-preview-tab__binary {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.workspace-resource-preview-tab__review-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgb(226 232 240 / 0.92);
+  background: #fff;
+}
+
+.workspace-resource-preview-tab__review-toolbar div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workspace-resource-preview-tab__review-toolbar strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.workspace-resource-preview-tab__review-toolbar span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.workspace-resource-preview-tab__review-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.workspace-resource-preview-tab__review-actions button {
+  padding: 5px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workspace-resource-preview-tab__review-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.workspace-resource-preview-tab__binary-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-resource-preview-tab__review-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 340px;
+  min-height: 0;
+  padding: 12px;
+  border-left: 1px solid #e2e8f0;
+  background: #f8fafc;
+  overflow-y: auto;
+}
+
+.workspace-resource-preview-tab__review-prompt {
+  display: grid;
+  gap: 6px;
+}
+
+.workspace-resource-preview-tab__review-prompt span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workspace-resource-preview-tab__review-prompt textarea {
+  resize: vertical;
+  min-height: 72px;
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.workspace-resource-preview-tab__review-error,
+.workspace-resource-preview-tab__review-summary,
+.workspace-resource-preview-tab__review-empty {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.workspace-resource-preview-tab__review-error {
+  color: #dc2626;
+}
+
+.workspace-resource-preview-tab__review-summary,
+.workspace-resource-preview-tab__review-empty {
+  color: #64748b;
+}
+
+.workspace-resource-preview-tab__review-pages {
+  display: grid;
+  gap: 12px;
+}
+
+.workspace-resource-preview-tab__review-pages section {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-resource-preview-tab__review-pages section > button {
+  justify-self: start;
+  padding: 4px 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workspace-resource-preview-tab__review-pages article {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workspace-resource-preview-tab__review-pages article div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-resource-preview-tab__review-pages article strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.workspace-resource-preview-tab__review-pages article span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.workspace-resource-preview-tab__review-pages article p,
+.workspace-resource-preview-tab__review-pages article blockquote {
+  margin: 0;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.workspace-resource-preview-tab__review-pages article blockquote {
+  padding-left: 8px;
+  border-left: 2px solid #bfdbfe;
+  color: #64748b;
 }
 </style>

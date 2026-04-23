@@ -38,6 +38,10 @@ interface ScreenshotDraft {
   deviceChoiceKey: string
   deviceFramePresetKey: string
   shellAssetId: string
+  offsetX: number
+  offsetY: number
+  scale: number
+  rotationOffset: number
 }
 
 interface ArrangementDeviceChoice {
@@ -338,6 +342,10 @@ function createScreenshotDraft(input: {
     deviceChoiceKey: defaultChoice?.key || resolveBuiltinChoiceKey(fallbackPresetKey.value),
     deviceFramePresetKey: defaultChoice?.presetKey || fallbackPresetKey.value,
     shellAssetId: buildCatalogShellAsset(defaultChoice?.variant || null)?.id || '',
+    offsetX: 0,
+    offsetY: 0,
+    scale: 1,
+    rotationOffset: 0,
   }
 }
 
@@ -426,6 +434,23 @@ function updateScreenshotDeviceChoice(id: string, choiceKey: string): void {
   })
 }
 
+function updateScreenshotTransform(
+  id: string,
+  patch: Partial<Pick<ScreenshotDraft, 'offsetX' | 'offsetY' | 'scale' | 'rotationOffset'>>,
+): void {
+  screenshots.value = screenshots.value.map((item) => {
+    if (item.id !== id)
+      return item
+    return {
+      ...item,
+      offsetX: Math.max(-600, Math.min(600, Number(patch.offsetX ?? item.offsetX ?? 0))),
+      offsetY: Math.max(-600, Math.min(600, Number(patch.offsetY ?? item.offsetY ?? 0))),
+      scale: Math.max(0.35, Math.min(2.5, Number(patch.scale ?? item.scale ?? 1))),
+      rotationOffset: Math.max(-45, Math.min(45, Number(patch.rotationOffset ?? item.rotationOffset ?? 0))),
+    }
+  })
+}
+
 function applyDefaultDeviceToAll(): void {
   const choice = defaultDeviceChoice.value
   if (!choice)
@@ -462,6 +487,10 @@ function buildArrangementDocument() {
         deviceFramePresetKey: choice.presetKey,
         shellAsset,
         shellMode: shellAsset ? 'external' : 'builtin',
+        offsetX: item.offsetX,
+        offsetY: item.offsetY,
+        scale: item.scale,
+        rotationOffset: item.rotationOffset,
       }
     }),
     layoutPresetKey: layoutPresetKey.value,
@@ -615,6 +644,52 @@ function submit(): void {
                     <span class="device-arrangement-dialog__device-summary">
                       {{ resolveScreenshotDeviceLabel(item) }}
                     </span>
+                    <div class="device-arrangement-dialog__manual-grid" data-testid="workspace-device-arrangement-manual-transform">
+                      <label>
+                        <span>X</span>
+                        <input
+                          :value="item.offsetX"
+                          type="number"
+                          min="-600"
+                          max="600"
+                          step="10"
+                          @input="updateScreenshotTransform(item.id, { offsetX: Number(($event.target as HTMLInputElement).value) })"
+                        >
+                      </label>
+                      <label>
+                        <span>Y</span>
+                        <input
+                          :value="item.offsetY"
+                          type="number"
+                          min="-600"
+                          max="600"
+                          step="10"
+                          @input="updateScreenshotTransform(item.id, { offsetY: Number(($event.target as HTMLInputElement).value) })"
+                        >
+                      </label>
+                      <label>
+                        <span>缩放</span>
+                        <input
+                          :value="item.scale"
+                          type="number"
+                          min="0.35"
+                          max="2.5"
+                          step="0.05"
+                          @input="updateScreenshotTransform(item.id, { scale: Number(($event.target as HTMLInputElement).value) })"
+                        >
+                      </label>
+                      <label>
+                        <span>旋转</span>
+                        <input
+                          :value="item.rotationOffset"
+                          type="number"
+                          min="-45"
+                          max="45"
+                          step="1"
+                          @input="updateScreenshotTransform(item.id, { rotationOffset: Number(($event.target as HTMLInputElement).value) })"
+                        >
+                      </label>
+                    </div>
                   </div>
                   <button type="button" aria-label="移除截图" @click="removeScreenshot(item.id)">
                     <span class="material-symbols-outlined">close</span>
@@ -692,6 +767,7 @@ function submit(): void {
             <section class="device-arrangement-dialog__section">
               <div class="device-arrangement-dialog__section-header">
                 <h3>布局与导出</h3>
+                <span data-testid="workspace-device-arrangement-batch-export">批量导出尺寸</span>
               </div>
               <label class="device-arrangement-dialog__field">
                 <span>布局</span>
@@ -1058,6 +1134,32 @@ function submit(): void {
   border-radius: 6px;
   background: #f1f5f9;
   color: #475569;
+}
+
+.device-arrangement-dialog__manual-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.device-arrangement-dialog__manual-grid label {
+  display: grid;
+  gap: 3px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.device-arrangement-dialog__manual-grid input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 5px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 11px;
 }
 
 .device-arrangement-dialog__grid {

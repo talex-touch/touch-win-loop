@@ -96,6 +96,7 @@ export type DeviceArrangementExportSizePresetKey = 'square' | 'portrait-4-5' | '
 export type DeviceArrangementShadowPresetKey = 'none' | 'soft' | 'deep'
 export type DeviceArrangementSpacingPresetKey = 'compact' | 'balanced' | 'spacious'
 export type DeviceArrangementRotationPresetKey = 'none' | 'soft' | 'dynamic'
+export type DeviceArrangementTemplateCategoryKey = 'launch' | 'social' | 'store' | 'deck' | 'brand'
 export interface ResolvedDesignPageExport {
   width: number
   height: number
@@ -6383,8 +6384,10 @@ export const DEVICE_ARRANGEMENT_ROTATION_PRESETS: Array<{
 
 export const DEVICE_ARRANGEMENT_TEMPLATE_PRESETS: Array<{
   key: string
+  categoryKey: DeviceArrangementTemplateCategoryKey
   title: string
   summary: string
+  tags: string[]
   layoutPresetKey: DeviceArrangementLayoutPresetKey
   exportSizePresetKey: DeviceArrangementExportSizePresetKey
   customWidth?: number
@@ -6398,8 +6401,10 @@ export const DEVICE_ARRANGEMENT_TEMPLATE_PRESETS: Array<{
 }> = [
   {
     key: 'launch-clean',
+    categoryKey: 'launch',
     title: '新品封面',
     summary: '单机居中，适合首图。',
+    tags: ['首图', '发布'],
     layoutPresetKey: 'solo',
     exportSizePresetKey: 'square',
     background: '#f8fafc',
@@ -6410,8 +6415,10 @@ export const DEVICE_ARRANGEMENT_TEMPLATE_PRESETS: Array<{
   },
   {
     key: 'social-overlap',
+    categoryKey: 'social',
     title: '叠屏预告',
     summary: '双机错位，适合社媒。',
+    tags: ['社媒', '预告'],
     layoutPresetKey: 'duo-overlap',
     exportSizePresetKey: 'portrait-4-5',
     background: '#e0f2fe',
@@ -6422,8 +6429,10 @@ export const DEVICE_ARRANGEMENT_TEMPLATE_PRESETS: Array<{
   },
   {
     key: 'feature-fan',
+    categoryKey: 'deck',
     title: '功能合集',
     summary: '三屏扇形，适合亮点页。',
+    tags: ['功能', '宽屏'],
     layoutPresetKey: 'trio-fan',
     exportSizePresetKey: 'wide-16-9',
     background: '#ecfdf5',
@@ -6434,8 +6443,10 @@ export const DEVICE_ARRANGEMENT_TEMPLATE_PRESETS: Array<{
   },
   {
     key: 'desktop-pair',
+    categoryKey: 'deck',
     title: '桌面联动',
     summary: '桌面主画面搭配手机。',
+    tags: ['桌面', '联动'],
     layoutPresetKey: 'desktop-phone',
     exportSizePresetKey: 'wide-16-9',
     background: '#fdf2f8',
@@ -6446,14 +6457,59 @@ export const DEVICE_ARRANGEMENT_TEMPLATE_PRESETS: Array<{
   },
   {
     key: 'store-grid',
+    categoryKey: 'store',
     title: '截图矩阵',
     summary: '多图规整，适合商店图。',
+    tags: ['商店', '矩阵'],
     layoutPresetKey: 'grid',
     exportSizePresetKey: 'portrait-4-5',
     background: '#fefce8',
     backgroundMode: 'solid',
     shadowPresetKey: 'none',
     spacingPresetKey: 'compact',
+    rotationPresetKey: 'none',
+  },
+  {
+    key: 'brand-hero',
+    categoryKey: 'brand',
+    title: '品牌主视觉',
+    summary: '大留白渐变，适合官网首屏。',
+    tags: ['品牌', '官网'],
+    layoutPresetKey: 'solo',
+    exportSizePresetKey: 'wide-16-9',
+    background: '#e0e7ff',
+    backgroundMode: 'gradient',
+    shadowPresetKey: 'deep',
+    spacingPresetKey: 'balanced',
+    rotationPresetKey: 'soft',
+    watermarkText: 'WinLoop',
+  },
+  {
+    key: 'social-story',
+    categoryKey: 'social',
+    title: '竖版快照',
+    summary: '9:16 竖版，适合短视频封面。',
+    tags: ['竖版', '视频'],
+    layoutPresetKey: 'duo-overlap',
+    exportSizePresetKey: 'story-9-16',
+    background: '#fef3c7',
+    backgroundMode: 'gradient',
+    shadowPresetKey: 'deep',
+    spacingPresetKey: 'compact',
+    rotationPresetKey: 'dynamic',
+  },
+  {
+    key: 'store-wide',
+    categoryKey: 'store',
+    title: '应用商店横幅',
+    summary: '宽屏矩阵，适合商店展示。',
+    tags: ['商店', '横幅'],
+    layoutPresetKey: 'grid',
+    exportSizePresetKey: 'wide-16-9',
+    background: '#f1f5f9',
+    backgroundMode: 'solid',
+    shadowPresetKey: 'soft',
+    spacingPresetKey: 'balanced',
     rotationPresetKey: 'none',
   },
 ]
@@ -6466,6 +6522,10 @@ export interface DeviceArrangementSceneItemInput {
   deviceFramePresetKey?: string
   shellAsset?: DesignAssetModel | null
   shellMode?: DeviceShellMode
+  offsetX?: number
+  offsetY?: number
+  scale?: number
+  rotationOffset?: number
 }
 
 export interface DeviceArrangementSceneInput {
@@ -6670,6 +6730,10 @@ export function buildDeviceArrangementSceneDocument(input: DeviceArrangementScen
       shellMode: normalizeString(entry.shellMode) === 'none' || normalizeString(entry.shellMode) === 'external'
         ? normalizeString(entry.shellMode) as DeviceShellMode
         : 'builtin',
+      offsetX: toFiniteNumber(entry.offsetX, 0),
+      offsetY: toFiniteNumber(entry.offsetY, 0),
+      scale: Math.max(0.35, Math.min(2.5, toFiniteNumber(entry.scale, 1))),
+      rotationOffset: Math.max(-45, Math.min(45, toFiniteNumber(entry.rotationOffset, 0))),
     }))
     .filter(item => Boolean(item.screenshotSrc))
     .slice(0, 9)
@@ -6766,7 +6830,15 @@ export function buildDeviceArrangementSceneDocument(input: DeviceArrangementScen
     const shellAsset = item.shellAsset || null
     if (shellAsset?.id)
       assetMap.set(shellAsset.id, shellAsset)
-    const placement = placements[index] || placements[0]!
+    const basePlacement = placements[index] || placements[0]!
+    const itemScale = Math.max(0.35, Math.min(2.5, toFiniteNumber(item.scale, 1)))
+    const placement = {
+      x: Math.round(basePlacement.x + toFiniteNumber(item.offsetX, 0)),
+      y: Math.round(basePlacement.y + toFiniteNumber(item.offsetY, 0)),
+      width: Math.max(1, Math.round(basePlacement.width * itemScale)),
+      height: Math.max(1, Math.round(basePlacement.height * itemScale)),
+      rotation: Math.round(basePlacement.rotation + toFiniteNumber(item.rotationOffset, 0)),
+    }
     const mockupFrame = normalizeDesignFrameModel({
       id: mockupFrameId,
       pageId: page.id,
@@ -6882,6 +6954,10 @@ export function buildDeviceArrangementSceneDocument(input: DeviceArrangementScen
           deviceFramePresetKey: normalizeString(item.deviceFramePresetKey) || 'iphone-16-pro',
           shellMode: item.shellAsset?.id ? 'external' : item.shellMode || 'builtin',
           shellAssetId: item.shellAsset?.id || undefined,
+          offsetX: Math.round(toFiniteNumber(item.offsetX, 0)),
+          offsetY: Math.round(toFiniteNumber(item.offsetY, 0)),
+          scale: Number(Math.max(0.35, Math.min(2.5, toFiniteNumber(item.scale, 1))).toFixed(2)),
+          rotationOffset: Math.round(toFiniteNumber(item.rotationOffset, 0)),
         })),
         watermarkText: normalizeString(input.watermarkText) || undefined,
       },
