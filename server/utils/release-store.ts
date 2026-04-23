@@ -1,5 +1,6 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
+  AdminContestListItem,
   ContestLevel,
   ContestReleaseContestSnapshot,
   ContestReleaseResourceSnapshot,
@@ -7,11 +8,15 @@ import type {
   ContestReleaseTimelineSnapshot,
   ContestReleaseTrackSnapshot,
   ContestReleaseTrackTimelineSnapshot,
+  ContestStatus,
+  ContestWorkflowTimelineItem,
+  ContestWorkflowTimelineSource,
   FeishuBitableSyncCleanupLegacySummary,
   FeishuBitableSyncItemEntityType,
   PolicyLibraryItemSnapshot,
   PolicyLibraryItemStatus,
   PolicyLibraryReleaseSnapshot,
+  PublishCheckResult,
   ReleaseDiffSummary,
   ReleaseReviewAction,
   ReleaseReviewLog,
@@ -106,11 +111,25 @@ interface ReleaseSnapshotOwnerRow {
   owner_sync_item_id: string | null
 }
 
+interface ContestAuditTimelineRow {
+  id: string
+  contest_id: string | null
+  resource_id: string | null
+  actor_user_id: string | null
+  action: string
+  payload: unknown
+  created_at: string
+}
+
 const MANAGED_NOTE_PREFIX = '[飞书同步:'
 const LEGACY_CONTEST_TIMELINE_PREFIX = 'legacy:contest:'
 const DERIVED_CONTEST_TIMELINE_PREFIX = 'derived:contest:'
 const LEGACY_TRACK_TIMELINE_PREFIX = 'legacy:track:'
 const DERIVED_TRACK_TIMELINE_PREFIX = 'derived:track:'
+const MANUAL_TRACK_EXTERNAL_ID_PREFIX = 'manual:track:'
+const MANUAL_CONTEST_TIMELINE_EXTERNAL_ID_PREFIX = 'manual:contest_timeline:'
+const MANUAL_TRACK_TIMELINE_EXTERNAL_ID_PREFIX = 'manual:track_timeline:'
+const MANUAL_RESOURCE_EXTERNAL_ID_PREFIX = 'manual:resource:'
 
 function normalizeText(value: unknown): string {
   return String(value || '').trim()
@@ -231,6 +250,159 @@ function mapReleaseReviewLog(row: ReleaseReviewLogRow): ReleaseReviewLog {
     actorUserId: row.actor_user_id,
     action: row.action,
     payload: parseJsonObject(row.payload),
+    createdAt: row.created_at,
+  }
+}
+
+function hasReleaseDiffSummaryChanges(summary: ReleaseDiffSummary): boolean {
+  return summary.createdCount > 0
+    || summary.updatedCount > 0
+    || summary.removedCount > 0
+    || summary.changedExternalIds.length > 0
+}
+
+function normalizeCompareValue(value: unknown): string {
+  return normalizeText(value).toLowerCase()
+}
+
+function workflowTimelineSourceFromReleaseAction(action: ReleaseReviewAction): ContestWorkflowTimelineSource {
+  if (action === 'sync_generated' || action === 'sync_draft_overwritten')
+    return 'feishu'
+  if (action === 'manual_generated')
+    return 'manual'
+  if (action === 'published')
+    return 'publish'
+  return 'review'
+}
+
+function workflowTimelineTitleFromReleaseAction(action: ReleaseReviewAction): string {
+  if (action === 'sync_generated')
+    return '飞书同步生成新版本'
+  if (action === 'manual_generated')
+    return '人工编辑生成新版本'
+  if (action === 'sync_draft_overwritten')
+    return '飞书同步覆盖待审草稿'
+  if (action === 'first_review_approved')
+    return '初审通过'
+  if (action === 'second_review_claimed')
+    return '领取二审任务'
+  if (action === 'second_review_approved')
+    return '二审通过'
+  if (action === 'rejected')
+    return '版本被驳回'
+  return '版本发布'
+}
+
+function buildReleaseTimelineDescription(
+  log: ReleaseReviewLog,
+  version: ReleaseVersion,
+): string {
+  const payload = parseJsonObject(log.payload)
+  const parts: string[] = []
+  const sourceModule = normalizeText(payload.sourceModule)
+  const syncItemId = normalizeText(payload.syncItemId || version.syncItemId)
+  const syncRunId = normalizeText(payload.syncRunId || version.syncRunId)
+  const recordId = normalizeText(payload.recordId)
+  if (log.action === 'manual_generated' && sourceModule)
+    parts.push(`模块 ${sourceModule}`)
+  if (syncItemId)
+    parts.push(`同步项 ${syncItemId}`)
+  if (syncRunId)
+    parts.push(`批次 ${syncRunId}`)
+  if (recordId)
+    parts.push(`记录 ${recordId}`)
+  if (log.action === 'rejected' && normalizeText(payload.reason))
+    parts.push(`原因：${normalizeText(payload.reason)}`)
+  if (log.action === 'published' && normalizeText(payload.liveEntityId))
+    parts.push(`上线实体 ${normalizeText(payload.liveEntityId)}`)
+  return parts.join(' / ')
+}
+
+function mapReleaseLogToWorkflowTimelineItem(
+  log: ReleaseReviewLog,
+  version: ReleaseVersion,
+): ContestWorkflowTimelineItem {
+  const payload = parseJsonObject(log.payload)
+  return {
+    id: `release-log:${log.id}`,
+    source: workflowTimelineSourceFromReleaseAction(log.action),
+    action: log.action,
+    title: workflowTimelineTitleFromReleaseAction(log.action),
+    description: buildReleaseTimelineDescription(log, version) || undefined,
+    actorUserId: log.actorUserId || null,
+    contestId: normalizeText(version.liveEntityId) || null,
+    versionId: version.id,
+    versionNumber: version.versionNumber,
+    syncItemId: normalizeText(payload.syncItemId || version.syncItemId) || null,
+    syncRunId: normalizeText(payload.syncRunId || version.syncRunId) || null,
+    recordId: normalizeText(payload.recordId) || null,
+    payload,
+    createdAt: log.createdAt,
+  }
+}
+
+function workflowTimelineSourceFromAuditAction(action: string): ContestWorkflowTimelineSource {
+  const normalized = normalizeText(action)
+  if (normalized.startsWith('repair.'))
+    return 'repair'
+  if (normalized === 'release.publish' || normalized === 'contest.publish')
+    return 'publish'
+  return 'manual'
+}
+
+function workflowTimelineTitleFromAuditAction(action: string): string {
+  const normalized = normalizeText(action)
+  if (normalized === 'contest.create')
+    return '创建赛事'
+  if (normalized === 'contest.patch')
+    return '更新赛事主信息'
+  if (normalized === 'track.create')
+    return '创建赛道'
+  if (normalized === 'track.patch')
+    return '更新赛道'
+  if (normalized === 'resource.create')
+    return '创建资料'
+  if (normalized === 'resource.patch')
+    return '更新资料'
+  if (normalized === 'release.publish')
+    return '版本发布到线上'
+  if (normalized === 'contest.publish')
+    return '赛事直接发布'
+  return normalized || '人工操作'
+}
+
+function buildAuditTimelineDescription(action: string, payload: Record<string, unknown>): string {
+  const message = normalizeText(payload.message)
+  if (message)
+    return message
+  if (normalizeText(action) === 'release.publish') {
+    const versionNumber = normalizeInteger(payload.versionNumber, 0)
+    const parts = [
+      versionNumber > 0 ? `版本 V${versionNumber}` : '',
+      normalizeText(payload.syncRunId) ? `批次 ${normalizeText(payload.syncRunId)}` : '',
+    ].filter(Boolean)
+    return parts.join(' / ')
+  }
+  return ''
+}
+
+function mapAuditRowToWorkflowTimelineItem(row: ContestAuditTimelineRow): ContestWorkflowTimelineItem {
+  const payload = parseJsonObject(row.payload)
+  return {
+    id: `contest-audit:${row.id}`,
+    source: workflowTimelineSourceFromAuditAction(row.action),
+    action: normalizeText(row.action),
+    title: workflowTimelineTitleFromAuditAction(row.action),
+    description: buildAuditTimelineDescription(row.action, payload) || undefined,
+    actorUserId: row.actor_user_id,
+    contestId: row.contest_id,
+    resourceId: row.resource_id,
+    versionId: normalizeText(payload.releaseVersionId) || null,
+    versionNumber: normalizeInteger(payload.versionNumber, 0) || null,
+    syncItemId: normalizeText(payload.syncItemId) || null,
+    syncRunId: normalizeText(payload.syncRunId) || null,
+    recordId: normalizeText(payload.recordId) || null,
+    payload,
     createdAt: row.created_at,
   }
 }
@@ -439,6 +611,22 @@ function buildTrackDerivedTimelinePrefix(trackExternalId: string): string {
   return `${DERIVED_TRACK_TIMELINE_PREFIX}${trackExternalId}:`
 }
 
+function buildManualTrackExternalId(trackId: string): string {
+  return `${MANUAL_TRACK_EXTERNAL_ID_PREFIX}${normalizeText(trackId)}`
+}
+
+function buildManualContestTimelineExternalId(timelineId: string): string {
+  return `${MANUAL_CONTEST_TIMELINE_EXTERNAL_ID_PREFIX}${normalizeText(timelineId)}`
+}
+
+function buildManualTrackTimelineExternalId(timelineId: string): string {
+  return `${MANUAL_TRACK_TIMELINE_EXTERNAL_ID_PREFIX}${normalizeText(timelineId)}`
+}
+
+function buildManualResourceExternalId(resourceId: string): string {
+  return `${MANUAL_RESOURCE_EXTERNAL_ID_PREFIX}${normalizeText(resourceId)}`
+}
+
 async function insertReleaseReviewLog(
   db: Queryable,
   input: {
@@ -623,9 +811,14 @@ export async function getReleaseVersionDetail(
   const version = await getReleaseVersionById(db, releaseVersionId)
   if (!version)
     return null
+  const logs = await listReleaseReviewLogs(db, { releaseVersionId })
   return {
     version,
-    logs: await listReleaseReviewLogs(db, { releaseVersionId }),
+    logs,
+    publishCheck: version.scopeKind === 'contest'
+      ? await getContestReleasePublishCheck(db, { version })
+      : null,
+    workflowTimeline: logs.map(log => mapReleaseLogToWorkflowTimelineItem(log, version)),
   }
 }
 
@@ -700,6 +893,160 @@ export async function listReleaseQueue(
   })
 }
 
+function matchAdminContestListQuery(item: AdminContestListItem, query: string): boolean {
+  const normalized = normalizeText(query).toLowerCase()
+  if (!normalized)
+    return true
+  const haystack = [
+    item.name,
+    item.organizer || '',
+    item.coOrganizer || '',
+    item.officialUrl || '',
+    item.scopeId,
+  ].join(' ').toLowerCase()
+  return haystack.includes(normalized)
+}
+
+export async function listAdminContestReleaseOverview(
+  db: Queryable,
+  input: {
+    status?: ContestStatus | ''
+    q?: string
+  } = {},
+): Promise<AdminContestListItem[]> {
+  const [liveContests, contestRefs, allContestVersions] = await Promise.all([
+    listAdminContests(db, {}),
+    db.query<{ entity_id: string, external_id: string }>(
+      `SELECT entity_id, external_id
+       FROM feishu_external_refs
+       WHERE provider = 'feishu_bitable'
+         AND scope = 'contest'`,
+    ),
+    listReleaseVersions(db, {
+      scopeKind: 'contest',
+      limit: 5000,
+    }),
+  ])
+
+  const externalIdByContestId = new Map<string, string>()
+  for (const row of contestRefs.rows) {
+    const entityId = normalizeText(row.entity_id)
+    const externalId = normalizeText(row.external_id)
+    if (entityId && externalId)
+      externalIdByContestId.set(entityId, externalId)
+  }
+
+  const latestVersionByScopeId = new Map<string, ReleaseVersion>()
+  const latestPublishedVersionByScopeId = new Map<string, ReleaseVersion>()
+  const latestVersionByLiveEntityId = new Map<string, ReleaseVersion>()
+  const latestPublishedVersionByLiveEntityId = new Map<string, ReleaseVersion>()
+
+  for (const version of allContestVersions) {
+    if (!latestVersionByScopeId.has(version.scopeId))
+      latestVersionByScopeId.set(version.scopeId, version)
+    const liveEntityId = normalizeText(version.liveEntityId)
+    if (liveEntityId && !latestVersionByLiveEntityId.has(liveEntityId))
+      latestVersionByLiveEntityId.set(liveEntityId, version)
+    if (version.status !== 'published')
+      continue
+    if (!latestPublishedVersionByScopeId.has(version.scopeId))
+      latestPublishedVersionByScopeId.set(version.scopeId, version)
+    if (liveEntityId && !latestPublishedVersionByLiveEntityId.has(liveEntityId))
+      latestPublishedVersionByLiveEntityId.set(liveEntityId, version)
+  }
+
+  const itemMap = new Map<string, AdminContestListItem>()
+  for (const contest of liveContests) {
+    const scopeId = externalIdByContestId.get(contest.id)
+      || latestVersionByLiveEntityId.get(contest.id)?.scopeId
+      || contest.id
+    const latestVersion = latestVersionByScopeId.get(scopeId) || latestVersionByLiveEntityId.get(contest.id) || null
+    const latestPublished = latestPublishedVersionByScopeId.get(scopeId) || latestPublishedVersionByLiveEntityId.get(contest.id) || null
+    const snapshotContest = latestVersion?.scopeKind === 'contest'
+      ? toContestSnapshot(latestVersion.snapshot, latestVersion.scopeId).contest
+      : null
+
+    itemMap.set(scopeId, {
+      id: contest.id,
+      scopeId,
+      externalId: scopeId,
+      name: normalizeText(snapshotContest?.name) || contest.name,
+      officialUrl: normalizeText(snapshotContest?.officialUrl) || contest.officialUrl || '',
+      organizer: normalizeText(snapshotContest?.organizer) || contest.organizer || '',
+      coOrganizer: normalizeText(snapshotContest?.coOrganizer) || contest.coOrganizer || '',
+      level: (snapshotContest?.level || contest.level || '') as ContestLevel | '',
+      liveStatus: (contest.status || '') as ContestStatus | '',
+      visibility: contest.visibility || '',
+      latestReleaseStatus: latestVersion?.status || '',
+      latestReleaseVersionId: latestVersion?.id || null,
+      latestPublishedVersionId: latestPublished?.id || null,
+      latestVersionNumber: latestVersion?.versionNumber || null,
+      latestPublishedVersionNumber: latestPublished?.versionNumber || null,
+      hasPublishBlockers: false,
+      latestSyncAt: latestVersion?.updatedAt || latestVersion?.createdAt || null,
+      latestPublishedAt: latestPublished?.publishedAt || latestPublished?.updatedAt || null,
+    })
+  }
+
+  for (const [scopeId, latestVersion] of latestVersionByScopeId) {
+    if (itemMap.has(scopeId))
+      continue
+    const snapshot = toContestSnapshot(latestVersion.snapshot, latestVersion.scopeId)
+    const contest = snapshot.contest
+    const latestPublished = latestPublishedVersionByScopeId.get(scopeId) || null
+    itemMap.set(scopeId, {
+      id: normalizeText(latestVersion.liveEntityId) || null,
+      scopeId,
+      externalId: scopeId,
+      name: normalizeText(contest?.name) || normalizeText(latestVersion.scopeTitle) || scopeId,
+      officialUrl: normalizeText(contest?.officialUrl) || '',
+      organizer: normalizeText(contest?.organizer) || '',
+      coOrganizer: normalizeText(contest?.coOrganizer) || '',
+      level: (contest?.level || '') as ContestLevel | '',
+      liveStatus: '',
+      visibility: contest?.visibility || '',
+      latestReleaseStatus: latestVersion.status,
+      latestReleaseVersionId: latestVersion.id,
+      latestPublishedVersionId: latestPublished?.id || null,
+      latestVersionNumber: latestVersion.versionNumber,
+      latestPublishedVersionNumber: latestPublished?.versionNumber || null,
+      hasPublishBlockers: false,
+      latestSyncAt: latestVersion.updatedAt || latestVersion.createdAt,
+      latestPublishedAt: latestPublished?.publishedAt || latestPublished?.updatedAt || null,
+    })
+  }
+
+  let items = Array.from(itemMap.values())
+  if (input.status)
+    items = items.filter(item => item.liveStatus === input.status)
+  if (normalizeText(input.q))
+    items = items.filter(item => matchAdminContestListQuery(item, input.q || ''))
+
+  const blockerFlags = await Promise.all(items.map(async (item) => {
+    const latestVersion = latestVersionByScopeId.get(item.scopeId)
+    if (!latestVersion || latestVersion.status === 'published' || latestVersion.status === 'superseded')
+      return [item.scopeId, false] as const
+    const publishCheck = await getContestReleasePublishCheck(db, { version: latestVersion })
+    return [item.scopeId, Boolean(publishCheck && !publishCheck.canPublish)] as const
+  }))
+  const blockerMap = new Map(blockerFlags)
+
+  items = items
+    .map(item => ({
+      ...item,
+      hasPublishBlockers: blockerMap.get(item.scopeId) || false,
+    }))
+    .sort((left, right) => {
+      const rightTime = new Date(right.latestSyncAt || right.latestPublishedAt || 0).getTime()
+      const leftTime = new Date(left.latestSyncAt || left.latestPublishedAt || 0).getTime()
+      if (rightTime !== leftTime)
+        return rightTime - leftTime
+      return String(left.name).localeCompare(String(right.name), 'zh-CN')
+    })
+
+  return items
+}
+
 async function getLatestPublishedVersion(
   db: Queryable,
   input: {
@@ -714,6 +1061,259 @@ async function getLatestPublishedVersion(
     limit: 1,
   })
   return items[0] || null
+}
+
+function hasReleaseRubrics(snapshot: ContestReleaseSnapshot): boolean {
+  return snapshot.tracks.some(track =>
+    (track.evidenceRequirements || []).length > 0
+    || (track.scoringPoints || []).length > 0
+    || (track.deductionItems || []).length > 0,
+  )
+}
+
+function normalizeSnapshotFaqItems(value: unknown): Array<{ question: string, answer: string }> {
+  if (!Array.isArray(value))
+    return []
+  return value
+    .map((item) => {
+      const raw = parseJsonObject(item)
+      return {
+        question: normalizeText(raw.question),
+        answer: normalizeText(raw.answer),
+      }
+    })
+    .filter(item => item.question || item.answer)
+}
+
+export async function getContestReleasePublishCheck(
+  db: Queryable,
+  input: {
+    version: ReleaseVersion
+  },
+): Promise<PublishCheckResult | null> {
+  if (input.version.scopeKind !== 'contest')
+    return null
+
+  const snapshot = toContestSnapshot(input.version.snapshot, input.version.scopeId)
+  const contest = snapshot.contest
+  if (!contest) {
+    return {
+      contestId: normalizeText(input.version.liveEntityId) || input.version.scopeId,
+      canPublish: false,
+      completion: 0,
+      blockers: [{
+        code: 'CONTEST_SNAPSHOT_REQUIRED',
+        message: '当前版本缺少竞赛主快照，无法发布。',
+        field: 'contest',
+        severity: 'blocker',
+      }],
+      warnings: [],
+    }
+  }
+
+  const blockers: PublishCheckResult['blockers'] = []
+  const warnings: PublishCheckResult['warnings'] = []
+  const checks: boolean[] = []
+
+  const pushBlocker = (code: string, message: string, field?: string) => {
+    blockers.push({ code, message, field, severity: 'blocker' })
+  }
+
+  const pushWarning = (code: string, message: string, field?: string) => {
+    warnings.push({ code, message, field, severity: 'warning' })
+  }
+
+  const hasName = Boolean(normalizeText(contest.name))
+  checks.push(hasName)
+  if (!hasName)
+    pushBlocker('CONTEST_NAME_REQUIRED', '赛事名称不能为空。', 'name')
+
+  const hasLevel = Boolean(normalizeText(contest.level))
+  checks.push(hasLevel)
+  if (!hasLevel)
+    pushBlocker('CONTEST_LEVEL_REQUIRED', '赛事级别不能为空。', 'level')
+
+  const hasOrganizer = Boolean(normalizeText(contest.organizer))
+  checks.push(hasOrganizer)
+  if (!hasOrganizer)
+    pushBlocker('CONTEST_ORGANIZER_REQUIRED', '主办方不能为空。', 'organizer')
+
+  const hasOfficialUrl = Boolean(normalizeText(contest.officialUrl))
+  checks.push(hasOfficialUrl)
+  if (!hasOfficialUrl)
+    pushBlocker('CONTEST_OFFICIAL_URL_REQUIRED', '官网链接不能为空。', 'officialUrl')
+
+  const hasSummary = Boolean(normalizeText(contest.summary))
+  checks.push(hasSummary)
+  if (!hasSummary)
+    pushBlocker('CONTEST_SUMMARY_REQUIRED', '简介不能为空。', 'summary')
+
+  const hasParticipantRequirements = Boolean(normalizeText(contest.participantRequirements))
+  checks.push(hasParticipantRequirements)
+  if (!hasParticipantRequirements)
+    pushBlocker('CONTEST_PARTICIPANT_REQUIREMENTS_REQUIRED', '参赛对象/限制不能为空。', 'participantRequirements')
+
+  const hasCurrentSeason = Boolean(normalizeText(contest.currentSeason))
+  checks.push(hasCurrentSeason)
+  if (!hasCurrentSeason)
+    pushBlocker('CONTEST_CURRENT_SEASON_REQUIRED', '当前届次不能为空。', 'currentSeason')
+
+  const hasDisciplines = normalizeStringArray(contest.disciplines).length > 0
+  checks.push(hasDisciplines)
+  if (!hasDisciplines)
+    pushBlocker('CONTEST_DISCIPLINES_REQUIRED', '学科门类至少填写 1 项。', 'disciplines')
+
+  const hasTracks = snapshot.tracks.length > 0
+  checks.push(hasTracks)
+  if (!hasTracks)
+    pushBlocker('CONTEST_TRACKS_REQUIRED', '至少需要 1 个赛道。', 'tracks')
+
+  const hasTimelines = snapshot.timelines.length > 0 || snapshot.trackTimelines.length > 0
+  checks.push(hasTimelines)
+  if (!hasTimelines)
+    pushBlocker('CONTEST_TIMELINES_REQUIRED', '至少需要 1 个时间节点。', 'timelines')
+
+  const hasRubrics = hasReleaseRubrics(snapshot)
+  checks.push(hasRubrics)
+  if (!hasRubrics)
+    pushBlocker('CONTEST_RUBRICS_REQUIRED', '至少需要 1 条评分规则。', 'rubrics')
+
+  const hasDedupKey = hasName && hasOrganizer && hasOfficialUrl
+  if (!hasDedupKey) {
+    pushWarning('CONTEST_DEDUPE_KEY_INCOMPLETE', '去重键不完整（名称+主办方+官网），发布前建议补全。', 'officialUrl')
+  }
+  else {
+    const rows = await db.query<{ id: string, name: string, organizer: string, official_url: string }>(
+      `SELECT id, name, organizer, official_url
+       FROM contests
+       WHERE status <> 'archived'
+         AND id <> $1`,
+      [normalizeText(input.version.liveEntityId) || normalizeText(contest.liveId) || ''],
+    )
+    const targetKey = [
+      normalizeCompareValue(contest.name),
+      normalizeCompareValue(contest.organizer),
+      normalizeCompareValue(contest.officialUrl),
+    ].join('|')
+    const duplicate = rows.rows.find((row) => {
+      const rowKey = [
+        normalizeCompareValue(row.name),
+        normalizeCompareValue(row.organizer),
+        normalizeCompareValue(row.official_url),
+      ].join('|')
+      return rowKey === targetKey
+    })
+    if (duplicate) {
+      pushBlocker(
+        'CONTEST_DUPLICATED',
+        `检测到重复竞赛（ID: ${duplicate.id}），请核对名称/主办方/官网组合。`,
+        'officialUrl',
+      )
+    }
+  }
+
+  const faqItems = normalizeSnapshotFaqItems(contest.faqItems)
+  if (faqItems.length === 0) {
+    pushWarning('CONTEST_FAQ_ITEMS_EMPTY', '当前未配置结构化 FAQ 条目，建议补充。', 'faqItems')
+  }
+  else if (faqItems.some(item => !item.question || !item.answer)) {
+    pushWarning('CONTEST_FAQ_ITEMS_INCOMPLETE', '存在 FAQ 条目未同时填写问题与答案。', 'faqItems')
+  }
+
+  const passedCount = checks.filter(Boolean).length
+  const completion = Math.round((passedCount / checks.length) * 100)
+
+  return {
+    contestId: normalizeText(input.version.liveEntityId) || normalizeText(contest.liveId) || input.version.scopeId,
+    canPublish: blockers.length === 0,
+    completion,
+    blockers,
+    warnings,
+  }
+}
+
+export async function listContestWorkflowTimeline(
+  db: Queryable,
+  input: {
+    contestId: string
+    page?: number
+    pageSize?: number
+    action?: string
+  },
+): Promise<{ items: ContestWorkflowTimelineItem[], total: number, page: number, pageSize: number }> {
+  const page = Math.max(1, normalizeInteger(input.page || 1, 1))
+  const pageSize = Math.max(1, Math.min(100, normalizeInteger(input.pageSize || 20, 20)))
+  const actionFilter = normalizeText(input.action).toLowerCase()
+
+  const [auditResult, versions] = await Promise.all([
+    db.query<ContestAuditTimelineRow>(
+      `SELECT
+        id,
+        contest_id,
+        resource_id,
+        actor_user_id,
+        action,
+        payload,
+        created_at::TEXT
+       FROM contest_audit_logs
+       WHERE contest_id = $1
+         AND action NOT ILIKE 'read.%'
+       ORDER BY created_at DESC`,
+      [input.contestId],
+    ),
+    listContestReleaseVersions(db, { contestId: input.contestId, limit: 200 }),
+  ])
+
+  const versionIds = versions.map(item => item.id)
+  const versionMap = new Map(versions.map(item => [item.id, item]))
+  const releaseLogResult = versionIds.length
+    ? await db.query<ReleaseReviewLogRow>(
+        `SELECT
+          id,
+          release_version_id,
+          actor_user_id,
+          action,
+          payload,
+          created_at::TEXT
+         FROM release_review_logs
+         WHERE release_version_id = ANY($1::TEXT[])
+         ORDER BY created_at DESC`,
+        [versionIds],
+      )
+    : { rows: [] as ReleaseReviewLogRow[] }
+
+  const items = [
+    ...auditResult.rows.map(mapAuditRowToWorkflowTimelineItem),
+    ...releaseLogResult.rows
+      .map(mapReleaseReviewLog)
+      .map((log) => {
+        const version = versionMap.get(log.releaseVersionId)
+        return version ? mapReleaseLogToWorkflowTimelineItem(log, version) : null
+      })
+      .filter(Boolean) as ContestWorkflowTimelineItem[],
+  ]
+    .filter((item) => {
+      if (!actionFilter)
+        return true
+      const haystack = [
+        item.action,
+        item.title,
+        item.description || '',
+        item.source,
+        item.syncItemId || '',
+        item.syncRunId || '',
+      ].join(' ').toLowerCase()
+      return haystack.includes(actionFilter)
+    })
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+
+  const offset = (page - 1) * pageSize
+  return {
+    items: items.slice(offset, offset + pageSize),
+    total: items.length,
+    page,
+    pageSize,
+  }
 }
 
 async function loadContestScopedRefs(
@@ -741,13 +1341,21 @@ async function loadContestScopedRefs(
 
 async function buildContestLiveBaseSnapshot(
   db: Queryable,
-  contestExternalId: string,
+  input: {
+    contestExternalId: string
+    contestId?: string | null
+    includeUnmanaged?: boolean
+  },
 ): Promise<{ snapshot: ContestReleaseSnapshot, liveEntityId: string | null }> {
-  const contestRef = await getFeishuExternalRef(db, {
-    scope: 'contest',
-    externalId: contestExternalId,
-  })
-  const contestId = normalizeText(contestRef?.entityId)
+  const contestExternalId = normalizeText(input.contestExternalId)
+  const contestRef = contestExternalId
+    ? await getFeishuExternalRef(db, {
+        scope: 'contest',
+        externalId: contestExternalId,
+      })
+    : null
+  const contestId = normalizeText(input.contestId) || normalizeText(contestRef?.entityId)
+  const includeUnmanaged = Boolean(input.includeUnmanaged)
   if (!contestId) {
     return {
       snapshot: createEmptyContestSnapshot(contestExternalId),
@@ -795,25 +1403,36 @@ async function buildContestLiveBaseSnapshot(
   const rubricByTrackId = new Map(detail.rubrics.map(item => [item.trackId, item]))
   const contestSnapshot: ContestReleaseContestSnapshot = {
     liveId: detail.contest.id,
-    externalId: contestExternalId,
+    externalId: contestExternalId || detail.contest.id,
     name: detail.contest.name,
     level: detail.contest.level as ContestLevel,
+    organizer: detail.contest.organizer || '',
+    coOrganizer: detail.contest.coOrganizer || '',
     officialUrl: detail.contest.officialUrl || '',
     summary: detail.contest.summary || '',
+    participantRequirements: detail.contest.participantRequirements || '',
+    teamRule: detail.contest.teamRule || '',
+    currentSeason: detail.contest.currentSeason || '',
     disciplines: detail.contest.disciplines || [],
+    aliases: detail.contest.aliases || [],
     keywords: detail.contest.keywords || [],
     recommendedFor: detail.contest.recommendedFor || [],
+    faq: detail.contest.faq || '',
+    faqItems: detail.contest.faqItems || [],
+    hotScore: Number(detail.contest.hotScore || 0),
+    visibility: detail.contest.visibility || 'internal',
   }
 
   const tracks: ContestReleaseTrackSnapshot[] = detail.contest.tracks
-    .filter(item => trackRefById.has(item.id))
+    .filter(item => includeUnmanaged || trackRefById.has(item.id))
     .map((item) => {
-      const ref = trackRefById.get(item.id)!
+      const ref = trackRefById.get(item.id)
+      const trackExternalId = ref?.external_id || buildManualTrackExternalId(item.id)
       const rubric = rubricByTrackId.get(item.id)
       return {
         liveId: item.id,
-        externalId: ref.external_id,
-        contestExternalId,
+        externalId: trackExternalId,
+        contestExternalId: contestExternalId || detail.contest.id,
         name: item.name,
         summary: item.summary || '',
         coverImageUrl: item.coverImageUrl || '',
@@ -833,10 +1452,12 @@ async function buildContestLiveBaseSnapshot(
     })
 
   const timelines: ContestReleaseTimelineSnapshot[] = detail.timelines
-    .filter(item => isManagedContestTimelineNote(item.note))
+    .filter(item => includeUnmanaged || isManagedContestTimelineNote(item.note))
     .map((item, index) => {
       const externalId = extractManagedExternalId(item.note)
-        || `${buildContestLegacyTimelinePrefix(contestExternalId)}${item.nodeType}:${item.year}:${index}`
+        || (isManagedContestTimelineNote(item.note)
+          ? `${buildContestLegacyTimelinePrefix(contestExternalId || detail.contest.id)}${item.nodeType}:${item.year}:${index}`
+          : buildManualContestTimelineExternalId(item.id))
       return {
         externalId,
         year: normalizeInteger(item.year, new Date().getFullYear()),
@@ -852,17 +1473,19 @@ async function buildContestLiveBaseSnapshot(
   for (const [index, item] of trackTimelines.entries()) {
     const ref = trackTimelineRefById.get(item.id)
     const trackExternalId = trackExternalIdByTrackId.get(item.trackId) || ''
-    if (!trackExternalId)
+    if (!trackExternalId && !includeUnmanaged)
       continue
     const derivedManaged = isManagedDerivedTrackTimelineNote(item.note)
-    if (!ref && !derivedManaged)
+    if (!includeUnmanaged && !ref && !derivedManaged)
       continue
 
     snapshotTrackTimelines.push({
       externalId: ref?.external_id
         || extractManagedExternalId(item.note)
-        || `${buildTrackLegacyTimelinePrefix(trackExternalId)}${item.nodeType}:${item.year}:${index}`,
-      trackExternalId,
+        || (derivedManaged
+          ? `${buildTrackLegacyTimelinePrefix(trackExternalId || buildManualTrackExternalId(item.trackId))}${item.nodeType}:${item.year}:${index}`
+          : buildManualTrackTimelineExternalId(item.id)),
+      trackExternalId: trackExternalId || buildManualTrackExternalId(item.trackId),
       trackLiveId: item.trackId,
       year: normalizeInteger(item.year, new Date().getFullYear()),
       nodeType: item.nodeType as TimelineNodeType,
@@ -874,16 +1497,16 @@ async function buildContestLiveBaseSnapshot(
   }
 
   const snapshotResources: ContestReleaseResourceSnapshot[] = resources
-    .filter(item => resourceRefById.has(item.id))
+    .filter(item => includeUnmanaged || resourceRefById.has(item.id))
     .map((item) => {
-      const ref = resourceRefById.get(item.id)!
+      const ref = resourceRefById.get(item.id)
       const metadata = sanitizeContestReleaseResourceMetadata(item.metadata)
       const trackId = normalizeText(metadata.trackId)
       return {
         liveId: item.id,
-        externalId: ref.external_id,
-        contestExternalId,
-        trackExternalId: trackId ? (trackExternalIdByTrackId.get(trackId) || '') : '',
+        externalId: ref?.external_id || buildManualResourceExternalId(item.id),
+        contestExternalId: contestExternalId || detail.contest.id,
+        trackExternalId: trackId ? (trackExternalIdByTrackId.get(trackId) || buildManualTrackExternalId(trackId)) : '',
         trackLiveId: trackId || null,
         title: item.title,
         category: (item.category || 'basic_info') as ResourceCategory,
@@ -900,7 +1523,7 @@ async function buildContestLiveBaseSnapshot(
 
   return {
     snapshot: {
-      contestExternalId,
+      contestExternalId: contestExternalId || detail.contest.id,
       contest: contestSnapshot,
       tracks,
       timelines,
@@ -985,7 +1608,9 @@ async function loadBaseSnapshot(
   }
 
   if (input.scopeKind === 'contest') {
-    const result = await buildContestLiveBaseSnapshot(db, input.scopeId)
+    const result = await buildContestLiveBaseSnapshot(db, {
+      contestExternalId: input.scopeId,
+    })
     return {
       contestSnapshot: result.snapshot,
       liveEntityId: result.liveEntityId,
@@ -999,17 +1624,224 @@ async function loadBaseSnapshot(
   }
 }
 
-async function getOrCreateWorkingReleaseVersion(
+async function resolveContestReleaseScope(
+  db: Queryable,
+  contestId: string,
+): Promise<{ scopeId: string, latestVersion: ReleaseVersion | null }> {
+  const versionStatuses: ReleaseVersionStatus[] = [
+    'pending_first_review',
+    'pending_second_review',
+    'approved',
+    'rejected',
+    'published',
+  ]
+
+  const latestByLive = await listReleaseScopedVersions(db, {
+    scopeKind: 'contest',
+    liveEntityId: contestId,
+    statuses: versionStatuses,
+    limit: 1,
+  })
+  if (latestByLive[0]) {
+    return {
+      scopeId: latestByLive[0].scopeId,
+      latestVersion: latestByLive[0],
+    }
+  }
+
+  const refResult = await db.query<{ external_id: string }>(
+    `SELECT external_id
+     FROM feishu_external_refs
+     WHERE provider = 'feishu_bitable'
+       AND scope = 'contest'
+       AND entity_id = $1
+     LIMIT 1`,
+    [contestId],
+  )
+  const scopeId = normalizeText(refResult.rows[0]?.external_id) || contestId
+  const latestByScope = await listReleaseScopedVersions(db, {
+    scopeKind: 'contest',
+    scopeId,
+    statuses: versionStatuses,
+    limit: 1,
+  })
+  return {
+    scopeId,
+    latestVersion: latestByScope[0] || null,
+  }
+}
+
+export async function createContestManualReleaseDraft(
   db: Queryable,
   input: {
     actorUserId: string
+    contestId: string
+    sourceModule?: string
+    patch: {
+      name?: string
+      level?: ContestLevel
+      organizer?: string
+      coOrganizer?: string
+      officialUrl?: string
+      summary?: string
+      participantRequirements?: string
+      teamRule?: string
+      currentSeason?: string
+      disciplines?: string[]
+      aliases?: string[]
+      keywords?: string[]
+      recommendedFor?: string[]
+      faq?: string
+      faqItems?: Array<{ question?: string, answer?: string, sortOrder?: number }>
+      hotScore?: number
+      visibility?: 'internal' | 'public'
+    }
+  },
+): Promise<{
+  version: ReleaseVersion | null
+  scopeId: string
+  unchanged: boolean
+}> {
+  const liveDetail = await getContestDetail(db, {
+    contestId: input.contestId,
+    includeInternal: true,
+  })
+  if (!liveDetail)
+    throw new Error('CONTEST_NOT_FOUND')
+
+  const { scopeId, latestVersion } = await resolveContestReleaseScope(db, input.contestId)
+  const current = latestVersion
+    ? toContestSnapshot(latestVersion.snapshot, scopeId)
+    : (await buildContestLiveBaseSnapshot(db, {
+        contestExternalId: scopeId,
+        contestId: input.contestId,
+        includeUnmanaged: true,
+      })).snapshot
+
+  if (!current.contest) {
+    const liveBase = await buildContestLiveBaseSnapshot(db, {
+      contestExternalId: scopeId,
+      contestId: input.contestId,
+      includeUnmanaged: true,
+    })
+    current.contest = liveBase.snapshot.contest
+    current.tracks = liveBase.snapshot.tracks
+    current.timelines = liveBase.snapshot.timelines
+    current.trackTimelines = liveBase.snapshot.trackTimelines
+    current.resources = liveBase.snapshot.resources
+  }
+
+  const next = toContestSnapshot(current, scopeId)
+  const contest = next.contest || {
+    liveId: input.contestId,
+    externalId: scopeId,
+    name: liveDetail.contest.name,
+    level: liveDetail.contest.level as ContestLevel,
+    organizer: liveDetail.contest.organizer || '',
+    coOrganizer: liveDetail.contest.coOrganizer || '',
+    officialUrl: liveDetail.contest.officialUrl || '',
+    summary: liveDetail.contest.summary || '',
+    participantRequirements: liveDetail.contest.participantRequirements || '',
+    teamRule: liveDetail.contest.teamRule || '',
+    currentSeason: liveDetail.contest.currentSeason || '',
+    disciplines: liveDetail.contest.disciplines || [],
+    aliases: liveDetail.contest.aliases || [],
+    keywords: liveDetail.contest.keywords || [],
+    recommendedFor: liveDetail.contest.recommendedFor || [],
+    faq: liveDetail.contest.faq || '',
+    faqItems: liveDetail.contest.faqItems || [],
+    hotScore: Number(liveDetail.contest.hotScore || 0),
+    visibility: liveDetail.contest.visibility || 'internal',
+  }
+
+  if (input.patch.name !== undefined)
+    contest.name = normalizeText(input.patch.name)
+  if (input.patch.level !== undefined)
+    contest.level = input.patch.level
+  if (input.patch.organizer !== undefined)
+    contest.organizer = normalizeText(input.patch.organizer)
+  if (input.patch.coOrganizer !== undefined)
+    contest.coOrganizer = normalizeText(input.patch.coOrganizer)
+  if (input.patch.officialUrl !== undefined)
+    contest.officialUrl = normalizeText(input.patch.officialUrl)
+  if (input.patch.summary !== undefined)
+    contest.summary = normalizeText(input.patch.summary)
+  if (input.patch.participantRequirements !== undefined)
+    contest.participantRequirements = normalizeText(input.patch.participantRequirements)
+  if (input.patch.teamRule !== undefined)
+    contest.teamRule = normalizeText(input.patch.teamRule)
+  if (input.patch.currentSeason !== undefined)
+    contest.currentSeason = normalizeText(input.patch.currentSeason)
+  if (input.patch.disciplines !== undefined)
+    contest.disciplines = normalizeStringArray(input.patch.disciplines)
+  if (input.patch.aliases !== undefined)
+    contest.aliases = normalizeStringArray(input.patch.aliases)
+  if (input.patch.keywords !== undefined)
+    contest.keywords = normalizeStringArray(input.patch.keywords)
+  if (input.patch.recommendedFor !== undefined)
+    contest.recommendedFor = normalizeStringArray(input.patch.recommendedFor)
+  if (input.patch.faq !== undefined)
+    contest.faq = normalizeText(input.patch.faq)
+  if (input.patch.faqItems !== undefined) {
+    contest.faqItems = (input.patch.faqItems || [])
+      .map((item, index) => ({
+        question: normalizeText(item.question),
+        answer: normalizeText(item.answer),
+        sortOrder: normalizeInteger(item.sortOrder, index),
+      }))
+      .filter(item => item.question || item.answer)
+  }
+  if (input.patch.hotScore !== undefined)
+    contest.hotScore = Math.max(0, normalizeInteger(input.patch.hotScore, 0))
+  if (input.patch.visibility !== undefined)
+    contest.visibility = input.patch.visibility
+
+  contest.liveId = input.contestId
+  contest.externalId = scopeId
+  next.contest = contest
+
+  const sanitizedNext = sanitizeContestReleaseSnapshot(next)
+  const diffSummary = computeContestDiffSummary(current, sanitizedNext)
+  if (!hasReleaseDiffSummaryChanges(diffSummary)) {
+    return {
+      version: null,
+      scopeId,
+      unchanged: true,
+    }
+  }
+
+  const createdVersion = await createWorkingReleaseVersion(db, {
+    actorUserId: input.actorUserId,
+    scopeKind: 'contest',
+    scopeId,
+    scopeTitle: normalizeText(contest.name) || normalizeText(latestVersion?.scopeTitle) || scopeId,
+    syncItemId: `manual:contest:${input.contestId}`,
+    syncRunId: `manual:${randomUUID()}`,
+    liveEntityId: input.contestId,
+    snapshot: sanitizedNext,
+    diffSummary,
+    reviewAction: 'manual_generated',
+    reviewPayload: {
+      contestId: input.contestId,
+      sourceModule: normalizeText(input.sourceModule) || 'overview',
+    },
+  })
+
+  return {
+    version: createdVersion,
+    scopeId,
+    unchanged: false,
+  }
+}
+
+async function findSyncRunScopedReleaseVersion(
+  db: Queryable,
+  input: {
     scopeKind: ReleaseScopeKind
     scopeId: string
-    scopeTitle: string
-    syncItemId: string
     syncRunId: string
   },
-): Promise<ReleaseVersion> {
+): Promise<ReleaseVersion | null> {
   const existingResult = await db.query<ReleaseVersionRow>(
     `SELECT
       id,
@@ -1044,66 +1876,27 @@ async function getOrCreateWorkingReleaseVersion(
        AND sync_run_id = $3
      ORDER BY version_number DESC
      LIMIT 1`,
-    [input.scopeKind, input.scopeId, input.syncRunId],
+    [input.scopeKind, input.scopeId, normalizeText(input.syncRunId)],
   )
-  if (existingResult.rows[0])
-    return mapReleaseVersion(existingResult.rows[0])
+  return existingResult.rows[0] ? mapReleaseVersion(existingResult.rows[0]) : null
+}
 
-  const reusableDraftResult = await db.query<ReleaseVersionRow>(
-    `SELECT
-      id,
-      scope_kind,
-      scope_id,
-      live_entity_id,
-      scope_title,
-      version_number,
-      status,
-      snapshot_json,
-      diff_summary_json,
-      sync_item_id,
-      sync_run_id,
-      first_review_by_user_id,
-      first_review_at::TEXT,
-      second_review_claimed_by_user_id,
-      second_review_claimed_at::TEXT,
-      second_review_by_user_id,
-      second_review_at::TEXT,
-      rejected_by_user_id,
-      rejected_at::TEXT,
-      reject_reason,
-      published_by_user_id,
-      published_at::TEXT,
-      created_by_user_id,
-      updated_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM release_versions
-     WHERE scope_kind = $1
-       AND scope_id = $2
-       AND status = 'pending_first_review'
-     ORDER BY version_number DESC
-     LIMIT 1`,
-    [input.scopeKind, input.scopeId],
-  )
-  if (reusableDraftResult.rows[0]) {
-    const reusable = mapReleaseVersion(reusableDraftResult.rows[0])
-    await insertReleaseReviewLog(db, {
-      releaseVersionId: reusable.id,
-      actorUserId: input.actorUserId,
-      action: 'sync_draft_overwritten',
-      payload: {
-        syncItemId: input.syncItemId,
-        syncRunId: input.syncRunId,
-        previousSyncItemId: normalizeText(reusable.syncItemId) || null,
-        previousSyncRunId: normalizeText(reusable.syncRunId) || null,
-        scopeKind: input.scopeKind,
-        scopeId: input.scopeId,
-        versionNumber: reusable.versionNumber,
-      },
-    })
-    return reusable
-  }
-
+async function createWorkingReleaseVersion(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    scopeKind: ReleaseScopeKind
+    scopeId: string
+    scopeTitle: string
+    syncItemId: string
+    syncRunId: string
+    liveEntityId?: string | null
+    snapshot: ContestReleaseSnapshot | PolicyLibraryReleaseSnapshot
+    diffSummary: ReleaseDiffSummary
+    reviewAction?: ReleaseReviewAction
+    reviewPayload?: Record<string, unknown>
+  },
+): Promise<ReleaseVersion> {
   const latestVersionResult = await db.query<{ version_number: string }>(
     `SELECT COALESCE(MAX(version_number), 0)::TEXT AS version_number
      FROM release_versions
@@ -1112,14 +1905,7 @@ async function getOrCreateWorkingReleaseVersion(
     [input.scopeKind, input.scopeId],
   )
   const versionNumber = normalizeInteger(latestVersionResult.rows[0]?.version_number, 0) + 1
-  const base = await loadBaseSnapshot(db, {
-    scopeKind: input.scopeKind,
-    scopeId: input.scopeId,
-  })
   const versionId = randomUUID()
-  const snapshot = input.scopeKind === 'contest'
-    ? base.contestSnapshot || createEmptyContestSnapshot(input.scopeId)
-    : base.policySnapshot || createEmptyPolicySnapshot()
 
   await db.query(
     `INSERT INTO release_versions (
@@ -1145,11 +1931,11 @@ async function getOrCreateWorkingReleaseVersion(
       versionId,
       input.scopeKind,
       input.scopeId,
-      normalizeText(base.liveEntityId) || '',
+      normalizeText(input.liveEntityId) || '',
       normalizeText(input.scopeTitle) || normalizeText(input.scopeId),
       versionNumber,
-      JSON.stringify(snapshot),
-      JSON.stringify(createEmptyDiffSummary()),
+      JSON.stringify(input.snapshot),
+      JSON.stringify(input.diffSummary),
       input.syncItemId,
       input.syncRunId,
       input.actorUserId,
@@ -1164,7 +1950,8 @@ async function getOrCreateWorkingReleaseVersion(
          updated_at = NOW()
      WHERE scope_kind = $3
        AND scope_id = $4
-       AND status = 'pending_first_review'
+       AND status <> 'published'
+       AND status <> 'superseded'
        AND id <> $1`,
     [versionId, input.actorUserId, input.scopeKind, input.scopeId],
   )
@@ -1172,13 +1959,14 @@ async function getOrCreateWorkingReleaseVersion(
   await insertReleaseReviewLog(db, {
     releaseVersionId: versionId,
     actorUserId: input.actorUserId,
-    action: 'sync_generated',
+    action: input.reviewAction || 'sync_generated',
     payload: {
       syncItemId: input.syncItemId,
       syncRunId: input.syncRunId,
       scopeKind: input.scopeKind,
       scopeId: input.scopeId,
       versionNumber,
+      ...parseJsonObject(input.reviewPayload),
     },
   })
 
@@ -1201,24 +1989,24 @@ export async function upsertContestReleaseDraft(
     trackTimelines?: ContestReleaseTrackTimelineSnapshot[]
     resource?: ContestReleaseResourceSnapshot | null
   },
-): Promise<{ version: ReleaseVersion, existed: boolean }> {
+): Promise<{ version: ReleaseVersion | null, existed: boolean }> {
   const scopeId = normalizeText(input.contestExternalId)
-  const version = await getOrCreateWorkingReleaseVersion(db, {
-    actorUserId: input.actorUserId,
+  const existingVersion = await findSyncRunScopedReleaseVersion(db, {
     scopeKind: 'contest',
     scopeId,
-    scopeTitle: normalizeText(input.scopeTitle) || scopeId,
-    syncItemId: input.syncItemId,
     syncRunId: input.syncRunId,
   })
-  const base = (await loadBaseSnapshot(db, {
+  const baseResult = await loadBaseSnapshot(db, {
     scopeKind: 'contest',
     scopeId,
-  })).contestSnapshot || createEmptyContestSnapshot(scopeId)
-  const current = toContestSnapshot(version.snapshot, scopeId)
+  })
+  const base = baseResult.contestSnapshot || createEmptyContestSnapshot(scopeId)
+  const current = existingVersion
+    ? toContestSnapshot(existingVersion.snapshot, scopeId)
+    : toContestSnapshot(base, scopeId)
 
   let existed = false
-  let nextScopeTitle = normalizeText(version.scopeTitle) || scopeId
+  let nextScopeTitle = normalizeText(existingVersion?.scopeTitle) || normalizeText(input.scopeTitle) || scopeId
   const syncSource = {
     syncItemId: input.syncItemId,
     syncRunId: input.syncRunId,
@@ -1226,7 +2014,7 @@ export async function upsertContestReleaseDraft(
   }
 
   if (input.entityType === 'contest') {
-    existed = Boolean(current.contest)
+    existed = Boolean(base.contest)
     current.contest = input.contest
       ? attachReleaseSyncSource(input.contest, syncSource)
       : null
@@ -1276,29 +2064,54 @@ export async function upsertContestReleaseDraft(
 
   const sanitizedCurrent = sanitizeContestReleaseSnapshot(current)
   const diffSummary = computeContestDiffSummary(base, sanitizedCurrent)
-  await db.query(
-    `UPDATE release_versions
-     SET scope_title = $2,
-         snapshot_json = $3::JSONB,
-         diff_summary_json = $4::JSONB,
-         sync_item_id = $5,
-         sync_run_id = $6,
-         updated_by_user_id = $7,
-         updated_at = NOW()
-     WHERE id = $1`,
-    [
-      version.id,
-      nextScopeTitle,
-      JSON.stringify(sanitizedCurrent),
-      JSON.stringify(diffSummary),
-      input.syncItemId,
-      input.syncRunId,
-      input.actorUserId,
-    ],
-  )
+  if (!existingVersion && !hasReleaseDiffSummaryChanges(diffSummary)) {
+    return {
+      version: null,
+      existed,
+    }
+  }
+
+  if (existingVersion) {
+    await db.query(
+      `UPDATE release_versions
+       SET scope_title = $2,
+           snapshot_json = $3::JSONB,
+           diff_summary_json = $4::JSONB,
+           sync_item_id = $5,
+           sync_run_id = $6,
+           updated_by_user_id = $7,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        existingVersion.id,
+        nextScopeTitle,
+        JSON.stringify(sanitizedCurrent),
+        JSON.stringify(diffSummary),
+        input.syncItemId,
+        input.syncRunId,
+        input.actorUserId,
+      ],
+    )
+    return {
+      version: (await getReleaseVersionById(db, existingVersion.id))!,
+      existed,
+    }
+  }
+
+  const createdVersion = await createWorkingReleaseVersion(db, {
+    actorUserId: input.actorUserId,
+    scopeKind: 'contest',
+    scopeId,
+    scopeTitle: nextScopeTitle,
+    syncItemId: input.syncItemId,
+    syncRunId: input.syncRunId,
+    liveEntityId: baseResult.liveEntityId,
+    snapshot: sanitizedCurrent,
+    diffSummary,
+  })
 
   return {
-    version: (await getReleaseVersionById(db, version.id))!,
+    version: createdVersion,
     existed,
   }
 }
@@ -1313,21 +2126,21 @@ export async function upsertPolicyLibraryReleaseDraft(
     scopeTitle?: string
     item: PolicyLibraryItemSnapshot
   },
-): Promise<{ version: ReleaseVersion, existed: boolean }> {
+): Promise<{ version: ReleaseVersion | null, existed: boolean }> {
   const scopeId = 'policy_library'
-  const version = await getOrCreateWorkingReleaseVersion(db, {
-    actorUserId: input.actorUserId,
+  const existingVersion = await findSyncRunScopedReleaseVersion(db, {
     scopeKind: 'policy_library',
     scopeId,
-    scopeTitle: normalizeText(input.scopeTitle) || '政策库',
-    syncItemId: input.syncItemId,
     syncRunId: input.syncRunId,
   })
-  const base = (await loadBaseSnapshot(db, {
+  const baseResult = await loadBaseSnapshot(db, {
     scopeKind: 'policy_library',
     scopeId,
-  })).policySnapshot || createEmptyPolicySnapshot()
-  const current = toPolicySnapshot(version.snapshot)
+  })
+  const base = baseResult.policySnapshot || createEmptyPolicySnapshot()
+  const current = existingVersion
+    ? toPolicySnapshot(existingVersion.snapshot)
+    : toPolicySnapshot(base)
   const merged = upsertSnapshotItem(current.items, attachReleaseSyncSource(input.item, {
     syncItemId: input.syncItemId,
     syncRunId: input.syncRunId,
@@ -1336,29 +2149,54 @@ export async function upsertPolicyLibraryReleaseDraft(
   current.items = merged.items
   const diffSummary = computePolicyDiffSummary(base, current)
 
-  await db.query(
-    `UPDATE release_versions
-     SET scope_title = $2,
-         snapshot_json = $3::JSONB,
-         diff_summary_json = $4::JSONB,
-         sync_item_id = $5,
-         sync_run_id = $6,
-         updated_by_user_id = $7,
-         updated_at = NOW()
-     WHERE id = $1`,
-    [
-      version.id,
-      normalizeText(input.scopeTitle) || '政策库',
-      JSON.stringify(current),
-      JSON.stringify(diffSummary),
-      input.syncItemId,
-      input.syncRunId,
-      input.actorUserId,
-    ],
-  )
+  if (!existingVersion && !hasReleaseDiffSummaryChanges(diffSummary)) {
+    return {
+      version: null,
+      existed: merged.existed,
+    }
+  }
+
+  if (existingVersion) {
+    await db.query(
+      `UPDATE release_versions
+       SET scope_title = $2,
+           snapshot_json = $3::JSONB,
+           diff_summary_json = $4::JSONB,
+           sync_item_id = $5,
+           sync_run_id = $6,
+           updated_by_user_id = $7,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        existingVersion.id,
+        normalizeText(input.scopeTitle) || '政策库',
+        JSON.stringify(current),
+        JSON.stringify(diffSummary),
+        input.syncItemId,
+        input.syncRunId,
+        input.actorUserId,
+      ],
+    )
+    return {
+      version: (await getReleaseVersionById(db, existingVersion.id))!,
+      existed: merged.existed,
+    }
+  }
+
+  const createdVersion = await createWorkingReleaseVersion(db, {
+    actorUserId: input.actorUserId,
+    scopeKind: 'policy_library',
+    scopeId,
+    scopeTitle: normalizeText(input.scopeTitle) || '政策库',
+    syncItemId: input.syncItemId,
+    syncRunId: input.syncRunId,
+    liveEntityId: baseResult.liveEntityId,
+    snapshot: current,
+    diffSummary,
+  })
 
   return {
-    version: (await getReleaseVersionById(db, version.id))!,
+    version: createdVersion,
     existed: merged.existed,
   }
 }
@@ -2125,6 +2963,7 @@ async function syncTrackRubricBySnapshot(
       actorUserId: input.actorUserId,
       contestId: input.contestId,
       rubricId: input.rubricId,
+      bypassReleaseWorkflowGuard: true,
       patch: {
         scoringPoints,
         deductionItems,
@@ -2139,6 +2978,7 @@ async function syncTrackRubricBySnapshot(
     actorUserId: input.actorUserId,
     contestId: input.contestId,
     trackId: input.trackId,
+    bypassReleaseWorkflowGuard: true,
     dimensions: [{
       key: 'overall',
       name: '综合评估',
@@ -2179,11 +3019,21 @@ async function publishContestRelease(
         patch: {
           name: snapshot.contest.name,
           level: snapshot.contest.level,
+          organizer: normalizeText(snapshot.contest.organizer),
+          coOrganizer: normalizeText(snapshot.contest.coOrganizer),
           officialUrl: normalizeText(snapshot.contest.officialUrl),
           summary: normalizeText(snapshot.contest.summary),
+          participantRequirements: normalizeText(snapshot.contest.participantRequirements),
+          teamRule: normalizeText(snapshot.contest.teamRule),
+          currentSeason: normalizeText(snapshot.contest.currentSeason),
           disciplines: snapshot.contest.disciplines || [],
+          aliases: snapshot.contest.aliases || [],
           keywords: snapshot.contest.keywords || [],
           recommendedFor: snapshot.contest.recommendedFor || [],
+          faq: normalizeText(snapshot.contest.faq),
+          faqItems: snapshot.contest.faqItems || [],
+          hotScore: Number(snapshot.contest.hotScore || 0),
+          visibility: snapshot.contest.visibility || 'internal',
         },
       })
       contestId = normalizeText(patched?.id || contestId)
@@ -2193,11 +3043,21 @@ async function publishContestRelease(
         actorUserId: input.actorUserId,
         name: snapshot.contest.name,
         level: snapshot.contest.level,
+        organizer: normalizeText(snapshot.contest.organizer),
+        coOrganizer: normalizeText(snapshot.contest.coOrganizer),
         officialUrl: normalizeText(snapshot.contest.officialUrl),
         summary: normalizeText(snapshot.contest.summary),
+        participantRequirements: normalizeText(snapshot.contest.participantRequirements),
+        teamRule: normalizeText(snapshot.contest.teamRule),
+        currentSeason: normalizeText(snapshot.contest.currentSeason),
         disciplines: snapshot.contest.disciplines || [],
+        aliases: snapshot.contest.aliases || [],
         keywords: snapshot.contest.keywords || [],
         recommendedFor: snapshot.contest.recommendedFor || [],
+        faq: normalizeText(snapshot.contest.faq),
+        faqItems: snapshot.contest.faqItems || [],
+        hotScore: Number(snapshot.contest.hotScore || 0),
+        visibility: snapshot.contest.visibility || 'internal',
       })
       contestId = created.id
     }
@@ -2271,6 +3131,7 @@ async function publishContestRelease(
       const created = await createAdminTrack(db, {
         actorUserId: input.actorUserId,
         contestId,
+        bypassSourceOfTruthGuard: true,
         name: track.name,
         summary: normalizeText(track.summary),
         coverImageUrl: normalizeText(track.coverImageUrl),
@@ -2333,6 +3194,7 @@ async function publishContestRelease(
         actorUserId: input.actorUserId,
         contestId,
         rubricId: archivedRubricId,
+        bypassReleaseWorkflowGuard: true,
         patch: {
           status: 'archived',
         },
@@ -2411,6 +3273,7 @@ async function publishContestRelease(
         actorUserId: input.actorUserId,
         contestId,
         trackTimelineId: timelineId,
+        bypassReleaseWorkflowGuard: true,
         patch: {
           trackId,
           year: normalizeInteger(timeline.year, new Date().getFullYear()),
@@ -2427,6 +3290,7 @@ async function publishContestRelease(
       const created = await createAdminTrackTimeline(db, {
         actorUserId: input.actorUserId,
         contestId,
+        bypassReleaseWorkflowGuard: true,
         trackId,
         year: normalizeInteger(timeline.year, new Date().getFullYear()),
         nodeType: timeline.nodeType,
@@ -2526,6 +3390,7 @@ async function publishContestRelease(
       const created = await createAdminResource(db, {
         actorUserId: input.actorUserId,
         contestId,
+        bypassSourceOfTruthGuard: true,
         category: (resource.category || 'basic_info') as ResourceCategory,
         title: resource.title,
         year: normalizeInteger(resource.year, new Date().getFullYear()),
@@ -2588,6 +3453,8 @@ async function publishContestRelease(
     payload: {
       releaseVersionId: input.version.id,
       versionNumber: input.version.versionNumber,
+      syncItemId: normalizeText(input.version.syncItemId) || null,
+      syncRunId: normalizeText(input.version.syncRunId) || null,
       trackCount: snapshot.tracks.length,
       timelineCount: snapshot.timelines.length,
       trackTimelineCount: snapshot.trackTimelines.length,
@@ -2720,6 +3587,12 @@ export async function publishReleaseVersion(
   let nextSnapshot: Record<string, unknown> = version.snapshot
 
   if (version.scopeKind === 'contest') {
+    const publishCheck = await getContestReleasePublishCheck(db, { version })
+    if (!publishCheck?.canPublish) {
+      const error = new Error('RELEASE_PUBLISH_CHECK_FAILED')
+      ;(error as Error & { publishCheck?: PublishCheckResult | null }).publishCheck = publishCheck
+      throw error
+    }
     const published = await publishContestRelease(db, {
       actorUserId: input.actorUserId,
       version,

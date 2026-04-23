@@ -179,7 +179,7 @@ afterAll(async () => {
 const databaseTest = canRunDbSmoke ? it : it.skip
 
 describe('release draft 覆盖与审批边界', () => {
-  databaseTest('pending_first_review 草稿会被重复同步复用并写入覆盖日志', async () => {
+  databaseTest('pending_first_review 草稿在新一轮有 diff 的同步下会生成新版本并替换旧未发布版本', async () => {
     const first = await createPolicyDraft(tempPool, {
       syncItemId: 'sync_policy_reuse',
       runId: 'run_policy_reuse_1',
@@ -187,6 +187,7 @@ describe('release draft 覆盖与审批边界', () => {
       meetingName: '政策会议 A',
       summary: '第一次同步摘要',
     })
+    assert.ok(first.version, '首次同步应生成版本草稿')
 
     const second = await createPolicyDraft(tempPool, {
       syncItemId: 'sync_policy_reuse',
@@ -195,16 +196,19 @@ describe('release draft 覆盖与审批边界', () => {
       meetingName: '政策会议 A',
       summary: '第二次同步摘要',
     })
+    assert.ok(second.version, '第二次有 diff 的同步应生成新版本草稿')
 
-    assert.equal(second.version.id, first.version.id, 'pending_first_review 草稿应被原地复用')
+    assert.notEqual(second.version.id, first.version.id, 'pending_first_review 草稿不应再被原地复用')
 
     const versions = await listPolicyReleaseVersions(tempPool)
-    assert.equal(versions.length, 1, '重复同步不应额外生成新草稿版本')
-    assert.equal(versions[0]?.sync_item_id, 'sync_policy_reuse')
-    assert.equal(versions[0]?.sync_run_id, 'run_policy_reuse_2')
-    assert.equal(versions[0]?.snapshot_json?.items?.[0]?.summary, '第二次同步摘要')
+    assert.equal(versions.length, 2, '重复同步有 diff 时应额外生成新草稿版本')
+    assert.equal(versions[0]?.status, 'superseded')
+    assert.equal(versions[0]?.superseded_by_version_id, second.version.id)
+    assert.equal(versions[1]?.sync_item_id, 'sync_policy_reuse')
+    assert.equal(versions[1]?.sync_run_id, 'run_policy_reuse_2')
+    assert.equal(versions[1]?.snapshot_json?.items?.[0]?.summary, '第二次同步摘要')
 
-    const logResult = await tempPool.query(
+    const firstLogResult = await tempPool.query(
       `SELECT action
        FROM release_review_logs
        WHERE release_version_id = $1
@@ -212,10 +216,55 @@ describe('release draft 覆盖与审批边界', () => {
       [first.version.id],
     )
     assert.deepEqual(
-      logResult.rows.map(item => item.action),
-      ['sync_generated', 'sync_draft_overwritten'],
-      '复用草稿时应额外记录覆盖日志动作',
+      firstLogResult.rows.map(item => item.action),
+      ['sync_generated'],
+      '旧版本仅保留首次生成日志，不能再写覆盖草稿动作',
     )
+
+    const secondLogResult = await tempPool.query(
+      `SELECT action
+       FROM release_review_logs
+       WHERE release_version_id = $1
+       ORDER BY created_at ASC`,
+      [second.version.id],
+    )
+    assert.deepEqual(secondLogResult.rows.map(item => item.action), ['sync_generated'])
+  })
+
+  databaseTest('同步无 diff 时不会新建新版本', async () => {
+    const first = await createPolicyDraft(tempPool, {
+      syncItemId: 'sync_policy_no_diff',
+      runId: 'run_policy_no_diff_1',
+      externalId: 'policy_ext_no_diff',
+      meetingName: '政策会议 无差异',
+      summary: '稳定摘要',
+    })
+    assert.ok(first.version, '首次同步应生成版本草稿')
+
+    await tempPool.query(
+      `UPDATE release_versions
+       SET status = 'published',
+           live_entity_id = 'policy_library',
+           published_by_user_id = $2,
+           published_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [first.version.id, ACTOR_USER_ID],
+    )
+
+    const second = await createPolicyDraft(tempPool, {
+      syncItemId: 'sync_policy_no_diff',
+      runId: 'run_policy_no_diff_2',
+      externalId: 'policy_ext_no_diff',
+      meetingName: '政策会议 无差异',
+      summary: '稳定摘要',
+    })
+
+    assert.equal(second.version, null, '无 diff 的同步不应再新建版本')
+
+    const versions = await listPolicyReleaseVersions(tempPool)
+    assert.equal(versions.length, 1, '无 diff 时应保留单一已发布版本')
+    assert.equal(versions[0]?.status, 'published')
   })
 
   databaseTest('pending_second_review 与 approved 版本不会被原地覆盖，而是生成新草稿', async () => {
@@ -230,6 +279,7 @@ describe('release draft 覆盖与审批边界', () => {
         meetingName: `政策会议_${status}`,
         summary: '首版摘要',
       })
+      assert.ok(first.version, '首次同步应生成版本草稿')
 
       await tempPool.query(
         `UPDATE release_versions
@@ -246,13 +296,14 @@ describe('release draft 覆盖与审批边界', () => {
         meetingName: `政策会议_${status}`,
         summary: '新版摘要',
       })
+      assert.ok(second.version, `${status} 后的新同步应继续生成草稿`)
 
       assert.notEqual(second.version.id, first.version.id, `${status} 版本不应被重复同步直接覆盖`)
 
       const versions = await listPolicyReleaseVersions(tempPool)
       assert.equal(versions.length, 2, `${status} 场景应保留旧版本并新建一版草稿`)
-      assert.equal(versions[0]?.status, status)
-      assert.equal(versions[0]?.superseded_by_version_id, null)
+      assert.equal(versions[0]?.status, 'superseded')
+      assert.equal(versions[0]?.superseded_by_version_id, second.version.id)
       assert.equal(versions[1]?.status, 'pending_first_review')
       assert.equal(versions[1]?.sync_run_id, `run_policy_${status}_2`)
       assert.equal(versions[1]?.snapshot_json?.items?.[0]?.summary, '新版摘要')

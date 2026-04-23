@@ -1,18 +1,16 @@
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
-import { recordContestAuditLog } from '~~/server/utils/contest-store'
+import { getContestDetail, recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { listContestWorkflowTimeline } from '~~/server/utils/release-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
-  const contestId = getRouterParam(event, 'id') || ''
-  const query = getQuery(event)
+  const contestId = String(getRouterParam(event, 'id') || '').trim()
 
   if (!contestId) {
     setResponseStatus(event, 400)
@@ -22,48 +20,48 @@ export default defineEventHandler(async (event) => {
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40094)
+    }, 40095)
   }
 
   const canReadInternal = await checkPlatformPermission(event, user, 'contest.read_internal')
   if (!canReadInternal) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权查看审计日志。', {
+    return fail('当前用户无权查看赛事详情。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40394)
+    }, 40395)
   }
 
-  const page = Number(query.page || 1)
-  const pageSize = Number(query.pageSize || 20)
-  const action = typeof query.action === 'string' ? query.action : ''
-
-  const result = await withClient(event, async (db) => {
-    return listContestWorkflowTimeline(db, {
+  const detail = await withClient(event, async (db) => {
+    return getContestDetail(db, {
       contestId,
-      page,
-      pageSize,
-      action,
+      includeInternal: true,
     })
   })
+
+  if (!detail) {
+    setResponseStatus(event, 404)
+    return fail('contest not found', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40495)
+  }
 
   await withTransaction(event, async (db) => {
     await recordContestAuditLog(db, {
       actorUserId: user.id,
-      action: 'read.admin.audit_history',
+      action: 'read.admin.contest_detail',
       contestId,
-      payload: {
-        page,
-        pageSize,
-        action,
-      },
     })
   })
 
-  return ok(result, {
+  return ok(detail, {
     startedAt,
     provider: runtime.ai.provider,
     model: runtime.ai.model,

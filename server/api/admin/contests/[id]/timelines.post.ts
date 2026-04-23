@@ -57,18 +57,34 @@ export default defineEventHandler(async (event) => {
     }, 40072)
   }
 
-  const timeline = await withTransaction(event, async (db) => {
-    return createAdminTimeline(db, {
-      actorUserId: user.id,
-      contestId,
-      year: Number(body?.year || new Date().getFullYear()),
-      nodeType: body.nodeType!,
-      startAt: body?.startAt || null,
-      endAt: body?.endAt || null,
-      note: body?.note,
-      sourceLink: body?.sourceLink,
+  let timeline
+  try {
+    timeline = await withTransaction(event, async (db) => {
+      return createAdminTimeline(db, {
+        actorUserId: user.id,
+        contestId,
+        year: Number(body?.year || new Date().getFullYear()),
+        nodeType: body.nodeType!,
+        startAt: body?.startAt || null,
+        endAt: body?.endAt || null,
+        note: body?.note,
+        sourceLink: body?.sourceLink,
+      })
     })
-  })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'CONTEST_RELEASE_WORKFLOW_REQUIRED') {
+      setResponseStatus(event, 409)
+      return fail('当前赛事已接入版本流，请通过“审核/版本”生成新版本后再发布。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40971)
+    }
+    throw error
+  }
 
   return ok(timeline, {
     startedAt,

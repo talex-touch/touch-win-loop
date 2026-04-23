@@ -2,10 +2,10 @@ import type { ContestStatus } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
-import { listAdminContests } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { listAdminContestReleaseOverview } from '~~/server/utils/release-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
   const status = typeof query.status === 'string' ? query.status as ContestStatus : ''
   const q = typeof query.q === 'string' ? query.q : ''
   const contests = await withClient(event, async (db) => {
-    return listAdminContests(db, { status, q })
+    return listAdminContestReleaseOverview(db, { status, q })
   })
 
   return ok(contests, {

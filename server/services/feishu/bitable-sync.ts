@@ -276,8 +276,13 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
   contest: [
     'externalId',
     'name',
+    'organizer',
+    'coOrganizer',
     'officialUrl',
     'summary',
+    'participantRequirements',
+    'teamRule',
+    'currentSeason',
     'level',
     'disciplines',
     'keywords',
@@ -1943,8 +1948,13 @@ async function applyContestRecord(
 
   const [
     name,
+    organizer,
+    coOrganizer,
     officialUrl,
     summary,
+    participantRequirements,
+    teamRule,
+    currentSeason,
     levelText,
     disciplines,
     keywords,
@@ -1954,8 +1964,13 @@ async function applyContestRecord(
     recommendedFor,
   ] = await Promise.all([
     input.resolver.getText('name'),
+    input.resolver.getText('organizer'),
+    input.resolver.getText('coOrganizer'),
     input.resolver.getText('officialUrl'),
     input.resolver.getText('summary'),
+    input.resolver.getText('participantRequirements'),
+    input.resolver.getText('teamRule'),
+    input.resolver.getText('currentSeason'),
     input.resolver.getText('level'),
     input.resolver.getStringArray('disciplines'),
     input.resolver.getStringArray('keywords'),
@@ -1990,8 +2005,13 @@ async function applyContestRecord(
     externalId: input.externalId,
     name,
     level: mapContestLevel(levelText),
+    organizer,
+    coOrganizer,
     officialUrl,
     summary,
+    participantRequirements,
+    teamRule,
+    currentSeason,
     disciplines,
     keywords,
     recommendedFor,
@@ -2014,7 +2034,7 @@ async function applyContestRecord(
     return {
       status: draft.existed ? 'updated' : 'created',
       externalId: input.externalId,
-      entityId: draft.version.id,
+      entityId: draft.version?.id || '',
     }
   }
 
@@ -2146,7 +2166,7 @@ async function applyTrackRecord(
     return {
       status: draft.existed ? 'updated' : 'created',
       externalId: input.externalId,
-      entityId: draft.version.id,
+      entityId: draft.version?.id || '',
     }
   }
 
@@ -2262,7 +2282,7 @@ async function applyTrackTimelineRecord(
     return {
       status: draft.existed ? 'updated' : 'created',
       externalId: input.externalId,
-      entityId: draft.version.id,
+      entityId: draft.version?.id || '',
     }
   }
 
@@ -2373,7 +2393,7 @@ async function applyResourceRecord(
     return {
       status: draft.existed ? 'updated' : 'created',
       externalId: input.externalId,
-      entityId: draft.version.id,
+      entityId: draft.version?.id || '',
     }
   }
 
@@ -2486,7 +2506,7 @@ async function applyPolicyRecord(
     return {
       status: draft.existed ? 'updated' : 'created',
       externalId: input.externalId,
-      entityId: draft.version.id,
+      entityId: draft.version?.id || '',
     }
   }
 

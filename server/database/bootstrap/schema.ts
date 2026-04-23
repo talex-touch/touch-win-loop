@@ -2439,6 +2439,7 @@ CREATE TABLE IF NOT EXISTS release_review_logs (
   actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   action TEXT NOT NULL CHECK (action IN (
     'sync_generated',
+    'manual_generated',
     'sync_draft_overwritten',
     'first_review_approved',
     'second_review_claimed',
@@ -2457,6 +2458,7 @@ ALTER TABLE release_review_logs
   ADD CONSTRAINT release_review_logs_action_check
   CHECK (action IN (
     'sync_generated',
+    'manual_generated',
     'sync_draft_overwritten',
     'first_review_approved',
     'second_review_claimed',

@@ -1830,12 +1830,15 @@ export type ReleaseVersionStatus
 
 export type ReleaseReviewAction
   = 'sync_generated'
+    | 'manual_generated'
     | 'sync_draft_overwritten'
     | 'first_review_approved'
     | 'second_review_claimed'
     | 'second_review_approved'
     | 'rejected'
     | 'published'
+
+export type ContestWorkflowTimelineSource = 'feishu' | 'manual' | 'review' | 'publish' | 'repair'
 
 export interface ReleaseSyncSource {
   syncItemId: string
@@ -2010,9 +2013,50 @@ export interface ReleaseReviewLog {
   createdAt: string
 }
 
+export interface ContestWorkflowTimelineItem {
+  id: string
+  source: ContestWorkflowTimelineSource
+  action: string
+  title: string
+  description?: string
+  actorUserId?: string | null
+  contestId?: string | null
+  resourceId?: string | null
+  versionId?: string | null
+  versionNumber?: number | null
+  syncItemId?: string | null
+  syncRunId?: string | null
+  recordId?: string | null
+  payload: Record<string, unknown>
+  createdAt: string
+}
+
 export interface ReleaseVersionDetail {
   version: ReleaseVersion
   logs: ReleaseReviewLog[]
+  publishCheck?: PublishCheckResult | null
+  workflowTimeline?: ContestWorkflowTimelineItem[]
+}
+
+export interface AdminContestListItem {
+  id?: string | null
+  scopeId: string
+  externalId?: string | null
+  name: string
+  officialUrl?: string
+  organizer?: string
+  coOrganizer?: string
+  level?: ContestLevel | ''
+  liveStatus?: ContestStatus | ''
+  visibility?: ContestVisibility | ''
+  latestReleaseStatus?: ReleaseVersionStatus | ''
+  latestReleaseVersionId?: string | null
+  latestPublishedVersionId?: string | null
+  latestVersionNumber?: number | null
+  latestPublishedVersionNumber?: number | null
+  hasPublishBlockers: boolean
+  latestSyncAt?: string | null
+  latestPublishedAt?: string | null
 }
 
 export interface ContestFilterInput {

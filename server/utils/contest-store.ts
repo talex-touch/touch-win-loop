@@ -1500,7 +1500,20 @@ async function loadContests(db: Queryable, includeInternal: boolean): Promise<Co
       created_at::TEXT,
       updated_at::TEXT
      FROM contests
-     WHERE ($1::BOOLEAN = TRUE OR (status = 'published' AND visibility = 'public'))
+     WHERE (
+       $1::BOOLEAN = TRUE
+       OR (
+         status = 'published'
+         AND visibility = 'public'
+         AND EXISTS (
+           SELECT 1
+           FROM release_versions rv
+           WHERE rv.scope_kind = 'contest'
+             AND rv.status = 'published'
+             AND rv.live_entity_id = contests.id
+         )
+       )
+     )
      ORDER BY updated_at DESC`,
     [includeInternal],
   )
@@ -1816,7 +1829,20 @@ export async function getContestDetail(
       updated_at::TEXT
      FROM contests
      WHERE id = $1
-       AND ($2::BOOLEAN = TRUE OR (status = 'published' AND visibility = 'public'))
+       AND (
+         $2::BOOLEAN = TRUE
+         OR (
+           status = 'published'
+           AND visibility = 'public'
+           AND EXISTS (
+             SELECT 1
+             FROM release_versions rv
+             WHERE rv.scope_kind = 'contest'
+               AND rv.status = 'published'
+               AND rv.live_entity_id = contests.id
+           )
+         )
+       )
      LIMIT 1`,
     [input.contestId, input.includeInternal],
   )
@@ -2391,6 +2417,31 @@ async function assertFeishuSourceOfTruthPatchAllowed(
   throw new Error('FEISHU_SOURCE_OF_TRUTH_CONFLICT')
 }
 
+async function assertContestReleaseWorkflowPatchAllowed(
+  db: Queryable,
+  input: {
+    contestId: string
+    bypass?: boolean
+  },
+): Promise<void> {
+  if (input.bypass)
+    return
+
+  const result = await db.query<{ id: string }>(
+    `SELECT id
+     FROM release_versions
+     WHERE scope_kind = 'contest'
+       AND status = 'published'
+       AND live_entity_id = $1
+     LIMIT 1`,
+    [input.contestId],
+  )
+  if (!result.rows[0]?.id)
+    return
+
+  throw new Error('CONTEST_RELEASE_WORKFLOW_REQUIRED')
+}
+
 export async function patchAdminContest(
   db: Queryable,
   input: {
@@ -2464,6 +2515,10 @@ export async function patchAdminContest(
   if (sets.length === 0)
     return getContestDetail(db, { contestId: input.contestId, includeInternal: true }).then(item => item?.contest || null)
 
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
   await assertFeishuSourceOfTruthPatchAllowed(db, {
     scope: 'contest',
     entityId: input.contestId,
@@ -2716,6 +2771,7 @@ export async function createAdminTrack(
   input: {
     actorUserId: string
     contestId: string
+    bypassSourceOfTruthGuard?: boolean
     name: string
     summary?: string
     coverImageUrl?: string
@@ -2734,6 +2790,11 @@ export async function createAdminTrack(
 ): Promise<Track> {
   const trackId = randomUUID()
   const now = new Date().toISOString()
+
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
 
   await db.query(
     `INSERT INTO contest_tracks (
@@ -2881,6 +2942,10 @@ export async function patchAdminTrack(
   if (sets.length === 0)
     return null
 
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
   await assertFeishuSourceOfTruthPatchAllowed(db, {
     scope: 'track',
     entityId: input.trackId,
@@ -2944,6 +3009,7 @@ export async function createAdminTimeline(
   input: {
     actorUserId: string
     contestId: string
+    bypassReleaseWorkflowGuard?: boolean
     year: number
     nodeType: TimelineNodeType
     startAt?: string | null
@@ -2954,6 +3020,11 @@ export async function createAdminTimeline(
 ): Promise<ContestTimeline> {
   const timelineId = randomUUID()
   const now = new Date().toISOString()
+
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassReleaseWorkflowGuard,
+  })
 
   await db.query(
     `INSERT INTO contest_timelines (
@@ -3008,6 +3079,7 @@ export async function patchAdminTimeline(
     actorUserId: string
     contestId: string
     timelineId: string
+    bypassReleaseWorkflowGuard?: boolean
     patch: {
       year?: number
       nodeType?: TimelineNodeType
@@ -3042,6 +3114,10 @@ export async function patchAdminTimeline(
   if (sets.length === 0)
     return null
 
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassReleaseWorkflowGuard,
+  })
   sets.push('updated_at = NOW()')
 
   await db.query(
@@ -3083,6 +3159,7 @@ export async function createAdminTrackTimeline(
   input: {
     actorUserId: string
     contestId: string
+    bypassReleaseWorkflowGuard?: boolean
     trackId: string
     year: number
     nodeType: TimelineNodeType
@@ -3095,6 +3172,11 @@ export async function createAdminTrackTimeline(
   await assertTrackExistsForContest(db, input.contestId, input.trackId)
   const timelineId = randomUUID()
   const now = new Date().toISOString()
+
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassReleaseWorkflowGuard,
+  })
 
   await db.query(
     `INSERT INTO contest_track_timelines (
@@ -3161,6 +3243,7 @@ export async function patchAdminTrackTimeline(
     actorUserId: string
     contestId: string
     trackTimelineId: string
+    bypassReleaseWorkflowGuard?: boolean
     patch: {
       trackId?: string
       year?: number
@@ -3201,6 +3284,10 @@ export async function patchAdminTrackTimeline(
   if (sets.length === 0)
     return null
 
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassReleaseWorkflowGuard,
+  })
   sets.push('updated_at = NOW()')
 
   await db.query(
@@ -3301,6 +3388,7 @@ export async function createAdminRubric(
   input: {
     actorUserId: string
     contestId: string
+    bypassReleaseWorkflowGuard?: boolean
     trackId: string
     scoringMode?: RubricScoringMode
     version?: number
@@ -3316,6 +3404,11 @@ export async function createAdminRubric(
 
   const rubricId = randomUUID()
   const now = new Date().toISOString()
+
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassReleaseWorkflowGuard,
+  })
 
   await db.query(
     `INSERT INTO contest_rubrics (
@@ -3401,6 +3494,7 @@ export async function patchAdminRubric(
     actorUserId: string
     contestId: string
     rubricId: string
+    bypassReleaseWorkflowGuard?: boolean
     patch: {
       trackId?: string
       scoringMode?: RubricScoringMode
@@ -3456,6 +3550,10 @@ export async function patchAdminRubric(
   if (sets.length === 0)
     return null
 
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassReleaseWorkflowGuard,
+  })
   addSet('updated_by_user_id', input.actorUserId)
   sets.push('updated_at = NOW()')
 
@@ -3563,6 +3661,7 @@ export async function createAdminResource(
   input: {
     actorUserId: string
     contestId: string
+    bypassSourceOfTruthGuard?: boolean
     category: ResourceCategory
     title: string
     year: number
@@ -3578,6 +3677,11 @@ export async function createAdminResource(
 ): Promise<Resource> {
   const resourceId = randomUUID()
   const now = new Date().toISOString()
+
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
 
   await db.query(
     `INSERT INTO contest_resources (
@@ -3709,6 +3813,10 @@ export async function patchAdminResource(
   if (sets.length === 0)
     return null
 
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
   await assertFeishuSourceOfTruthPatchAllowed(db, {
     scope: 'resource',
     entityId: input.resourceId,

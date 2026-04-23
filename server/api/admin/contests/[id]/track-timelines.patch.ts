@@ -86,6 +86,16 @@ export default defineEventHandler(async (event) => {
     })
   }
   catch (error) {
+    if (error instanceof Error && error.message === 'CONTEST_RELEASE_WORKFLOW_REQUIRED') {
+      setResponseStatus(event, 409)
+      return fail('当前赛事已接入版本流，请通过“审核/版本”生成新版本后再发布。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40978)
+    }
     if (error instanceof Error && error.message === 'TRACK_NOT_FOUND') {
       setResponseStatus(event, 400)
       return fail('trackId 不属于当前赛事。', {

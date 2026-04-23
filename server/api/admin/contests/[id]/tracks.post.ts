@@ -66,26 +66,42 @@ export default defineEventHandler(async (event) => {
     }, 40068)
   }
 
-  const track = await withTransaction(event, async (db) => {
-    return createAdminTrack(db, {
-      actorUserId: user.id,
-      contestId,
-      name,
-      summary: body?.summary,
-      coverImageUrl: body?.coverImageUrl,
-      location: body?.location,
-      organizer: body?.organizer,
-      undertaker: body?.undertaker,
-      participantRequirements: body?.participantRequirements,
-      teamRule: body?.teamRule,
-      awardRatio: body?.awardRatio,
-      suitableMajors: body?.suitableMajors,
-      deliverableTypes: body?.deliverableTypes,
-      rubricId: body?.rubricId,
-      sortOrder: Number(body?.sortOrder || 0),
-      status: body?.status,
+  let track
+  try {
+    track = await withTransaction(event, async (db) => {
+      return createAdminTrack(db, {
+        actorUserId: user.id,
+        contestId,
+        name,
+        summary: body?.summary,
+        coverImageUrl: body?.coverImageUrl,
+        location: body?.location,
+        organizer: body?.organizer,
+        undertaker: body?.undertaker,
+        participantRequirements: body?.participantRequirements,
+        teamRule: body?.teamRule,
+        awardRatio: body?.awardRatio,
+        suitableMajors: body?.suitableMajors,
+        deliverableTypes: body?.deliverableTypes,
+        rubricId: body?.rubricId,
+        sortOrder: Number(body?.sortOrder || 0),
+        status: body?.status,
+      })
     })
-  })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'CONTEST_RELEASE_WORKFLOW_REQUIRED') {
+      setResponseStatus(event, 409)
+      return fail('当前赛事已接入版本流，请通过“审核/版本”生成新版本后再发布。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40967)
+    }
+    throw error
+  }
 
   return ok(track, {
     startedAt,
