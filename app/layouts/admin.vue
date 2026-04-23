@@ -34,23 +34,29 @@ const loadingProfile = ref(true)
 const profileDialogVisible = ref(false)
 const workspaceOptions = ref<WorkspaceWithQuota[]>([])
 const activeWorkspaceId = ref('')
+const adminSearchQuery = ref('')
+const searchInputRef = ref<HTMLInputElement | null>(null)
+const isFullscreen = ref(false)
 
 const navItems: AdminNavItem[] = [
   { key: 'admin-home', to: '/admin', label: '管理首页', icon: 'i-heroicons-outline-home', section: 'core' },
-  { key: 'admin-users', to: '/admin/users', label: '用户管理', icon: 'i-heroicons-outline-users', section: 'system', requiredAny: ['role.assign'] },
-  { key: 'admin-orgs', to: '/admin/organizations', label: '组织管理', icon: 'i-heroicons-outline-building-office-2', section: 'system', requiredAny: ['pricing.write'] },
-  { key: 'admin-contests', to: '/admin/contests', label: '赛事管理', icon: 'i-heroicons-outline-academic-cap', section: 'system', requiredAny: ['contest.read_internal'] },
-  { key: 'admin-ai-prompts', to: '/admin/ai-prompts', label: 'AI配置', icon: 'i-heroicons-outline-sparkles', section: 'system', requiredAny: ['contest.read_internal'] },
-  { key: 'admin-canvas-library', to: '/admin/canvas-library', label: '画布资源库', icon: 'i-heroicons-outline-swatch', section: 'system', requiredAny: ['contest.read_internal'] },
-  { key: 'admin-integrations', to: '/admin/integrations', label: '集成中心', icon: 'i-heroicons-outline-puzzle-piece', section: 'system', requiredAny: ['role.assign', 'contest.write'] },
+  { key: 'admin-users', to: '/admin/users', label: '用户管理', icon: 'i-heroicons-outline-users', section: 'core', requiredAny: ['role.assign'] },
+  { key: 'admin-contests', to: '/admin/contests', label: '赛事管理', icon: 'i-heroicons-outline-academic-cap', section: 'core', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-resources', to: '/admin/resources', label: '资料中心', icon: 'i-heroicons-outline-folder-open', section: 'core', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-ai-prompts', to: '/admin/ai-prompts', label: 'AI配置', icon: 'i-heroicons-outline-sparkles', section: 'core', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-operations', to: '/admin/operations', label: '运营管控', icon: 'i-heroicons-outline-chart-bar', section: 'core', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-runtime-settings', to: '/admin/runtime-settings', label: '系统设置', icon: 'i-heroicons-outline-adjustments-horizontal', section: 'system', requiredAny: ['contest.write'] },
+  { key: 'admin-roles', to: '/admin/roles', label: '权限管理', icon: 'i-heroicons-outline-shield-check', section: 'system', requiredAny: ['role.assign'] },
   { key: 'admin-notifications', to: '/admin/notifications', label: '通知管理', icon: 'i-heroicons-outline-bell', section: 'system', requiredAny: ['contest.write'] },
-  { key: 'admin-runtime-settings', to: '/admin/runtime-settings', label: '运行设置', icon: 'i-heroicons-outline-adjustments-horizontal', section: 'system', requiredAny: ['contest.write'] },
-  { key: 'admin-resources', to: '/admin/resources', label: '资料管理', icon: 'i-heroicons-outline-folder-open', section: 'system', requiredAny: ['contest.read_internal'] },
-  { key: 'admin-operations', to: '/admin/operations', label: '运营管控', icon: 'i-heroicons-outline-chart-bar', section: 'system', requiredAny: ['contest.read_internal'] },
-  { key: 'admin-resource-preview-worker', to: '/admin/resource-preview-worker', label: '文档转换监控', icon: 'i-heroicons-outline-arrow-path', section: 'system', requiredAny: ['contest.read_internal'] },
-  { key: 'admin-resource-recycle-worker', to: '/admin/resource-recycle-worker', label: '回收站清理', icon: 'i-heroicons-outline-trash', section: 'system', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-integrations', to: '/admin/integrations', label: '集成中心', icon: 'i-heroicons-outline-puzzle-piece', section: 'system', requiredAny: ['role.assign', 'contest.write'] },
+  { key: 'admin-organizations', to: '/admin/organizations', label: '组织管理', icon: 'i-heroicons-outline-building-office-2', section: 'system', requiredAny: ['pricing.write'] },
   { key: 'admin-billing', to: '/admin/billing', label: '套餐计费', icon: 'i-heroicons-outline-currency-dollar', section: 'system', requiredAny: ['pricing.write'] },
-  { key: 'admin-roles', to: '/admin/roles', label: '角色权限', icon: 'i-heroicons-outline-shield-check', section: 'system', requiredAny: ['role.assign'] },
+  { key: 'admin-meeting-providers', to: '/admin/meeting-providers', label: '会议服务', icon: 'i-heroicons-outline-video-camera', section: 'system', requiredAny: ['contest.write'] },
+  { key: 'admin-canvas-library', to: '/admin/canvas-library', label: '画布资源库', icon: 'i-heroicons-outline-swatch', section: 'system', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-docs', to: '/admin/docs', label: '文档中心', icon: 'i-heroicons-outline-book-open', section: 'system', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-resource-preview-worker', to: '/admin/resource-preview-worker', label: '文档转换监控', icon: 'i-heroicons-outline-arrow-path', section: 'system', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-resource-knowledge-worker', to: '/admin/resource-knowledge-worker', label: '知识索引监控', icon: 'i-heroicons-outline-circle-stack', section: 'system', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-resource-recycle-worker', to: '/admin/resource-recycle-worker', label: '回收站清理', icon: 'i-heroicons-outline-trash', section: 'system', requiredAny: ['contest.read_internal'] },
 ]
 
 function isRouteActive(path: string): boolean {
@@ -67,9 +73,30 @@ function canAccess(item: AdminNavItem): boolean {
   return item.requiredAny.some(permission => permissions.value.includes(permission))
 }
 
+function normalizeKeyword(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function resolveSearchMatch(keyword: string): AdminNavItem | null {
+  const normalized = normalizeKeyword(keyword)
+  if (!normalized)
+    return null
+  return visibleNavItems.value.find((item) => {
+    return normalizeKeyword(item.label).includes(normalized) || normalizeKeyword(item.to).includes(normalized)
+  }) || null
+}
+
 const visibleNavItems = computed(() => navItems.filter(canAccess))
 const coreItems = computed(() => visibleNavItems.value.filter(item => item.section === 'core'))
 const systemItems = computed(() => visibleNavItems.value.filter(item => item.section === 'system'))
+const notificationTarget = computed(() => visibleNavItems.value.find(item => item.key === 'admin-notifications')?.to || '')
+const searchMatch = computed(() => resolveSearchMatch(adminSearchQuery.value))
+const searchIndicatorText = computed(() => {
+  const keyword = normalizeKeyword(adminSearchQuery.value)
+  if (!keyword)
+    return '⌘ K'
+  return searchMatch.value?.label || '无匹配'
+})
 
 const selectedMenuKeys = computed(() => {
   const current = visibleNavItems.value.find(item => isRouteActive(item.to))
@@ -114,6 +141,8 @@ const {
   navItems,
 })
 
+const showRouteTabs = computed(() => adminRouteTabs.value.length > 0)
+
 function onMenuItemClick(key: string | number): void {
   const target = visibleNavItems.value.find(item => item.key === String(key))
   if (!target)
@@ -123,6 +152,54 @@ function onMenuItemClick(key: string | number): void {
     return
   }
   void navigateTo(target.to)
+}
+
+async function submitAdminSearch() {
+  const target = searchMatch.value
+  if (!target)
+    return
+  adminSearchQuery.value = ''
+  if (route.path === target.to)
+    return
+  await navigateTo(target.to)
+}
+
+function focusAdminSearch() {
+  searchInputRef.value?.focus()
+  searchInputRef.value?.select()
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  const key = event.key.toLowerCase()
+  if ((event.metaKey || event.ctrlKey) && key === 'k') {
+    event.preventDefault()
+    focusAdminSearch()
+    return
+  }
+  if (key === 'escape' && document.activeElement === searchInputRef.value) {
+    adminSearchQuery.value = ''
+    searchInputRef.value?.blur()
+  }
+}
+
+function syncFullscreenState() {
+  if (!import.meta.client)
+    return
+  isFullscreen.value = Boolean(document.fullscreenElement)
+}
+
+async function toggleFullscreen() {
+  if (!import.meta.client)
+    return
+  try {
+    if (!document.fullscreenElement)
+      await document.documentElement.requestFullscreen()
+    else
+      await document.exitFullscreen()
+  }
+  catch {
+    syncFullscreenState()
+  }
 }
 
 function openProfileDialog() {
@@ -186,7 +263,21 @@ async function loadProfile() {
   }
 }
 
-onMounted(loadProfile)
+onMounted(() => {
+  void loadProfile()
+  if (import.meta.client) {
+    document.addEventListener('keydown', handleGlobalKeydown)
+    document.addEventListener('fullscreenchange', syncFullscreenState)
+    syncFullscreenState()
+  }
+})
+
+onBeforeUnmount(() => {
+  if (!import.meta.client)
+    return
+  document.removeEventListener('keydown', handleGlobalKeydown)
+  document.removeEventListener('fullscreenchange', syncFullscreenState)
+})
 
 if (import.meta.client) {
   onMounted(() => {
@@ -210,19 +301,24 @@ if (import.meta.client) {
   </div>
   <div v-else class="admin-shell">
     <a-layout class="admin-layout">
-      <a-layout-sider :width="224" class="admin-sider">
+      <a-layout-sider :width="236" class="admin-sider">
         <div class="admin-brand">
-          <div class="admin-brand-icon">
-            <span class="i-heroicons-solid-chart-bar-square h-3.5 w-3.5" />
+          <div class="admin-brand-mark">
+            <BrandLogo variant="mark" />
           </div>
-          <p class="admin-brand-text">
-            WinLoop Admin
-          </p>
+          <div class="admin-brand-copy">
+            <p class="admin-brand-title">
+              WinLoop Admin
+            </p>
+            <p class="admin-brand-caption">
+              平台控制台
+            </p>
+          </div>
         </div>
 
         <nav class="admin-scrollbar admin-menu-wrap">
           <div class="admin-section-title">
-            Core
+            核心管理
           </div>
           <a-menu
             mode="vertical"
@@ -239,7 +335,7 @@ if (import.meta.client) {
           </a-menu>
 
           <div class="admin-section-title admin-section-title-system">
-            System
+            系统管理
           </div>
           <a-menu
             mode="vertical"
@@ -257,7 +353,7 @@ if (import.meta.client) {
         </nav>
 
         <div class="admin-user-panel">
-          <a-button type="outline" size="mini" long class="admin-back-btn" @click="navigateTo('/dashboard')">
+          <a-button type="text" long class="admin-back-btn" @click="navigateTo('/dashboard')">
             <template #icon>
               <span class="admin-inline-icon i-heroicons-outline-arrow-uturn-left" />
             </template>
@@ -274,7 +370,7 @@ if (import.meta.client) {
               <span class="admin-user-skeleton-setting" />
             </template>
             <template v-else>
-              <a-avatar :size="28" class="admin-avatar">
+              <a-avatar :size="34" class="admin-avatar">
                 <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="用户头像" class="admin-avatar-image">
                 <template v-else>
                   {{ userInitial }}
@@ -285,7 +381,7 @@ if (import.meta.client) {
                   {{ userName }}
                 </p>
                 <p v-if="showAdminBadge" class="admin-admin-badge">
-                  管理页
+                  管理员
                 </p>
               </div>
               <a-button type="text" size="mini" class="admin-setting-btn" @click.stop="openProfileDialog">
@@ -301,28 +397,74 @@ if (import.meta.client) {
       <a-layout class="admin-main-layout">
         <a-layout-header class="admin-header">
           <div class="admin-header-left">
-            <a-breadcrumb class="admin-breadcrumb" size="mini">
-              <a-breadcrumb-item>WinLoop Admin</a-breadcrumb-item>
-              <a-breadcrumb-item>{{ pageTitle }}</a-breadcrumb-item>
-            </a-breadcrumb>
+            <span class="admin-header-chevron i-heroicons-outline-chevron-left" />
+            <div class="admin-header-copy">
+              <p class="admin-header-title">
+                {{ pageTitle }}
+              </p>
+              <p class="admin-header-subtitle">
+                后台管理中心
+              </p>
+            </div>
+          </div>
+
+          <div class="admin-header-actions">
+            <form class="admin-search" @submit.prevent="submitAdminSearch">
+              <span class="admin-search-icon i-heroicons-outline-magnifying-glass" />
+              <input
+                ref="searchInputRef"
+                v-model="adminSearchQuery"
+                class="admin-search-input"
+                type="text"
+                placeholder="搜索菜单、功能或数据..."
+              >
+              <span class="admin-search-indicator">{{ searchIndicatorText }}</span>
+            </form>
+
+            <NuxtLink
+              v-if="notificationTarget"
+              :to="notificationTarget"
+              class="admin-header-action admin-header-action--alert"
+              aria-label="通知管理"
+            >
+              <span class="admin-action-icon i-heroicons-outline-bell" />
+            </NuxtLink>
+
+            <button type="button" class="admin-header-action" :aria-label="isFullscreen ? '退出全屏' : '进入全屏'" @click="toggleFullscreen">
+              <span
+                class="admin-action-icon"
+                :class="isFullscreen ? 'i-heroicons-outline-arrows-pointing-in' : 'i-heroicons-outline-arrows-pointing-out'"
+              />
+            </button>
           </div>
         </a-layout-header>
 
-        <div class="admin-route-tabs-wrap admin-scrollbar">
-          <div class="admin-route-tabs-inner">
+        <div v-if="showRouteTabs" class="admin-route-tabs-wrap admin-scrollbar">
+          <div class="admin-route-tabs-inner" role="tablist" aria-label="管理页标签">
             <div
               v-for="tab in adminRouteTabs"
               :key="tab.id"
-              role="button"
-              tabindex="0"
-              class="admin-route-tab"
+              class="admin-route-tab-shell"
               :class="{ 'is-active': activeRouteTabId === tab.id }"
-              @click="openRouteTab(tab.id)"
-              @keydown.enter="openRouteTab(tab.id)"
             >
-              <span class="admin-route-tab-label">{{ tab.label }}</span>
-              <button type="button" class="admin-route-tab-close" @click.stop="closeRouteTab(tab.id)">
-                ×
+              <button
+                type="button"
+                class="admin-route-tab"
+                role="tab"
+                :aria-selected="activeRouteTabId === tab.id ? 'true' : 'false'"
+                :tabindex="activeRouteTabId === tab.id ? 0 : -1"
+                @click="openRouteTab(tab.id)"
+                @keydown.enter="openRouteTab(tab.id)"
+              >
+                <span class="admin-route-tab-label">{{ tab.label }}</span>
+              </button>
+              <button
+                type="button"
+                class="admin-route-tab-close"
+                aria-label="关闭标签页"
+                @click.stop="closeRouteTab(tab.id)"
+              >
+                <span class="material-symbols-outlined admin-route-tab-close-icon">close</span>
               </button>
             </div>
           </div>
@@ -353,15 +495,25 @@ if (import.meta.client) {
 
 <style scoped>
 .admin-shell {
+  position: relative;
   height: 100vh;
   overflow: hidden;
-  --wl-admin-primary: #1152d4;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 30%),
+    linear-gradient(180deg, #f8fbff 0%, #f3f6fb 100%);
+  --wl-admin-primary: #2563eb;
+  --wl-admin-primary-soft: rgba(37, 99, 235, 0.12);
+  --wl-admin-border: #e2eaf4;
+  --wl-admin-border-strong: #d5dfed;
+  --wl-admin-surface: rgba(255, 255, 255, 0.9);
+  --wl-admin-text: #10233f;
+  --wl-admin-muted: #6b7a90;
 }
 
 .admin-embed-shell {
   min-height: 100vh;
-  background: #f4f6f8;
-  padding: 12px;
+  background: #f4f7fb;
+  padding: 14px;
 }
 
 .admin-layout {
@@ -371,109 +523,131 @@ if (import.meta.client) {
 .admin-sider {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #e2e8f0;
-  background: #f8f9fb;
+  border-right: 1px solid var(--wl-admin-border);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px);
 }
 
 .admin-brand {
-  height: 48px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border-bottom: 1px solid #e2e8f0;
-  background: #fff;
+  gap: 10px;
+  padding: 14px 16px 13px;
+  border-bottom: 1px solid var(--wl-admin-border);
 }
 
-.admin-brand-icon {
-  display: flex;
-  height: 20px;
-  width: 20px;
+.admin-brand-mark {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--wl-admin-primary);
-  color: #fff;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.08);
 }
 
-.admin-brand-text {
+.admin-brand-mark :deep(.winloop-brand) {
+  --winloop-brand-mark-size: 1.05rem;
+}
+
+.admin-brand-copy {
+  min-width: 0;
+}
+
+.admin-brand-title {
   margin: 0;
-  font-size: 12px;
+  color: var(--wl-admin-text);
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 0.01em;
-  color: #0f172a;
+  line-height: 1.1;
+}
+
+.admin-brand-caption {
+  margin: 2px 0 0;
+  color: var(--wl-admin-muted);
+  font-size: 11px;
   line-height: 1;
-  white-space: nowrap;
 }
 
 .admin-menu-wrap {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: 12px 0;
 }
 
 .admin-scrollbar::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 5px;
+  height: 5px;
 }
 
 .admin-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: rgba(140, 160, 190, 0.72);
+  border-radius: 999px;
 }
 
 .admin-section-title {
   margin: 0;
-  padding: 4px 12px;
-  color: #94a3b8;
-  font-size: 10px;
+  padding: 0 16px 6px;
+  color: #8a98ae;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .admin-section-title-system {
-  margin-top: 8px;
+  margin-top: 12px;
 }
 
 .admin-menu-icon {
   display: inline-block;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
 }
 
 .admin-inline-icon {
   display: inline-block;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .admin-user-panel {
-  padding: 8px;
-  border-top: 1px solid #e2e8f0;
-  background: #fff;
+  padding: 12px 12px 14px;
+  border-top: 1px solid var(--wl-admin-border);
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .admin-back-btn {
-  height: 28px;
-  font-size: 11px;
-  font-weight: 700;
-  border-color: #d0d7de;
-  color: #334155;
+  height: 36px;
+  justify-content: flex-start;
+  padding-inline: 10px;
+  border-radius: 12px;
+  color: #385070;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.admin-back-btn:hover {
+  background: #eef4ff;
+  color: var(--wl-admin-primary);
 }
 
 .admin-user-card {
-  margin-top: 8px;
+  margin-top: 10px;
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  padding: 8px;
+  border: 1px solid var(--wl-admin-border);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+  padding: 10px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.035);
 }
 
 .admin-user-skeleton-avatar {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 9999px;
   background: #e2e8f0;
   animation: admin-pulse 1.2s ease-in-out infinite;
@@ -487,13 +661,13 @@ if (import.meta.client) {
 .admin-user-skeleton-line {
   display: block;
   height: 10px;
-  border-radius: 6px;
+  border-radius: 999px;
   background: #e2e8f0;
   animation: admin-pulse 1.2s ease-in-out infinite;
 }
 
 .admin-user-skeleton-line-main {
-  width: 72px;
+  width: 76px;
 }
 
 .admin-user-skeleton-line-sub {
@@ -504,15 +678,15 @@ if (import.meta.client) {
 .admin-user-skeleton-setting {
   width: 26px;
   height: 26px;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #e2e8f0;
   animation: admin-pulse 1.2s ease-in-out infinite;
 }
 
 .admin-avatar {
   flex-shrink: 0;
-  background: #e2e8f0;
-  color: #475569;
+  background: #dbe8ff;
+  color: #254169;
   font-size: 11px;
   font-weight: 700;
   overflow: hidden;
@@ -531,9 +705,9 @@ if (import.meta.client) {
 
 .admin-user-name {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--wl-admin-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -543,20 +717,20 @@ if (import.meta.client) {
   margin: 4px 0 0;
   display: inline-flex;
   align-items: center;
-  border: 1px solid #fecaca;
-  background: #fef2f2;
-  padding: 0 4px;
-  line-height: 16px;
+  border-radius: 999px;
+  background: #edf4ff;
+  padding: 0 7px;
+  line-height: 20px;
   font-size: 10px;
-  color: #b91c1c;
+  color: var(--wl-admin-primary);
   font-weight: 700;
 }
 
 .admin-setting-btn {
-  color: #64748b;
-  min-width: 26px;
-  width: 26px;
-  height: 26px;
+  color: #6b7a90;
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
 }
 
 @keyframes admin-pulse {
@@ -572,113 +746,254 @@ if (import.meta.client) {
 .admin-main-layout {
   min-width: 0;
   height: 100%;
-  background: #f4f6f8;
+  background: transparent;
 }
 
 .admin-header {
-  height: 48px;
-  padding: 0 12px;
-  border-bottom: 1px solid #e2e8f0;
-  background: #fff;
+  height: 62px;
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(226, 234, 244, 0.72);
+  background: rgba(255, 255, 255, 0.56);
+  backdrop-filter: blur(16px);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-}
-
-.admin-route-tabs-wrap {
-  border-bottom: 1px solid #e2e8f0;
-  background: #f8fafc;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.admin-route-tabs-inner {
-  min-height: 34px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-}
-
-.admin-route-tab {
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid #d6dde5;
-  background: #ffffff;
-  color: #475569;
-  padding: 0 8px;
-  font-size: 11px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.admin-route-tab:hover {
-  border-color: #94a3b8;
-}
-
-.admin-route-tab.is-active {
-  border-color: #0f172a;
-  color: #0f172a;
-  font-weight: 700;
-}
-
-.admin-route-tab-label {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.admin-route-tab-close {
-  border: none;
-  background: transparent;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-}
-
-.admin-route-tab-close:hover {
-  color: #0f172a;
+  gap: 12px;
 }
 
 .admin-header-left {
   min-width: 0;
   display: flex;
   align-items: center;
+  gap: 10px;
 }
 
-.admin-breadcrumb {
-  font-size: 11px;
+.admin-header-chevron {
+  width: 18px;
+  height: 18px;
+  color: #9aa9bf;
 }
 
-.admin-breadcrumb :deep(.arco-breadcrumb-item) {
-  color: #64748b;
+.admin-header-copy {
+  min-width: 0;
 }
 
-.admin-breadcrumb :deep(.arco-breadcrumb-item:last-child) {
-  color: #0f172a;
+.admin-header-title {
+  margin: 0;
+  color: var(--wl-admin-text);
+  font-size: 18px;
   font-weight: 700;
+  line-height: 1.1;
 }
 
-.admin-create-btn {
-  height: 28px;
+.admin-header-subtitle {
+  margin: 2px 0 0;
+  color: var(--wl-admin-muted);
   font-size: 11px;
-  font-weight: 700;
+  line-height: 1;
+}
+
+.admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(420px, 40vw);
+  min-width: 260px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(213, 223, 237, 0.92);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.04);
+}
+
+.admin-search:focus-within {
+  border-color: rgba(37, 99, 235, 0.26);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
+.admin-search-icon {
+  width: 18px;
+  height: 18px;
+  color: #8ea0bc;
+  flex-shrink: 0;
+}
+
+.admin-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--wl-admin-text);
+  font-size: 13px;
+  outline: none;
+}
+
+.admin-search-input::placeholder {
+  color: #97a8bf;
+}
+
+.admin-search-indicator {
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: #f2f6fc;
+  padding: 0 8px;
+  line-height: 24px;
+  font-size: 11px;
+  color: #70829d;
+  font-weight: 600;
+}
+
+.admin-header-action {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(213, 223, 237, 0.92);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #445978;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.04);
+}
+
+.admin-header-action--alert::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.96);
+}
+
+.admin-action-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-route-tabs-wrap {
+  border-bottom: 1px solid rgba(226, 234, 244, 0.72);
+  background: rgba(248, 251, 255, 0.88);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.admin-route-tabs-inner {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  min-width: max-content;
+  padding: 0 8px;
+}
+
+.admin-route-tab-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  border-right: 1px solid rgba(226, 234, 244, 0.92);
+  background: transparent;
+  transition: background-color 0.16s ease;
+}
+
+.admin-route-tab-shell::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 2px;
+  border-radius: 999px 999px 0 0;
   background: var(--wl-admin-primary);
+  opacity: 0;
+  transform: scaleX(0.56);
+  transform-origin: center;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.admin-route-tab-shell:hover {
+  background: rgba(37, 99, 235, 0.04);
+}
+
+.admin-route-tab-shell.is-active {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.admin-route-tab-shell.is-active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.admin-route-tab {
+  display: inline-flex;
+  align-items: center;
+  min-width: 128px;
+  max-width: 220px;
+  height: 100%;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: #5f7088;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.admin-route-tab-shell.is-active .admin-route-tab {
+  color: var(--wl-admin-primary);
+  font-weight: 700;
+}
+
+.admin-route-tab-label {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-route-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 6px;
+  border: none;
+  background: transparent;
+  color: #7d8ea7;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 8px;
+}
+
+.admin-route-tab-close:hover,
+.admin-route-tab-shell.is-active .admin-route-tab-close:hover {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--wl-admin-primary);
+}
+
+.admin-route-tab-close-icon {
+  font-size: 15px;
+  line-height: 1;
 }
 
 .admin-content {
   min-height: 0;
   overflow-y: auto;
-  padding: 12px;
-}
-
-:deep(*) {
-  border-radius: 0 !important;
+  padding: 18px 20px 20px;
 }
 
 :deep(.arco-layout-sider-children) {
@@ -697,33 +1012,88 @@ if (import.meta.client) {
 }
 
 :deep(.admin-menu .arco-menu-item) {
-  height: 30px;
-  line-height: 30px;
-  margin: 0;
+  height: 38px;
+  line-height: 38px;
+  margin: 3px 10px;
   padding-inline: 12px !important;
-  border-right: 2px solid transparent;
-  color: #475569;
-  font-size: 12px;
+  border-radius: 12px !important;
+  color: #5f7088;
+  font-size: 13px;
   transition: all 0.15s ease;
 }
 
 :deep(.admin-menu .arco-menu-item:hover) {
-  background: rgba(226, 232, 240, 0.45);
+  background: rgba(37, 99, 235, 0.06);
+  color: #23456f;
 }
 
 :deep(.admin-menu .arco-menu-item.arco-menu-selected) {
   color: var(--wl-admin-primary);
   font-weight: 700;
-  border-right-color: var(--wl-admin-primary);
-  background: #fff;
+  background: #edf4ff;
 }
 
 :deep(.admin-menu .arco-menu-icon) {
   margin-right: 8px;
-  font-size: 16px;
+  font-size: 17px;
 }
 
-:deep(.arco-btn-size-mini) {
-  font-size: 11px;
+:deep(.arco-btn),
+:deep(.arco-input-wrapper),
+:deep(.arco-select-view),
+:deep(.arco-picker) {
+  border-radius: 12px !important;
+}
+
+:deep(.arco-table-container),
+:deep(.arco-card) {
+  border-radius: 18px !important;
+  overflow: hidden;
+}
+
+:deep(.arco-table-container) {
+  border: 1px solid var(--wl-admin-border);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.05);
+}
+
+:deep(.arco-table-th) {
+  background: #f7faff;
+}
+
+@media (max-width: 1280px) {
+  .admin-header {
+    padding-inline: 16px;
+  }
+
+  .admin-search {
+    width: min(340px, 34vw);
+    min-width: 220px;
+  }
+
+  .admin-content {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 960px) {
+  .admin-header {
+    height: auto;
+    padding-block: 14px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-header-actions {
+    width: 100%;
+  }
+
+  .admin-search {
+    flex: 1;
+    width: auto;
+  }
+
+  .admin-search-indicator {
+    display: none;
+  }
 }
 </style>
