@@ -3900,6 +3900,8 @@ const flowResourceTitle = computed(() => {
   return '流程画布'
 })
 function resolveResourceSourceDownloadUrl(resource: Resource | null | undefined): string {
+  if (isDeviceArrangementResource(resource))
+    return ''
   const rawUrl = String(resource?.sourceDownloadUrl || resource?.sourceLink || '').trim()
   if (!rawUrl)
     return ''
@@ -7229,10 +7231,14 @@ async function createDeviceArrangement(): Promise<void> {
         title: '设备排布',
       },
     })
+    const createdResource = response.data?.resource || null
     await refreshProjectResourceContext()
-    const createdResourceId = String(response.data?.resource?.id || '').trim()
+    const createdResourceId = String(createdResource?.id || '').trim()
     if (createdResourceId) {
-      await openProjectResourcePreview(createdResourceId, { forceReload: true })
+      await openProjectResourcePreview(createdResourceId, {
+        forceReload: true,
+        resourceHint: createdResource,
+      })
       statusLine.value = '已创建设备排布。'
       return
     }
@@ -7714,6 +7720,7 @@ interface OpenPreviewOptions {
   openTab?: boolean
   requestId?: number
   forceReload?: boolean
+  resourceHint?: Resource | null
 }
 
 interface OpenCollabOptions extends OpenPreviewOptions {
@@ -7913,12 +7920,12 @@ async function tryMigrateLegacyDeviceArrangement(resource: Resource | null, reso
   }
 }
 
-async function resolveProjectResourceOpenTarget(resourceId: string): Promise<ProjectResourceOpenTarget | null> {
+async function resolveProjectResourceOpenTarget(resourceId: string, resourceHint: Resource | null = null): Promise<ProjectResourceOpenTarget | null> {
   const targetResourceId = normalizeString(resourceId)
   if (!targetResourceId)
     return null
 
-  let targetResource = resources.value.find(item => item.id === targetResourceId) || null
+  let targetResource = resources.value.find(item => item.id === targetResourceId) || resourceHint
   if (!targetResource)
     return { resourceId: targetResourceId, surface: 'binary' }
 
@@ -8024,7 +8031,7 @@ async function openProjectResourcePreview(resourceId: string, options: OpenPrevi
   if (!activeProjectId.value || !targetResourceId)
     return
 
-  const target = await resolveProjectResourceOpenTarget(targetResourceId)
+  const target = await resolveProjectResourceOpenTarget(targetResourceId, options.resourceHint || null)
   if (!target)
     return
 
@@ -8049,7 +8056,8 @@ async function openProjectResourcePreview(resourceId: string, options: OpenPrevi
   const requestId = Number(options.requestId || ++projectResourcePreviewRequestId)
   const resolvedResourceId = target.resourceId
   const targetTabId = createResourceTabId(resolvedResourceId)
-  const resolvedResource = resources.value.find(item => item.id === resolvedResourceId) || null
+  const resolvedResource = resources.value.find(item => item.id === resolvedResourceId)
+    || (resolvedResourceId === targetResourceId ? (options.resourceHint || null) : null)
   const isTargetDeviceArrangement = isDeviceArrangementResource(resolvedResource)
 
   if (

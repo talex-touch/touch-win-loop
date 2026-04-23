@@ -305,6 +305,8 @@ export function resourceIconClass(resource: Resource): string {
 }
 
 export function hasDownloadableSource(resource: Resource): boolean {
+  if (isDeviceArrangementResource(resource))
+    return false
   const sourceDownloadUrl = String(resource.sourceDownloadUrl || '').trim()
   const sourceLink = String(resource.sourceLink || '').trim()
   return Boolean(sourceDownloadUrl || sourceLink)
