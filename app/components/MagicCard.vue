@@ -86,7 +86,7 @@ function handlePointerLeave() {
   padding: 28px;
   border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.58)), rgba(255, 255, 255, 0.5);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.56), rgba(255, 255, 255, 0.28)), rgba(255, 255, 255, 0.14);
   box-shadow:
     0 30px 100px rgba(15, 23, 42, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.78);
@@ -117,7 +117,7 @@ function handlePointerLeave() {
       color-mix(in srgb, var(--magic-card-glow-to) 18%, transparent) 0,
       transparent 46%
     );
-  opacity: 0.95;
+  opacity: 0.72;
 }
 
 .magic-card__border-glow {
@@ -186,7 +186,7 @@ function handlePointerLeave() {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent 36%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.44), rgba(255, 255, 255, 0) 30%);
-  opacity: 0.65;
+  opacity: 0.42;
 }
 
 .magic-card__content {

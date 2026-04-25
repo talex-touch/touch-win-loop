@@ -14,6 +14,7 @@ const ADMIN_CASDOOR_CONFIG_PATCH_FILE = resolve(process.cwd(), 'server/api/admin
 const ADMIN_OAUTH_CONFIG_GET_FILE = resolve(process.cwd(), 'server/api/admin/integrations/oauth/config.get.ts')
 const ADMIN_OAUTH_CONFIG_PATCH_FILE = resolve(process.cwd(), 'server/api/admin/integrations/oauth/config.patch.ts')
 const LOGIN_PAGE_FILE = resolve(process.cwd(), 'app/pages/login.vue')
+const MAGIC_CARD_FILE = resolve(process.cwd(), 'app/components/MagicCard.vue')
 const LOGIN_PAGE_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useLoginPage.ts')
 const AUTH_LAYOUT_FILE = resolve(process.cwd(), 'app/layouts/auth.vue')
 const AUTH_BIND_MIDDLEWARE_FILE = resolve(process.cwd(), 'app/middleware/auth-bind.ts')
@@ -71,9 +72,10 @@ it('登录页提供第三方 OAuth 入口并根据注册开关切换文案', asy
 })
 
 it('登录页通过 auth layout 承载背景与 footer，并保留表单入口', async () => {
-  const [layoutSource, pageSource] = await Promise.all([
+  const [layoutSource, pageSource, magicCardSource] = await Promise.all([
     readFile(AUTH_LAYOUT_FILE, 'utf8'),
     readFile(LOGIN_PAGE_FILE, 'utf8'),
+    readFile(MAGIC_CARD_FILE, 'utf8'),
   ])
 
   assert.match(layoutSource, /import UniverseBackground/, 'auth layout 未接入 UniverseBackground')
@@ -90,6 +92,7 @@ it('登录页通过 auth layout 承载背景与 footer，并保留表单入口',
   assert.match(pageSource, /data-testid="login-password-input"/, '登录页未内联密码输入框')
   assert.match(pageSource, /data-testid="login-submit-button"/, '登录页未内联登录提交按钮')
   assert.match(pageSource, /\{\{ loading \? '登录中\.\.\.' : '登录' \}\}/, '登录页提交按钮不应继续暴露自动注册文案')
+  assert.match(magicCardSource, /background:\s*linear-gradient\(180deg,\s*rgba\(255,\s*255,\s*255,\s*0\.56\),\s*rgba\(255,\s*255,\s*255,\s*0\.28\)\),\s*rgba\(255,\s*255,\s*255,\s*0\.14\);/, '登录卡片背景未保持半透明玻璃层')
   assert.doesNotMatch(pageSource, /<LoginFooterBar/, '登录页不应再直接内联 FooterBar')
   assert.doesNotMatch(pageSource, /<UniverseBackground/, '登录页不应再直接内联 UniverseBackground')
   assert.match(pageSource, /scale-\[0\.64\] sm:scale-\[0\.72\]/, '登录页未按卡片尺寸调整 Text Logo 比例')
