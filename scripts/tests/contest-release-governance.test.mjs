@@ -128,5 +128,12 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /赛道确认表单/, '赛道详情弹窗应是表单确认语义')
     assert.match(workbenchSource, /<a-table[\s\S]*detailContestSnapshot\.tracks/, '赛道库快照应改为表格')
     assert.doesNotMatch(workbenchSource, /\{\{\s*trackSummary\(item\)\s*\}\}/, '赛道库不应再用长文本卡片展示')
+
+    assert.match(workbenchSource, /reviewLogDrawerVisible/, '审批日志详情应使用独立 drawer 状态')
+    assert.match(workbenchSource, /selectedReviewLog/, '审批日志详情应按单条日志打开')
+    assert.match(workbenchSource, /审批日志详情/, '审批日志 drawer 应有明确标题')
+    assert.match(workbenchSource, /openReviewLogDetail\(record\)/, '审批日志列表应点击打开详情 drawer')
+    assert.match(workbenchSource, /<a-drawer[\s\S]*v-model:visible="reviewLogDrawerVisible"[\s\S]*title="审批日志详情"/, '审批日志详情应放入独立 drawer')
+    assert.doesNotMatch(workbenchSource, /<pre v-if="Object\.keys\(item\.payload \|\| \{\}\)\.length"[\s\S]*JSON\.stringify\(item\.payload/, '审批日志列表不应直接展开 payload')
   })
 })
