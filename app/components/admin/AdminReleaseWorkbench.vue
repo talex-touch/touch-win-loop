@@ -93,10 +93,12 @@ const rejectReason = ref('')
 const detailVisible = ref(false)
 const timelineVisible = ref(false)
 const trackDetailVisible = ref(false)
+const reviewLogDrawerVisible = ref(false)
 const detail = ref<ReleaseVersionDetail | null>(null)
 const versions = ref<ReleaseVersion[]>([])
 const currentUserId = ref('')
 const selectedTrack = ref<ContestReleaseTrackSnapshot | null>(null)
+const selectedReviewLog = ref<ReleaseReviewLog | null>(null)
 
 const statusFilter = ref<ReleaseVersionStatus | ''>('')
 const selectedVersionId = ref('')
@@ -319,6 +321,12 @@ function trackFormRows(item: ContestReleaseTrackSnapshot | null) {
   ]
 }
 
+function reviewLogPayloadText(item: ReleaseReviewLog | null): string {
+  if (!item || !Object.keys(item.payload || {}).length)
+    return '{}'
+  return JSON.stringify(item.payload, null, 2)
+}
+
 async function loadCurrentUser() {
   try {
     const data = await requestApi<AuthMeResult>(
@@ -363,7 +371,9 @@ async function openDetail(versionId: string) {
   rejectReason.value = ''
   timelineVisible.value = false
   trackDetailVisible.value = false
+  reviewLogDrawerVisible.value = false
   selectedTrack.value = null
+  selectedReviewLog.value = null
   try {
     const data = await requestApi<ReleaseVersionDetail>(
       endpoint(`/admin/releases/${encodeURIComponent(versionId)}`),
@@ -385,6 +395,11 @@ async function openDetail(versionId: string) {
 function openTrackDetail(item: ContestReleaseTrackSnapshot) {
   selectedTrack.value = item
   trackDetailVisible.value = true
+}
+
+function openReviewLogDetail(item: ReleaseReviewLog) {
+  selectedReviewLog.value = item
+  reviewLogDrawerVisible.value = true
 }
 
 async function mutateVersion(
@@ -867,25 +882,54 @@ onMounted(() => {
         </section>
 
         <section class="p-3 border border-slate-200 rounded">
-          <h3 class="text-sm text-slate-900 font-semibold">
-            审批日志
-          </h3>
-          <div v-if="detail.logs.length" class="mt-3 space-y-2">
-            <div v-for="item in detail.logs" :key="item.id" class="p-2 border border-slate-200 rounded">
-              <div class="flex flex-wrap gap-2 items-center justify-between">
-                <p class="text-slate-900 font-medium">
-                  {{ actionLabel(item.action) }}
-                </p>
-                <p class="text-slate-500">
-                  {{ formatDateTime(item.createdAt) }}
-                </p>
-              </div>
-              <p class="text-slate-500 mt-1">
-                操作人：{{ item.actorUserId || '-' }}
-              </p>
-              <pre v-if="Object.keys(item.payload || {}).length" class="text-[11px] text-slate-700 mt-2 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ JSON.stringify(item.payload, null, 2) }}</pre>
-            </div>
+          <div class="flex flex-wrap gap-2 items-center justify-between">
+            <h3 class="text-sm text-slate-900 font-semibold">
+              审批日志
+            </h3>
+            <p class="text-[11px] text-slate-500">
+              点击查看详情
+            </p>
           </div>
+          <a-table
+            v-if="detail.logs.length"
+            class="mt-3"
+            :data="detail.logs"
+            :pagination="false"
+            :bordered="false"
+            size="small"
+            row-key="id"
+          >
+            <template #columns>
+              <a-table-column title="动作" data-index="action">
+                <template #cell="{ record }">
+                  <p class="text-xs text-slate-900 font-medium">
+                    {{ actionLabel(record.action) }}
+                  </p>
+                </template>
+              </a-table-column>
+              <a-table-column title="操作人" data-index="actorUserId" :width="260">
+                <template #cell="{ record }">
+                  <p class="text-[11px] text-slate-500 break-all">
+                    {{ record.actorUserId || '-' }}
+                  </p>
+                </template>
+              </a-table-column>
+              <a-table-column title="时间" data-index="createdAt" :width="160">
+                <template #cell="{ record }">
+                  <p class="text-[11px] text-slate-500">
+                    {{ formatDateTime(record.createdAt) }}
+                  </p>
+                </template>
+              </a-table-column>
+              <a-table-column title="操作" data-index="actions" :width="96" fixed="right">
+                <template #cell="{ record }">
+                  <button class="dense-btn" type="button" @click="openReviewLogDetail(record)">
+                    查看
+                  </button>
+                </template>
+              </a-table-column>
+            </template>
+          </a-table>
           <a-empty v-else description="暂无审批日志" />
         </section>
 
@@ -938,6 +982,42 @@ onMounted(() => {
       </div>
 
       <a-empty v-else description="未加载到版本详情" />
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="reviewLogDrawerVisible"
+      width="640px"
+      title="审批日志详情"
+      unmount-on-close
+    >
+      <div v-if="selectedReviewLog" class="text-xs space-y-4">
+        <section class="p-3 border border-slate-200 rounded bg-slate-50">
+          <div class="flex flex-wrap gap-2 items-center justify-between">
+            <h3 class="text-sm text-slate-900 font-semibold">
+              {{ actionLabel(selectedReviewLog.action) }}
+            </h3>
+            <p class="text-slate-500">
+              {{ formatDateTime(selectedReviewLog.createdAt) }}
+            </p>
+          </div>
+          <div class="mt-3 gap-2 grid">
+            <p class="text-slate-600 break-all">
+              操作人：{{ selectedReviewLog.actorUserId || '-' }}
+            </p>
+            <p class="text-slate-600 break-all">
+              日志 ID：{{ selectedReviewLog.id }}
+            </p>
+          </div>
+        </section>
+
+        <section class="p-3 border border-slate-200 rounded">
+          <h3 class="text-sm text-slate-900 font-semibold">
+            原始数据
+          </h3>
+          <pre class="text-[11px] text-slate-700 mt-3 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ reviewLogPayloadText(selectedReviewLog) }}</pre>
+        </section>
+      </div>
+      <a-empty v-else description="未选择审批日志" />
     </a-drawer>
 
     <a-modal
