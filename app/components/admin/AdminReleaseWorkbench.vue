@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   ApiResponse,
+  AuthMeResult,
   ContestReleaseContestSnapshot,
   ContestReleaseResourceSnapshot,
   ContestReleaseSnapshot,
@@ -90,8 +91,12 @@ const errorText = ref('')
 const successText = ref('')
 const rejectReason = ref('')
 const detailVisible = ref(false)
+const timelineVisible = ref(false)
+const trackDetailVisible = ref(false)
 const detail = ref<ReleaseVersionDetail | null>(null)
 const versions = ref<ReleaseVersion[]>([])
+const currentUserId = ref('')
+const selectedTrack = ref<ContestReleaseTrackSnapshot | null>(null)
 
 const statusFilter = ref<ReleaseVersionStatus | ''>('')
 const selectedVersionId = ref('')
@@ -252,6 +257,82 @@ const canPublishCurrentDetail = computed(() => {
   return detail.value.publishCheck?.canPublish !== false
 })
 
+function normalizeUserId(value?: string | null): string {
+  return String(value || '').trim()
+}
+
+function isCurrentUser(userId?: string | null): boolean {
+  const normalizedCurrentUserId = normalizeUserId(currentUserId.value)
+  return Boolean(normalizedCurrentUserId && normalizeUserId(userId) === normalizedCurrentUserId)
+}
+
+function canReviewSecond(version: ReleaseVersion): boolean {
+  return version.status === 'pending_second_review'
+    && Boolean(normalizeUserId(currentUserId.value))
+    && !isCurrentUser(version.firstReviewByUserId)
+    && isCurrentUser(version.secondReviewClaimedByUserId)
+}
+
+function canRejectVersion(version: ReleaseVersion): boolean {
+  if (version.status === 'pending_first_review' || version.status === 'approved')
+    return true
+  if (version.status === 'pending_second_review')
+    return canReviewSecond(version)
+  return false
+}
+
+function secondReviewNotice(version: ReleaseVersion): string {
+  if (version.status !== 'pending_second_review')
+    return ''
+  if (!normalizeUserId(currentUserId.value))
+    return '正在确认当前登录用户，暂不能处理二审。'
+  if (isCurrentUser(version.firstReviewByUserId))
+    return '你已完成初审，二审必须由其他管理员领取并处理。'
+  if (!normalizeUserId(version.secondReviewClaimedByUserId))
+    return '请先通过随机领取进入二审，再执行审批。'
+  if (!isCurrentUser(version.secondReviewClaimedByUserId))
+    return '该版本已被其他管理员领取二审。'
+  return ''
+}
+
+function arrayText(items?: string[] | null): string {
+  return Array.isArray(items) && items.length ? items.join('、') : '-'
+}
+
+function trackFormRows(item: ContestReleaseTrackSnapshot | null) {
+  if (!item)
+    return []
+  return [
+    { label: '赛道编号', value: item.externalId || '-' },
+    { label: '赛道名称', value: item.name || '-' },
+    { label: '具体位置', value: item.location || '-' },
+    { label: '主办方', value: item.organizer || '-' },
+    { label: '承办方', value: item.undertaker || '-' },
+    { label: '参赛对象', value: item.participantRequirements || '-' },
+    { label: '组队规则', value: item.teamRule || '-' },
+    { label: '适合专业', value: arrayText(item.suitableMajors) },
+    { label: '奖项比例', value: item.awardRatio || '-' },
+    { label: '证明材料', value: arrayText(item.evidenceRequirements) },
+    { label: '评分要点', value: arrayText(item.scoringPoints) },
+    { label: '扣分项', value: arrayText(item.deductionItems) },
+    { label: '提交内容', value: arrayText(item.deliverableTypes) },
+  ]
+}
+
+async function loadCurrentUser() {
+  try {
+    const data = await requestApi<AuthMeResult>(
+      endpoint('/auth/me'),
+      {},
+      '当前用户加载失败。',
+    )
+    currentUserId.value = data.user.id || ''
+  }
+  catch {
+    currentUserId.value = ''
+  }
+}
+
 async function loadVersions() {
   loading.value = true
   errorText.value = ''
@@ -280,6 +361,9 @@ async function openDetail(versionId: string) {
   detailLoading.value = true
   errorText.value = ''
   rejectReason.value = ''
+  timelineVisible.value = false
+  trackDetailVisible.value = false
+  selectedTrack.value = null
   try {
     const data = await requestApi<ReleaseVersionDetail>(
       endpoint(`/admin/releases/${encodeURIComponent(versionId)}`),
@@ -296,6 +380,11 @@ async function openDetail(versionId: string) {
   finally {
     detailLoading.value = false
   }
+}
+
+function openTrackDetail(item: ContestReleaseTrackSnapshot) {
+  selectedTrack.value = item
+  trackDetailVisible.value = true
 }
 
 async function mutateVersion(
@@ -403,24 +492,6 @@ function resourceSummary(item: ContestReleaseResourceSnapshot): string {
   ].filter(Boolean).join(' / ')
 }
 
-function trackSummary(item: ContestReleaseTrackSnapshot): string {
-  return [
-    item.externalId,
-    item.name,
-    item.location || '',
-    item.organizer || '',
-    item.undertaker || '',
-    item.participantRequirements || '',
-    item.teamRule || '',
-    (item.suitableMajors || []).join('、'),
-    item.awardRatio || '',
-    (item.evidenceRequirements || []).join('、'),
-    (item.scoringPoints || []).join('、'),
-    (item.deductionItems || []).join('、'),
-    (item.deliverableTypes || []).join('、'),
-  ].filter(Boolean).join(' / ')
-}
-
 function policySummary(item: PolicyLibraryItemSnapshot): string {
   return [
     item.externalId,
@@ -441,6 +512,10 @@ function policySummary(item: PolicyLibraryItemSnapshot): string {
 }
 
 watch(() => props.fetchPath, loadVersions, { immediate: true })
+
+onMounted(() => {
+  void loadCurrentUser()
+})
 </script>
 
 <template>
@@ -579,27 +654,11 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
               </template>
             </a-table-column>
 
-            <a-table-column title="操作" data-index="actions" :width="250" fixed="right">
+            <a-table-column title="操作" data-index="actions" :width="120" fixed="right">
               <template #cell="{ record }">
                 <div class="flex flex-wrap gap-2">
                   <button class="dense-btn" :disabled="actionLoading" @click="selectedVersionId = record.id; openDetail(record.id)">
-                    查看
-                  </button>
-                  <button
-                    v-if="record.status === 'pending_first_review'"
-                    class="dense-btn"
-                    :disabled="actionLoading"
-                    @click="mutateVersion(record.id, 'approve', { stage: 'first' })"
-                  >
-                    初审通过
-                  </button>
-                  <button
-                    v-if="record.status === 'pending_second_review'"
-                    class="dense-btn"
-                    :disabled="actionLoading"
-                    @click="mutateVersion(record.id, 'approve', { stage: 'second' })"
-                  >
-                    二审通过
+                    审核
                   </button>
                 </div>
               </template>
@@ -633,9 +692,14 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
                 版本 V{{ detail.version.versionNumber }} · {{ detail.version.scopeId }}
               </p>
             </div>
-            <a-tag size="small" :color="statusColor(detail.version.status)">
-              {{ statusLabel(detail.version.status) }}
-            </a-tag>
+            <div class="flex flex-wrap gap-2 items-center justify-end">
+              <a-tag size="small" :color="statusColor(detail.version.status)">
+                {{ statusLabel(detail.version.status) }}
+              </a-tag>
+              <button class="dense-btn" type="button" @click="timelineVisible = true">
+                查看流程时间线
+              </button>
+            </div>
           </div>
           <div class="mt-3 gap-2 grid md:grid-cols-2">
             <p class="text-slate-600">
@@ -721,11 +785,53 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
             <h3 class="text-sm text-slate-900 font-semibold">
               赛道库快照
             </h3>
-            <div v-if="detailContestSnapshot.tracks.length" class="mt-3 space-y-2">
-              <div v-for="item in detailContestSnapshot.tracks" :key="item.externalId" class="p-2 border border-slate-200 rounded bg-slate-50">
-                {{ trackSummary(item) }}
-              </div>
-            </div>
+            <a-table
+              v-if="detailContestSnapshot.tracks.length"
+              class="mt-3"
+              :data="detailContestSnapshot.tracks"
+              :pagination="false"
+              :bordered="false"
+              size="small"
+              row-key="externalId"
+            >
+              <template #columns>
+                <a-table-column title="赛道编号" data-index="externalId" :width="160">
+                  <template #cell="{ record }">
+                    <p class="text-[11px] text-slate-600 break-all">
+                      {{ record.externalId || '-' }}
+                    </p>
+                  </template>
+                </a-table-column>
+                <a-table-column title="赛道名称" data-index="name">
+                  <template #cell="{ record }">
+                    <p class="text-xs text-slate-900 font-medium">
+                      {{ record.name || '-' }}
+                    </p>
+                  </template>
+                </a-table-column>
+                <a-table-column title="主办方" data-index="organizer" :width="180">
+                  <template #cell="{ record }">
+                    <p class="text-xs text-slate-600">
+                      {{ record.organizer || '-' }}
+                    </p>
+                  </template>
+                </a-table-column>
+                <a-table-column title="位置" data-index="location" :width="160">
+                  <template #cell="{ record }">
+                    <p class="text-xs text-slate-600">
+                      {{ record.location || '-' }}
+                    </p>
+                  </template>
+                </a-table-column>
+                <a-table-column title="操作" data-index="actions" :width="96" fixed="right">
+                  <template #cell="{ record }">
+                    <button class="dense-btn" type="button" @click="openTrackDetail(record)">
+                      确认
+                    </button>
+                  </template>
+                </a-table-column>
+              </template>
+            </a-table>
             <a-empty v-else description="当前版本没有赛道变更" />
             <div class="mt-3">
               <p class="text-slate-400 mb-1">
@@ -758,36 +864,6 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
             </div>
           </div>
           <a-empty v-else description="当前版本没有政策项" />
-        </section>
-
-        <section class="p-3 border border-slate-200 rounded">
-          <h3 class="text-sm text-slate-900 font-semibold">
-            流程时间线
-          </h3>
-          <div v-if="detailWorkflowTimeline.length" class="mt-3 space-y-2">
-            <div v-for="item in detailWorkflowTimeline" :key="item.id" class="p-2 border border-slate-200 rounded">
-              <div class="flex flex-wrap gap-2 items-center justify-between">
-                <div class="flex flex-wrap gap-2 items-center">
-                  <a-tag size="small" :color="timelineSourceColor(item.source)">
-                    {{ timelineSourceLabel(item.source) }}
-                  </a-tag>
-                  <p class="text-slate-900 font-medium">
-                    {{ item.title }}
-                  </p>
-                </div>
-                <p class="text-slate-500">
-                  {{ formatDateTime(item.createdAt) }}
-                </p>
-              </div>
-              <p class="text-slate-500 mt-1">
-                actor={{ item.actorUserId || '-' }} · version={{ item.versionNumber ? `V${item.versionNumber}` : '-' }} · syncRun={{ item.syncRunId || '-' }}
-              </p>
-              <p v-if="item.description" class="text-slate-600 mt-1">
-                {{ item.description }}
-              </p>
-            </div>
-          </div>
-          <a-empty v-else description="暂无流程时间线" />
         </section>
 
         <section class="p-3 border border-slate-200 rounded">
@@ -828,7 +904,7 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
               初审通过
             </button>
             <button
-              v-if="detail.version.status === 'pending_second_review'"
+              v-if="canReviewSecond(detail.version)"
               class="dense-btn"
               :disabled="actionLoading"
               @click="mutateVersion(detail.version.id, 'approve', { stage: 'second' })"
@@ -836,7 +912,7 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
               二审通过
             </button>
             <button
-              v-if="['pending_first_review', 'pending_second_review', 'approved'].includes(detail.version.status)"
+              v-if="canRejectVersion(detail.version)"
               class="dense-btn"
               :disabled="actionLoading"
               @click="mutateVersion(detail.version.id, 'reject', { reason: rejectReason })"
@@ -852,6 +928,9 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
               发布替换
             </button>
           </div>
+          <p v-if="secondReviewNotice(detail.version)" class="text-xs text-amber-700">
+            {{ secondReviewNotice(detail.version) }}
+          </p>
           <p v-if="detail.version.status === 'approved' && detail.publishCheck && !detail.publishCheck.canPublish" class="text-xs text-amber-700">
             当前版本仍存在发布阻断项，建议先驳回并补齐后再进入发布。
           </p>
@@ -860,5 +939,64 @@ watch(() => props.fetchPath, loadVersions, { immediate: true })
 
       <a-empty v-else description="未加载到版本详情" />
     </a-drawer>
+
+    <a-modal
+      v-model:visible="timelineVisible"
+      :footer="false"
+      title="流程时间线"
+      width="760px"
+      unmount-on-close
+    >
+      <div v-if="detailWorkflowTimeline.length" class="text-xs pr-1 max-h-[70vh] overflow-auto space-y-2">
+        <div v-for="item in detailWorkflowTimeline" :key="item.id" class="p-2 border border-slate-200 rounded">
+          <div class="flex flex-wrap gap-2 items-center justify-between">
+            <div class="flex flex-wrap gap-2 items-center">
+              <a-tag size="small" :color="timelineSourceColor(item.source)">
+                {{ timelineSourceLabel(item.source) }}
+              </a-tag>
+              <p class="text-slate-900 font-medium">
+                {{ item.title }}
+              </p>
+            </div>
+            <p class="text-slate-500">
+              {{ formatDateTime(item.createdAt) }}
+            </p>
+          </div>
+          <p class="text-slate-500 mt-1">
+            actor={{ item.actorUserId || '-' }} · version={{ item.versionNumber ? `V${item.versionNumber}` : '-' }} · syncRun={{ item.syncRunId || '-' }}
+          </p>
+          <p v-if="item.description" class="text-slate-600 mt-1">
+            {{ item.description }}
+          </p>
+        </div>
+      </div>
+      <a-empty v-else description="暂无流程时间线" />
+    </a-modal>
+
+    <a-modal
+      v-model:visible="trackDetailVisible"
+      :footer="false"
+      title="赛道确认表单"
+      width="760px"
+      unmount-on-close
+    >
+      <a-form v-if="selectedTrack" :model="selectedTrack" layout="vertical" class="text-xs">
+        <div class="gap-3 grid md:grid-cols-2">
+          <a-form-item v-for="item in trackFormRows(selectedTrack)" :key="item.label" :label="item.label">
+            <a-textarea
+              :model-value="item.value"
+              :auto-size="{ minRows: item.value.length > 80 ? 2 : 1, maxRows: 6 }"
+              readonly
+            />
+          </a-form-item>
+        </div>
+        <div class="pt-2 flex justify-end">
+          <button class="dense-btn" type="button" @click="trackDetailVisible = false">
+            确认
+          </button>
+        </div>
+      </a-form>
+      <a-empty v-else description="未选择赛道" />
+    </a-modal>
   </section>
 </template>

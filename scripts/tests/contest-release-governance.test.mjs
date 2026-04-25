@@ -101,4 +101,32 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(auditPageSource, /流程时间线/, '审计页未改为流程时间线视图')
     assert.match(auditPageSource, /sourceLabel/, '审计页未展示来源标签')
   })
+
+  it('版本审批工作台收口为审核入口、二级时间线和赛道确认表单', async () => {
+    const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
+    const tableActionSource = workbenchSource.slice(
+      workbenchSource.indexOf('<a-table-column title="操作"'),
+      workbenchSource.indexOf('<a-drawer'),
+    )
+
+    assert.match(tableActionSource, />\s*审核\s*</, '列表操作列应统一为审核入口')
+    assert.doesNotMatch(tableActionSource, />\s*查看\s*</, '列表操作列不应再展示查看按钮')
+    assert.doesNotMatch(tableActionSource, />\s*初审通过\s*</, '列表操作列不应直接初审通过')
+    assert.doesNotMatch(tableActionSource, />\s*二审通过\s*</, '列表操作列不应直接二审通过')
+
+    assert.match(workbenchSource, /currentUserId/, '工作台需要加载当前用户用于审批约束')
+    assert.match(workbenchSource, /canReviewSecond\(detail\.version\)/, '二审按钮必须经过当前用户与领取人校验')
+    assert.match(workbenchSource, /firstReviewByUserId/, '二审校验必须识别初审人')
+    assert.match(workbenchSource, /secondReviewClaimedByUserId/, '二审校验必须识别领取人')
+
+    assert.match(workbenchSource, /timelineVisible/, '流程时间线应作为二级弹窗状态管理')
+    assert.match(workbenchSource, /查看流程时间线/, '版本详情应提供流程时间线二级入口')
+    assert.match(workbenchSource, /<a-modal[\s\S]*v-model:visible="timelineVisible"[\s\S]*title="流程时间线"/, '流程时间线应放入二级弹窗')
+
+    assert.match(workbenchSource, /trackDetailVisible/, '赛道详情应使用独立确认表单弹窗')
+    assert.match(workbenchSource, /selectedTrack/, '赛道详情应按单条赛道打开')
+    assert.match(workbenchSource, /赛道确认表单/, '赛道详情弹窗应是表单确认语义')
+    assert.match(workbenchSource, /<a-table[\s\S]*detailContestSnapshot\.tracks/, '赛道库快照应改为表格')
+    assert.doesNotMatch(workbenchSource, /\{\{\s*trackSummary\(item\)\s*\}\}/, '赛道库不应再用长文本卡片展示')
+  })
 })
