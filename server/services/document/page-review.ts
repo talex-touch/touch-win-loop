@@ -149,13 +149,15 @@ function normalizeAiFindings(rawFindings: z.infer<typeof pageReviewFindingSchema
   const findings = rawFindings
     .map((finding) => {
       const pageNumber = Math.max(1, Number(finding.pageNumber || 1))
-      const page = pageMap.get(pageNumber)
-      const firstBlock = page ? firstBlockForPage(page) : null
+      if (!pageMap.has(pageNumber))
+        return null
+      const page = pageMap.get(pageNumber)!
+      const firstBlock = firstBlockForPage(page)
       const sourceBlockIds = finding.sourceBlockIds
         .map(item => normalizeString(item))
         .filter(Boolean)
       const quote = normalizeString(finding.quote)
-        || summarizeText(firstBlock?.text || page?.text || '', 160)
+        || summarizeText(firstBlock?.text || page.text || '', 160)
       return {
         pageNumber,
         severity: normalizeSeverity(finding.severity),
@@ -172,7 +174,7 @@ function normalizeAiFindings(rawFindings: z.infer<typeof pageReviewFindingSchema
         confidence: Math.max(0, Math.min(1, Number(finding.confidence || 0.65))),
       }
     })
-    .filter(finding => finding.pageNumber > 0 && finding.title && finding.comment)
+    .filter((finding): finding is NonNullable<typeof finding> => Boolean(finding?.pageNumber && finding.title && finding.comment))
 
   const coveredPages = new Set(findings.map(finding => finding.pageNumber))
   const fallbackByPage = buildFallbackFindings(pages)

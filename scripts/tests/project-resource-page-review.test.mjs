@@ -43,6 +43,7 @@ it('pdf/ppt 页级审稿复用预览 PDF 与 document_analysis，并保证每页
   assert.match(chain, /sourceBlockIds/, '审稿链路未要求 sourceBlockIds')
   assert.match(chain, /quote/, '审稿链路未要求 quote')
   assert.match(chain, /coveredPages/, '审稿链路未补齐无意见页面')
+  assert.match(chain, /pageMap\.has\(pageNumber\)/, '审稿链路未过滤 AI 返回的不存在页码')
   assert.match(chain, /fallbackFilledPageCount/, '审稿链路未统计 AI 漏页后的规则补齐页数')
   assert.match(chain, /fallbackUsed: fallbackFilledPageCount > 0/, '审稿链路未把部分页面规则补齐透出为 fallbackUsed')
   assert.match(api, /runProjectResourcePageReview/, '创建接口未运行页级审稿')
