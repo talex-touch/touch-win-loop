@@ -12,7 +12,7 @@ const BILLING_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/billin
 const SWITCH_ENTRY_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceSwitchEntry.vue')
 const TEAM_INDEX_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/index.vue')
 
-it('Business Team 结算具备 mock order 持久化与用户侧 API', async () => {
+it('business Team 结算具备 mock order 持久化与用户侧 API', async () => {
   const [schema, store, plansApi, checkoutApi, ordersApi] = await Promise.all([
     readFile(SCHEMA_FILE, 'utf8'),
     readFile(CONTEST_STORE_FILE, 'utf8'),
@@ -28,6 +28,8 @@ it('Business Team 结算具备 mock order 持久化与用户侧 API', async () =
   assert.match(store, /listWorkspaceBillingOrders/, '计费 store 缺少订单列表')
   assert.match(plansApi, /listBillingPlans\(db, false\)/, '用户侧套餐 API 未只返回启用套餐')
   assert.match(checkoutApi, /createWorkspaceBillingMockCheckout/, 'checkout API 未接入 mock 支付')
+  assert.match(checkoutApi, /SUPPORTED_BILLING_CYCLES/, 'checkout API 未显式约束 billingCycle')
+  assert.match(checkoutApi, /billingCycle 仅支持 monthly \/ quarterly \/ yearly。/, 'checkout API 缺少非法 billingCycle 错误提示')
   assert.match(ordersApi, /listWorkspaceBillingOrders/, '订单 API 未返回 Team 结算记录')
 })
 

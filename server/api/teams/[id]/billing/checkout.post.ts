@@ -6,9 +6,12 @@ import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { teamHasWorkspaceRoles } from '~~/server/utils/team-membership-store'
 
+const SUPPORTED_BILLING_CYCLES = ['monthly', 'quarterly', 'yearly'] as const
+type SupportedBillingCycle = typeof SUPPORTED_BILLING_CYCLES[number]
+
 interface MockCheckoutBody {
   planId?: string
-  billingCycle?: 'monthly' | 'quarterly' | 'yearly'
+  billingCycle?: string
 }
 
 export default defineEventHandler(async (event) => {
@@ -29,6 +32,18 @@ export default defineEventHandler(async (event) => {
     }, 400136)
   }
 
+  const billingCycle = String(body.billingCycle || 'monthly').trim() as SupportedBillingCycle
+  if (!SUPPORTED_BILLING_CYCLES.includes(billingCycle)) {
+    setResponseStatus(event, 400)
+    return fail('billingCycle 仅支持 monthly / quarterly / yearly。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 400138)
+  }
+
   try {
     const result = await withTransaction(event, async (db) => {
       const canManage = await teamHasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
@@ -37,7 +52,7 @@ export default defineEventHandler(async (event) => {
       return createWorkspaceBillingMockCheckout(db, {
         workspaceId,
         planId: body.planId!,
-        billingCycle: body.billingCycle || 'monthly',
+        billingCycle,
         actorUserId: user.id,
       })
     })
