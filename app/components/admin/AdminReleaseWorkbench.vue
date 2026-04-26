@@ -38,6 +38,7 @@ const props = withDefaults(defineProps<{
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
+const route = useRoute()
 
 type ApiRequestError = Error & {
   data?: {
@@ -106,6 +107,11 @@ const selectedReviewLog = ref<ReleaseReviewLog | null>(null)
 
 const statusFilter = ref<ReleaseVersionStatus | ''>('')
 const selectedVersionId = ref('')
+const routeVersionId = computed(() => {
+  const value = route.query.versionId
+  return Array.isArray(value) ? String(value[0] || '').trim() : String(value || '').trim()
+})
+
 const statusOptions: Array<{ value: ReleaseVersionStatus | '', label: string }> = [
   { value: '', label: '全部状态' },
   { value: 'pending_first_review', label: '待初审' },
@@ -382,6 +388,7 @@ async function loadVersions() {
       versions.value = data.items || []
       queueStats.value = data.stats
       queueTotal.value = data.total
+      await openRouteVersionDetail(data.items)
     }
     else {
       versions.value = data || []
@@ -429,6 +436,17 @@ async function openDetail(versionId: string) {
   }
 }
 
+async function openRouteVersionDetail(items: ReleaseVersion[] = versions.value) {
+  const versionId = routeVersionId.value
+  if (!versionId)
+    return
+  if (detailVisible.value && detail.value?.version.id === versionId)
+    return
+
+  const listedVersion = items.find(item => item.id === versionId)
+  selectedVersionId.value = listedVersion?.id || versionId
+  await openDetail(versionId)
+}
 
 function openTrackDetail(item: ContestReleaseTrackSnapshot) {
   selectedTrack.value = item
@@ -565,6 +583,10 @@ function policySummary(item: PolicyLibraryItemSnapshot): string {
 }
 
 watch(() => props.fetchPath, loadVersions, { immediate: true })
+
+watch(routeVersionId, async () => {
+  await openRouteVersionDetail(versions.value)
+})
 
 onMounted(() => {
   void loadCurrentUser()

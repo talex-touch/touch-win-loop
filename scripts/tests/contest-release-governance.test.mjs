@@ -154,4 +154,34 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /queueStats\.value \|\|/, '版本工作台 summary 仍只按当前加载列表计数')
     assert.match(workbenchSource, /顶部统计为全量口径/, '版本工作台未提示统计与当前加载列表的口径差异')
   })
+
+  it('后台赛事列表的四个操作会按 live 与待审版本分流', async () => {
+    const pageSource = await readSource('app/pages/admin/contests.vue')
+
+    assert.match(pageSource, /function buildReleaseDetailPath\(record: AdminContestListItem\): string/, '赛事列表缺少待审版本详情深链构造函数')
+    assert.match(pageSource, /url\.searchParams\.set\('versionId', record\.latestReleaseVersionId\)/, '待审版本详情深链未携带 versionId')
+    assert.match(pageSource, /async function goToReleaseDetail\(record: AdminContestListItem\)/, '赛事列表缺少统一版本详情跳转函数')
+    assert.match(pageSource, /goToContestOverviewEditor\(record\)/, '编辑版本按钮仍只传 live contest id')
+    assert.match(pageSource, /goToContestWorkspace\(record\)/, '工作区按钮仍只传 live contest id')
+    assert.match(pageSource, /:disabled="!record\.id"/, '未生成 live 赛事的工作区按钮未置灰')
+    assert.match(pageSource, /发布后生成工作区/, '未生成 live 赛事的工作区按钮缺少明确提示')
+    assert.doesNotMatch(pageSource, /if \(!contestId\) \{\s+await navigateTo\('\/admin\/releases\/queue'\)/, '无 live id 时不应再把所有操作裸跳全局审批队列')
+    assert.doesNotMatch(pageSource, /if \(!record\.id\) \{\s+await navigateTo\('\/admin\/releases\/queue'\)/, '无 live id 的版本操作不应裸跳全局审批队列')
+  })
+
+  it('发布审批工作台支持 versionId 深链自动打开详情', async () => {
+    const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
+
+    assert.match(workbenchSource, /const route = useRoute\(\)/, '版本工作台未读取当前路由')
+    assert.match(workbenchSource, /const routeVersionId = computed/, '版本工作台缺少 versionId query 解析')
+    assert.match(workbenchSource, /async function openRouteVersionDetail\(/, '版本工作台缺少深链详情打开函数')
+    assert.match(workbenchSource, /await openRouteVersionDetail\(data\.items\)/, '队列结果加载后未尝试打开深链版本详情')
+    assert.match(workbenchSource, /watch\(routeVersionId,[\s\S]*openRouteVersionDetail\(versions\.value\)/, 'versionId query 变化时未重新打开对应版本')
+  })
+
+  it('管理页标签会识别发布审批队列路由', async () => {
+    const tabSource = await readSource('app/composables/useAdminRouteTabs.ts')
+
+    assert.match(tabSource, /if \(path === '\/admin\/releases\/queue'\)\s+return '发布审批队列'/, '管理页 tabs 未给发布审批队列专用标题')
+  })
 })

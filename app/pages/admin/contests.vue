@@ -197,21 +197,29 @@ function resetFilters() {
   void loadContests()
 }
 
-async function goToContestWorkspace(contestId?: string) {
-  if (!contestId) {
-    await navigateTo('/admin/releases/queue')
-    return
-  }
-  await navigateTo(`/admin/contests/${contestId}`)
+function buildReleaseDetailPath(record: AdminContestListItem): string {
+  const url = new URL('/admin/releases/queue', 'http://localhost')
+  if (record.latestReleaseVersionId)
+    url.searchParams.set('versionId', record.latestReleaseVersionId)
+  return `${url.pathname}${url.search}`
 }
 
-async function goToContestOverviewEditor(contestId?: string) {
-  if (!contestId) {
-    await navigateTo('/admin/releases/queue')
+async function goToReleaseDetail(record: AdminContestListItem) {
+  await navigateTo(buildReleaseDetailPath(record))
+}
+
+async function goToContestWorkspace(record: AdminContestListItem) {
+  if (!record.id)
+    return
+  await navigateTo(`/admin/contests/${record.id}`)
+}
+
+async function goToContestOverviewEditor(record: AdminContestListItem) {
+  if (!record.id) {
+    await goToReleaseDetail(record)
+    return
   }
-  else {
-    await navigateTo(`/admin/contests/${contestId}/overview/edit`)
-  }
+  await navigateTo(`/admin/contests/${record.id}/overview/edit`)
 }
 
 async function goToContestReleases(record: AdminContestListItem) {
@@ -219,7 +227,7 @@ async function goToContestReleases(record: AdminContestListItem) {
     await navigateTo(`/admin/contests/${record.id}/releases`)
     return
   }
-  await navigateTo('/admin/releases/queue')
+  await goToReleaseDetail(record)
 }
 
 async function goToContestAudit(record: AdminContestListItem) {
@@ -227,7 +235,7 @@ async function goToContestAudit(record: AdminContestListItem) {
     await navigateTo(`/admin/contests/${record.id}/audit`)
     return
   }
-  await navigateTo('/admin/releases/queue')
+  await goToReleaseDetail(record)
 }
 
 function rowKey(record: AdminContestListItem): string {
@@ -244,10 +252,9 @@ function releaseMetaText(record: AdminContestListItem): string {
 }
 
 async function goToContestAiPrompts(contestId?: string) {
-  if (!contestId) {
-    await navigateTo('/admin/releases/queue')
+  if (!contestId)
     return
-  }
+
   await navigateTo(`/admin/contests/${contestId}/ai-prompts`)
 }
 
@@ -440,10 +447,15 @@ watch(isListRoute, async (value) => {
 
             <template #actions="{ record }">
               <div class="flex flex-wrap gap-1 justify-end">
-                <a-button size="mini" @click="goToContestOverviewEditor(record.id)">
+                <a-button size="mini" @click="goToContestOverviewEditor(record)">
                   编辑版本
                 </a-button>
-                <a-button size="mini" @click="goToContestWorkspace(record.id)">
+                <a-button
+                  :disabled="!record.id"
+                  :title="record.id ? '进入竞赛工作区' : '发布后生成工作区'"
+                  size="mini"
+                  @click="goToContestWorkspace(record)"
+                >
                   工作区
                 </a-button>
                 <a-button size="mini" @click="goToContestReleases(record)">

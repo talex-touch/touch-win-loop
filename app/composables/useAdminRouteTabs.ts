@@ -107,6 +107,8 @@ export function useAdminRouteTabs(input: {
   function resolveRouteTabLabel(path: string): string {
     if (path === '/admin')
       return '管理首页'
+    if (path === '/admin/releases/queue')
+      return '发布审批队列'
 
     if (path.startsWith('/admin/integrations/')) {
       const segments = path.split('/').filter(Boolean)
