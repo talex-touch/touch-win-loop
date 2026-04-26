@@ -51,7 +51,6 @@ interface ProviderDraftBody {
   apiKeyMode?: SecretMode
   embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
   embeddingDimensions?: number
-  visionModel?: string
   models?: unknown[]
 }
 
@@ -176,9 +175,6 @@ export default defineEventHandler(async (event) => {
         embeddingDimensions: hasOwn(source as Record<string, unknown>, 'embeddingDimensions')
           ? Number(source.embeddingDimensions || currentRuntime.ai.embeddingDimensions)
           : (currentProvider?.embeddingDimensions || currentRuntime.ai.embeddingDimensions),
-        visionModel: hasOwn(source as Record<string, unknown>, 'visionModel')
-          ? toText(source.visionModel)
-          : (currentProvider?.visionModel || currentRuntime.ai.visionModel),
         models: Array.isArray(source.models)
           ? source.models
           : (currentProvider?.models || []),
@@ -296,7 +292,6 @@ export default defineEventHandler(async (event) => {
       apiKeyConfigured: Boolean(String(provider.apiKey || '').trim()),
       embeddingApiStyle: provider.embeddingApiStyle || effectiveRuntime.ai.embeddingApiStyle,
       embeddingDimensions: provider.embeddingDimensions || effectiveRuntime.ai.embeddingDimensions,
-      visionModel: provider.visionModel || '',
       models: provider.models,
     })),
     scenes: {

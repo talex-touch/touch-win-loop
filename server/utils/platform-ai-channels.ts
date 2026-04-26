@@ -79,7 +79,6 @@ export interface PlatformAiProviderConfig {
   fetchedAt: string
   embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
   embeddingDimensions?: number
-  visionModel?: string
   models: PlatformAiProviderModelConfig[]
 }
 
@@ -536,10 +535,9 @@ function normalizeProviderModel(
   fallbackFormat: PlatformAiModelFormat,
   options?: {
     providerType?: PlatformAiProviderType
-    fallbackEmbeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
-    fallbackEmbeddingDimensions?: number
-    legacyVisionModel?: string
-  },
+  fallbackEmbeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+  fallbackEmbeddingDimensions?: number
+},
 ): PlatformAiProviderModelConfig | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     return null
@@ -586,11 +584,7 @@ function normalizeProviderModel(
     provider: providerType,
     rawText: JSON.stringify(source),
   })
-  const legacyVisionModel = toText(options?.legacyVisionModel)
-  const capabilityFallback = legacyVisionModel && legacyVisionModel === model
-    ? normalizeModelCapabilities(['chat', 'vision'], inferredCapabilities)
-    : inferredCapabilities
-  const capabilities = normalizeModelCapabilities(source.capabilities || source.capability || source.mode, capabilityFallback)
+  const capabilities = normalizeModelCapabilities(source.capabilities || source.capability || source.mode, inferredCapabilities)
   const embeddingApiStyleFallback = inferEmbeddingApiStyle(
     model,
     providerType,
@@ -745,7 +739,6 @@ function buildDefaultProvider(runtime: RuntimeSettings): PlatformAiProviderConfi
     fetchedAt: '',
     embeddingApiStyle: runtime.ai.embeddingApiStyle,
     embeddingDimensions: runtime.ai.embeddingDimensions,
-    visionModel: runtime.ai.visionModel,
     models: dedupeProviderModels(models),
   }
 }
@@ -771,7 +764,6 @@ function normalizeProvider(
   const formatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
   const embeddingApiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(source.embeddingApiStyle, runtime.ai.embeddingApiStyle)
   const embeddingDimensions = clampInt(source.embeddingDimensions, runtime.ai.embeddingDimensions, 0, 16384)
-  const visionModel = toText(source.visionModel || runtime.ai.visionModel)
 
   let models = capability !== 'search' && Array.isArray(source.models)
     ? source.models
@@ -779,7 +771,6 @@ function normalizeProvider(
           providerType: type,
           fallbackEmbeddingApiStyle: embeddingApiStyle,
           fallbackEmbeddingDimensions: embeddingDimensions,
-          legacyVisionModel: visionModel,
         }))
         .filter((item): item is PlatformAiProviderModelConfig => Boolean(item))
     : []
@@ -788,19 +779,6 @@ function normalizeProvider(
     const legacyModel = toText(source.model || runtime.ai.model)
     if (legacyModel)
       models = [createModelFromName(legacyModel, formatFallback, { providerType: type, capabilities: ['chat'] })]
-  }
-
-  if (capability === 'llm' && visionModel) {
-    const existingVisionModel = models.find(item => item.model === visionModel)
-    if (existingVisionModel) {
-      existingVisionModel.capabilities = normalizeModelCapabilities(['chat', 'vision'], existingVisionModel.capabilities)
-    }
-    else {
-      models.push(createModelFromName(visionModel, formatFallback, {
-        providerType: type,
-        capabilities: ['chat', 'vision'],
-      }))
-    }
   }
 
   const providerId = sanitizeProviderId(source.id, index)
@@ -820,7 +798,6 @@ function normalizeProvider(
     fetchedAt: toText(source.fetchedAt || source.modelFetchedAt),
     embeddingApiStyle,
     embeddingDimensions,
-    visionModel,
     models: dedupeProviderModels(models),
   }
 }

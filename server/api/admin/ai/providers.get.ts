@@ -43,7 +43,6 @@ export default defineEventHandler(async (event) => {
       apiKeyConfigured: Boolean(String(provider.apiKey || '').trim()),
       embeddingApiStyle: provider.embeddingApiStyle || runtime.ai.embeddingApiStyle,
       embeddingDimensions: provider.embeddingDimensions || runtime.ai.embeddingDimensions,
-      visionModel: provider.visionModel || '',
       models: provider.models,
     })),
     scenes: {

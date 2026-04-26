@@ -66,7 +66,7 @@ function dedupeStrings(values: string[], limit = 12): string[] {
 function buildFallbackProjection(textFallback: string): Omit<KnowledgeVisualProjectionResult, 'provider' | 'model' | 'fallbackUsed' | 'attempts'> {
   const normalized = normalizeString(textFallback)
   return {
-    summary: summarizeText(normalized) || '未配置视觉模型，已回退到文件名与资源元信息摘要。',
+    summary: summarizeText(normalized) || '视觉投影场景未配置，已回退到文件名与资源元信息摘要。',
     tags: dedupeStrings(extractKnowledgeKeywords(normalized, 10)),
     ocrText: '',
     layout: '',

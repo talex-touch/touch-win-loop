@@ -24,7 +24,6 @@ interface ProviderDraftBody {
   apiKey?: string
   embeddingApiStyle?: string
   embeddingDimensions?: number
-  visionModel?: string
   models?: unknown[]
 }
 
@@ -95,7 +94,7 @@ export default defineEventHandler(async (event) => {
       })()
     : currentProvider
 
-  if (!resolvedProvider || resolvedProvider.capability !== 'llm') {
+  if (!resolvedProvider || resolvedProvider.capability === 'search') {
     setResponseStatus(event, 400)
     return fail('当前 Provider 不支持模型池拉取。', {
       startedAt,

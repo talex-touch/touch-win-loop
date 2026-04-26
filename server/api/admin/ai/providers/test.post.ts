@@ -24,7 +24,6 @@ interface ProviderDraftBody {
   apiKey?: string
   embeddingApiStyle?: string
   embeddingDimensions?: number
-  visionModel?: string
   models?: unknown[]
 }
 

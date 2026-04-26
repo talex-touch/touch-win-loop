@@ -46,7 +46,7 @@ it('渠道和模型页不再暴露默认模型入口与联网能力卡片', asyn
   assert.doesNotMatch(source, /<a-form-item label="默认视觉模型">/, '不应继续展示默认视觉模型入口')
   assert.doesNotMatch(source, /defaultsForm/, '页面不应再维护默认模型表单状态')
   assert.doesNotMatch(source, /<div class="text-base font-semibold">\s*联网能力\s*<\/div>/, '联网能力卡片应已移出当前页')
-  assert.match(source, /每个 Provider 独立维护类型、密钥、模型池，以及搜索或 LLM 能力配置。/, 'Provider 列表说明应体现搜索能力归属 Provider')
+  assert.match(source, /每个 Provider 独立维护类型、密钥、模型池，以及搜索或 AI 能力配置。/, 'Provider 列表说明应体现搜索能力归属 Provider')
   assert.doesNotMatch(source, /价格优先级固定为 手工覆盖 > NewAPI 导入 > none。/, '旧统一模型池说明不应继续存在')
 })
 
@@ -57,7 +57,7 @@ it('provider 抽屉支持独立测试、拉取模型和维护模型池', async (
   assert.match(source, /测试 Provider/, '缺少 Provider 测试入口')
   assert.match(source, /拉取模型/, '缺少 Provider 拉取模型入口')
   assert.match(source, /Provider 模型池/, '缺少 Provider 模型池区域')
-  assert.match(source, /每个 LLM Provider 维护自己的模型池、能力标签、接入参数与价格覆盖。/, '缺少 Provider 级模型池说明')
+  assert.match(source, /每个可承载模型的 Provider 维护自己的模型池、能力标签、接入参数与价格覆盖。/, '缺少 Provider 级模型池说明')
   assert.match(source, /Provider 只保存连接身份；模型能力与接入细节在模型池里维护。/, 'Provider 抽屉应按连接与模型池分层')
   assert.match(source, /https:\/\/dashscope\.aliyuncs\.com/, '百炼 Base URL 应提示填写服务根地址')
   assert.match(source, /为聊天补 compatible-mode\/v1\/chat\/completions/, '百炼路径应由系统自动补齐')
@@ -66,11 +66,11 @@ it('provider 抽屉支持独立测试、拉取模型和维护模型池', async (
   assert.doesNotMatch(source, /百炼原生 SDK/, '暂不应暴露不可用的百炼原生聊天接入')
 })
 
-it('search-only Provider 不参与 LLM 场景模型路由', async () => {
+it('search-only Provider 不参与模型场景路由', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.match(source, /搜索型 Provider，只做 search-only 登记，不参与 LLM 场景模型路由。/, '缺少 search-only 限制说明')
-  assert.match(source, /只能选择 llm Provider/, '场景 Provider 选择应限制为 llm Provider')
+  assert.match(source, /搜索型 Provider，只做 search-only 登记，不参与 AI 场景模型路由。/, '缺少 search-only 限制说明')
+  assert.match(source, /按场景能力过滤 Provider/, '场景 Provider 选择应按场景能力过滤')
   assert.match(source, /llmProviderOptions/, '场景 Provider 下拉应来自 llmProviderOptions')
 })
 
@@ -91,7 +91,7 @@ it('场景抽屉支持 Provider 绑定、模型池、回退顺序和故障转移
   assert.match(source, /knowledge_visual_projection/, '缺少专用视觉投影场景')
   assert.match(source, /sceneRequiredCapability/, '场景模型选择应按能力过滤')
   assert.match(source, /sceneEmbeddingApiStyleFilter/, 'Embedding 场景模型选择应按接入类型过滤')
-  assert.match(source, /Embedding 场景只配置向量模型路由/, 'Embedding 场景不应执行对话测试')
+  assert.match(source, /只配置模型路由，无需执行对话测试/, '非聊天场景不应执行对话测试')
   assert.match(source, /复制当前策略到全部场景/, '缺少一键复制当前场景策略入口')
   assert.match(source, /一键设置全部场景/, '缺少批量配置入口')
 })
@@ -100,13 +100,13 @@ it('知识库 Embedding 场景只使用 embedding 模型并禁用对话测试', 
   const source = await readFile(PAGE_FILE, 'utf8')
 
   assert.match(source, /'knowledge_embedding'/, '场景类型缺少知识库 Embedding')
-  assert.match(source, /function sceneRequiredCapability\(key: PlatformAiChannelKey\): ModelCapability \{[\s\S]*key === 'knowledge_embedding'[\s\S]*return 'embedding'/, '知识库 Embedding 场景未声明 embedding 能力')
+  assert.match(source, /function sceneRequiredCapability\(key: PlatformAiChannelKey\): ModelCapability \{[\s\S]*requiredModelCapability \|\| 'chat'/, '知识库 Embedding 场景应从后端定义读取模型能力')
   assert.match(source, /resolveSceneModelCatalog\(sceneEditorForm\.providerIds, sceneEditorForm\.models, sceneRequiredCapability\(sceneEditorForm\.key\), sceneEmbeddingApiStyleFilter\(sceneEditorForm\.key\)\)/, '场景模型池候选未按场景能力与 Embedding 接入类型过滤')
   assert.match(source, /function normalizeSceneRoutingConfig\(/, '场景保存前未统一整理模型池与回退顺序')
   assert.match(source, /modelFallback: normalizeSceneModels\(/, '场景回退顺序未按模型池裁剪')
   assert.match(source, /if \(!sceneCanRunChatTest\(scene\)\)[\s\S]*无需执行对话测试/, 'Embedding 场景测试入口未拦截对话测试')
   assert.match(source, /:disabled="!sceneCanRunChatTest\(scope\.record\)"[\s\S]*无需测试/, 'Embedding 场景测试按钮未禁用并提示无需测试')
-  assert.match(source, /key === 'knowledge_visual_projection'[\s\S]*return 'vision'/, '视觉投影场景未声明 vision 能力')
+  assert.match(source, /sceneAllowedProviderCapabilities/, '场景 Provider 过滤应从后端定义读取允许 Provider 类型')
   assert.doesNotMatch(source, /回退默认模型池/, '场景页不应再出现默认模型池兜底文案')
   assert.doesNotMatch(source, /回退默认模型/, '场景页不应再出现默认模型兜底文案')
 })

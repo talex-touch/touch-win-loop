@@ -331,6 +331,7 @@ describe('platform-ai-channels', () => {
           type: 'newapi',
           provider: 'newapi',
           baseURL: 'https://newapi.example',
+          visionModel: 'qwen-vl-max',
           models: [
             { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
           ],
@@ -350,6 +351,7 @@ describe('platform-ai-channels', () => {
     expect(registry.providers[0]?.models.map(item => item.model)).toEqual(['gpt-4.1-mini'])
     expect(registry.providers[0]?.models.some(item => item.model === 'text-embedding-3-small')).toBe(false)
     expect(registry.providers[0]?.models.some(item => item.model === 'gpt-4.1')).toBe(false)
+    expect(registry.providers[0]?.models.some(item => item.model === 'qwen-vl-max')).toBe(false)
   })
 
   it('旧场景模型链在存在路由配置时会迁移到首个 Provider', () => {

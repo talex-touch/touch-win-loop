@@ -82,7 +82,6 @@ interface ProviderItem {
   apiKeyConfigured: boolean
   embeddingApiStyle: EmbeddingApiStyle
   embeddingDimensions: number
-  visionModel: string
   models: ProviderModelItem[]
 }
 
@@ -303,7 +302,7 @@ const providerTypeGuides: Record<ProviderType, ProviderTypeGuide> = {
   },
   'searchxng': {
     title: 'SearchXNG',
-    summary: '搜索型 Provider，只做 search-only 登记，不参与 LLM 场景模型路由。',
+    summary: '搜索型 Provider，只做 search-only 登记，不参与 AI 场景模型路由。',
     providerPlaceholder: 'searchxng',
     baseURLPlaceholder: 'https://search.example.com',
     baseURLHint: '填写 SearchXNG 服务地址；当前 Provider 模型池不会使用它发起 LLM 请求。',
@@ -402,7 +401,6 @@ const providerEditorForm = reactive<ProviderDraftItem>({
   apiKeyConfigured: false,
   embeddingApiStyle: 'openai-compatible-text',
   embeddingDimensions: 1024,
-  visionModel: '',
   models: [],
   apiKeyMode: 'keep',
   apiKey: '',
@@ -700,7 +698,6 @@ function createEmptyProviderDraft(): ProviderDraftItem {
     apiKeyConfigured: false,
     embeddingApiStyle: 'openai-compatible-text',
     embeddingDimensions: 1024,
-    visionModel: '',
     models: [],
     apiKeyMode: 'keep',
     apiKey: '',
@@ -1137,7 +1134,7 @@ const sceneRows = computed(() => {
 
 function providerSummary(provider: ProviderDraftItem): string {
   if (provider.capability === 'search')
-    return '仅搜索能力，不参与当前 LLM 场景模型路由'
+    return '仅搜索能力，不参与当前 AI 场景模型路由'
   if (provider.capability === 'asr')
     return '语音识别 Provider，只参与 ASR 场景模型路由'
   if (provider.capability === 'tts')
@@ -1380,7 +1377,6 @@ function syncProviderType(type: ProviderType) {
     providerEditorForm.provider = type
   if (providerEditorForm.capability === 'search') {
     providerEditorForm.models = []
-    providerEditorForm.visionModel = ''
   }
   if (providerEditorForm.capability !== 'search')
     providerEditorForm.models = providerEditorForm.models.map(item => normalizeModelItem(item, type))
@@ -1981,7 +1977,7 @@ onMounted(async () => {
                   Provider 列表
                 </div>
                 <div class="text-xs text-slate-500">
-                  每个 Provider 独立维护类型、密钥、模型池，以及搜索或 LLM 能力配置。
+                  每个 Provider 独立维护类型、密钥、模型池，以及搜索或 AI 能力配置。
                 </div>
               </div>
               <div class="flex flex-wrap gap-2">
@@ -2450,7 +2446,7 @@ onMounted(async () => {
                     Provider 模型池
                   </div>
                   <div class="text-xs text-slate-500">
-                    每个 LLM Provider 维护自己的模型池、能力标签、接入参数与价格覆盖。
+                    每个可承载模型的 Provider 维护自己的模型池、能力标签、接入参数与价格覆盖。
                   </div>
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -2724,7 +2720,7 @@ onMounted(async () => {
               </div>
             </a-checkbox-group>
             <div class="text-xs text-slate-500 mt-1">
-              场景绑定会按能力过滤：LLM 场景只选择聊天模型，知识库向量只选择 Embedding 模型，视觉投影只选择视觉模型。
+              场景绑定会按能力过滤：聊天场景只选择 chat 模型，知识库向量只选择 Embedding，视觉投影只选择 vision，ASR/TTS 场景只选择对应语音模型。
             </div>
           </a-form-item>
           <div v-if="modelEditorForm.capabilities.includes('chat')" class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
@@ -2778,7 +2774,7 @@ onMounted(async () => {
               视觉与生成能力
             </div>
             <div class="text-xs text-slate-500 mt-1">
-              视觉模型通过 vision 能力参与图片理解；image-gen / video-gen 先作为后续生成场景路由标签保留。
+              vision 能力模型通过显式模型池参与图片理解；image-gen / video-gen 先作为后续生成场景路由标签保留。
             </div>
           </div>
           <a-form-item label="启用">
