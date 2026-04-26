@@ -1137,6 +1137,7 @@ function normalizeSceneBatchRoutingConfig(input: Pick<typeof sceneBatchForm, 'mo
 }
 
 const sceneEditorModelPoolOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.models, sceneRequiredCapability(sceneEditorForm.key), sceneEmbeddingApiStyleFilter(sceneEditorForm.key)))
+const sceneEditorProviderOptions = computed(() => routableProviderOptions.value.filter(provider => providerCanServeScene(provider, sceneEditorForm.key)))
 const sceneEditorFallbackOptions = computed(() => {
   const modelSet = new Set(sceneEditorForm.models)
   return sceneEditorModelPoolOptions.value.filter(item => modelSet.has(item.model))
@@ -2905,7 +2906,7 @@ onMounted(async () => {
               @change="handleSceneProviderIdsChange"
             >
               <a-option
-                v-for="item in routableProviderOptions"
+                v-for="item in sceneEditorProviderOptions"
                 :key="item.id"
                 :value="item.id"
                 :disabled="!item.enabled"

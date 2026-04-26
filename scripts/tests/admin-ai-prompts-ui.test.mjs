@@ -75,6 +75,8 @@ it('search-only Provider 不参与模型场景路由', async () => {
   assert.match(source, /搜索型 Provider，只做 search-only 登记，不参与 AI 场景模型路由。/, '缺少 search-only 限制说明')
   assert.match(source, /按场景能力过滤 Provider/, '场景 Provider 选择应按场景能力过滤')
   assert.match(source, /routableProviderOptions/, '场景 Provider 下拉应来自可路由 Provider 列表')
+  assert.match(source, /sceneEditorProviderOptions[\s\S]*providerCanServeScene\(provider, sceneEditorForm\.key\)/, '单场景 Provider 下拉应按当前场景允许能力过滤')
+  assert.match(source, /v-for="item in sceneEditorProviderOptions"/, '单场景 Provider 下拉不应展示全部可路由 Provider')
   assert.match(source, /Provider 能力/, 'Provider 抽屉应允许显式选择模型路由能力')
   assert.match(source, /providerEditorCapabilityLocked/, 'search-only 类型应锁定 Provider 能力')
   assert.match(source, /providerEditorCanRunChatTest/, 'Provider 连通性测试应仅面向 LLM Provider')
