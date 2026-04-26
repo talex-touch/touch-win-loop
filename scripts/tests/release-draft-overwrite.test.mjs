@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import { afterAll, beforeAll, beforeEach, describe, it, vi } from 'vitest'
 import { ensureSchemaReady } from '../../server/database/bootstrap/schema.ts'
@@ -12,6 +14,9 @@ const canRunDbSmoke = parsedPgUrl.password.length > 0
 
 let adminPool = null
 let tempPool = null
+let getContestReleasePublishCheck = null
+let searchFeishuSyncedData = null
+let upsertContestReleaseDraft = null
 let upsertPolicyLibraryReleaseDraft = null
 
 vi.mock('#imports', () => ({
@@ -64,6 +69,7 @@ async function resetReleaseScopeTables(pool) {
 }
 
 async function seedSyncContext(pool, input) {
+  const entityType = input.entityType || 'policy'
   await pool.query(
     `INSERT INTO feishu_bitable_sync_items (
       id,
@@ -74,12 +80,14 @@ async function seedSyncContext(pool, input) {
       created_by_user_id,
       updated_by_user_id
     ) VALUES (
-      $1, $2, 'policy', 'app_token_demo', 'table_demo', $3, $3
+      $1, $2, $3, 'app_token_demo', $4, $5, $5
     )
     ON CONFLICT (id) DO UPDATE
-    SET updated_by_user_id = EXCLUDED.updated_by_user_id,
+    SET entity_type = EXCLUDED.entity_type,
+        table_id = EXCLUDED.table_id,
+        updated_by_user_id = EXCLUDED.updated_by_user_id,
         updated_at = NOW()`,
-    [input.syncItemId, input.name || input.syncItemId, ACTOR_USER_ID],
+    [input.syncItemId, input.name || input.syncItemId, entityType, `table_${entityType}`, ACTOR_USER_ID],
   )
 
   await pool.query(
@@ -102,6 +110,7 @@ async function createPolicyDraft(pool, input) {
   await seedSyncContext(pool, {
     syncItemId: input.syncItemId,
     runId: input.runId,
+    entityType: 'policy',
     name: input.name,
   })
   return upsertPolicyLibraryReleaseDraft(pool, {
@@ -131,6 +140,89 @@ async function createPolicyDraft(pool, input) {
   })
 }
 
+async function createContestEntityDraft(pool, input) {
+  await seedSyncContext(pool, {
+    syncItemId: input.syncItemId,
+    runId: input.runId,
+    entityType: input.entityType,
+    name: input.name,
+  })
+  return upsertContestReleaseDraft(pool, {
+    actorUserId: ACTOR_USER_ID,
+    syncItemId: input.syncItemId,
+    syncRunId: input.runId,
+    recordId: input.recordId || `${input.runId}_record`,
+    contestExternalId: input.contestExternalId,
+    scopeTitle: input.scopeTitle || input.contestExternalId,
+    entityType: input.entityType,
+    contest: input.contest || null,
+    track: input.track || null,
+    timelines: input.timelines || [],
+    trackTimelines: input.trackTimelines || [],
+    resource: input.resource || null,
+  })
+}
+
+function buildContestSnapshot(overrides = {}) {
+  return {
+    externalId: 'contest_ext_agg',
+    name: '聚合测试竞赛',
+    level: 'national',
+    organizer: '中国日报社',
+    officialUrl: 'https://example.test/contest',
+    summary: '用于验证飞书竞赛与赛道草稿聚合。',
+    participantRequirements: '全国高校学生',
+    currentSeason: '2026',
+    disciplines: ['英语'],
+    visibility: 'internal',
+    ...overrides,
+  }
+}
+
+function buildContestTimeline(overrides = {}) {
+  return {
+    externalId: 'contest_timeline_ext_agg',
+    year: 2026,
+    nodeType: 'submission_deadline',
+    startAt: '2026-05-01T00:00:00.000Z',
+    endAt: '2026-05-31T23:59:59.000Z',
+    note: '提交截止',
+    sourceLink: '',
+    ...overrides,
+  }
+}
+
+function buildTrackSnapshot(overrides = {}) {
+  return {
+    externalId: 'track_ext_agg',
+    contestExternalId: 'contest_ext_agg',
+    name: '大学组',
+    summary: '大学组赛道',
+    organizer: '中国日报社',
+    participantRequirements: '大学生',
+    currentSeason: '2026',
+    sortOrder: 1,
+    evidenceRequirements: ['提交演讲视频'],
+    scoringPoints: ['语言表达', '主题立意'],
+    deductionItems: [],
+    ...overrides,
+  }
+}
+
+function buildTrackTimeline(overrides = {}) {
+  return {
+    externalId: 'track_timeline_ext_agg',
+    trackExternalId: 'track_ext_agg',
+    year: 2026,
+    nodeType: 'submission_deadline',
+    startAt: '2026-05-01T00:00:00.000Z',
+    endAt: '2026-05-31T23:59:59.000Z',
+    note: '赛道提交截止',
+    sourceLink: '',
+    ...overrides,
+  }
+}
+
 async function listPolicyReleaseVersions(pool) {
   const result = await pool.query(
     `SELECT
@@ -149,11 +241,36 @@ async function listPolicyReleaseVersions(pool) {
   return result.rows
 }
 
-beforeAll(async () => {
-  if (!canRunDbSmoke)
-    return
+async function listContestReleaseVersions(pool, scopeId = 'contest_ext_agg') {
+  const result = await pool.query(
+    `SELECT
+      id,
+      status,
+      version_number,
+      sync_item_id,
+      sync_run_id,
+      superseded_by_version_id,
+      snapshot_json
+     FROM release_versions
+     WHERE scope_kind = 'contest'
+       AND scope_id = $1
+     ORDER BY version_number ASC`,
+    [scopeId],
+  )
+  return result.rows
+}
 
-  ({ upsertPolicyLibraryReleaseDraft } = await import('../../server/utils/release-store.ts'))
+beforeAll(async () => {
+  if (!canRunDbSmoke) {
+    return
+  }
+
+  ;({
+    getContestReleasePublishCheck,
+    upsertContestReleaseDraft,
+    upsertPolicyLibraryReleaseDraft,
+  } = await import('../../server/utils/release-store.ts'))
+  ;({ searchFeishuSyncedData } = await import('../../server/utils/feishu-integration-store.ts'))
 
   adminPool = createPool(buildConnectionString('postgres'))
   await adminPool.query(`CREATE DATABASE "${tempDatabaseName}"`)
@@ -179,6 +296,42 @@ afterAll(async () => {
 const databaseTest = canRunDbSmoke ? it : it.skip
 
 describe('release draft 覆盖与审批边界', () => {
+  it('竞赛子表同步会以最新 pending_first_review 草稿作为聚合基线', async () => {
+    const releaseStoreSource = await readFile(
+      resolve(process.cwd(), 'server/utils/release-store.ts'),
+      'utf8',
+    )
+
+    const helperMatch = releaseStoreSource.match(/async function getLatestMergeableContestReleaseDraft\([\s\S]*?\n\}/)
+    assert.ok(helperMatch, 'release-store 缺少竞赛同步可聚合草稿查询 helper')
+    const helperSource = helperMatch[0]
+    assert.match(
+      helperSource,
+      /statuses:\s*\['pending_first_review'\]/,
+      '竞赛同步只能把 pending_first_review 草稿作为自动聚合基线',
+    )
+    assert.match(
+      releaseStoreSource,
+      /const mergeBaseVersion = existingVersion\s*\?\s*null\s*:\s*await getLatestMergeableContestReleaseDraft/,
+      'upsertContestReleaseDraft 未在不同 syncRunId 下读取最新可聚合草稿',
+    )
+    assert.match(
+      releaseStoreSource,
+      /mergeBaseVersion\s*\?\s*toContestSnapshot\(mergeBaseVersion\.snapshot, scopeId\)/,
+      'upsertContestReleaseDraft 未把最新可聚合草稿作为 sibling 快照来源',
+    )
+    assert.doesNotMatch(
+      helperSource,
+      /statuses:\s*\[[^\]]*pending_second_review[^\]]*\]/,
+      '二审草稿不应被自动同步继续聚合改写',
+    )
+    assert.doesNotMatch(
+      helperSource,
+      /statuses:\s*\[[^\]]*approved[^\]]*\]/,
+      'approved 草稿不应被自动同步继续聚合改写',
+    )
+  })
+
   databaseTest('pending_first_review 草稿在新一轮有 diff 的同步下会生成新版本并替换旧未发布版本', async () => {
     const first = await createPolicyDraft(tempPool, {
       syncItemId: 'sync_policy_reuse',
@@ -308,5 +461,97 @@ describe('release draft 覆盖与审批边界', () => {
       assert.equal(versions[1]?.sync_run_id, `run_policy_${status}_2`)
       assert.equal(versions[1]?.snapshot_json?.items?.[0]?.summary, '新版摘要')
     }
+  })
+
+  databaseTest('竞赛同步后再同步赛道时，最新 pending_first_review 草稿会保留竞赛主快照', async () => {
+    const contestDraft = await createContestEntityDraft(tempPool, {
+      syncItemId: 'sync_item_contest_agg',
+      runId: 'run_contest_agg_1',
+      entityType: 'contest',
+      contestExternalId: 'contest_ext_agg',
+      scopeTitle: '聚合测试竞赛',
+      contest: buildContestSnapshot(),
+      timelines: [buildContestTimeline()],
+    })
+    assert.ok(contestDraft.version, '竞赛同步应生成主草稿')
+
+    const trackDraft = await createContestEntityDraft(tempPool, {
+      syncItemId: 'sync_item_track_agg',
+      runId: 'run_track_agg_1',
+      entityType: 'track',
+      contestExternalId: 'contest_ext_agg',
+      scopeTitle: '聚合测试竞赛',
+      track: buildTrackSnapshot(),
+      trackTimelines: [buildTrackTimeline()],
+    })
+    assert.ok(trackDraft.version, '赛道同步应生成聚合草稿')
+
+    const versions = await listContestReleaseVersions(tempPool)
+    assert.equal(versions.length, 2, '竞赛和赛道不同 run 应生成两版草稿')
+    assert.equal(versions[0]?.status, 'superseded')
+    assert.equal(versions[0]?.superseded_by_version_id, trackDraft.version.id)
+    assert.equal(versions[1]?.status, 'pending_first_review')
+    assert.equal(versions[1]?.snapshot_json?.contest?.externalId, 'contest_ext_agg')
+    assert.equal(versions[1]?.snapshot_json?.tracks?.[0]?.externalId, 'track_ext_agg')
+
+    const publishCheck = await getContestReleasePublishCheck(tempPool, { version: trackDraft.version })
+    assert.ok(publishCheck, '竞赛版本应返回发布校验结果')
+    assert.equal(
+      publishCheck.blockers.some(item => item.code === 'CONTEST_SNAPSHOT_REQUIRED'),
+      false,
+      '聚合后的赛道草稿不能丢失竞赛主快照',
+    )
+
+    const contestRows = await searchFeishuSyncedData(tempPool, {
+      scope: 'contest',
+      page: 1,
+      pageSize: 20,
+    })
+    const trackRows = await searchFeishuSyncedData(tempPool, {
+      scope: 'track',
+      page: 1,
+      pageSize: 20,
+    })
+    assert.equal(contestRows.items.some(item => item.externalId === 'contest_ext_agg'), true)
+    assert.equal(trackRows.items.some(item => item.externalId === 'track_ext_agg'), true)
+  })
+
+  databaseTest('赛道同步后再同步竞赛时，最新 pending_first_review 草稿会保留赛道快照', async () => {
+    const trackDraft = await createContestEntityDraft(tempPool, {
+      syncItemId: 'sync_item_track_reverse',
+      runId: 'run_track_reverse_1',
+      entityType: 'track',
+      contestExternalId: 'contest_ext_agg',
+      scopeTitle: '聚合测试竞赛',
+      track: buildTrackSnapshot(),
+      trackTimelines: [buildTrackTimeline()],
+    })
+    assert.ok(trackDraft.version, '赛道同步应先生成草稿')
+
+    const contestDraft = await createContestEntityDraft(tempPool, {
+      syncItemId: 'sync_item_contest_reverse',
+      runId: 'run_contest_reverse_1',
+      entityType: 'contest',
+      contestExternalId: 'contest_ext_agg',
+      scopeTitle: '聚合测试竞赛',
+      contest: buildContestSnapshot({ summary: '竞赛主信息随后同步。' }),
+      timelines: [buildContestTimeline()],
+    })
+    assert.ok(contestDraft.version, '竞赛同步应生成聚合草稿')
+
+    const versions = await listContestReleaseVersions(tempPool)
+    assert.equal(versions.length, 2)
+    assert.equal(versions[0]?.status, 'superseded')
+    assert.equal(versions[0]?.superseded_by_version_id, contestDraft.version.id)
+    assert.equal(versions[1]?.snapshot_json?.contest?.externalId, 'contest_ext_agg')
+    assert.equal(versions[1]?.snapshot_json?.tracks?.[0]?.externalId, 'track_ext_agg')
+
+    const publishCheck = await getContestReleasePublishCheck(tempPool, { version: contestDraft.version })
+    assert.ok(publishCheck, '竞赛版本应返回发布校验结果')
+    assert.equal(
+      publishCheck.blockers.some(item => item.code === 'CONTEST_SNAPSHOT_REQUIRED'),
+      false,
+      '聚合后的竞赛草稿不能丢失已同步赛道快照',
+    )
   })
 })
