@@ -149,6 +149,43 @@ function normalizeInteger(value: unknown, fallback = 0): number {
   return Math.trunc(parsed)
 }
 
+function joinUniqueTexts(values: unknown[]): string {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const normalized = normalizeText(value)
+    if (!normalized || seen.has(normalized))
+      continue
+    seen.add(normalized)
+    result.push(normalized)
+  }
+  return result.join('；')
+}
+
+function inferLatestTimelineSeason(timelines: Array<{ year?: unknown }>): string {
+  const years = timelines
+    .map(item => normalizeInteger(item.year, 0))
+    .filter(year => year >= 1900)
+  if (years.length === 0)
+    return ''
+  return String(Math.max(...years))
+}
+
+function resolveContestReleaseEffectiveMetadata(snapshot: ContestReleaseSnapshot): {
+  organizer: string
+  participantRequirements: string
+  currentSeason: string
+} {
+  const contest = snapshot.contest
+  return {
+    organizer: normalizeText(contest?.organizer) || joinUniqueTexts(snapshot.tracks.map(item => item.organizer)),
+    participantRequirements: normalizeText(contest?.participantRequirements) || joinUniqueTexts(snapshot.tracks.map(item => item.participantRequirements)),
+    currentSeason: normalizeText(contest?.currentSeason)
+      || joinUniqueTexts(snapshot.tracks.map(item => item.currentSeason))
+      || inferLatestTimelineSeason([...snapshot.timelines, ...snapshot.trackTimelines]),
+  }
+}
+
 function parseJsonObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     return {}
@@ -1123,6 +1160,7 @@ export async function getContestReleasePublishCheck(
     warnings.push({ code, message, field, severity: 'warning' })
   }
 
+  const effectiveMetadata = resolveContestReleaseEffectiveMetadata(snapshot)
   const hasName = Boolean(normalizeText(contest.name))
   checks.push(hasName)
   if (!hasName)
@@ -1133,7 +1171,7 @@ export async function getContestReleasePublishCheck(
   if (!hasLevel)
     pushBlocker('CONTEST_LEVEL_REQUIRED', '赛事级别不能为空。', 'level')
 
-  const hasOrganizer = Boolean(normalizeText(contest.organizer))
+  const hasOrganizer = Boolean(effectiveMetadata.organizer)
   checks.push(hasOrganizer)
   if (!hasOrganizer)
     pushBlocker('CONTEST_ORGANIZER_REQUIRED', '主办方不能为空。', 'organizer')
@@ -1148,12 +1186,12 @@ export async function getContestReleasePublishCheck(
   if (!hasSummary)
     pushBlocker('CONTEST_SUMMARY_REQUIRED', '简介不能为空。', 'summary')
 
-  const hasParticipantRequirements = Boolean(normalizeText(contest.participantRequirements))
+  const hasParticipantRequirements = Boolean(effectiveMetadata.participantRequirements)
   checks.push(hasParticipantRequirements)
   if (!hasParticipantRequirements)
     pushBlocker('CONTEST_PARTICIPANT_REQUIREMENTS_REQUIRED', '参赛对象/限制不能为空。', 'participantRequirements')
 
-  const hasCurrentSeason = Boolean(normalizeText(contest.currentSeason))
+  const hasCurrentSeason = Boolean(effectiveMetadata.currentSeason)
   checks.push(hasCurrentSeason)
   if (!hasCurrentSeason)
     pushBlocker('CONTEST_CURRENT_SEASON_REQUIRED', '当前届次不能为空。', 'currentSeason')
@@ -1192,7 +1230,7 @@ export async function getContestReleasePublishCheck(
     )
     const targetKey = [
       normalizeCompareValue(contest.name),
-      normalizeCompareValue(contest.organizer),
+      normalizeCompareValue(effectiveMetadata.organizer),
       normalizeCompareValue(contest.officialUrl),
     ].join('|')
     const duplicate = rows.rows.find((row) => {
@@ -3010,6 +3048,7 @@ async function publishContestRelease(
     contestId = normalizeText(contestRef?.entityId)
   }
 
+  const effectiveMetadata = resolveContestReleaseEffectiveMetadata(snapshot)
   if (snapshot.contest) {
     if (contestId) {
       const patched = await patchAdminContest(db, {
@@ -3019,13 +3058,13 @@ async function publishContestRelease(
         patch: {
           name: snapshot.contest.name,
           level: snapshot.contest.level,
-          organizer: normalizeText(snapshot.contest.organizer),
+          organizer: effectiveMetadata.organizer,
           coOrganizer: normalizeText(snapshot.contest.coOrganizer),
           officialUrl: normalizeText(snapshot.contest.officialUrl),
           summary: normalizeText(snapshot.contest.summary),
-          participantRequirements: normalizeText(snapshot.contest.participantRequirements),
+          participantRequirements: effectiveMetadata.participantRequirements,
           teamRule: normalizeText(snapshot.contest.teamRule),
-          currentSeason: normalizeText(snapshot.contest.currentSeason),
+          currentSeason: effectiveMetadata.currentSeason,
           disciplines: snapshot.contest.disciplines || [],
           aliases: snapshot.contest.aliases || [],
           keywords: snapshot.contest.keywords || [],
@@ -3043,13 +3082,13 @@ async function publishContestRelease(
         actorUserId: input.actorUserId,
         name: snapshot.contest.name,
         level: snapshot.contest.level,
-        organizer: normalizeText(snapshot.contest.organizer),
+        organizer: effectiveMetadata.organizer,
         coOrganizer: normalizeText(snapshot.contest.coOrganizer),
         officialUrl: normalizeText(snapshot.contest.officialUrl),
         summary: normalizeText(snapshot.contest.summary),
-        participantRequirements: normalizeText(snapshot.contest.participantRequirements),
+        participantRequirements: effectiveMetadata.participantRequirements,
         teamRule: normalizeText(snapshot.contest.teamRule),
-        currentSeason: normalizeText(snapshot.contest.currentSeason),
+        currentSeason: effectiveMetadata.currentSeason,
         disciplines: snapshot.contest.disciplines || [],
         aliases: snapshot.contest.aliases || [],
         keywords: snapshot.contest.keywords || [],

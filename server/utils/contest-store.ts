@@ -633,6 +633,45 @@ function normalizeStringArray(value: unknown): string[] {
   return value.map(item => normalizeString(item)).filter(Boolean)
 }
 
+function joinUniqueStrings(values: unknown[]): string {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const normalized = normalizeString(value)
+    if (!normalized || seen.has(normalized))
+      continue
+    seen.add(normalized)
+    result.push(normalized)
+  }
+  return result.join('；')
+}
+
+function inferLatestTimelineSeason(timelines: Array<{ year?: unknown }>): string {
+  const years = timelines
+    .map(item => Number(item.year || 0))
+    .filter(year => Number.isFinite(year) && year >= 1900)
+  if (years.length === 0)
+    return ''
+  return String(Math.max(...years))
+}
+
+function resolveContestPublishEffectiveMetadata(input: {
+  contest: Contest
+  timelines: ContestTimeline[]
+  trackTimelines: Array<{ year?: unknown }>
+}): {
+  organizer: string
+  participantRequirements: string
+  currentSeason: string
+} {
+  return {
+    organizer: normalizeString(input.contest.organizer) || joinUniqueStrings((input.contest.tracks || []).map(item => item.organizer)),
+    participantRequirements: normalizeString(input.contest.participantRequirements) || joinUniqueStrings((input.contest.tracks || []).map(item => item.participantRequirements)),
+    currentSeason: normalizeString(input.contest.currentSeason)
+      || inferLatestTimelineSeason([...input.timelines, ...input.trackTimelines]),
+  }
+}
+
 function parseResourceMetadata(value: unknown): Record<string, unknown> {
   if (!value)
     return {}
@@ -2569,6 +2608,12 @@ export async function getContestPublishCheck(
   const blockers: PublishCheckResult['blockers'] = []
   const warnings: PublishCheckResult['warnings'] = []
   const contest = detail.contest
+  const trackTimelines = await loadTrackTimelines(db, [contest.id])
+  const effectiveMetadata = resolveContestPublishEffectiveMetadata({
+    contest,
+    timelines: detail.timelines || [],
+    trackTimelines,
+  })
 
   const pushBlocker = (code: string, message: string, field?: string) => {
     blockers.push({ code, message, field, severity: 'blocker' })
@@ -2589,7 +2634,7 @@ export async function getContestPublishCheck(
   if (!hasLevel)
     pushBlocker('CONTEST_LEVEL_REQUIRED', '赛事级别不能为空。', 'level')
 
-  const hasOrganizer = Boolean(normalizeString(contest.organizer))
+  const hasOrganizer = Boolean(effectiveMetadata.organizer)
   checks.push(hasOrganizer)
   if (!hasOrganizer)
     pushBlocker('CONTEST_ORGANIZER_REQUIRED', '主办方不能为空。', 'organizer')
@@ -2604,12 +2649,12 @@ export async function getContestPublishCheck(
   if (!hasSummary)
     pushBlocker('CONTEST_SUMMARY_REQUIRED', '简介不能为空。', 'summary')
 
-  const hasParticipantRequirements = Boolean(normalizeString(contest.participantRequirements))
+  const hasParticipantRequirements = Boolean(effectiveMetadata.participantRequirements)
   checks.push(hasParticipantRequirements)
   if (!hasParticipantRequirements)
     pushBlocker('CONTEST_PARTICIPANT_REQUIREMENTS_REQUIRED', '参赛对象/限制不能为空。', 'participantRequirements')
 
-  const hasCurrentSeason = Boolean(normalizeString(contest.currentSeason))
+  const hasCurrentSeason = Boolean(effectiveMetadata.currentSeason)
   checks.push(hasCurrentSeason)
   if (!hasCurrentSeason)
     pushBlocker('CONTEST_CURRENT_SEASON_REQUIRED', '当前届次不能为空。', 'currentSeason')
@@ -2625,7 +2670,7 @@ export async function getContestPublishCheck(
   if (!hasTracks)
     pushBlocker('CONTEST_TRACKS_REQUIRED', '至少需要 1 个赛道。', 'tracks')
 
-  const hasTimelines = (detail.timelines || []).length > 0
+  const hasTimelines = (detail.timelines || []).length > 0 || trackTimelines.length > 0
   checks.push(hasTimelines)
   if (!hasTimelines)
     pushBlocker('CONTEST_TIMELINES_REQUIRED', '至少需要 1 个时间节点。', 'timelines')
@@ -2649,7 +2694,7 @@ export async function getContestPublishCheck(
     )
     const targetKey = [
       normalizeCompareValue(contest.name),
-      normalizeCompareValue(contest.organizer),
+      normalizeCompareValue(effectiveMetadata.organizer),
       normalizeCompareValue(contest.officialUrl),
     ].join('|')
     const duplicate = rows.rows.find((row) => {
