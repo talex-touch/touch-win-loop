@@ -380,8 +380,8 @@ describe('platform-ai-channels', () => {
         {
           key: 'project_chat',
           providerIds: [],
-          models: [],
-          modelFallback: [],
+          models: ['gpt-4.1-mini'],
+          modelFallback: ['gpt-4.1-mini'],
           failoverStrategy: 'model_then_provider',
           enabled: true,
         },

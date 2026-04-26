@@ -971,7 +971,7 @@ function normalizeChannelModelsAndFallback(
   modelFallback: string[]
 } {
   const providerIdSet = new Set(providerIds)
-  const eligibleProviders = providers.filter(provider => providerCanServeChannel(provider, key) && (providerIdSet.size === 0 || providerIdSet.has(provider.id)))
+  const eligibleProviders = providers.filter(provider => providerCanServeChannel(provider, key) && providerIdSet.has(provider.id))
   const explicitModels = dedupeStrings(input.models)
   const explicitFallback = dedupeStrings(input.modelFallback)
   const modelSeed = explicitModels.length > 0
