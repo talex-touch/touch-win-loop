@@ -100,6 +100,7 @@ const successText = ref('')
 const rejectReason = ref('')
 const detailVisible = ref(false)
 const timelineVisible = ref(false)
+const metadataDrawerVisible = ref(false)
 const trackDetailVisible = ref(false)
 const reviewLogDrawerVisible = ref(false)
 const detail = ref<ReleaseVersionDetail | null>(null)
@@ -387,6 +388,73 @@ function arrayText(items?: string[] | null): string {
   return Array.isArray(items) && items.length ? items.join('、') : '-'
 }
 
+function metadataText(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function joinUniqueMetadata(values: unknown[]): string {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const normalized = metadataText(value)
+    if (!normalized || seen.has(normalized))
+      continue
+    seen.add(normalized)
+    result.push(normalized)
+  }
+  return result.join('；')
+}
+
+function inferTimelineSeason(items: Array<ContestReleaseTimelineSnapshot | ContestReleaseTrackTimelineSnapshot>): string {
+  const years = items
+    .map(item => Number(item.year || 0))
+    .filter(year => Number.isFinite(year) && year >= 1900)
+  if (years.length === 0)
+    return ''
+  return String(Math.max(...years))
+}
+
+function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
+  if (!snapshot)
+    return []
+
+  const contest = snapshot.contest
+  const organizer = metadataText(contest?.organizer)
+  const participantRequirements = metadataText(contest?.participantRequirements)
+  const currentSeason = metadataText(contest?.currentSeason)
+  const trackOrganizer = joinUniqueMetadata(snapshot.tracks.map(item => item.organizer))
+  const trackParticipantRequirements = joinUniqueMetadata(snapshot.tracks.map(item => item.participantRequirements))
+  const trackCurrentSeason = joinUniqueMetadata(snapshot.tracks.map(item => item.currentSeason))
+  const timelineCurrentSeason = inferTimelineSeason([...snapshot.timelines, ...snapshot.trackTimelines])
+
+  return [
+    {
+      key: 'organizer',
+      label: '主办方',
+      value: organizer || trackOrganizer || '-',
+      source: organizer ? '概览字段' : trackOrganizer ? '赛道字段回填' : '未填写',
+    },
+    {
+      key: 'participantRequirements',
+      label: '参赛对象/限制',
+      value: participantRequirements || trackParticipantRequirements || '-',
+      source: participantRequirements ? '概览字段' : trackParticipantRequirements ? '赛道字段回填' : '未填写',
+    },
+    {
+      key: 'currentSeason',
+      label: '当前届次',
+      value: currentSeason || trackCurrentSeason || timelineCurrentSeason || '-',
+      source: currentSeason ? '概览字段' : trackCurrentSeason ? '赛道字段回填' : timelineCurrentSeason ? '时间线年份推断' : '未填写',
+    },
+    { key: 'name', label: '赛事名称', value: metadataText(contest?.name) || '-', source: '概览字段' },
+    { key: 'level', label: '赛事级别', value: metadataText(contest?.level) || '-', source: '概览字段' },
+    { key: 'coOrganizer', label: '协办/承办', value: metadataText(contest?.coOrganizer) || '-', source: '概览字段' },
+    { key: 'officialUrl', label: '官网地址', value: metadataText(contest?.officialUrl) || '-', source: '概览字段' },
+    { key: 'teamRule', label: '组队规则', value: metadataText(contest?.teamRule) || '-', source: '概览字段' },
+    { key: 'summary', label: '竞赛简介', value: metadataText(contest?.summary) || '-', source: '概览字段' },
+  ]
+}
+
 function trackFormRows(item: ContestReleaseTrackSnapshot | null) {
   if (!item)
     return []
@@ -489,6 +557,7 @@ async function openDetail(versionId: string) {
   errorText.value = ''
   rejectReason.value = ''
   timelineVisible.value = false
+  metadataDrawerVisible.value = false
   trackDetailVisible.value = false
   reviewLogDrawerVisible.value = false
   selectedTrack.value = null
@@ -1139,9 +1208,14 @@ onMounted(() => {
           </div>
 
           <div class="p-3 border border-slate-200 rounded">
-            <h3 class="text-sm text-slate-900 font-semibold">
-              竞赛库快照
-            </h3>
+            <div class="flex flex-wrap gap-2 items-center justify-between">
+              <h3 class="text-sm text-slate-900 font-semibold">
+                竞赛库快照
+              </h3>
+              <button class="dense-btn" type="button" @click="metadataDrawerVisible = true">
+                确认概览字段
+              </button>
+            </div>
             <div class="mt-3 gap-2 grid md:grid-cols-2">
               <p v-for="item in contestSummaryRows(detailContestSnapshot.contest || null)" :key="item.label" class="text-slate-700">
                 <span class="text-slate-400">{{ item.label }}：</span>{{ item.value }}
@@ -1377,6 +1451,76 @@ onMounted(() => {
         </section>
       </div>
       <a-empty v-else description="未选择审批日志" />
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="metadataDrawerVisible"
+      width="720px"
+      title="赛事概览确认表单"
+      unmount-on-close
+    >
+      <a-form v-if="detailContestSnapshot" :model="detailContestSnapshot" layout="vertical" class="text-xs space-y-4">
+        <section class="p-3 border border-slate-200 rounded bg-slate-50">
+          <div class="flex flex-wrap gap-2 items-center justify-between">
+            <h3 class="text-sm text-slate-900 font-semibold">
+              发布校验核心字段
+            </h3>
+            <a-tag size="small" color="arcoblue">
+              核心字段
+            </a-tag>
+          </div>
+          <div class="mt-3 gap-3 grid md:grid-cols-2">
+            <a-form-item v-for="item in contestMetadataFormRows(detailContestSnapshot)" :key="item.key" :label="item.label">
+              <a-textarea
+                :model-value="item.value"
+                :auto-size="{ minRows: item.value.length > 80 ? 2 : 1, maxRows: 6 }"
+                readonly
+              />
+              <p class="text-[11px] text-slate-500 mt-1">
+                审核口径：{{ item.source }}
+              </p>
+            </a-form-item>
+          </div>
+        </section>
+
+        <section class="p-3 border border-slate-200 rounded">
+          <h3 class="text-sm text-slate-900 font-semibold">
+            同版本赛道/时间线
+          </h3>
+          <div class="mt-3 gap-2 grid md:grid-cols-3">
+            <p class="text-slate-600">
+              赛道数量：{{ detailContestSnapshot.tracks.length }}
+            </p>
+            <p class="text-slate-600">
+              赛事时间节点：{{ detailContestSnapshot.timelines.length }}
+            </p>
+            <p class="text-slate-600">
+              赛道时间节点：{{ detailContestSnapshot.trackTimelines.length }}
+            </p>
+          </div>
+          <div class="mt-3 gap-3 grid md:grid-cols-2">
+            <div>
+              <p class="text-slate-400 mb-1">
+                时间节点
+              </p>
+              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ contestTimelineText(detailContestSnapshot.timelines) }}</pre>
+            </div>
+            <div>
+              <p class="text-slate-400 mb-1">
+                赛道时间节点
+              </p>
+              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ trackTimelineText(detailContestSnapshot.trackTimelines) }}</pre>
+            </div>
+          </div>
+        </section>
+
+        <div class="pt-2 flex justify-end">
+          <button class="dense-btn" type="button" @click="metadataDrawerVisible = false">
+            确认
+          </button>
+        </div>
+      </a-form>
+      <a-empty v-else description="未加载到赛事快照" />
     </a-drawer>
 
     <a-modal

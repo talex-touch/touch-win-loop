@@ -129,6 +129,14 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /<a-table[\s\S]*detailContestSnapshot\.tracks/, '赛道库快照应改为表格')
     assert.doesNotMatch(workbenchSource, /\{\{\s*trackSummary\(item\)\s*\}\}/, '赛道库不应再用长文本卡片展示')
 
+    assert.match(workbenchSource, /metadataDrawerVisible/, '赛事概览 metadata 应使用独立确认抽屉状态')
+    assert.match(workbenchSource, /contestMetadataFormRows/, '赛事概览 metadata 应整理成确认表单行')
+    assert.match(workbenchSource, /确认概览字段/, '版本详情应提供概览字段确认入口')
+    assert.match(workbenchSource, /赛事概览确认表单/, '赛事概览 metadata drawer 应有明确标题')
+    assert.match(workbenchSource, /organizer[\s\S]*participantRequirements[\s\S]*currentSeason/, 'metadata 确认表单应覆盖主办方、参赛对象和当前届次')
+    assert.match(workbenchSource, /detailContestSnapshot\.tracks\.length/, 'metadata 确认抽屉应把赛道数量并入同一审核路径')
+    assert.match(workbenchSource, /detailContestSnapshot\.trackTimelines\.length/, 'metadata 确认抽屉应把赛道时间线数量并入同一审核路径')
+
     assert.match(workbenchSource, /reviewLogDrawerVisible/, '审批日志详情应使用独立 drawer 状态')
     assert.match(workbenchSource, /selectedReviewLog/, '审批日志详情应按单条日志打开')
     assert.match(workbenchSource, /审批日志详情/, '审批日志 drawer 应有明确标题')
