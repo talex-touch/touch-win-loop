@@ -148,7 +148,11 @@ export default defineEventHandler(async (event) => {
         detail,
         injectedPrompt,
         localContext: knowledgeContext.summaryText,
-        knowledge: knowledgeContext,
+        knowledge: {
+          ...knowledgeContext,
+          retrievalPlan: knowledgeContext.retrievalPlan,
+          evidencePaths: knowledgeContext.evidencePaths,
+        },
       }
     })
   }

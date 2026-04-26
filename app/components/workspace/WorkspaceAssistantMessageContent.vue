@@ -4,11 +4,15 @@ import type {
   ProjectKnowledgeCitation,
   ProjectKnowledgeCitationLocator,
   ProjectKnowledgeCitationSourceScope,
+  ProjectKnowledgeEvidencePath,
+  ProjectKnowledgeMessagePayload,
   ProjectKnowledgeModality,
   ProjectKnowledgeProjectionType,
+  ProjectKnowledgeRetrievalIntent,
+  ProjectKnowledgeRetrievalPlan,
+  ProjectKnowledgeRetrievalPlannerSource,
   ProjectKnowledgeSourceStatus,
 } from '~~/shared/types/domain'
-import type { ProjectKnowledgeMessagePayload } from '~~/shared/types/domain'
 import { computed, ref } from 'vue'
 
 const props = defineProps<{
@@ -21,6 +25,60 @@ const emit = defineEmits<{
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function normalizeRetrievalPlan(value: unknown): ProjectKnowledgeRetrievalPlan | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return null
+  const candidate = value as Record<string, unknown>
+  const intent = normalizeString(candidate.intent) || 'direct_answer'
+  const plannerSource = normalizeString(candidate.plannerSource) || 'heuristic'
+  return {
+    intent: intent as ProjectKnowledgeRetrievalIntent,
+    queryVariants: Array.isArray(candidate.queryVariants)
+      ? candidate.queryVariants.map(item => normalizeString(item)).filter(Boolean)
+      : [],
+    preferredModalities: Array.isArray(candidate.preferredModalities)
+      ? candidate.preferredModalities.map(item => normalizeString(item)).filter(Boolean) as ProjectKnowledgeRetrievalPlan['preferredModalities']
+      : [],
+    preferredProjectionTypes: Array.isArray(candidate.preferredProjectionTypes)
+      ? candidate.preferredProjectionTypes.map(item => normalizeString(item)).filter(Boolean) as ProjectKnowledgeRetrievalPlan['preferredProjectionTypes']
+      : [],
+    preferredEmbeddingStatuses: Array.isArray(candidate.preferredEmbeddingStatuses)
+      ? candidate.preferredEmbeddingStatuses.map(item => normalizeString(item)).filter(Boolean) as ProjectKnowledgeRetrievalPlan['preferredEmbeddingStatuses']
+      : [],
+    relationTypes: Array.isArray(candidate.relationTypes)
+      ? candidate.relationTypes.map(item => normalizeString(item)).filter(Boolean) as ProjectKnowledgeRetrievalPlan['relationTypes']
+      : [],
+    retrievalBudget: Number.isFinite(Number(candidate.retrievalBudget)) ? Number(candidate.retrievalBudget) : 0,
+    plannerSource: plannerSource as ProjectKnowledgeRetrievalPlannerSource,
+    reasoning: normalizeString(candidate.reasoning) || undefined,
+  }
+}
+
+function normalizeEvidencePaths(value: unknown): ProjectKnowledgeEvidencePath[] {
+  if (!Array.isArray(value))
+    return []
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+    .map((item) => {
+      return {
+        id: normalizeString(item.id),
+        relationType: normalizeString(item.relationType) as ProjectKnowledgeEvidencePath['relationType'],
+        sourceNodeType: normalizeString(item.sourceNodeType) as ProjectKnowledgeEvidencePath['sourceNodeType'],
+        sourceNodeId: normalizeString(item.sourceNodeId),
+        sourceLabel: normalizeString(item.sourceLabel),
+        targetNodeType: normalizeString(item.targetNodeType) as ProjectKnowledgeEvidencePath['targetNodeType'],
+        targetNodeId: normalizeString(item.targetNodeId),
+        targetLabel: normalizeString(item.targetLabel),
+        score: Number.isFinite(Number(item.score)) ? Number(item.score) : 0,
+        evidenceMetric: normalizeString(item.evidenceMetric),
+        evidenceModel: normalizeString(item.evidenceModel),
+        citationChunkId: normalizeString(item.citationChunkId) || undefined,
+        summary: normalizeString(item.summary),
+      } satisfies ProjectKnowledgeEvidencePath
+    })
+    .filter(item => item.id && item.summary)
 }
 
 function normalizeKnowledge(value: unknown): ProjectKnowledgeMessagePayload | null {
@@ -49,15 +107,15 @@ function normalizeKnowledge(value: unknown): ProjectKnowledgeMessagePayload | nu
           nodeId: normalizeString(item.nodeId) || undefined,
           locator: item.locator && typeof item.locator === 'object' && !Array.isArray(item.locator)
             ? {
-                page: Number.isFinite(Number((item.locator as Record<string, unknown>).page))
-                  ? Number((item.locator as Record<string, unknown>).page)
-                  : undefined,
-                section: normalizeString((item.locator as Record<string, unknown>).section) || undefined,
-                anchorId: normalizeString((item.locator as Record<string, unknown>).anchorId) || undefined,
-                nodeId: normalizeString((item.locator as Record<string, unknown>).nodeId) || undefined,
-                utteranceRange: normalizeString((item.locator as Record<string, unknown>).utteranceRange) || undefined,
-                label: normalizeString((item.locator as Record<string, unknown>).label) || undefined,
-              } satisfies ProjectKnowledgeCitationLocator
+              page: Number.isFinite(Number((item.locator as Record<string, unknown>).page))
+                ? Number((item.locator as Record<string, unknown>).page)
+                : undefined,
+              section: normalizeString((item.locator as Record<string, unknown>).section) || undefined,
+              anchorId: normalizeString((item.locator as Record<string, unknown>).anchorId) || undefined,
+              nodeId: normalizeString((item.locator as Record<string, unknown>).nodeId) || undefined,
+              utteranceRange: normalizeString((item.locator as Record<string, unknown>).utteranceRange) || undefined,
+              label: normalizeString((item.locator as Record<string, unknown>).label) || undefined,
+            } satisfies ProjectKnowledgeCitationLocator
             : null,
           quote: normalizeString(item.quote) || undefined,
         } satisfies ProjectKnowledgeCitation
@@ -65,6 +123,8 @@ function normalizeKnowledge(value: unknown): ProjectKnowledgeMessagePayload | nu
       .filter(item => item.sourceId && item.chunkId),
     warning: normalizeString(candidate.warning),
     usedFallback: candidate.usedFallback === true,
+    retrievalPlan: normalizeRetrievalPlan(candidate.retrievalPlan),
+    evidencePaths: normalizeEvidencePaths(candidate.evidencePaths),
   }
 }
 
@@ -78,9 +138,35 @@ const knowledge = computed(() => {
 })
 
 const visibleCitations = computed(() => knowledge.value?.citations || [])
-const hasKnowledgePanel = computed(() => Boolean(knowledge.value?.warning) || visibleCitations.value.length > 0)
+const retrievalPlan = computed(() => knowledge.value?.retrievalPlan || null)
+const evidencePaths = computed(() => knowledge.value?.evidencePaths || [])
+const visibleEvidencePaths = computed(() => evidencePaths.value.slice(0, 4))
+const hasRetrievalPaths = computed(() => Boolean(retrievalPlan.value) || visibleEvidencePaths.value.length > 0)
+const hasKnowledgePanel = computed(() => Boolean(knowledge.value?.warning) || visibleCitations.value.length > 0 || hasRetrievalPaths.value)
 const citationsExpanded = ref(false)
 const citationToggleLabel = computed(() => `资料引用(${visibleCitations.value.length})`)
+
+function buildRetrievalIntentLabel(intent: ProjectKnowledgeRetrievalIntent | string | undefined): string {
+  if (intent === 'evidence_trace')
+    return '证据链'
+  if (intent === 'global_summary')
+    return '全局总结'
+  if (intent === 'relation_explore')
+    return '关系探索'
+  if (intent === 'visual_lookup')
+    return '视觉检索'
+  if (intent === 'meeting_lookup')
+    return '会议检索'
+  return '直接问答'
+}
+
+function buildPlannerSourceLabel(source: ProjectKnowledgeRetrievalPlannerSource | string | undefined): string {
+  if (source === 'llm')
+    return 'LLM 规划'
+  if (source === 'fallback')
+    return '回退规划'
+  return '启发式规划'
+}
 
 function buildCitationMeta(citation: ProjectKnowledgeCitation): string {
   const parts: string[] = []
@@ -145,7 +231,7 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
       </div>
 
       <div
-        v-if="visibleCitations.length > 0"
+        v-if="visibleCitations.length > 0 || hasRetrievalPaths"
         class="workspace-assistant-message-content__citations"
       >
         <button
@@ -223,6 +309,33 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
                 {{ citation.quote }}
               </div>
             </component>
+
+            <div
+              v-if="hasRetrievalPaths"
+              class="workspace-assistant-message-content__knowledge-paths"
+              data-testid="workspace-assistant-knowledge-paths"
+            >
+              <div class="workspace-assistant-message-content__knowledge-paths-head">
+                <strong>检索路径</strong>
+                <span v-if="retrievalPlan">
+                  {{ buildPlannerSourceLabel(retrievalPlan.plannerSource) }} · {{ buildRetrievalIntentLabel(retrievalPlan.intent) }}
+                </span>
+              </div>
+              <div class="workspace-assistant-message-content__knowledge-paths-meta">
+                <span v-if="retrievalPlan">预算 {{ retrievalPlan.retrievalBudget || visibleCitations.length }}</span>
+                <span>{{ visibleEvidencePaths.length }} 条证据链</span>
+              </div>
+              <div v-if="visibleEvidencePaths.length > 0" class="workspace-assistant-message-content__knowledge-path-list">
+                <div
+                  v-for="path in visibleEvidencePaths"
+                  :key="path.id"
+                  class="workspace-assistant-message-content__knowledge-path-item"
+                >
+                  <span>{{ path.summary }}</span>
+                  <small>{{ Math.round(path.score * 100) }}%</small>
+                </div>
+              </div>
+            </div>
           </div>
         </Transition>
       </div>
@@ -436,5 +549,61 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
   font-size: var(--workspace-assistant-font-xs);
   line-height: 1.6;
   white-space: pre-wrap;
+}
+
+.workspace-assistant-message-content__knowledge-paths {
+  padding: var(--workspace-assistant-card-padding-y) var(--workspace-assistant-card-padding-x);
+  border: 1px solid rgba(125, 148, 179, 0.28);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.88);
+}
+
+.workspace-assistant-message-content__knowledge-paths-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--workspace-assistant-gap-tight);
+  color: #334155;
+  font-size: var(--workspace-assistant-font-xs);
+}
+
+.workspace-assistant-message-content__knowledge-paths-head strong {
+  color: #0f172a;
+  font-size: var(--workspace-assistant-font-sm);
+}
+
+.workspace-assistant-message-content__knowledge-paths-meta,
+.workspace-assistant-message-content__knowledge-path-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--workspace-assistant-gap-tight);
+  margin-top: var(--wl-ws-space-1_5, 6px);
+  color: #64748b;
+  font-size: var(--workspace-assistant-font-xs);
+  line-height: 1.5;
+}
+
+.workspace-assistant-message-content__knowledge-path-list {
+  display: grid;
+  gap: var(--wl-ws-space-1_5, 6px);
+  margin-top: var(--workspace-assistant-gap-tight);
+}
+
+.workspace-assistant-message-content__knowledge-path-item {
+  justify-content: space-between;
+  padding-top: var(--wl-ws-space-1_5, 6px);
+  border-top: 1px solid rgba(203, 213, 225, 0.68);
+}
+
+.workspace-assistant-message-content__knowledge-path-item span {
+  min-width: 0;
+  color: #334155;
+}
+
+.workspace-assistant-message-content__knowledge-path-item small {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: var(--workspace-assistant-font-2xs);
+  font-weight: 700;
 }
 </style>

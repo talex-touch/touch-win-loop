@@ -553,6 +553,9 @@ onBeforeUnmount(() => {
         <NuxtLink v-if="canViewOperations" to="/admin/operations" class="admin-home-action-button is-primary">
           查看运行监控
         </NuxtLink>
+        <NuxtLink v-if="canViewOperations" to="/admin/resource-knowledge-worker" class="admin-home-action-button">
+          知识索引监控
+        </NuxtLink>
         <button
           type="button"
           class="admin-home-action-button"

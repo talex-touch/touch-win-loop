@@ -25,13 +25,13 @@ import { executeWorkspaceAi } from '~~/server/services/ai/workspace-orchestrator
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { upsertAiChatSessionContext } from '~~/server/utils/chat-session-context-store'
 import {
   appendAiChatMessage,
   createAiChatSession,
   getAiChatSessionById,
   patchAiChatSessionContext,
 } from '~~/server/utils/chat-store'
-import { upsertAiChatSessionContext } from '~~/server/utils/chat-session-context-store'
 import { getContestDetail, recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
@@ -625,6 +625,8 @@ export default defineEventHandler(async (event) => {
             citations: knowledgeContext.citations,
             warning: knowledgeContext.warning,
             usedFallback: knowledgeContext.usedFallback,
+            retrievalPlan: knowledgeContext.retrievalPlan,
+            evidencePaths: knowledgeContext.evidencePaths,
           },
         }
       })

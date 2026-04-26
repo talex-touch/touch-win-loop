@@ -523,6 +523,9 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
         >
           <template #actions>
             <div class="loopy-center__main-actions">
+              <span class="loopy-center__main-pill" data-tone="primary">
+                AI 检索策略已接入
+              </span>
               <span class="loopy-center__main-pill" :data-tone="analyticsReady ? 'success' : 'warning'">
                 {{ analyticsReady ? 'Analytics 已就绪' : 'Analytics 待刷新' }}
               </span>

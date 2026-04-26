@@ -231,6 +231,8 @@ export default defineEventHandler(async (event) => {
             citations: knowledgeContext.citations,
             warning: knowledgeContext.warning,
             usedFallback: knowledgeContext.usedFallback,
+            retrievalPlan: knowledgeContext.retrievalPlan,
+            evidencePaths: knowledgeContext.evidencePaths,
           },
         }
       })
