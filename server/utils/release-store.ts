@@ -2273,6 +2273,21 @@ async function findSyncRunScopedReleaseVersion(
   return existingResult.rows[0] ? mapReleaseVersion(existingResult.rows[0]) : null
 }
 
+async function getLatestMergeableContestReleaseDraft(
+  db: Queryable,
+  input: {
+    scopeId: string
+  },
+): Promise<ReleaseVersion | null> {
+  const items = await listReleaseScopedVersions(db, {
+    scopeKind: 'contest',
+    scopeId: input.scopeId,
+    statuses: ['pending_first_review'],
+    limit: 1,
+  })
+  return items[0] || null
+}
+
 async function createWorkingReleaseVersion(
   db: Queryable,
   input: {
@@ -2388,17 +2403,27 @@ export async function upsertContestReleaseDraft(
     scopeId,
     syncRunId: input.syncRunId,
   })
+  const mergeBaseVersion = existingVersion
+    ? null
+    : await getLatestMergeableContestReleaseDraft(db, {
+        scopeId,
+      })
   const baseResult = await loadBaseSnapshot(db, {
     scopeKind: 'contest',
     scopeId,
   })
-  const base = baseResult.contestSnapshot || createEmptyContestSnapshot(scopeId)
+  const base = mergeBaseVersion
+    ? toContestSnapshot(mergeBaseVersion.snapshot, scopeId)
+    : (baseResult.contestSnapshot || createEmptyContestSnapshot(scopeId))
   const current = existingVersion
     ? toContestSnapshot(existingVersion.snapshot, scopeId)
     : toContestSnapshot(base, scopeId)
 
   let existed = false
-  let nextScopeTitle = normalizeText(existingVersion?.scopeTitle) || normalizeText(input.scopeTitle) || scopeId
+  let nextScopeTitle = normalizeText(existingVersion?.scopeTitle)
+    || normalizeText(mergeBaseVersion?.scopeTitle)
+    || normalizeText(input.scopeTitle)
+    || scopeId
   const syncSource = {
     syncItemId: input.syncItemId,
     syncRunId: input.syncRunId,
@@ -2497,7 +2522,7 @@ export async function upsertContestReleaseDraft(
     scopeTitle: nextScopeTitle,
     syncItemId: input.syncItemId,
     syncRunId: input.syncRunId,
-    liveEntityId: baseResult.liveEntityId,
+    liveEntityId: normalizeText(mergeBaseVersion?.liveEntityId) || baseResult.liveEntityId,
     snapshot: sanitizedCurrent,
     diffSummary,
   })
