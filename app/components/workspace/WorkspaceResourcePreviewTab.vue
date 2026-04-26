@@ -538,7 +538,7 @@ defineExpose({
                     {{ reviewJob.resultSummary }}
                   </p>
                   <p v-if="reviewJob?.fallbackUsed" class="workspace-resource-preview-tab__review-warning">
-                    当前意见为规则回退结果：文档审稿 AI 未配置或调用失败，请先检查 document_analysis 通道后再用于最终审阅。
+                    当前意见包含规则回退结果：文档审稿 AI 未配置、调用失败或部分页面未返回结构化意见，请先检查 document_analysis 通道后再用于最终审阅。
                   </p>
                   <div v-if="reviewFindingsByPage.length" class="workspace-resource-preview-tab__review-pages">
                     <section v-for="[pageNumber, findings] in reviewFindingsByPage" :key="pageNumber">

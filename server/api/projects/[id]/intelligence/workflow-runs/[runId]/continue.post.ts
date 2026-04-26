@@ -1,14 +1,14 @@
 import { setResponseStatus } from 'h3'
+import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
+import { continueIntelligenceWorkflow } from '~~/server/services/ai/intelligence-workflow-engine'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
-import { continueIntelligenceWorkflow } from '~~/server/services/ai/intelligence-workflow-engine'
-import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readEffectiveRuntimeSettings(event)
+  const { runtime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = String(getRouterParam(event, 'id') || '').trim()
   const runId = String(getRouterParam(event, 'runId') || '').trim()

@@ -1,20 +1,26 @@
 import { setResponseStatus } from 'h3'
+import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
+import { normalizeAiWorkflowRunTriggerPayload } from '~~/server/services/ai/intelligence-workflow-definition'
+import { executeIntelligenceWorkflow } from '~~/server/services/ai/intelligence-workflow-engine'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
-import { normalizeAiWorkflowRunTriggerPayload } from '~~/server/services/ai/intelligence-workflow-definition'
-import { executeIntelligenceWorkflow } from '~~/server/services/ai/intelligence-workflow-engine'
-import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
 import { getAiWorkflowDefinitionById } from '~~/server/utils/project-intelligence-workflow-store'
+
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readEffectiveRuntimeSettings(event)
+  const { runtime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = String(getRouterParam(event, 'id') || '').trim()
   const workflowId = String(getRouterParam(event, 'workflowId') || '').trim()
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}))
+  const body = normalizeRecord(await readBody<unknown>(event).catch(() => ({})))
 
   if (!projectId || !workflowId) {
     setResponseStatus(event, 400)
@@ -43,7 +49,7 @@ export default defineEventHandler(async (event) => {
       user,
       project,
       workflow,
-      triggerPayload: normalizeAiWorkflowRunTriggerPayload(body.triggerPayload || body),
+      triggerPayload: normalizeAiWorkflowRunTriggerPayload(body.triggerPayload ? normalizeRecord(body.triggerPayload) : body),
     })
   }).catch((error) => {
     if (error instanceof Error && (error.message === 'PROJECT_NOT_FOUND' || error.message === 'WORKFLOW_NOT_FOUND')) {

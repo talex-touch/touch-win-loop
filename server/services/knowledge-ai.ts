@@ -780,7 +780,7 @@ export async function resolveKnowledgeEmbeddingRuntimeProfile(input: {
   const provider = normalizeAiRuntimeProvider(embeddingAi.provider)
   const apiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(
     modelRuntime?.modelConfig.embeddingApiStyle,
-    resolvePlatformAiChannelEmbeddingApiStyle(embeddingChannelKey),
+    resolvePlatformAiChannelEmbeddingApiStyle(embeddingChannelKey) || undefined,
   )
   const model = normalizeEmbeddingModel(modelRuntime?.modelConfig.model || embeddingAi.model || '')
   const dimensions = resolveKnowledgeEmbeddingDimensions({

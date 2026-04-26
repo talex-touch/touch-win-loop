@@ -107,8 +107,12 @@ describe('intelligence workflow v1', () => {
 
     assert.match(workflowsIndexGetSource, /listBuiltinWorkflowTemplates\(\)/, 'workflows list API 未返回 builtin templates')
     assert.match(workflowsIndexPostSource, /saveAiWorkflowDefinition/, 'workflows save API 未接入 store')
+    assert.match(workflowsIndexPostSource, /function normalizeRecord/, 'workflows save API 未窄化请求体结构')
+    assert.match(workflowsIndexPostSource, /resolveProjectWorkspaceId\(project\)/, 'workflows save API 未兜底解析项目 workspaceId')
     assert.match(workflowRunPostSource, /executeIntelligenceWorkflow\(/, 'workflow run API 未接入执行引擎')
+    assert.match(workflowRunPostSource, /const \{ runtime \} = await readEffectiveRuntimeSettings\(event\)/, 'workflow run API 未等待有效 AI runtime')
     assert.match(workflowContinuePostSource, /continueIntelligenceWorkflow\(/, 'workflow continue API 未接入继续引擎')
+    assert.match(workflowContinuePostSource, /const \{ runtime \} = await readEffectiveRuntimeSettings\(event\)/, 'workflow continue API 未等待有效 AI runtime')
 
     assert.match(loopyTabSource, /id: 'workflows'/, 'Loopy 数据 tab 未新增 workflows 子视图')
     assert.match(loopyWorkflowsSource, /项目级智能工作流/, '缺少项目内 workflow 面板文案')

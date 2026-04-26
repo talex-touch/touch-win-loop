@@ -1,6 +1,11 @@
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { discoverProviderModels } from '~~/server/services/admin-ai/provider-models'
 import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolvePlatformAiRequestBaseURL, resolvePlatformAiTransientApiKey } from '~~/server/utils/platform-ai-base-url'
+
+const PROVIDER_MODELS_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/provider-models.post.ts')
+const PROVIDERS_TEST_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers/test.post.ts')
 
 function okJson(data: unknown) {
   return {
@@ -66,6 +71,16 @@ describe('admin-ai provider models', () => {
       providedApiKey: 'Bearer new-key',
       mode: 'keep',
     })).toBe('new-key')
+  })
+
+  it('临时 provider registry 不再读取已移除的 defaults 字段', async () => {
+    const [providerModelsPost, providersTestPost] = await Promise.all([
+      readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
+      readFile(PROVIDERS_TEST_POST_FILE, 'utf8'),
+    ])
+
+    expect(providerModelsPost).not.toMatch(/defaults: registry\.defaults/)
+    expect(providersTestPost).not.toMatch(/defaults: registry\.defaults/)
   })
 
   it('首个成功响应不是模型列表时会继续尝试下一个端点', async () => {

@@ -21,6 +21,7 @@ describe('project knowledge embedding governance', () => {
     assert.match(source, /function buildKnowledgeEmbeddingCacheKey\(/, 'knowledge-ai 未生成稳定 cache key')
     assert.match(source, /function resolveKnowledgeEmbeddingFailureReason\(/, 'knowledge-ai 未归一化 embedding 失败原因')
     assert.match(source, /export async function resolveKnowledgeEmbeddingRuntimeProfile\(/, 'knowledge-ai 未暴露统一 runtime profile 解析函数')
+    assert.match(source, /resolvePlatformAiChannelEmbeddingApiStyle\(embeddingChannelKey\) \|\| undefined/, 'knowledge-ai 未把 channel apiStyle 的 null fallback 收口为 undefined')
     assert.match(source, /failureReason: 'EMBEDDING_RUNTIME_NOT_CONFIGURED'/, 'knowledge-ai 未在 runtime 不可用时写入 failureReason')
     assert.match(source, /getKnowledgeEmbeddingCache\(\)\.set\(cacheKey, \{/, 'knowledge-ai 未在查询路径写入 embedding cache')
   })

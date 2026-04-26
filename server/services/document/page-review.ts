@@ -176,11 +176,17 @@ function normalizeAiFindings(rawFindings: z.infer<typeof pageReviewFindingSchema
 
   const coveredPages = new Set(findings.map(finding => finding.pageNumber))
   const fallbackByPage = buildFallbackFindings(pages)
+  let fallbackFilledPageCount = 0
   for (const fallback of fallbackByPage) {
-    if (!coveredPages.has(fallback.pageNumber))
+    if (!coveredPages.has(fallback.pageNumber)) {
       findings.push(fallback)
+      fallbackFilledPageCount += 1
+    }
   }
-  return findings.sort((left, right) => left.pageNumber - right.pageNumber)
+  return {
+    findings: findings.sort((left, right) => left.pageNumber - right.pageNumber),
+    fallbackFilledPageCount,
+  }
 }
 
 export async function reviewDocumentPages(input: {
@@ -242,12 +248,14 @@ export async function reviewDocumentPages(input: {
       run: async () => pageReviewResultSchema.parse(await structuredModel.invoke(promptValue)),
     })
     const parsed = reviewResult.data
+    const normalizedFindings = normalizeAiFindings(parsed.findings, pages)
+    const fallbackFilledPageCount = normalizedFindings.fallbackFilledPageCount
     return {
       summary: normalizeString(parsed.summary) || '已完成逐页审稿。',
-      findings: normalizeAiFindings(parsed.findings, pages),
+      findings: normalizedFindings.findings,
       provider,
       model,
-      fallbackUsed: false,
+      fallbackUsed: fallbackFilledPageCount > 0,
     }
   }
   catch {

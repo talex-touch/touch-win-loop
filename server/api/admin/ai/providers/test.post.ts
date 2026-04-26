@@ -108,7 +108,6 @@ export default defineEventHandler(async (event) => {
             ...runtime.ai,
             providersJson: buildPlatformAiRegistryJson(runtime, {
               providers: [seed],
-              defaults: registry.defaults,
             }),
           },
         }
