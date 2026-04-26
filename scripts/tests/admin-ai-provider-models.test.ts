@@ -5,6 +5,7 @@ import { discoverProviderModels } from '~~/server/services/admin-ai/provider-mod
 import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolvePlatformAiRequestBaseURL, resolvePlatformAiTransientApiKey } from '~~/server/utils/platform-ai-base-url'
 
 const PROVIDER_MODELS_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/provider-models.post.ts')
+const PROVIDER_MODELS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/provider-models.get.ts')
 const PROVIDERS_TEST_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers/test.post.ts')
 const PROVIDERS_PATCH_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers.patch.ts')
 const AI_PROMPTS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/ai-prompts.vue')
@@ -83,6 +84,16 @@ describe('admin-ai provider models', () => {
 
     expect(providerModelsPost).not.toMatch(/defaults: registry\.defaults/)
     expect(providersTestPost).not.toMatch(/defaults: registry\.defaults/)
+  })
+
+  it('旧 GET 模型拉取接口也收敛到 Provider 语义', async () => {
+    const source = await readFile(PROVIDER_MODELS_GET_FILE, 'utf8')
+
+    expect(source).toMatch(/const providerId = String\(query\.providerId \|\| ''\)\.trim\(\)/)
+    expect(source).toMatch(/registry\.providers\.find\(item => item\.capability !== 'search'\)/)
+    expect(source).toMatch(/provider\.capability === 'search'/)
+    expect(source).toMatch(/Provider API Key 未配置/)
+    expect(source).not.toMatch(/共享上游/)
   })
 
   it('首个成功响应不是模型列表时会继续尝试下一个端点', async () => {

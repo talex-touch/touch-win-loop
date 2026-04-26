@@ -26,10 +26,14 @@ export default defineEventHandler(async (event) => {
   }
 
   const registry = resolvePlatformAiRegistry(runtime)
-  const provider = registry.providers[0]
+  const query = getQuery(event)
+  const providerId = String(query.providerId || '').trim()
+  const provider = (providerId ? registry.providers.find(item => item.id === providerId) : null)
+    || registry.providers.find(item => item.capability !== 'search')
+    || null
   if (!provider) {
     setResponseStatus(event, 400)
-    return fail('尚未配置共享上游，无法拉取模型列表。', {
+    return fail('尚未配置可拉取模型池的 Provider。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -38,9 +42,20 @@ export default defineEventHandler(async (event) => {
     }, 40096)
   }
 
+  if (provider.capability === 'search') {
+    setResponseStatus(event, 400)
+    return fail('当前 Provider 不支持模型池拉取。', {
+      startedAt,
+      provider: provider.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40098)
+  }
+
   if (!String(provider.apiKey || '').trim()) {
     setResponseStatus(event, 400)
-    return fail('共享上游 API Key 未配置，无法自动拉取模型。', {
+    return fail('Provider API Key 未配置，无法自动拉取模型。', {
       startedAt,
       provider: provider.provider,
       model: runtime.ai.model,
@@ -72,6 +87,8 @@ export default defineEventHandler(async (event) => {
     })
 
     return ok({
+      providerId: provider.id,
+      providerName: provider.name,
       provider: provider.provider,
       baseURL: provider.baseURL,
       fetchedAt: new Date().toISOString(),
