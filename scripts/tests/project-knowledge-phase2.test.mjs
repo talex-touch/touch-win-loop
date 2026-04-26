@@ -11,6 +11,7 @@ const PROJECT_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/projec
 const RIGHT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceRightSidebar.vue')
 const FINAL_REVIEW_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceFinalReviewSidebar.vue')
 const DESIGN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceDesignPanel.vue')
+const DESIGN_AI_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/design/WorkspaceDesignDiagramCanvasAiPanel.vue')
 const ASSISTANT_MESSAGE_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceAssistantMessageContent.vue')
 const KNOWLEDGE_WORKER_STATE_FILE = resolve(process.cwd(), 'server/utils/project-knowledge-worker-state.ts')
 const KNOWLEDGE_WORKER_PLUGIN_FILE = resolve(process.cwd(), 'server/plugins/project-knowledge-worker.ts')
@@ -40,11 +41,12 @@ describe('project knowledge phase2', () => {
   })
 
   it('统一引用渲染组件已接入右栏、终审和画布 AI 最近消息', async () => {
-    const [assistantSource, sidebarSource, finalReviewSource, designSource, pageSource] = await Promise.all([
+    const [assistantSource, sidebarSource, finalReviewSource, designSource, designAiPanelSource, pageSource] = await Promise.all([
       readFile(ASSISTANT_MESSAGE_FILE, 'utf8'),
       readFile(RIGHT_SIDEBAR_FILE, 'utf8'),
       readFile(FINAL_REVIEW_SIDEBAR_FILE, 'utf8'),
       readFile(DESIGN_PANEL_FILE, 'utf8'),
+      readFile(DESIGN_AI_PANEL_FILE, 'utf8'),
       readFile(PROJECT_PAGE_FILE, 'utf8'),
     ])
 
@@ -57,8 +59,9 @@ describe('project knowledge phase2', () => {
     assert.match(assistantSource, /workspace-assistant-citation-stale/, '统一 assistant 消息组件缺少 stale 标记')
     assert.match(sidebarSource, /<WorkspaceAssistantMessageContent/, '右栏未接入统一 assistant 消息组件')
     assert.match(finalReviewSource, /<WorkspaceAssistantMessageContent/, '终审侧栏未接入统一 assistant 消息组件')
-    assert.match(designSource, /data-testid="workspace-canvas-ai-messages"/, '画布 AI 未展示最近消息列表')
-    assert.match(designSource, /<WorkspaceAssistantMessageContent[\s\S]*@open-resource="emit\('openResource', \$event\)"/, '画布 AI 最近消息未接入引用打开资源动作')
+    assert.match(designSource, /<WorkspaceDesignDiagramCanvasAiPanel[\s\S]*:messages="canvasAiMessages"[\s\S]*@open-resource="emit\('openResource', \$event\)"/, '画布 AI 父面板未挂载最近消息面板')
+    assert.match(designAiPanelSource, /data-testid="workspace-canvas-ai-messages"/, '画布 AI 未展示最近消息列表')
+    assert.match(designAiPanelSource, /<WorkspaceAssistantMessageContent[\s\S]*@open-resource="emit\('openResource', \$event\)"/, '画布 AI 最近消息未接入引用打开资源动作')
     assert.match(designSource, /workspace-design-canvas-ai:/, '画布 AI 最近消息未接入本地持久化 key')
     assert.match(designSource, /localStorage\.setItem/, '画布 AI 最近消息未持久化到本地存储')
     assert.match(pageSource, /@open-resource="openProjectResourcePreview"/, '项目页未接住工作台或画布引用打开资源事件')
