@@ -28,6 +28,7 @@ const COMMON_TARGET_ALIASES: Record<string, string[]> = {
   undertaker: ['undertaker', '承办方', '承办单位', '承办'],
   participantRequirements: ['participantRequirements', 'participant_requirements', '参赛对象', '适用对象', '参赛要求'],
   teamRule: ['teamRule', 'team_rule', '组队规则', '组队要求'],
+  currentSeason: ['currentSeason', 'current_season', '届次', '当前届次', '赛季', '当前赛季'],
   awardRatio: ['awardRatio', 'award_ratio', '获奖比例'],
   suitableMajors: ['suitableMajors', '适合专业', '适用专业', '推荐专业', '相关专业'],
   deliverableTypes: ['deliverableTypes', '交付物', '成果类型', '提交物', '提交内容'],
@@ -116,7 +117,7 @@ const CHINESE_DIGITS: Record<string, string> = {
 }
 
 function toHalfwidth(raw: string): string {
-  return raw.replace(/[！-～]/g, (char) => {
+  return raw.replace(/[\uFF01-\uFF5E]/g, (char) => {
     const code = char.charCodeAt(0)
     return String.fromCharCode(code - FULLWIDTH_OFFSET)
   })

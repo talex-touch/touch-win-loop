@@ -1882,6 +1882,7 @@ export interface ContestReleaseTrackSnapshot {
   undertaker?: string
   participantRequirements?: string
   teamRule?: string
+  currentSeason?: string
   awardRatio?: string
   suitableMajors?: string[]
   deliverableTypes?: string[]

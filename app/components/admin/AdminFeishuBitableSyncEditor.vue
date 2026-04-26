@@ -217,6 +217,7 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'summary', label: 'summary（赛道简介）' },
     { key: 'participantRequirements', label: 'participantRequirements（参赛对象）' },
     { key: 'teamRule', label: 'teamRule（组队规则）' },
+    { key: 'currentSeason', label: 'currentSeason（当前届次）' },
     { key: 'timelineText', label: 'timelineText（时间节点）' },
     { key: 'suitableMajors', label: 'suitableMajors（相关专业）' },
     { key: 'awardRatio', label: 'awardRatio（获奖比例）' },

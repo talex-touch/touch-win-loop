@@ -129,6 +129,7 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
           summary: '',
           participantRequirements: '',
           teamRule: '',
+          currentSeason: '',
           timelineText: '',
           suitableMajors: '',
           awardRatio: '',
