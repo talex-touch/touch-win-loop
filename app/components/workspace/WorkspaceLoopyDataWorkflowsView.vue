@@ -38,7 +38,7 @@ const AGENT_MODE_OPTIONS = [
   { id: 'contextual_agent', label: '上下文 Agent' },
 ]
 
-type DraftState = {
+interface DraftState {
   id?: string
   definition: AiWorkflowDefinitionPayload
 }
@@ -506,9 +506,15 @@ watch(workflows, (items) => {
             <div class="workflow-editor__section-head">
               <h4>步骤</h4>
               <div class="workflow-editor__step-actions">
-                <button type="button" @click="addStep('prompt')">加提示步骤</button>
-                <button type="button" @click="addStep('tool')">加工具步骤</button>
-                <button type="button" @click="addStep('agent')">加 Agent 步骤</button>
+                <button type="button" @click="addStep('prompt')">
+                  加提示步骤
+                </button>
+                <button type="button" @click="addStep('tool')">
+                  加工具步骤
+                </button>
+                <button type="button" @click="addStep('agent')">
+                  加 Agent 步骤
+                </button>
               </div>
             </div>
 

@@ -537,6 +537,9 @@ defineExpose({
                   <p v-if="reviewJob?.resultSummary" class="workspace-resource-preview-tab__review-summary">
                     {{ reviewJob.resultSummary }}
                   </p>
+                  <p v-if="reviewJob?.fallbackUsed" class="workspace-resource-preview-tab__review-warning">
+                    当前意见为规则回退结果：文档审稿 AI 未配置或调用失败，请先检查 document_analysis 通道后再用于最终审阅。
+                  </p>
                   <div v-if="reviewFindingsByPage.length" class="workspace-resource-preview-tab__review-pages">
                     <section v-for="[pageNumber, findings] in reviewFindingsByPage" :key="pageNumber">
                       <button type="button" @click="focusReviewPage(pageNumber)">
@@ -767,6 +770,7 @@ defineExpose({
 
 .workspace-resource-preview-tab__review-error,
 .workspace-resource-preview-tab__review-summary,
+.workspace-resource-preview-tab__review-warning,
 .workspace-resource-preview-tab__review-empty {
   margin: 0;
   font-size: 12px;
@@ -780,6 +784,10 @@ defineExpose({
 .workspace-resource-preview-tab__review-summary,
 .workspace-resource-preview-tab__review-empty {
   color: #64748b;
+}
+
+.workspace-resource-preview-tab__review-warning {
+  color: #b45309;
 }
 
 .workspace-resource-preview-tab__review-pages {

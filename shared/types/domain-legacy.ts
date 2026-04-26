@@ -1746,6 +1746,7 @@ export interface ProjectResourceReviewJob {
   errorMessage: string
   provider: string
   model: string
+  fallbackUsed: boolean
   createdByUserId?: string | null
   startedAt?: string | null
   finishedAt?: string | null
@@ -3834,7 +3835,7 @@ export interface AiWorkflowRunTriggerPayload {
   [key: string]: unknown
 }
 
-export interface AiWorkflowRunReviewContext {
+export interface AiWorkflowRunReviewContext extends Record<string, unknown> {
   kind: 'project_change_request'
   changeRequestIds: string[]
   changeRequests?: AiProjectChangeRequest[]

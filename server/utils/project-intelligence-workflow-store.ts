@@ -170,6 +170,7 @@ function mapRun(row: AiWorkflowRunRow): AiWorkflowRun {
 function mapRunStep(row: AiWorkflowRunStepRow): AiWorkflowRunStep {
   const input = normalizeRecord(row.input_json)
   const output = normalizeRecord(row.output_json)
+  const agentMode = normalizeString(row.agent_mode) as AiWorkflowRunStep['agentMode']
   return {
     id: row.id,
     runId: row.run_id,
@@ -180,7 +181,7 @@ function mapRunStep(row: AiWorkflowRunStepRow): AiWorkflowRunStep {
     type: row.step_type,
     status: row.status,
     toolKey: normalizeString(row.tool_key) || undefined,
-    agentMode: normalizeString(row.agent_mode) || undefined,
+    agentMode: agentMode || undefined,
     continueOnError: Boolean(row.continue_on_error),
     input: Object.keys(input).length > 0 ? input : undefined,
     output: Object.keys(output).length > 0 ? output : undefined,

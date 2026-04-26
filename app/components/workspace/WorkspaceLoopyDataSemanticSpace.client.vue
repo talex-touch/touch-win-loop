@@ -228,6 +228,40 @@ const embeddingDimensionLabel = computed(() => {
   return `${dimensions} 维`
 })
 
+const semanticHealthState = computed(() => String(props.dashboard?.diagnostics.healthState || '').trim())
+
+const semanticSubtitle = computed(() => {
+  if (semanticHealthState.value === 'healthy')
+    return '真实 embedding 经降维后形成聚类分布，悬停即可查看当前簇的数量、密度、主题和相似度。'
+  if (semanticHealthState.value === 'fallback_only')
+    return '当前语义空间只包含 fallback 向量，适合检查索引形状，不适合作为真实语义相似度结论。'
+  if (semanticHealthState.value === 'partial')
+    return '当前语义空间混合了真实向量与待刷新资源，适合定位缺口，结论需要结合索引健康一起判断。'
+  if (semanticHealthState.value === 'missing_runtime')
+    return 'Embedding 运行时尚未配置，语义空间会等待真实向量产出后再形成可信布局。'
+  if (semanticHealthState.value === 'worker_inactive' || semanticHealthState.value === 'queued_but_not_running')
+    return '知识索引 Worker 未稳定消费任务，语义布局可能落后于当前资源状态。'
+  return '语义空间分布依赖项目知识索引、embedding 产出和 analytics 刷新状态。'
+})
+
+const semanticHealthNotice = computed(() => {
+  if (!props.dashboard)
+    return ''
+  if (semanticHealthState.value === 'healthy' && payload.value?.layout?.status !== 'degraded')
+    return ''
+  if (semanticHealthState.value === 'fallback_only')
+    return '当前布局来自 deterministic fallback embedding，只能辅助排查数据流，不代表真实语义距离。'
+  if (semanticHealthState.value === 'partial')
+    return props.dashboard.diagnostics.healthMessage || '真实 embedding 只覆盖部分资源，语义空间仍处于部分可用状态。'
+  if (semanticHealthState.value === 'missing_runtime')
+    return '请先配置 knowledge_embedding 或 knowledge_visual_embedding 通道，再重建项目知识索引。'
+  if (semanticHealthState.value === 'worker_inactive' || semanticHealthState.value === 'queued_but_not_running')
+    return props.dashboard.diagnostics.healthMessage || '请先恢复知识索引 Worker，避免语义布局继续读取旧快照。'
+  if (payload.value?.layout?.status === 'degraded')
+    return '当前 semantic layout 标记为 degraded，请结合索引健康页查看退化原因。'
+  return props.dashboard.diagnostics.healthMessage || ''
+})
+
 const metricCards = computed(() => {
   const summary = payload.value?.summary
   return [
@@ -295,7 +329,7 @@ watch(() => props.projectId, () => {
           <span class="material-symbols-outlined loopy-embedding__title-icon">help</span>
         </div>
         <p class="loopy-embedding__subtitle">
-          真实向量经降维后形成的聚类分布，悬停即可查看当前簇的数量、密度、主题和相似度。
+          {{ semanticSubtitle }}
         </p>
       </div>
 
@@ -318,6 +352,10 @@ watch(() => props.projectId, () => {
       <span>布局状态 {{ payload.layout.status === 'degraded' ? '轻度退化' : '已就绪' }}</span>
       <span>已显示 {{ payload.selectionSummary.returnedPoints.toLocaleString('zh-CN') }} / {{ payload.summary.pointCount.toLocaleString('zh-CN') }}</span>
       <span>最近刷新 {{ payload.layout.updatedAt || payload.analytics.semanticLayoutUpdatedAt || '-' }}</span>
+    </div>
+
+    <div v-if="semanticHealthNotice" class="loopy-embedding__notice">
+      {{ semanticHealthNotice }}
     </div>
 
     <div v-if="loading" class="loopy-embedding__empty">
@@ -526,6 +564,16 @@ watch(() => props.projectId, () => {
   gap: 12px;
   color: #6d82a1;
   font-size: 12px;
+}
+
+.loopy-embedding__notice {
+  padding: 10px 12px;
+  border: 1px solid #f4d6a8;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #9a5b13;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .loopy-embedding__chart-shell,

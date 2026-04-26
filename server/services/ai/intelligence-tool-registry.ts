@@ -6,11 +6,12 @@ import type {
   AiWorkflowRunReviewContext,
   AiWorkflowToolRef,
   AuthUser,
+  FeishuSyncRunMode,
   Project,
 } from '~~/shared/types/domain'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
-import { createAiProjectChangeRequests } from '~~/server/utils/project-ai-store'
 import { runWorkflow } from '~~/server/services/workflow/workflow-orchestrator'
+import { createAiProjectChangeRequests } from '~~/server/utils/project-ai-store'
 
 export interface WorkflowToolExecutionContext {
   event?: H3Event
@@ -41,6 +42,18 @@ function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value))
     return []
   return value.map(item => normalizeString(item)).filter(Boolean)
+}
+
+function resolveProjectWorkspaceId(project: Project): string {
+  const workspaceId = normalizeString(project.workspaceId || project.teamId)
+  if (!workspaceId)
+    throw new Error('PROJECT_WORKSPACE_REQUIRED')
+  return workspaceId
+}
+
+function normalizeFeishuSyncRunMode(value: unknown): FeishuSyncRunMode | undefined {
+  const mode = normalizeString(value)
+  return mode === 'delta' || mode === 'full' ? mode : undefined
 }
 
 function normalizeRecord(value: unknown): Record<string, unknown> {
@@ -201,7 +214,7 @@ const workflowTools: WorkflowToolDefinition[] = [
         throw new Error('WORKFLOW_PROJECT_CHANGE_REQUIRED')
 
       const created = await createAiProjectChangeRequests(context.db, {
-        workspaceId: context.project.workspaceId,
+        workspaceId: resolveProjectWorkspaceId(context.project),
         projectId: context.project.id,
         sessionId: context.sessionId,
         mode: 'auto_optimize',
@@ -249,7 +262,7 @@ const workflowTools: WorkflowToolDefinition[] = [
         actorUserId: context.user.id,
         triggerSource: 'manual',
         syncItemId,
-        mode: normalizeString(args.mode) || undefined,
+        mode: normalizeFeishuSyncRunMode(args.mode),
         recordIds: normalizeStringArray(args.recordIds),
       })
       return {

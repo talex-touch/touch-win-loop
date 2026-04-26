@@ -153,6 +153,7 @@ export async function runProjectResourcePageReview(input: {
         resultSummary: review.summary,
         provider: review.provider,
         model: review.model,
+        fallbackUsed: review.fallbackUsed,
       })
     })
   }

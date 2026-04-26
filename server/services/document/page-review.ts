@@ -6,8 +6,8 @@ import type {
   ProjectResourceReviewFinding,
   ProjectResourceReviewSeverity,
 } from '~~/shared/types/domain'
-import { z } from 'zod'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
+import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
@@ -237,10 +237,11 @@ export async function reviewDocumentPages(input: {
       ].join('\n\n')],
     ])
     const promptValue = await promptTemplate.invoke({})
-    const parsed = await runWithRetry<z.infer<typeof pageReviewResultSchema>>({
+    const reviewResult = await runWithRetry<z.infer<typeof pageReviewResultSchema>>({
       maxRetries: Math.max(0, Math.min(3, Number(channelRuntime.ai.maxRetries || 0))),
       run: async () => pageReviewResultSchema.parse(await structuredModel.invoke(promptValue)),
     })
+    const parsed = reviewResult.data
     return {
       summary: normalizeString(parsed.summary) || '已完成逐页审稿。',
       findings: normalizeAiFindings(parsed.findings, pages),

@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const projectId = String(getRouterParam(event, 'id') || '').trim()
   const resourceId = String(getRouterParam(event, 'resourceId') || '').trim()
-  const body = await readBody<CreateReviewJobBody>(event).catch(() => ({}))
+  const body = await readBody<CreateReviewJobBody>(event).catch((): CreateReviewJobBody => ({}))
 
   if (!projectId || !resourceId) {
     setResponseStatus(event, 400)
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
     }, 400132)
   }
 
-  const canAccess = await withClient(event, async (db) => Boolean(await getVisibleProjectById(db, user, projectId)))
+  const canAccess = await withClient(event, async db => Boolean(await getVisibleProjectById(db, user, projectId)))
   if (!canAccess) {
     setResponseStatus(event, 404)
     return fail('project not found', {
@@ -54,7 +54,7 @@ export default defineEventHandler(async (event) => {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
-      fallbackUsed: job.provider ? false : true,
+      fallbackUsed: job.fallbackUsed,
       attempts: 1,
     })
   }

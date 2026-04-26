@@ -1355,6 +1355,7 @@ CREATE TABLE IF NOT EXISTS project_resource_review_jobs (
   error_message TEXT NOT NULL DEFAULT '',
   provider TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',
+  fallback_used BOOLEAN NOT NULL DEFAULT FALSE,
   created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   started_at TIMESTAMPTZ,
   finished_at TIMESTAMPTZ,

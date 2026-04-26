@@ -1711,6 +1711,50 @@ export interface DocumentAnalysis {
   pages: DocumentPageAnalysis[]
 }
 
+export type ProjectResourceReviewJobStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
+export type ProjectResourceReviewSeverity = 'info' | 'low' | 'medium' | 'high'
+
+export interface ProjectResourceReviewFinding {
+  id: string
+  jobId: string
+  projectId: string
+  resourceId: string
+  documentId: string
+  pageNumber: number
+  severity: ProjectResourceReviewSeverity
+  category: string
+  title: string
+  comment: string
+  quote: string
+  sourceBlockIds: string[]
+  locator: ProjectKnowledgeCitationLocator
+  bbox?: DocumentBBox | null
+  confidence: number
+  createdAt: string
+}
+
+export interface ProjectResourceReviewJob {
+  id: string
+  projectId: string
+  resourceId: string
+  documentId: string
+  status: ProjectResourceReviewJobStatus
+  prompt: string
+  pageTotal: number
+  pageReviewed: number
+  resultSummary: string
+  errorMessage: string
+  provider: string
+  model: string
+  fallbackUsed: boolean
+  createdByUserId?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+  findings: ProjectResourceReviewFinding[]
+}
+
 export interface ResourceDocument {
   id: string
   contestId: string
@@ -3715,6 +3759,138 @@ export interface AiProjectChangeRequest {
   failedReason?: string
   createdAt: string
   updatedAt: string
+}
+
+export type AiToolSource = 'builtin' | 'provider'
+export type AiToolRiskLevel = 'read' | 'write' | 'destructive'
+export type AiWorkflowTriggerType = 'manual' | 'resource.batch'
+export type AiWorkflowContextSource
+  = | 'project.settings'
+    | 'project.outline'
+    | 'project.resources'
+    | 'project.knowledge'
+    | 'resource.selection'
+    | 'session.memory'
+export type AiWorkflowStepType = 'prompt' | 'tool' | 'agent'
+export type AiWorkflowAgentMode = Exclude<WorkspaceAiMode, 'defense'>
+export type AiWorkflowRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'needs_review'
+export type AiWorkflowRunStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'needs_review' | 'skipped'
+
+export interface AiWorkflowTrigger {
+  type: AiWorkflowTriggerType
+}
+
+export interface AiWorkflowToolRef {
+  key: string
+  label: string
+  description: string
+  source: AiToolSource
+  riskLevel: AiToolRiskLevel
+  projectScoped: boolean
+  supportsWorkflow: boolean
+  resultSchema?: Record<string, unknown>
+}
+
+export interface AiWorkflowStep {
+  id: string
+  name: string
+  type: AiWorkflowStepType
+  prompt?: string
+  toolKey?: string
+  toolInput?: Record<string, unknown>
+  agentMode?: AiWorkflowAgentMode
+  continueOnError?: boolean
+  requiresReview?: boolean
+  contextSources?: AiWorkflowContextSource[]
+}
+
+export interface AiWorkflowDefinitionPayload {
+  name: string
+  description: string
+  trigger: AiWorkflowTrigger
+  contextSources: AiWorkflowContextSource[]
+  toolAllowlist: string[]
+  steps: AiWorkflowStep[]
+}
+
+export interface AiWorkflowDefinition extends AiWorkflowDefinitionPayload {
+  id: string
+  workspaceId: string
+  projectId: string
+  createdByUserId: string
+  updatedByUserId: string
+  createdAt: string
+  updatedAt: string
+  archivedAt?: string | null
+}
+
+export interface AiWorkflowTemplatePreset extends AiWorkflowDefinitionPayload {
+  key: string
+}
+
+export interface AiWorkflowRunTriggerPayload {
+  selectedResourceIds?: string[]
+  sessionId?: string
+  note?: string
+  [key: string]: unknown
+}
+
+export interface AiWorkflowRunReviewContext extends Record<string, unknown> {
+  kind: 'project_change_request'
+  changeRequestIds: string[]
+  changeRequests?: AiProjectChangeRequest[]
+}
+
+export interface AiWorkflowRunStep {
+  id: string
+  runId: string
+  workflowId: string
+  stepId: string
+  stepIndex: number
+  name: string
+  type: AiWorkflowStepType
+  status: AiWorkflowRunStepStatus
+  toolKey?: string
+  agentMode?: AiWorkflowAgentMode
+  continueOnError: boolean
+  input?: Record<string, unknown>
+  output?: Record<string, unknown>
+  errorMessage?: string
+  reviewContext?: AiWorkflowRunReviewContext | null
+  startedAt?: string | null
+  completedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AiWorkflowRun {
+  id: string
+  workflowId: string
+  workspaceId: string
+  projectId: string
+  status: AiWorkflowRunStatus
+  trigger: AiWorkflowTrigger
+  triggerPayload?: AiWorkflowRunTriggerPayload
+  definitionSnapshot: AiWorkflowDefinitionPayload
+  runtimeState?: Record<string, unknown>
+  latestStepIndex: number
+  createdByUserId: string
+  errorMessage?: string
+  startedAt?: string | null
+  completedAt?: string | null
+  createdAt: string
+  updatedAt: string
+  steps?: AiWorkflowRunStep[]
+}
+
+export interface AiWorkflowCatalogPayload {
+  items: AiWorkflowDefinition[]
+  availableTools: AiWorkflowToolRef[]
+  builtinTemplates: AiWorkflowTemplatePreset[]
+}
+
+export interface AiWorkflowRunListPayload {
+  items: AiWorkflowRun[]
 }
 
 export type ProjectIssueSeverity = 'critical' | 'high' | 'medium' | 'low'

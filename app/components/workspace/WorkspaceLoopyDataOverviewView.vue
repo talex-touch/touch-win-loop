@@ -8,7 +8,7 @@ import {
   resolveHealthLabel,
   resolveHealthTone,
 } from '~/utils/loopy-data-center'
-import { formatEtaSeconds, formatWorkspaceDateTime as formatDateTime } from '~/utils/workspace-main-panel-formatters'
+import { formatWorkspaceDateTime as formatDateTime, formatEtaSeconds } from '~/utils/workspace-main-panel-formatters'
 
 type ProjectKnowledgeReindexTarget = 'all' | 'stale' | 'failed'
 
@@ -365,20 +365,16 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
         <div class="loopy-center__visual">
           <div class="loopy-center__visual-stage">
-            <img class="loopy-center__visual-image" src="/loopy-hero-placeholder.svg" alt="">
-
-            <div class="loopy-center__video-slot" aria-hidden="true">
-              <video
-                class="loopy-center__video-slot-media"
-                src="/winloop-hero-video.mp4"
-                poster="/winloop-hero-video-poster.png"
-                autoplay
-                muted
-                loop
-                playsinline
-                preload="metadata"
-              />
-            </div>
+            <video
+              class="loopy-center__video-slot-media"
+              src="/winloop-hero-video.mp4"
+              poster="/winloop-hero-video-poster.png"
+              autoplay
+              muted
+              loop
+              playsinline
+              preload="metadata"
+            />
           </div>
         </div>
       </div>
@@ -988,33 +984,11 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   background: var(--wl-wb-stage-bg);
 }
 
-.loopy-center__visual-image {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center center;
-}
-
-.loopy-center__video-slot {
-  position: absolute;
-  right: var(--dc-gap-5);
-  bottom: var(--dc-gap-5);
-  width: min(43%, 228px);
-  aspect-ratio: 1;
-  padding: var(--dc-gap-2);
-  border: 1px solid rgba(150, 190, 248, 0.44);
-  border-radius: calc(var(--dc-panel-radius) + 6px);
-  background: rgba(245, 250, 255, 0.82);
-  backdrop-filter: blur(12px);
-}
-
 .loopy-center__video-slot-media {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: calc(var(--dc-panel-radius) + 2px);
 }
 
 .loopy-center__hero-rail {
@@ -1697,10 +1671,6 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
     min-height: 220px;
   }
 
-  .loopy-center__video-slot {
-    width: min(46%, 214px);
-  }
-
   .loopy-center__hero-metric-grid,
   .loopy-center__metric-grid,
   .loopy-center__lower,
@@ -1710,12 +1680,6 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 }
 
 @media (max-width: 720px) {
-  .loopy-center__video-slot {
-    right: var(--dc-gap-3);
-    bottom: var(--dc-gap-3);
-    width: min(52%, 192px);
-  }
-
   .loopy-center__queue-item {
     align-items: flex-start;
   }

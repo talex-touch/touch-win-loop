@@ -6,16 +6,15 @@ import type {
   AiWorkflowContextSource,
   AiWorkflowDefinition,
   AiWorkflowRun,
-  AiWorkflowRunStatus,
   AiWorkflowRunStep,
   AuthUser,
   ChatMessage,
   Project,
 } from '~~/shared/types/domain'
-import { createAiChatSession } from '~~/server/utils/chat-store'
-import { buildIntelligenceWorkflowContextBundle, buildWorkflowContextSnapshot } from '~~/server/services/ai/intelligence-workflow-context'
 import { executeWorkflowTool, listWorkflowTools } from '~~/server/services/ai/intelligence-tool-registry'
+import { buildIntelligenceWorkflowContextBundle, buildWorkflowContextSnapshot } from '~~/server/services/ai/intelligence-workflow-context'
 import { executeWorkspaceAi } from '~~/server/services/ai/workspace-orchestrator'
+import { createAiChatSession } from '~~/server/utils/chat-store'
 import { getAiProjectChangeRequestById } from '~~/server/utils/project-ai-store'
 import {
   createAiWorkflowRun,
@@ -53,7 +52,7 @@ interface WorkflowRuntimeArtifact {
   summary: string
 }
 
-interface WorkflowRuntimeState {
+interface WorkflowRuntimeState extends Record<string, unknown> {
   workflowSessionId?: string
   promptStack: string[]
   artifacts: WorkflowRuntimeArtifact[]
@@ -67,6 +66,13 @@ function normalizeRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
+}
+
+function resolveProjectWorkspaceId(project: Project): string {
+  const workspaceId = normalizeString(project.workspaceId || project.teamId)
+  if (!workspaceId)
+    throw new Error('PROJECT_WORKSPACE_REQUIRED')
+  return workspaceId
 }
 
 function normalizeWorkflowRuntimeState(value: unknown): WorkflowRuntimeState {
@@ -176,7 +182,7 @@ function buildAgentMessages(input: {
       ? `[既有工作流提示]\n${input.runtimeState.promptStack.map((item, index) => `${index + 1}. ${item}`).join('\n')}`
       : '',
     input.runtimeState.artifacts.length > 0
-      ? `[上游步骤产出]\n${input.runtimeState.artifacts.map((item) => `- ${item.name}：${item.summary}`).join('\n')}`
+      ? `[上游步骤产出]\n${input.runtimeState.artifacts.map(item => `- ${item.name}：${item.summary}`).join('\n')}`
       : '',
     `[当前步骤]\n${normalizeString(input.step.prompt)}`,
   ].filter(Boolean)
@@ -200,7 +206,7 @@ async function ensureWorkflowSessionId(
     return input.runtimeState
 
   const session = await createAiChatSession(db, {
-    workspaceId: input.project.workspaceId,
+    workspaceId: resolveProjectWorkspaceId(input.project),
     projectId: input.project.id,
     mode: 'dialog_ask',
     createdByUserId: input.user.id,
@@ -284,13 +290,14 @@ async function runWorkflowSteps(
 ): Promise<AiWorkflowRun> {
   let runtimeState = input.runtimeState
   let currentRun = input.run
+  const projectWorkspaceId = resolveProjectWorkspaceId(input.project)
 
   for (let index = input.startIndex; index < currentRun.definitionSnapshot.steps.length; index += 1) {
     const step = currentRun.definitionSnapshot.steps[index]!
     const contextSources = resolveStepContextSources(currentRun, step)
     const contextBundle = await buildIntelligenceWorkflowContextBundle(input.db, {
       event: input.event,
-      workspaceId: input.project.workspaceId,
+      workspaceId: projectWorkspaceId,
       projectId: input.project.id,
       user: input.user,
       selectedResourceIds: Array.isArray(currentRun.triggerPayload?.selectedResourceIds)
@@ -450,7 +457,7 @@ async function runWorkflowSteps(
             runtimeState,
           }),
           context: {
-            workspaceId: input.project.workspaceId,
+            workspaceId: projectWorkspaceId,
             projectId: input.project.id,
             projectTitle: input.project.title,
             contestId: input.project.contestId,
@@ -657,7 +664,7 @@ async function runWorkflowSteps(
 export async function executeIntelligenceWorkflow(input: ExecuteIntelligenceWorkflowInput): Promise<AiWorkflowRun> {
   const createdRun = await createAiWorkflowRun(input.db, {
     workflowId: input.workflow.id,
-    workspaceId: input.project.workspaceId,
+    workspaceId: resolveProjectWorkspaceId(input.project),
     projectId: input.project.id,
     status: 'running',
     trigger: input.workflow.trigger,

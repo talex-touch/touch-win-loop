@@ -51,7 +51,7 @@ export default defineEventHandler(async (event) => {
     startedAt,
     provider: runtime.ai.provider,
     model: runtime.ai.model,
-    fallbackUsed: false,
+    fallbackUsed: job.fallbackUsed,
     attempts: 1,
   })
 })

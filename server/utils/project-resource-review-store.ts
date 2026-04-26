@@ -22,6 +22,7 @@ interface ReviewJobRow {
   error_message: string
   provider: string
   model: string
+  fallback_used: boolean
   created_by_user_id: string | null
   started_at: string | null
   finished_at: string | null
@@ -122,6 +123,7 @@ function mapJob(row: ReviewJobRow, findings: ProjectResourceReviewFinding[] = []
     errorMessage: normalizeString(row.error_message),
     provider: normalizeString(row.provider),
     model: normalizeString(row.model),
+    fallbackUsed: Boolean(row.fallback_used),
     createdByUserId: row.created_by_user_id,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
@@ -220,6 +222,7 @@ export async function getProjectResourceReviewJob(
       error_message,
       provider,
       model,
+      fallback_used,
       created_by_user_id,
       started_at::TEXT,
       finished_at::TEXT,
@@ -257,6 +260,7 @@ export async function getLatestProjectResourceReviewJob(
       error_message,
       provider,
       model,
+      fallback_used,
       created_by_user_id,
       started_at::TEXT,
       finished_at::TEXT,
@@ -353,6 +357,7 @@ export async function updateProjectResourceReviewJobState(
     errorMessage?: string
     provider?: string
     model?: string
+    fallbackUsed?: boolean
   },
 ): Promise<void> {
   await db.query(
@@ -363,6 +368,7 @@ export async function updateProjectResourceReviewJobState(
          error_message = COALESCE($5, error_message),
          provider = COALESCE($6, provider),
          model = COALESCE($7, model),
+         fallback_used = COALESCE($8, fallback_used),
          started_at = CASE WHEN $2 = 'processing' THEN COALESCE(started_at, NOW()) ELSE started_at END,
          finished_at = CASE WHEN $2 IN ('succeeded', 'failed') THEN NOW() ELSE finished_at END,
          updated_at = NOW()
@@ -375,6 +381,7 @@ export async function updateProjectResourceReviewJobState(
       input.errorMessage ?? null,
       input.provider ?? null,
       input.model ?? null,
+      input.fallbackUsed ?? null,
     ],
   )
 }

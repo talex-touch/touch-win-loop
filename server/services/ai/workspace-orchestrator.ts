@@ -1,3 +1,12 @@
+import type {
+  WorkspaceAgentProfile,
+  WorkspaceAiChangeDraft,
+  WorkspaceAiExecutionResult,
+  WorkspaceAiHooks,
+  WorkspaceAiIssueDraft,
+  WorkspaceModeState,
+  WorkspaceSupportedMode,
+} from '~~/server/services/ai/workspace-agent-stream'
 import type { RuntimeSettings } from '~~/server/utils/env'
 import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import type {
@@ -25,6 +34,13 @@ import { createDeepAgent } from 'deepagents'
 import { tool } from 'langchain'
 import { z } from 'zod'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
+import { resolveCanvasSourceFormat, runCanvasAssistGeneration } from '~~/server/services/ai/canvas-assist'
+import {
+  buildDeepAgentThreadBinding,
+  createPersistedDeepAgent,
+  resolveLatestDeepAgentCheckpointRef,
+} from '~~/server/services/ai/deepagent-factory'
+import { createChatModel } from '~~/server/services/ai/llm-client'
 import {
   consumeWorkspaceAgentStream,
   extractWorkspaceLangGraphOutputMessages,
@@ -32,21 +48,7 @@ import {
   isAbortError,
   throwIfAborted,
   toText,
-  type WorkspaceAgentProfile,
-  type WorkspaceAiChangeDraft,
-  type WorkspaceAiExecutionResult,
-  type WorkspaceAiHooks,
-  type WorkspaceAiIssueDraft,
-  type WorkspaceModeState,
-  type WorkspaceSupportedMode,
 } from '~~/server/services/ai/workspace-agent-stream'
-import {
-  buildDeepAgentThreadBinding,
-  createPersistedDeepAgent,
-  resolveLatestDeepAgentCheckpointRef,
-} from '~~/server/services/ai/deepagent-factory'
-import { resolveCanvasSourceFormat, runCanvasAssistGeneration } from '~~/server/services/ai/canvas-assist'
-import { createChatModel } from '~~/server/services/ai/llm-client'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { runWithRetry } from '~~/server/utils/retry'
@@ -903,6 +905,9 @@ function buildDocumentAssistPrompt(context: WorkspaceAiExecutionContext): string
     context.markdown || '（空文档）',
     '',
     '请结合最近多轮对话，判断用户想对文档做什么。',
+    'document_assist 必须先调用 get_workspace_context 读取项目设置、大纲、知识索引与 citation/warning，再判断是否生成文档草案。',
+    '如果上下文提示 degraded、fallback、索引未完成或规则回退，必须在回复或草案摘要中显式说明可靠性边界，不要把降级结果包装成稳定结论。',
+    '引用资料时必须保留上下文中的 citation 标签，不要绕过 warning 直接编造依据。',
     '如果能够安全生成文档草案，请调用 propose_document_change；否则直接回复原因或补充建议。',
   ].join('\n')
 }
@@ -1083,7 +1088,7 @@ function createWorkspaceContextTool(input: WorkspaceModeExecutionInput, contextS
     },
     {
       name: 'get_workspace_context',
-      description: '读取当前工作台上下文（项目配置、资料摘要、大纲与用户输入）。',
+      description: '读取当前工作台上下文（项目配置、资料摘要、大纲、知识索引、citation/warning 与用户输入）。',
       schema: z.object({}),
     },
   )
