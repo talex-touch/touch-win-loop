@@ -9,6 +9,7 @@ const REVIEW_RUNNER_FILE = resolve(process.cwd(), 'server/services/document/proj
 const REVIEW_CHAIN_FILE = resolve(process.cwd(), 'server/services/document/page-review.ts')
 const REVIEW_API_FILE = resolve(process.cwd(), 'server/api/projects/[id]/resources/[resourceId]/review-jobs/index.post.ts')
 const REVIEW_GET_FILE = resolve(process.cwd(), 'server/api/projects/[id]/resources/[resourceId]/review-jobs/[jobId].get.ts')
+const REVIEW_RETRY_FILE = resolve(process.cwd(), 'server/api/projects/[id]/resources/[resourceId]/review-jobs/[jobId]/retry.post.ts')
 const PREVIEW_TAB_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceResourcePreviewTab.vue')
 const MAIN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanel.vue')
 
@@ -30,10 +31,11 @@ it('pdf/ppt 页级审稿具备 job 与 finding 持久化模型', async () => {
 })
 
 it('pdf/ppt 页级审稿复用预览 PDF 与 document_analysis，并保证每页来源', async () => {
-  const [runner, chain, api] = await Promise.all([
+  const [runner, chain, api, retryApi] = await Promise.all([
     readFile(REVIEW_RUNNER_FILE, 'utf8'),
     readFile(REVIEW_CHAIN_FILE, 'utf8'),
     readFile(REVIEW_API_FILE, 'utf8'),
+    readFile(REVIEW_RETRY_FILE, 'utf8'),
   ])
 
   assert.match(runner, /getProjectResourcePreviewFileRef/, 'review runner 未复用项目预览 PDF')
@@ -48,6 +50,8 @@ it('pdf/ppt 页级审稿复用预览 PDF 与 document_analysis，并保证每页
   assert.match(chain, /fallbackUsed: fallbackFilledPageCount > 0/, '审稿链路未把部分页面规则补齐透出为 fallbackUsed')
   assert.match(api, /runProjectResourcePageReview/, '创建接口未运行页级审稿')
   assert.match(api, /fallbackUsed: job\.fallbackUsed/, '创建接口 meta 未按实际 job fallbackUsed 返回')
+  assert.match(retryApi, /PREVIEW_NOT_READY/, '重试接口未对齐预览未就绪错误语义')
+  assert.match(retryApi, /DOCUMENT_NOT_FOUND/, '重试接口未对齐文档不存在错误语义')
 })
 
 it('资源预览 UI 提供页级意见面板与来源跳页', async () => {

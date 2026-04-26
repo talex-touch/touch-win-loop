@@ -48,20 +48,45 @@ export default defineEventHandler(async (event) => {
     }, 404136)
   }
 
-  const job = await runProjectResourcePageReview({
-    event,
-    projectId,
-    resourceId,
-    actorUserId: user.id,
-    prompt: previousJob.prompt,
-    runtime,
-  })
+  try {
+    const job = await runProjectResourcePageReview({
+      event,
+      projectId,
+      resourceId,
+      actorUserId: user.id,
+      prompt: previousJob.prompt,
+      runtime,
+    })
 
-  return ok(job, {
-    startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
-    fallbackUsed: job.fallbackUsed,
-    attempts: 1,
-  })
+    return ok(job, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: job.fallbackUsed,
+      attempts: 1,
+    })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'DOCUMENT_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('resource document not found', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 404137)
+    }
+    if (error instanceof Error && error.message === 'PREVIEW_NOT_READY') {
+      setResponseStatus(event, 409)
+      return fail('资料预览还未就绪，无法重新生成页级审稿。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 409133)
+    }
+    throw error
+  }
 })
