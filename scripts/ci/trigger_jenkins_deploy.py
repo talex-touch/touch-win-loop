@@ -11,6 +11,16 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
+REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+  def redirect_request(self, req, fp, code, msg, headers, newurl):
+    return None
+
+
+HTTP_OPENER = urllib.request.build_opener(NoRedirectHandler)
+
 
 def to_text(value: object) -> str:
   return str(value or '').strip()
@@ -47,20 +57,56 @@ def api_url(url: str, suffix: str = 'api/json') -> str:
   return urllib.parse.urljoin(normalized, suffix)
 
 
-def request_json(url: str, headers: dict[str, str]) -> dict:
+def open_request(request: urllib.request.Request, *, timeout: int):
+  return HTTP_OPENER.open(request, timeout=timeout)
+
+
+def raise_http_error(context: str, exc: urllib.error.HTTPError) -> None:
+  if exc.code in REDIRECT_STATUS_CODES:
+    location = to_text(exc.headers.get('Location')) if exc.headers else ''
+    location_detail = f' Location: {location}.' if location else ''
+    raise SystemExit(
+      f'{context} was redirected with HTTP {exc.code} {exc.reason}.{location_detail} '
+      'Jenkins API endpoints must not require browser redirects; check JENKINS_BASE_URL, '
+      'reverse proxy HTTPS/X-Forwarded-* settings, and API token permissions.'
+    )
+  raise exc
+
+
+def request_json(
+  url: str,
+  headers: dict[str, str],
+  *,
+  context: str = 'Jenkins JSON request',
+  ignore_http_statuses: tuple[int, ...] = (),
+) -> dict:
   request = urllib.request.Request(url, headers=headers)
-  with urllib.request.urlopen(request, timeout=30) as response:
-    return json.load(response)
+  try:
+    with open_request(request, timeout=30) as response:
+      return json.load(response)
+  except urllib.error.HTTPError as exc:
+    if exc.code in ignore_http_statuses:
+      if exc.code in REDIRECT_STATUS_CODES:
+        location = to_text(exc.headers.get('Location')) if exc.headers else ''
+        location_detail = f' Location: {location}.' if location else ''
+        print(
+          f'{context} was redirected with HTTP {exc.code} {exc.reason}; '
+          f'continue without this optional response.{location_detail}'
+        )
+      return {}
+    raise_http_error(context, exc)
+    raise
 
 
 def fetch_crumb_headers(base_url: str, default_headers: dict[str, str]) -> dict[str, str]:
   crumb_url = f'{base_url}/crumbIssuer/api/json'
   try:
-    crumb_payload = request_json(crumb_url, default_headers)
-  except urllib.error.HTTPError as exc:
-    if exc.code not in (401, 403, 404):
-      raise
-    crumb_payload = {}
+    crumb_payload = request_json(
+      crumb_url,
+      default_headers,
+      context='Jenkins crumb request',
+      ignore_http_statuses=(401, 403, 404, *REDIRECT_STATUS_CODES),
+    )
   except urllib.error.URLError:
     crumb_payload = {}
 
@@ -102,9 +148,13 @@ def trigger_jenkins_queue(*,
   trigger_url = f'{base_url}{job_path(job_name)}/buildWithParameters'
   request = urllib.request.Request(trigger_url, data=params, headers=headers, method='POST')
 
-  with urllib.request.urlopen(request, timeout=30) as response:
-    location = to_text(response.headers.get('Location'))
-    status = response.getcode()
+  try:
+    with open_request(request, timeout=30) as response:
+      location = to_text(response.headers.get('Location'))
+      status = response.getcode()
+  except urllib.error.HTTPError as exc:
+    raise_http_error('Jenkins trigger request', exc)
+    raise
 
   if status not in (200, 201, 202):
     raise SystemExit(f'Unexpected Jenkins trigger status: {status}')
@@ -116,7 +166,7 @@ def trigger_jenkins_queue(*,
 def wait_for_build_start(*, queue_url: str, headers: dict[str, str], timeout_seconds: int = 15 * 60) -> str:
   deadline = time.time() + timeout_seconds
   while time.time() < deadline:
-    queue_payload = request_json(api_url(queue_url), headers)
+    queue_payload = request_json(api_url(queue_url), headers, context='Jenkins queue API request')
     if queue_payload.get('cancelled'):
       why = to_text(queue_payload.get('why')) or 'cancelled'
       raise SystemExit(f'Jenkins queue item was cancelled: {why}')
@@ -137,7 +187,7 @@ def wait_for_build_start(*, queue_url: str, headers: dict[str, str], timeout_sec
 def wait_for_build_result(*, build_url: str, headers: dict[str, str], timeout_seconds: int = 90 * 60) -> str:
   deadline = time.time() + timeout_seconds
   while time.time() < deadline:
-    build_payload = request_json(api_url(build_url), headers)
+    build_payload = request_json(api_url(build_url), headers, context='Jenkins build API request')
     if build_payload.get('building'):
       print('Jenkins build is still running...')
       time.sleep(10)

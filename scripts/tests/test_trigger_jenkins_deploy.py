@@ -4,6 +4,7 @@ import importlib.util
 import pathlib
 import sys
 import unittest
+import urllib.error
 from unittest import mock
 
 
@@ -84,6 +85,50 @@ class TriggerJenkinsDeployTests(unittest.TestCase):
         )
 
     self.assertEqual(result, 'SUCCESS')
+
+  def test_fetch_crumb_headers_tolerates_redirect_when_api_token_exempts_crumb(self) -> None:
+    redirect = urllib.error.HTTPError(
+      url='https://jenkins.example/crumbIssuer/api/json',
+      code=302,
+      msg='Found',
+      hdrs={'Location': 'http://jenkins.example/crumbIssuer/api/json'},
+      fp=None,
+    )
+
+    with mock.patch.object(MODULE, 'open_request', side_effect=redirect):
+      with mock.patch('builtins.print') as print_mock:
+        headers = MODULE.fetch_crumb_headers(
+          'https://jenkins.example',
+          {'Authorization': 'Basic token'},
+        )
+
+    self.assertEqual(headers, {})
+    messages = '\n'.join(str(call.args[0]) for call in print_mock.call_args_list)
+    self.assertIn('Jenkins crumb request was redirected with HTTP 302 Found', messages)
+    self.assertIn('Location: http://jenkins.example/crumbIssuer/api/json.', messages)
+    self.assertIn('continue without crumb header', messages)
+
+  def test_required_json_request_reports_redirect_configuration_error(self) -> None:
+    redirect = urllib.error.HTTPError(
+      url='https://jenkins.example/job/demo/api/json',
+      code=302,
+      msg='Found',
+      hdrs={'Location': 'securityRealm/commenceLogin'},
+      fp=None,
+    )
+
+    with mock.patch.object(MODULE, 'open_request', side_effect=redirect):
+      with self.assertRaises(SystemExit) as context:
+        MODULE.request_json(
+          'https://jenkins.example/job/demo/api/json',
+          {'Authorization': 'Basic token'},
+          context='Jenkins build API request',
+        )
+
+    message = str(context.exception)
+    self.assertIn('Jenkins build API request was redirected with HTTP 302 Found', message)
+    self.assertIn('Location: securityRealm/commenceLogin.', message)
+    self.assertIn('JENKINS_BASE_URL', message)
 
 
 if __name__ == '__main__':
