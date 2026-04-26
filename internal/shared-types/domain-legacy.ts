@@ -2050,11 +2050,57 @@ export interface ReleaseQueueStatusStats {
   total: number
 }
 
+export type ReleaseQueueReviewerRankingMode = 'total_actions' | 'second_review_approved' | 'published'
+export type ReleaseQueueInsightsWindowDays = 0 | 7 | 30
+
+export interface ReleaseQueueReviewerStats {
+  userId: string
+  actorName: string
+  avatarUrl?: string | null
+  firstReviewApprovedCount: number
+  secondReviewClaimedCount: number
+  secondReviewApprovedCount: number
+  rejectedCount: number
+  totalActions: number
+  publishedCount: number
+  lastActionAt?: string | null
+}
+
+export interface ReleaseQueueActionableCounts {
+  pendingFirstCount: number
+  claimedSecondCount: number
+  readyToPublishCount: number
+}
+
+export interface ReleaseQueueRecentReviewItem {
+  id: string
+  releaseVersionId: string
+  scopeKind: ReleaseScopeKind
+  scopeId: string
+  scopeTitle: string
+  versionNumber: number
+  actorUserId: string
+  action: ReleaseReviewAction
+  actorName: string
+  avatarUrl?: string | null
+  createdAt: string
+}
+
+export interface ReleaseQueueInsights {
+  windowDays: ReleaseQueueInsightsWindowDays
+  rankingMode: ReleaseQueueReviewerRankingMode
+  currentUser: ReleaseQueueReviewerStats | null
+  actionable: ReleaseQueueActionableCounts | null
+  reviewers: ReleaseQueueReviewerStats[]
+  recentReviews: ReleaseQueueRecentReviewItem[]
+}
+
 export interface AdminReleaseQueueResult {
   items: ReleaseVersion[]
   total: number
   limit: number
   stats: ReleaseQueueStatusStats
+  insights: ReleaseQueueInsights
 }
 
 export interface AdminContestListItem {

@@ -155,6 +155,47 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /顶部统计为全量口径/, '版本工作台未提示统计与当前加载列表的口径差异')
   })
 
+  it('发布审批队列返回审核洞察，并在左侧展示个人统计、管理员排名和近期审核', async () => {
+    const [typeSource, queueApiSource, releaseStoreSource, workbenchSource] = await Promise.all([
+      readSource('shared/types/domain-legacy.ts'),
+      readSource('server/api/admin/releases/queue.get.ts'),
+      readSource('server/utils/release-store.ts'),
+      readSource('app/components/admin/AdminReleaseWorkbench.vue'),
+    ])
+
+    assert.match(typeSource, /export type ReleaseQueueReviewerRankingMode = 'total_actions' \| 'second_review_approved' \| 'published'/, '共享类型未声明审核排名维度')
+    assert.match(typeSource, /export type ReleaseQueueInsightsWindowDays = 0 \| 7 \| 30/, '共享类型未声明审核洞察时间窗口')
+    assert.match(typeSource, /export interface ReleaseQueueReviewerStats \{[\s\S]*totalActions: number[\s\S]*publishedCount: number/, '共享类型未声明审核员统计 DTO')
+    assert.match(typeSource, /export interface ReleaseQueueActionableCounts \{[\s\S]*pendingFirstCount: number[\s\S]*claimedSecondCount: number[\s\S]*readyToPublishCount: number/, '共享类型未声明待我处理统计 DTO')
+    assert.match(typeSource, /export interface ReleaseQueueRecentReviewItem \{[\s\S]*action: ReleaseReviewAction[\s\S]*actorName: string/, '共享类型未声明近期审核 DTO')
+    assert.match(typeSource, /export interface ReleaseQueueInsights \{[\s\S]*windowDays: ReleaseQueueInsightsWindowDays[\s\S]*rankingMode: ReleaseQueueReviewerRankingMode[\s\S]*actionable: ReleaseQueueActionableCounts \| null[\s\S]*recentReviews: ReleaseQueueRecentReviewItem\[\]/, '共享类型未声明发布审批洞察结构')
+    assert.match(typeSource, /export interface AdminReleaseQueueResult \{[\s\S]*insights: ReleaseQueueInsights/, '发布审批队列返回结构未挂载洞察字段')
+    assert.match(queueApiSource, /actorUserId: user\.id/, '队列 API 未把当前用户传入洞察聚合')
+    assert.match(queueApiSource, /rankingMode = normalizeReviewerRankingMode/, '队列 API 未解析审核排名维度')
+    assert.match(queueApiSource, /windowDays = normalizeInsightsWindowDays/, '队列 API 未解析审核洞察时间窗口')
+    assert.match(releaseStoreSource, /export async function listReleaseQueueInsights\(/, 'release-store 未提供审核洞察聚合函数')
+    assert.match(releaseStoreSource, /FROM release_review_logs l[\s\S]*LEFT JOIN users u ON u\.id = l\.actor_user_id/, '审核洞察未从 review logs 联表用户信息')
+    assert.match(releaseStoreSource, /readyToPublishCount/, 'release-store 未统计待我处理发布桶')
+    assert.match(releaseStoreSource, /ORDER BY total_actions DESC|ORDER BY second_review_approved_count DESC|ORDER BY published_count DESC/, 'release-store 未支持按维度排序审核排名')
+    assert.match(workbenchSource, /我的审核统计/, '工作台左侧未展示个人审核统计')
+    assert.match(workbenchSource, /待我处理/, '工作台左侧未展示待我处理')
+    assert.match(workbenchSource, /管理员审核排名/, '工作台左侧未展示管理员审核排名')
+    assert.match(workbenchSource, /近期审核/, '工作台左侧未展示近期审核')
+    assert.match(workbenchSource, /insightWindowDays/, '工作台未提供审核洞察时间窗口状态')
+    assert.match(workbenchSource, /reviewerRankingMode/, '工作台未提供审核排名维度状态')
+    assert.match(workbenchSource, /近 7 天|近 30 天|累计/, '工作台未提供审核洞察窗口选项')
+    assert.match(workbenchSource, /按总审核|按二审通过|按发布次数/, '工作台未提供审核排名维度选项')
+    assert.match(workbenchSource, /insights\.value\?\.currentUser/, '工作台未消费个人审核统计')
+    assert.match(workbenchSource, /insights\.value\?\.actionable/, '工作台未消费待我处理统计')
+    assert.match(workbenchSource, /insights\.value\?\.reviewers/, '工作台未消费管理员排名')
+    assert.match(workbenchSource, /insights\.value\?\.recentReviews/, '工作台未消费近期审核列表')
+    assert.match(workbenchSource, /const actionableFilter = ref<'all' \| 'pending_first' \| 'claimed_second' \| 'ready_publish'>\('all'\)/, '工作台未维护待我处理快捷筛选状态')
+    assert.match(workbenchSource, /item\.status === 'pending_second_review' && item\.secondReviewClaimedByUserId === currentUserId\.value/, '工作台未按当前用户筛选我领的二审')
+    assert.match(workbenchSource, /toggleActionableFilter\('pending_first'\)|toggleActionableFilter\('claimed_second'\)|toggleActionableFilter\('ready_publish'\)/, '工作台待我处理卡片未提供快捷筛选交互')
+    assert.match(workbenchSource, /async function openRecentReview\(item: ReleaseQueueRecentReviewItem\)/, '工作台未提供近期审核快捷打开能力')
+    assert.match(workbenchSource, /@click="openRecentReview\(item\)"/, '工作台近期审核列表未绑定详情打开交互')
+  })
+
   it('后台赛事列表的四个操作会按 live 与待审版本分流', async () => {
     const pageSource = await readSource('app/pages/admin/contests.vue')
 

@@ -19,6 +19,12 @@ import type {
   PolicyLibraryReleaseSnapshot,
   PublishCheckResult,
   ReleaseDiffSummary,
+  ReleaseQueueActionableCounts,
+  ReleaseQueueInsights,
+  ReleaseQueueInsightsWindowDays,
+  ReleaseQueueRecentReviewItem,
+  ReleaseQueueReviewerRankingMode,
+  ReleaseQueueReviewerStats,
   ReleaseQueueStatusStats,
   ReleaseReviewAction,
   ReleaseReviewLog,
@@ -102,6 +108,39 @@ interface ReleaseReviewLogRow {
 interface ReleaseQueueStatsRow {
   status: ReleaseVersionStatus
   item_count: number | string
+}
+
+interface ReleaseQueueReviewerStatsRow {
+  actor_user_id: string
+  actor_name: string | null
+  avatar_url: string | null
+  first_review_approved_count: number | string
+  second_review_claimed_count: number | string
+  second_review_approved_count: number | string
+  rejected_count: number | string
+  published_count: number | string
+  total_actions: number | string
+  last_action_at: string | null
+}
+
+interface ReleaseQueueRecentReviewRow {
+  id: string
+  release_version_id: string
+  scope_kind: ReleaseScopeKind
+  scope_id: string
+  scope_title: string
+  version_number: number | string
+  actor_user_id: string | null
+  actor_name: string | null
+  avatar_url: string | null
+  action: ReleaseReviewAction
+  created_at: string
+}
+
+interface ReleaseQueueCurrentUserRow {
+  id: string
+  username: string
+  avatar_url: string | null
 }
 
 interface FeishuExternalRefRow {
@@ -950,6 +989,52 @@ function createEmptyReleaseQueueStatusStats(): ReleaseQueueStatusStats {
   }
 }
 
+function mapReleaseQueueReviewerStats(row: ReleaseQueueReviewerStatsRow): ReleaseQueueReviewerStats {
+  return {
+    userId: normalizeText(row.actor_user_id),
+    actorName: normalizeText(row.actor_name) || normalizeText(row.actor_user_id) || '未知管理员',
+    avatarUrl: normalizeText(row.avatar_url) || null,
+    firstReviewApprovedCount: Math.max(0, normalizeInteger(row.first_review_approved_count)),
+    secondReviewClaimedCount: Math.max(0, normalizeInteger(row.second_review_claimed_count)),
+    secondReviewApprovedCount: Math.max(0, normalizeInteger(row.second_review_approved_count)),
+    rejectedCount: Math.max(0, normalizeInteger(row.rejected_count)),
+    publishedCount: Math.max(0, normalizeInteger(row.published_count)),
+    totalActions: Math.max(0, normalizeInteger(row.total_actions)),
+    lastActionAt: normalizeText(row.last_action_at) || null,
+  }
+}
+
+function mapReleaseQueueRecentReviewItem(row: ReleaseQueueRecentReviewRow): ReleaseQueueRecentReviewItem {
+  return {
+    id: row.id,
+    releaseVersionId: row.release_version_id,
+    scopeKind: row.scope_kind,
+    scopeId: row.scope_id,
+    scopeTitle: row.scope_title,
+    versionNumber: Math.max(1, normalizeInteger(row.version_number, 1)),
+    actorUserId: normalizeText(row.actor_user_id),
+    actorName: normalizeText(row.actor_name) || normalizeText(row.actor_user_id) || '未知管理员',
+    avatarUrl: normalizeText(row.avatar_url) || null,
+    action: row.action,
+    createdAt: row.created_at,
+  }
+}
+
+function createZeroReleaseQueueReviewerStats(row: ReleaseQueueCurrentUserRow): ReleaseQueueReviewerStats {
+  return {
+    userId: row.id,
+    actorName: normalizeText(row.username) || row.id,
+    avatarUrl: normalizeText(row.avatar_url) || null,
+    firstReviewApprovedCount: 0,
+    secondReviewClaimedCount: 0,
+    secondReviewApprovedCount: 0,
+    rejectedCount: 0,
+    publishedCount: 0,
+    totalActions: 0,
+    lastActionAt: null,
+  }
+}
+
 function applyReleaseQueueStatusCount(
   stats: ReleaseQueueStatusStats,
   status: ReleaseVersionStatus,
@@ -1006,12 +1091,163 @@ async function countReleaseQueueStatusStats(
   return stats
 }
 
+export async function listReleaseQueueInsights(
+  db: Queryable,
+  input: {
+    actorUserId?: string
+    scopeKind?: ReleaseScopeKind
+    recentLimit?: number
+    reviewerLimit?: number
+    windowDays?: ReleaseQueueInsightsWindowDays
+    rankingMode?: ReleaseQueueReviewerRankingMode
+    canWriteCurrentUser?: boolean
+    canPublishCurrentUser?: boolean
+  } = {},
+): Promise<ReleaseQueueInsights> {
+  const reviewActions: ReleaseReviewAction[] = [
+    'first_review_approved',
+    'second_review_claimed',
+    'second_review_approved',
+    'rejected',
+    'published',
+  ]
+  const where: string[] = [`l.action = ANY($1::TEXT[])`]
+  const values: unknown[] = [reviewActions]
+  const rankingMode = input.rankingMode || 'total_actions'
+  const windowDays = input.windowDays === 7 || input.windowDays === 30 ? input.windowDays : 0
+  const rankingOrderSql = rankingMode === 'second_review_approved'
+    ? 'ORDER BY second_review_approved_count DESC, total_actions DESC, published_count DESC, MAX(l.created_at) DESC'
+    : rankingMode === 'published'
+      ? 'ORDER BY published_count DESC, total_actions DESC, second_review_approved_count DESC, MAX(l.created_at) DESC'
+      : 'ORDER BY total_actions DESC, published_count DESC, second_review_approved_count DESC, MAX(l.created_at) DESC'
+  const currentUserId = normalizeText(input.actorUserId)
+  const canWriteCurrentUser = Boolean(input.canWriteCurrentUser)
+  const canPublishCurrentUser = Boolean(input.canPublishCurrentUser)
+
+  if (input.scopeKind) {
+    values.push(input.scopeKind)
+    where.push(`rv.scope_kind = $${values.length}`)
+  }
+
+  if (windowDays > 0) {
+    values.push(windowDays)
+    where.push(`l.created_at >= NOW() - ($${values.length}::INT * INTERVAL '1 day')`)
+  }
+
+  const reviewerLimit = Math.max(1, Math.min(20, normalizeInteger(input.reviewerLimit || 8, 8)))
+  const recentLimit = Math.max(1, Math.min(20, normalizeInteger(input.recentLimit || 8, 8)))
+
+  const [reviewersResult, recentResult, currentUserResult, actionableResult] = await Promise.all([
+    db.query<ReleaseQueueReviewerStatsRow>(
+      `SELECT
+        l.actor_user_id,
+        u.username AS actor_name,
+        u.avatar_url,
+        SUM(CASE WHEN l.action = 'first_review_approved' THEN 1 ELSE 0 END)::INT AS first_review_approved_count,
+        SUM(CASE WHEN l.action = 'second_review_claimed' THEN 1 ELSE 0 END)::INT AS second_review_claimed_count,
+        SUM(CASE WHEN l.action = 'second_review_approved' THEN 1 ELSE 0 END)::INT AS second_review_approved_count,
+        SUM(CASE WHEN l.action = 'rejected' THEN 1 ELSE 0 END)::INT AS rejected_count,
+        SUM(CASE WHEN l.action = 'published' THEN 1 ELSE 0 END)::INT AS published_count,
+        COUNT(*)::INT AS total_actions,
+        MAX(l.created_at)::TEXT AS last_action_at
+       FROM release_review_logs l
+       JOIN release_versions rv ON rv.id = l.release_version_id
+       LEFT JOIN users u ON u.id = l.actor_user_id
+       WHERE ${where.join(' AND ')}
+         AND COALESCE(l.actor_user_id, '') <> ''
+       GROUP BY l.actor_user_id, u.username, u.avatar_url
+       ${rankingOrderSql}
+       LIMIT ${reviewerLimit}`,
+      values,
+    ),
+    db.query<ReleaseQueueRecentReviewRow>(
+      `SELECT
+        l.id,
+        l.release_version_id,
+        rv.scope_kind,
+        rv.scope_id,
+        rv.scope_title,
+        rv.version_number,
+        l.actor_user_id,
+        u.username AS actor_name,
+        u.avatar_url,
+        l.action,
+        l.created_at::TEXT
+       FROM release_review_logs l
+       JOIN release_versions rv ON rv.id = l.release_version_id
+       LEFT JOIN users u ON u.id = l.actor_user_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY l.created_at DESC
+       LIMIT ${recentLimit}`,
+      values,
+    ),
+    currentUserId
+      ? db.query<ReleaseQueueCurrentUserRow>(
+          `SELECT id, username, avatar_url
+           FROM users
+           WHERE id = $1
+           LIMIT 1`,
+          [currentUserId],
+        )
+      : Promise.resolve({ rows: [] } as { rows: ReleaseQueueCurrentUserRow[] }),
+    currentUserId
+      ? db.query<{
+          pending_first_count: number | string
+          claimed_second_count: number | string
+          ready_to_publish_count: number | string
+        }>(
+          `SELECT
+            COUNT(*) FILTER (WHERE status = 'pending_first_review')::INT AS pending_first_count,
+            COUNT(*) FILTER (WHERE status = 'pending_second_review' AND second_review_claimed_by_user_id = $1)::INT AS claimed_second_count,
+            COUNT(*) FILTER (WHERE status = 'approved')::INT AS ready_to_publish_count
+           FROM release_versions
+           WHERE ($2::TEXT = '' OR scope_kind = $2)`,
+          [currentUserId, input.scopeKind || ''],
+        )
+      : Promise.resolve({ rows: [] } as { rows: Array<Record<string, unknown>> }),
+  ])
+
+  const reviewers = reviewersResult.rows.map(mapReleaseQueueReviewerStats)
+  const recentReviews = recentResult.rows.map(mapReleaseQueueRecentReviewItem)
+  let currentUser: ReleaseQueueReviewerStats | null = null
+  if (currentUserId) {
+    currentUser = reviewers.find(item => item.userId === currentUserId)
+      || (currentUserResult.rows[0] ? createZeroReleaseQueueReviewerStats(currentUserResult.rows[0]) : null)
+  }
+  const actionableRow = actionableResult.rows[0] as {
+    pending_first_count?: number | string
+    claimed_second_count?: number | string
+    ready_to_publish_count?: number | string
+  } | undefined
+  const actionable: ReleaseQueueActionableCounts | null = currentUserId
+    ? {
+        pendingFirstCount: canWriteCurrentUser ? Math.max(0, normalizeInteger(actionableRow?.pending_first_count)) : 0,
+        claimedSecondCount: canWriteCurrentUser ? Math.max(0, normalizeInteger(actionableRow?.claimed_second_count)) : 0,
+        readyToPublishCount: canPublishCurrentUser ? Math.max(0, normalizeInteger(actionableRow?.ready_to_publish_count)) : 0,
+      }
+    : null
+
+  return {
+    windowDays,
+    rankingMode,
+    currentUser,
+    actionable,
+    reviewers,
+    recentReviews,
+  }
+}
+
 export async function listReleaseQueueResult(
   db: Queryable,
   input: {
+    actorUserId?: string
     scopeKind?: ReleaseScopeKind
     statuses?: ReleaseVersionStatus[]
     limit?: number
+    windowDays?: ReleaseQueueInsightsWindowDays
+    rankingMode?: ReleaseQueueReviewerRankingMode
+    canWriteCurrentUser?: boolean
+    canPublishCurrentUser?: boolean
   } = {},
 ): Promise<AdminReleaseQueueResult> {
   const statuses: ReleaseVersionStatus[] = input.statuses?.length
@@ -1019,7 +1255,7 @@ export async function listReleaseQueueResult(
     : DEFAULT_RELEASE_QUEUE_STATUSES
   const limit = Math.max(1, Math.min(500, normalizeInteger(input.limit || 100, 100)))
 
-  const [items, stats] = await Promise.all([
+  const [items, stats, insights] = await Promise.all([
     listReleaseScopedVersions(db, {
       scopeKind: input.scopeKind,
       statuses,
@@ -1029,6 +1265,14 @@ export async function listReleaseQueueResult(
       scopeKind: input.scopeKind,
       statuses,
     }),
+    listReleaseQueueInsights(db, {
+      actorUserId: input.actorUserId,
+      scopeKind: input.scopeKind,
+      windowDays: input.windowDays,
+      rankingMode: input.rankingMode,
+      canWriteCurrentUser: input.canWriteCurrentUser,
+      canPublishCurrentUser: input.canPublishCurrentUser,
+    }),
   ])
 
   return {
@@ -1036,6 +1280,7 @@ export async function listReleaseQueueResult(
     total: stats.total,
     limit,
     stats,
+    insights,
   }
 }
 

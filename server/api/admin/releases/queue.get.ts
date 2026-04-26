@@ -1,4 +1,9 @@
-import type { ReleaseScopeKind, ReleaseVersionStatus } from '~~/shared/types/domain'
+import type {
+  ReleaseQueueInsightsWindowDays,
+  ReleaseQueueReviewerRankingMode,
+  ReleaseScopeKind,
+  ReleaseVersionStatus,
+} from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -34,6 +39,20 @@ function normalizeStatuses(raw: unknown): ReleaseVersionStatus[] | undefined {
   return values.length ? values : undefined
 }
 
+function normalizeReviewerRankingMode(raw: unknown): ReleaseQueueReviewerRankingMode {
+  const value = String(raw || '').trim()
+  if (value === 'second_review_approved' || value === 'published')
+    return value
+  return 'total_actions'
+}
+
+function normalizeInsightsWindowDays(raw: unknown): ReleaseQueueInsightsWindowDays {
+  const value = Number(raw)
+  if (value === 7 || value === 30)
+    return value
+  return 0
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
@@ -55,12 +74,23 @@ export default defineEventHandler(async (event) => {
   const scopeKind = normalizeScopeKind(query.scopeKind)
   const statuses = normalizeStatuses(query.statuses)
   const limit = Math.max(1, Math.min(500, Number(query.limit || 100)))
+  const rankingMode = normalizeReviewerRankingMode(query.rankingMode)
+  const windowDays = normalizeInsightsWindowDays(query.windowDays)
+  const [canWrite, canPublish] = await Promise.all([
+    checkPlatformPermission(event, user, 'contest.write'),
+    checkPlatformPermission(event, user, 'contest.publish'),
+  ])
 
   const items = await withClient(event, async (db) => {
     return listReleaseQueueResult(db, {
+      actorUserId: user.id,
+      canPublishCurrentUser: canPublish,
+      canWriteCurrentUser: canWrite,
+      rankingMode,
       scopeKind,
       statuses,
       limit,
+      windowDays,
     })
   })
 

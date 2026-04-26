@@ -12,6 +12,11 @@ import type {
   ContestWorkflowTimelineItem,
   PolicyLibraryItemSnapshot,
   PolicyLibraryReleaseSnapshot,
+  ReleaseQueueInsights,
+  ReleaseQueueInsightsWindowDays,
+  ReleaseQueueRecentReviewItem,
+  ReleaseQueueReviewerRankingMode,
+  ReleaseQueueReviewerStats,
   ReleaseQueueStatusStats,
   ReleaseReviewLog,
   ReleaseScopeKind,
@@ -101,11 +106,15 @@ const detail = ref<ReleaseVersionDetail | null>(null)
 const versions = ref<ReleaseVersion[]>([])
 const queueStats = ref<ReleaseQueueStatusStats | null>(null)
 const queueTotal = ref<number | null>(null)
+const insights = ref<ReleaseQueueInsights | null>(null)
 const currentUserId = ref('')
 const selectedTrack = ref<ContestReleaseTrackSnapshot | null>(null)
 const selectedReviewLog = ref<ReleaseReviewLog | null>(null)
 
 const statusFilter = ref<ReleaseVersionStatus | ''>('')
+const insightWindowDays = ref<ReleaseQueueInsightsWindowDays>(0)
+const reviewerRankingMode = ref<ReleaseQueueReviewerRankingMode>('total_actions')
+const actionableFilter = ref<'all' | 'pending_first' | 'claimed_second' | 'ready_publish'>('all')
 const selectedVersionId = ref('')
 const routeVersionId = computed(() => {
   const value = route.query.versionId
@@ -122,10 +131,30 @@ const statusOptions: Array<{ value: ReleaseVersionStatus | '', label: string }> 
   { value: 'superseded', label: '已替换' },
 ]
 
+const insightWindowOptions: Array<{ value: ReleaseQueueInsightsWindowDays, label: string }> = [
+  { value: 0, label: '累计' },
+  { value: 7, label: '近 7 天' },
+  { value: 30, label: '近 30 天' },
+]
+
+const reviewerRankingOptions: Array<{ value: ReleaseQueueReviewerRankingMode, label: string }> = [
+  { value: 'total_actions', label: '按总审核' },
+  { value: 'second_review_approved', label: '按二审通过' },
+  { value: 'published', label: '按发布次数' },
+]
+
 const filteredVersions = computed(() => {
-  if (!statusFilter.value)
-    return versions.value
-  return versions.value.filter(item => item.status === statusFilter.value)
+  return versions.value.filter((item) => {
+    if (statusFilter.value && item.status !== statusFilter.value)
+      return false
+    if (actionableFilter.value === 'pending_first')
+      return item.status === 'pending_first_review'
+    if (actionableFilter.value === 'claimed_second')
+      return item.status === 'pending_second_review' && item.secondReviewClaimedByUserId === currentUserId.value
+    if (actionableFilter.value === 'ready_publish')
+      return item.status === 'approved'
+    return true
+  })
 })
 
 const selectedVersion = computed(() => {
@@ -142,6 +171,25 @@ const summaryStats = computed(() => {
     superseded: versions.value.filter(item => item.status === 'superseded').length,
     total: versions.value.length,
   }
+})
+
+const currentUserInsights = computed(() => insights.value?.currentUser || null)
+const actionableInsights = computed(() => insights.value?.actionable || null)
+const rankedReviewerInsights = computed(() => insights.value?.reviewers || [])
+const recentReviewInsights = computed(() => insights.value?.recentReviews || [])
+
+const insightsWindowLabel = computed(() => {
+  return insightWindowOptions.find(item => item.value === insightWindowDays.value)?.label || '累计'
+})
+
+const actionableFilterLabel = computed(() => {
+  if (actionableFilter.value === 'pending_first')
+    return '当前仅查看可做初审'
+  if (actionableFilter.value === 'claimed_second')
+    return '当前仅查看我领的二审'
+  if (actionableFilter.value === 'ready_publish')
+    return '当前仅查看待发布'
+  return ''
 })
 
 const queueLoadedText = computed(() => {
@@ -209,6 +257,22 @@ function actionLabel(action: ReleaseReviewLog['action']): string {
   if (action === 'rejected')
     return '驳回'
   return '发布'
+}
+
+function reviewActionTagColor(action: ReleaseQueueRecentReviewItem['action']): string {
+  if (action === 'first_review_approved')
+    return 'gold'
+  if (action === 'second_review_claimed')
+    return 'arcoblue'
+  if (action === 'second_review_approved')
+    return 'green'
+  if (action === 'rejected')
+    return 'red'
+  return 'purple'
+}
+
+function reviewerMetricText(item: ReleaseQueueReviewerStats): string {
+  return `总 ${item.totalActions} / 发布 ${item.publishedCount}`
 }
 
 function timelineSourceLabel(source: ContestWorkflowTimelineItem['source']): string {
@@ -380,7 +444,11 @@ async function loadVersions() {
     const data = await requestApi<ReleaseVersion[] | AdminReleaseQueueResult>(
       endpoint(props.fetchPath),
       {
-        query: props.fetchQuery,
+        query: {
+          ...props.fetchQuery,
+          rankingMode: reviewerRankingMode.value,
+          windowDays: insightWindowDays.value,
+        },
       },
       '版本列表加载失败。',
     )
@@ -388,12 +456,18 @@ async function loadVersions() {
       versions.value = data.items || []
       queueStats.value = data.stats
       queueTotal.value = data.total
+      insights.value = data.insights || null
+      if (data.insights) {
+        insightWindowDays.value = data.insights.windowDays
+        reviewerRankingMode.value = data.insights.rankingMode
+      }
       await openRouteVersionDetail(data.items)
     }
     else {
       versions.value = data || []
       queueStats.value = null
       queueTotal.value = null
+      insights.value = null
     }
     if (!selectedVersion.value && versions.value[0])
       selectedVersionId.value = versions.value[0].id
@@ -402,6 +476,7 @@ async function loadVersions() {
     versions.value = []
     queueStats.value = null
     queueTotal.value = null
+    insights.value = null
     errorText.value = String(error?.data?.message || '版本列表加载失败。')
   }
   finally {
@@ -434,6 +509,24 @@ async function openDetail(versionId: string) {
   finally {
     detailLoading.value = false
   }
+}
+
+function toggleActionableFilter(nextFilter: 'pending_first' | 'claimed_second' | 'ready_publish') {
+  actionableFilter.value = actionableFilter.value === nextFilter ? 'all' : nextFilter
+  if (actionableFilter.value === 'pending_first')
+    statusFilter.value = 'pending_first_review'
+  else if (actionableFilter.value === 'claimed_second')
+    statusFilter.value = 'pending_second_review'
+  else if (actionableFilter.value === 'ready_publish')
+    statusFilter.value = 'approved'
+  else
+    statusFilter.value = ''
+  selectedVersionId.value = ''
+}
+
+async function openRecentReview(item: ReleaseQueueRecentReviewItem) {
+  selectedVersionId.value = item.releaseVersionId
+  await openDetail(item.releaseVersionId)
 }
 
 async function openRouteVersionDetail(items: ReleaseVersion[] = versions.value) {
@@ -582,7 +675,11 @@ function policySummary(item: PolicyLibraryItemSnapshot): string {
   ].filter(Boolean).join(' / ')
 }
 
-watch(() => props.fetchPath, loadVersions, { immediate: true })
+watch(
+  [() => props.fetchPath, insightWindowDays, reviewerRankingMode],
+  loadVersions,
+  { immediate: true },
+)
 
 watch(routeVersionId, async () => {
   await openRouteVersionDetail(versions.value)
@@ -619,6 +716,12 @@ onMounted(() => {
           </button>
         </div>
       </div>
+      <div v-if="actionableFilterLabel" class="text-[11px] text-slate-500 mt-2 flex gap-2 items-center">
+        <span>{{ actionableFilterLabel }}</span>
+        <button class="text-slate-700 hover:text-slate-900" type="button" @click="actionableFilter = 'all'">
+          清除
+        </button>
+      </div>
       <p v-if="queueLoadedText" class="text-[11px] text-slate-500 mt-2">
         {{ queueLoadedText }}
       </p>
@@ -626,39 +729,232 @@ onMounted(() => {
 
     <div class="gap-0 grid md:grid-cols-4">
       <div class="border-b border-slate-200 bg-slate-50/60 md:border-b-0 md:border-r">
-        <div class="grid grid-cols-2">
-          <div class="px-3 py-2 border-b border-r border-slate-200">
-            <p class="text-[10px] text-slate-400 uppercase">
-              待初审
-            </p>
-            <p class="text-sm text-slate-900 font-semibold mt-1">
-              {{ summaryStats.pendingFirst }}
-            </p>
+        <div class="space-y-0">
+          <div class="grid grid-cols-2">
+            <div class="px-3 py-2 border-b border-r border-slate-200">
+              <p class="text-[10px] text-slate-400 uppercase">
+                待初审
+              </p>
+              <p class="text-sm text-slate-900 font-semibold mt-1">
+                {{ summaryStats.pendingFirst }}
+              </p>
+            </div>
+            <div class="px-3 py-2 border-b border-slate-200">
+              <p class="text-[10px] text-slate-400 uppercase">
+                待二审
+              </p>
+              <p class="text-sm text-slate-900 font-semibold mt-1">
+                {{ summaryStats.pendingSecond }}
+              </p>
+            </div>
+            <div class="px-3 py-2 border-b border-r border-slate-200">
+              <p class="text-[10px] text-slate-400 uppercase">
+                待发布
+              </p>
+              <p class="text-sm text-slate-900 font-semibold mt-1">
+                {{ summaryStats.approved }}
+              </p>
+            </div>
+            <div class="px-3 py-2 border-b border-slate-200">
+              <p class="text-[10px] text-slate-400 uppercase">
+                已发布
+              </p>
+              <p class="text-sm text-slate-900 font-semibold mt-1">
+                {{ summaryStats.published }}
+              </p>
+            </div>
           </div>
-          <div class="px-3 py-2 border-b border-slate-200">
-            <p class="text-[10px] text-slate-400 uppercase">
-              待二审
+
+          <section class="px-3 py-3 border-b border-slate-200">
+            <div class="flex gap-2 items-center justify-between">
+              <h3 class="text-xs text-slate-900 font-semibold">
+                待我处理
+              </h3>
+              <span class="text-[11px] text-slate-500">
+                {{ insightsWindowLabel }}
+              </span>
+            </div>
+            <div v-if="actionableInsights" class="mt-3 text-center gap-2 grid grid-cols-3">
+              <button
+                class="px-2 py-2 text-left border rounded transition"
+                :class="actionableFilter === 'pending_first' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'"
+                type="button"
+                @click="toggleActionableFilter('pending_first')"
+              >
+                <p class="text-[10px] text-slate-400">
+                  可做初审
+                </p>
+                <p class="text-sm text-slate-900 font-semibold mt-1">
+                  {{ actionableInsights.pendingFirstCount }}
+                </p>
+              </button>
+              <button
+                class="px-2 py-2 text-left border rounded transition"
+                :class="actionableFilter === 'claimed_second' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'"
+                type="button"
+                @click="toggleActionableFilter('claimed_second')"
+              >
+                <p class="text-[10px] text-slate-400">
+                  我领的二审
+                </p>
+                <p class="text-sm text-slate-900 font-semibold mt-1">
+                  {{ actionableInsights.claimedSecondCount }}
+                </p>
+              </button>
+              <button
+                class="px-2 py-2 text-left border rounded transition"
+                :class="actionableFilter === 'ready_publish' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'"
+                type="button"
+                @click="toggleActionableFilter('ready_publish')"
+              >
+                <p class="text-[10px] text-slate-400">
+                  待发布
+                </p>
+                <p class="text-sm text-slate-900 font-semibold mt-1">
+                  {{ actionableInsights.readyToPublishCount }}
+                </p>
+              </button>
+            </div>
+            <a-empty v-else-if="!loading" description="暂无待处理项" class="py-4" />
+          </section>
+
+          <section class="px-3 py-3 border-b border-slate-200">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs text-slate-900 font-semibold">
+                我的审核统计
+              </h3>
+              <span v-if="currentUserInsights" class="text-[11px] text-slate-500">
+                {{ reviewerMetricText(currentUserInsights) }}
+              </span>
+            </div>
+            <div v-if="currentUserInsights" class="text-[11px] mt-3 gap-x-3 gap-y-2 grid grid-cols-2">
+              <div class="space-y-0.5">
+                <p class="text-slate-400">
+                  初审通过
+                </p>
+                <p class="text-slate-900 font-medium">
+                  {{ currentUserInsights.firstReviewApprovedCount }}
+                </p>
+              </div>
+              <div class="space-y-0.5">
+                <p class="text-slate-400">
+                  领取二审
+                </p>
+                <p class="text-slate-900 font-medium">
+                  {{ currentUserInsights.secondReviewClaimedCount }}
+                </p>
+              </div>
+              <div class="space-y-0.5">
+                <p class="text-slate-400">
+                  二审通过
+                </p>
+                <p class="text-slate-900 font-medium">
+                  {{ currentUserInsights.secondReviewApprovedCount }}
+                </p>
+              </div>
+              <div class="space-y-0.5">
+                <p class="text-slate-400">
+                  驳回
+                </p>
+                <p class="text-slate-900 font-medium">
+                  {{ currentUserInsights.rejectedCount }}
+                </p>
+              </div>
+              <div class="space-y-0.5">
+                <p class="text-slate-400">
+                  发布
+                </p>
+                <p class="text-slate-900 font-medium">
+                  {{ currentUserInsights.publishedCount }}
+                </p>
+              </div>
+              <div class="space-y-0.5">
+                <p class="text-slate-400">
+                  累计动作
+                </p>
+                <p class="text-slate-900 font-medium">
+                  {{ currentUserInsights.totalActions }}
+                </p>
+              </div>
+            </div>
+            <p v-if="currentUserInsights?.lastActionAt" class="text-[11px] text-slate-500 mt-3">
+              最近参与：{{ formatDateTime(currentUserInsights.lastActionAt) }}
             </p>
-            <p class="text-sm text-slate-900 font-semibold mt-1">
-              {{ summaryStats.pendingSecond }}
-            </p>
-          </div>
-          <div class="px-3 py-2 border-r border-slate-200">
-            <p class="text-[10px] text-slate-400 uppercase">
-              待发布
-            </p>
-            <p class="text-sm text-slate-900 font-semibold mt-1">
-              {{ summaryStats.approved }}
-            </p>
-          </div>
-          <div class="px-3 py-2">
-            <p class="text-[10px] text-slate-400 uppercase">
-              已发布
-            </p>
-            <p class="text-sm text-slate-900 font-semibold mt-1">
-              {{ summaryStats.published }}
-            </p>
-          </div>
+            <a-empty v-else-if="!loading" description="暂无个人审核记录" class="py-4" />
+          </section>
+
+          <section class="px-3 py-3 border-b border-slate-200">
+            <div class="flex gap-2 items-center justify-between">
+              <h3 class="text-xs text-slate-900 font-semibold">
+                管理员审核排名
+              </h3>
+              <a-select v-model="reviewerRankingMode" size="mini" class="w-[110px]">
+                <a-option v-for="option in reviewerRankingOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </a-option>
+              </a-select>
+            </div>
+            <div v-if="rankedReviewerInsights.length" class="mt-3 space-y-2">
+              <div v-for="(reviewer, index) in rankedReviewerInsights" :key="reviewer.userId" class="flex gap-2 items-center">
+                <div class="text-[11px] text-slate-400 font-medium w-5">
+                  {{ index + 1 }}
+                </div>
+                <a-avatar :size="24" :image-url="reviewer.avatarUrl || undefined">
+                  {{ reviewer.actorName.slice(0, 1) }}
+                </a-avatar>
+                <div class="flex-1 min-w-0">
+                  <p class="text-[11px] text-slate-900 font-medium truncate">
+                    {{ reviewer.actorName }}
+                  </p>
+                  <p class="text-[11px] text-slate-500">
+                    {{ reviewerMetricText(reviewer) }}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <a-empty v-else-if="!loading" description="暂无审核排名" class="py-4" />
+          </section>
+
+          <section class="px-3 py-3">
+            <div class="flex gap-2 items-center justify-between">
+              <h3 class="text-xs text-slate-900 font-semibold">
+                近期审核
+              </h3>
+              <a-select v-model="insightWindowDays" size="mini" class="w-[96px]">
+                <a-option v-for="option in insightWindowOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </a-option>
+              </a-select>
+            </div>
+            <div v-if="recentReviewInsights.length" class="mt-3 space-y-3">
+              <button
+                v-for="item in recentReviewInsights"
+                :key="item.id"
+                class="px-2 py-2 text-left border border-transparent rounded w-full block transition space-y-1 hover:border-slate-200 hover:bg-white"
+                type="button"
+                @click="openRecentReview(item)"
+              >
+                <div class="flex gap-2 items-center">
+                  <a-avatar :size="22" :image-url="item.avatarUrl || undefined">
+                    {{ item.actorName.slice(0, 1) }}
+                  </a-avatar>
+                  <p class="text-[11px] text-slate-900 font-medium flex-1 min-w-0 truncate">
+                    {{ item.actorName }}
+                  </p>
+                  <a-tag size="small" :color="reviewActionTagColor(item.action)">
+                    {{ actionLabel(item.action) }}
+                  </a-tag>
+                </div>
+                <p class="text-[11px] text-slate-600">
+                  {{ item.scopeTitle || item.scopeId }} · V{{ item.versionNumber }}
+                </p>
+                <p class="text-[11px] text-slate-500">
+                  {{ formatDateTime(item.createdAt) }}
+                </p>
+              </button>
+            </div>
+            <a-empty v-else-if="!loading" description="暂无近期审核" class="py-4" />
+          </section>
         </div>
       </div>
 
