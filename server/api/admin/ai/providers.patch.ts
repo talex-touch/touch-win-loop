@@ -1,4 +1,4 @@
-import type { PlatformAiProviderType } from '~~/server/utils/platform-ai-channels'
+import type { PlatformAiProviderCapability, PlatformAiProviderType } from '~~/server/utils/platform-ai-channels'
 import type {
   PlatformAiClientType,
   ProjectKnowledgeEmbeddingApiStyle,
@@ -40,6 +40,7 @@ interface ProviderDraftBody {
   id?: string
   name?: string
   type?: PlatformAiProviderType
+  capability?: PlatformAiProviderCapability
   provider?: string
   clientType?: PlatformAiClientType
   baseURL?: string
@@ -150,6 +151,7 @@ export default defineEventHandler(async (event) => {
         id: providerId,
         name: toText(source.name) || currentProvider?.name || '',
         type: source.type || currentProvider?.type || 'openai-compatible',
+        capability: source.capability || currentProvider?.capability || 'llm',
         provider: toText(source.provider) || currentProvider?.provider || '',
         clientType: hasOwn(source as Record<string, unknown>, 'clientType')
           ? normalizePlatformAiClientType(source.clientType, currentRuntime.ai.clientType)

@@ -6,6 +6,8 @@ import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolvePlatformA
 
 const PROVIDER_MODELS_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/provider-models.post.ts')
 const PROVIDERS_TEST_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers/test.post.ts')
+const PROVIDERS_PATCH_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers.patch.ts')
+const AI_PROMPTS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/ai-prompts.vue')
 
 function okJson(data: unknown) {
   return {
@@ -197,6 +199,8 @@ describe('admin-ai provider models', () => {
           { id: 'text-embedding-v4', name: 'Text Embedding V4' },
           { id: 'qwen-plus', name: 'Qwen Plus' },
           { id: 'qwen-vl-max', name: 'Qwen VL Max' },
+          { id: 'gpt-4o-mini-transcribe', name: 'GPT-4o Mini Transcribe' },
+          { id: 'tts-1', name: 'TTS 1' },
           { id: 'wanx2.1-t2i-turbo', name: 'Wanx Image' },
         ],
       })
@@ -212,6 +216,8 @@ describe('admin-ai provider models', () => {
     expect(items.find(item => item.model === 'text-embedding-v4')?.capabilities).toEqual(['embedding'])
     expect(items.find(item => item.model === 'qwen-plus')?.capabilities).toEqual(['chat'])
     expect(items.find(item => item.model === 'qwen-vl-max')?.capabilities).toEqual(['chat', 'vision'])
+    expect(items.find(item => item.model === 'gpt-4o-mini-transcribe')?.capabilities).toEqual(['asr'])
+    expect(items.find(item => item.model === 'tts-1')?.capabilities).toEqual(['tts'])
     expect(items.find(item => item.model === 'wanx2.1-t2i-turbo')?.capabilities).toEqual(['image-gen'])
     expect(items.find(item => item.model === 'text-embedding-v4')?.sourceEndpoint).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/models')
     expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.capabilities).toEqual(['embedding'])
@@ -233,5 +239,24 @@ describe('admin-ai provider models', () => {
       baseURL: '',
       apiKey: 'test-key',
     })).rejects.toThrow(/baseURL/)
+  })
+
+  it('管理端配置页按后端场景定义过滤 Provider 和模型能力', async () => {
+    const [pageSource, patchSource] = await Promise.all([
+      readFile(AI_PROMPTS_PAGE_FILE, 'utf8'),
+      readFile(PROVIDERS_PATCH_FILE, 'utf8'),
+    ])
+
+    expect(pageSource).toMatch(/requiredModelCapability: ModelCapability/)
+    expect(pageSource).toMatch(/allowedProviderCapabilities: ProviderCapability\[\]/)
+    expect(pageSource).toMatch(/sceneDefinitionMap/)
+    expect(pageSource).toMatch(/sceneDefinitionForKey/)
+    expect(pageSource).toMatch(/meeting_asr/)
+    expect(pageSource).toMatch(/speech_tts/)
+    expect(pageSource).toMatch(/value: 'asr'/)
+    expect(pageSource).toMatch(/value: 'tts'/)
+    expect(pageSource).toMatch(/normalizeSceneProviderIds\(item\.providerIds(?: \|\| \[\])?, item\.key\)/)
+    expect(pageSource).not.toMatch(/key === 'knowledge_embedding' \|\| key === 'knowledge_visual_embedding'/)
+    expect(patchSource).toMatch(/capability: source\.capability \|\| currentProvider\?\.capability \|\| 'llm'/)
   })
 })

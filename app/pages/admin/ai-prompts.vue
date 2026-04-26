@@ -15,8 +15,8 @@ type SecretMode = 'keep' | 'replace' | 'clear'
 type ModelFormat = 'openai-compatible' | 'response'
 type PricingSource = 'provider' | 'manual' | 'none'
 type ProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'searchxng' | 'tavily'
-type ProviderCapability = 'llm' | 'search'
-type ModelCapability = 'chat' | 'vision' | 'embedding' | 'image-gen' | 'video-gen'
+type ProviderCapability = 'llm' | 'search' | 'asr' | 'tts'
+type ModelCapability = 'chat' | 'vision' | 'embedding' | 'asr' | 'tts' | 'image-gen' | 'video-gen'
 type LoadBalanceStrategy = 'round_robin'
 type FailoverStrategy = 'model_then_provider'
 type PlatformAiChannelKey
@@ -40,8 +40,11 @@ type PlatformAiChannelKey
     | 'admin_publish_assistant'
     | 'knowledge_embedding'
     | 'knowledge_visual_embedding'
+    | 'knowledge_query_planner'
     | 'knowledge_visual_projection'
     | 'document_analysis'
+    | 'meeting_asr'
+    | 'speech_tts'
 
 interface ProviderModelItem {
   model: string
@@ -92,6 +95,9 @@ interface SceneDefinition {
   key: PlatformAiChannelKey
   label: string
   description: string
+  requiredModelCapability: ModelCapability
+  allowedProviderCapabilities: ProviderCapability[]
+  embeddingApiStyle?: EmbeddingApiStyle
 }
 
 interface SceneItem {
@@ -244,6 +250,8 @@ const modelCapabilityOptions: Array<{ value: ModelCapability, label: string, col
   { value: 'chat', label: '聊天', color: 'arcoblue', hint: '用于 LLM 对话、文档分析和后台助手场景。' },
   { value: 'vision', label: '视觉', color: 'purple', hint: '用于图片理解、OCR 和视觉投影。' },
   { value: 'embedding', label: 'Embedding', color: 'green', hint: '用于知识库文本或多模态向量。' },
+  { value: 'asr', label: 'ASR', color: 'cyan', hint: '用于会议字幕、录音转写和语音识别。' },
+  { value: 'tts', label: 'TTS', color: 'lime', hint: '用于文本转语音、朗读和语音播报。' },
   { value: 'image-gen', label: '图片生成', color: 'orange', hint: '先作为生成路由能力保留。' },
   { value: 'video-gen', label: '视频生成', color: 'magenta', hint: '先作为生成路由能力保留。' },
 ]
@@ -253,6 +261,8 @@ const modelPullCapabilityFilters: Array<{ value: ModelCapability | 'all', label:
   { value: 'chat', label: '聊天' },
   { value: 'vision', label: '视觉' },
   { value: 'embedding', label: 'Embedding' },
+  { value: 'asr', label: 'ASR' },
+  { value: 'tts', label: 'TTS' },
   { value: 'image-gen', label: '图片生成' },
   { value: 'video-gen', label: '视频生成' },
 ]
@@ -553,7 +563,21 @@ function dedupeStrings(items: string[]): string[] {
   return result
 }
 
-function resolveProviderCapability(type: ProviderType): ProviderCapability {
+function normalizeProviderCapability(value: unknown): ProviderCapability | null {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'llm' || normalized === 'search' || normalized === 'asr' || normalized === 'tts')
+    return normalized
+  if (normalized === 'speech-to-text' || normalized === 'speech_to_text' || normalized === 'transcription')
+    return 'asr'
+  if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis')
+    return 'tts'
+  return null
+}
+
+function resolveProviderCapability(type: ProviderType, value?: unknown): ProviderCapability {
+  const explicit = normalizeProviderCapability(value)
+  if (explicit)
+    return explicit
   return type === 'searchxng' || type === 'tavily' ? 'search' : 'llm'
 }
 
@@ -569,8 +593,12 @@ function normalizeModelCapability(value: unknown): ModelCapability | null {
   const normalized = String(value || '').trim().toLowerCase()
   if (normalized === 'llm' || normalized === 'text-generation')
     return 'chat'
-  if (normalized === 'chat' || normalized === 'vision' || normalized === 'embedding' || normalized === 'image-gen' || normalized === 'video-gen')
+  if (normalized === 'chat' || normalized === 'vision' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'image-gen' || normalized === 'video-gen')
     return normalized
+  if (normalized === 'speech-to-text' || normalized === 'speech_to_text' || normalized === 'transcription' || normalized === 'transcribe')
+    return 'asr'
+  if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis' || normalized === 'speech_synthesis')
+    return 'tts'
   if (normalized === 'image' || normalized === 'image-generation' || normalized === 'image_generation')
     return 'image-gen'
   if (normalized === 'video' || normalized === 'video-generation' || normalized === 'video_generation')
@@ -583,13 +611,17 @@ function inferModelCapabilities(model: string, label = '', rawText = ''): ModelC
   const result = new Set<ModelCapability>()
   if (/(?:^|[-_:./\s])(?:text-)?embed(?:ding)?(?:[-_:./\s]|$)|embedding|bge|gte|e5-|multimodal-embedding/.test(text))
     result.add('embedding')
-  if (!result.has('embedding') && /(?:^|[-_:./\s])(?:qwen[-_.:]?vl|vl|vision|gpt-4o|gpt-4\.1|gpt-4[-_.:]?vision|gemini[-_.:]?pro[-_.:]?vision)(?:[-_:./\s]|$)/.test(text))
+  if (/(?:^|[-_:./\s])(?:whisper|transcribe|transcription|speech-to-text|asr|audio-transcriptions?|gpt-4o-(?:mini-)?transcribe)(?:[-_:./\s]|$)/.test(text))
+    result.add('asr')
+  if (/(?:^|[-_:./\s])(?:tts|text-to-speech|speech-synthesis|speech-generation|gpt-4o-(?:mini-)?tts)(?:[-_:./\s]|$)/.test(text))
+    result.add('tts')
+  if (!result.has('embedding') && !result.has('asr') && !result.has('tts') && /(?:^|[-_:./\s])(?:qwen[-_.:]?vl|vl|vision|gpt-4o|gpt-4\.1|gpt-4[-_.:]?vision|gemini[-_.:]?pro[-_.:]?vision)(?:[-_:./\s]|$)/.test(text))
     result.add('vision')
   if (/wanx|(?:^|[-_:./\s])(?:dall[-_.:]?e|gpt-image|image-generation|stable-diffusion|flux|cogview|t2i)(?:[-_:./\s]|$)/.test(text))
     result.add('image-gen')
   if (/(?:^|[-_:./\s])(?:sora|kling|cogvideo|video-generation|text-to-video|image-to-video|t2v|i2v|wan.*video)(?:[-_:./\s]|$)/.test(text))
     result.add('video-gen')
-  if (!result.has('embedding') && !result.has('image-gen') && !result.has('video-gen'))
+  if (!result.has('embedding') && !result.has('image-gen') && !result.has('video-gen') && !result.has('asr') && !result.has('tts'))
     result.add('chat')
   return modelCapabilityOptions.map(item => item.value).filter(item => result.has(item))
 }
@@ -760,8 +792,8 @@ function normalizePullItem(item: ProviderPullItem): ProviderPullItem {
 }
 
 function normalizeProviderDraft(provider: ProviderDraftItem): ProviderDraftItem {
-  const capability = resolveProviderCapability(provider.type)
-  const models = capability === 'llm'
+  const capability = resolveProviderCapability(provider.type, provider.capability)
+  const models = capability !== 'search'
     ? provider.models.map(item => normalizeModelItem(item, provider.type)).sort((a, b) => a.model.localeCompare(b.model, 'en'))
     : []
   const hasApiKey = provider.apiKeyMode === 'clear'
@@ -869,16 +901,17 @@ const providerRows = computed(() => {
 
 const llmProviderOptions = computed(() => {
   return providers.value
-    .filter(item => item.capability === 'llm')
+    .filter(item => item.capability !== 'search')
     .map(item => ({
       id: item.id,
       name: item.name,
       provider: item.provider,
+      capability: item.capability,
       enabled: item.enabled,
     }))
 })
 
-const providerEditorSupportsModels = computed(() => providerEditorForm.capability === 'llm')
+const providerEditorSupportsModels = computed(() => providerEditorForm.capability !== 'search')
 const providerEditorTypeGuide = computed(() => providerTypeGuides[providerEditorForm.type] || providerTypeGuides['openai-compatible'])
 
 const providerEditorModelRows = computed(() => {
@@ -949,30 +982,36 @@ const allPulledModelsIndeterminate = computed(() => {
 })
 const pulledEmbeddingCandidateCount = computed(() => pulledProviderModels.value.filter(item => item.capabilities.includes('embedding')).length)
 
+const sceneDefinitionMap = computed(() => new Map(sceneDefinitions.value.map(item => [item.key, item])))
+
+function sceneDefinitionForKey(key: PlatformAiChannelKey): SceneDefinition | null {
+  return sceneDefinitionMap.value.get(key) || null
+}
+
 function sceneRequiredCapability(key: PlatformAiChannelKey): ModelCapability {
-  if (key === 'knowledge_embedding' || key === 'knowledge_visual_embedding')
-    return 'embedding'
-  if (key === 'knowledge_visual_projection')
-    return 'vision'
-  return 'chat'
+  return sceneDefinitionForKey(key)?.requiredModelCapability || 'chat'
+}
+
+function sceneAllowedProviderCapabilities(key: PlatformAiChannelKey): ProviderCapability[] {
+  return sceneDefinitionForKey(key)?.allowedProviderCapabilities || ['llm']
 }
 
 function sceneEmbeddingApiStyleFilter(key: PlatformAiChannelKey): EmbeddingApiStyle | null {
-  if (key === 'knowledge_embedding')
-    return 'openai-compatible-text'
-  if (key === 'knowledge_visual_embedding')
-    return 'bailian-multimodal'
-  return null
+  return sceneDefinitionForKey(key)?.embeddingApiStyle || null
 }
 
 function sceneCanRunChatTest(scene: Pick<SceneItem, 'key'>): boolean {
   return sceneRequiredCapability(scene.key) === 'chat'
 }
 
+function providerCanServeScene(provider: Pick<ProviderItem, 'capability'>, key: PlatformAiChannelKey): boolean {
+  return sceneAllowedProviderCapabilities(key).includes(provider.capability)
+}
+
 function resolveSceneModelCatalog(providerIds: string[], currentModels: string[] = [], capability: ModelCapability = 'chat', embeddingApiStyle: EmbeddingApiStyle | null = null): Array<{ model: string, label: string, priceText: string }> {
   const providerSet = new Set(providerIds)
   const map = new Map<string, { model: string, label: string, priceText: string }>()
-  for (const provider of providers.value.filter(item => item.capability === 'llm' && providerSet.has(item.id))) {
+  for (const provider of providers.value.filter(item => item.capability !== 'search' && providerSet.has(item.id))) {
     for (const model of provider.models.filter(item => item.enabled && modelHasCapability(item, capability) && (!embeddingApiStyle || item.embeddingApiStyle === embeddingApiStyle))) {
       if (!map.has(model.model)) {
         map.set(model.model, {
@@ -999,7 +1038,7 @@ function resolveSceneModelCatalog(providerIds: string[], currentModels: string[]
 function resolveSceneBatchModelCatalog(providerIds: string[], currentModels: string[] = []): Array<{ model: string, label: string, priceText: string }> {
   const providerSet = new Set(providerIds)
   const map = new Map<string, { model: string, label: string, priceText: string }>()
-  for (const provider of providers.value.filter(item => item.capability === 'llm' && providerSet.has(item.id))) {
+  for (const provider of providers.value.filter(item => item.capability !== 'search' && providerSet.has(item.id))) {
     for (const model of provider.models.filter(item => item.enabled)) {
       if (!map.has(model.model)) {
         map.set(model.model, {
@@ -1027,7 +1066,7 @@ function normalizeSceneModels(models: string[], providerIds: string[], capabilit
   const catalog = new Set(resolveSceneModelCatalog(providerIds, [], capability, embeddingApiStyle).map(item => item.model))
   const normalized = dedupeStrings(models)
   if (catalog.size === 0)
-    return normalized
+    return []
   return normalized.filter(item => catalog.has(item))
 }
 
@@ -1035,7 +1074,7 @@ function normalizeSceneBatchModels(models: string[], providerIds: string[]): str
   const catalog = new Set(resolveSceneBatchModelCatalog(providerIds, []).map(item => item.model))
   const normalized = dedupeStrings(models)
   if (catalog.size === 0)
-    return normalized
+    return []
   return normalized.filter(item => catalog.has(item))
 }
 
@@ -1081,9 +1120,14 @@ const sceneBatchFallbackOptions = computed(() => {
   return sceneBatchModelPoolOptions.value.filter(item => modelSet.has(item.model))
 })
 
-function normalizeSceneProviderIds(providerIds: string[]): string[] {
-  const llmProviderIdSet = new Set(providers.value.filter(item => item.capability === 'llm').map(item => item.id))
-  return dedupeStrings(providerIds).filter(item => llmProviderIdSet.has(item))
+function normalizeSceneProviderIds(providerIds: string[], key?: PlatformAiChannelKey): string[] {
+  const providerMap = new Map(providers.value.map(item => [item.id, item]))
+  return dedupeStrings(providerIds).filter((item) => {
+    const provider = providerMap.get(item)
+    if (!provider || provider.capability === 'search')
+      return false
+    return key ? providerCanServeScene(provider, key) : true
+  })
 }
 
 const sceneRows = computed(() => {
@@ -1094,6 +1138,10 @@ const sceneRows = computed(() => {
 function providerSummary(provider: ProviderDraftItem): string {
   if (provider.capability === 'search')
     return '仅搜索能力，不参与当前 LLM 场景模型路由'
+  if (provider.capability === 'asr')
+    return '语音识别 Provider，只参与 ASR 场景模型路由'
+  if (provider.capability === 'tts')
+    return '语音合成 Provider，只参与 TTS 场景模型路由'
   const enabledCount = provider.models.filter(item => item.enabled).length
   const capabilityText = modelCapabilityOptions
     .map(option => `${option.label} ${provider.models.filter(item => modelHasCapability(item, option.value)).length}`)
@@ -1176,7 +1224,7 @@ function applyConsolePayload(payload: ProvidersPayload): void {
   })
   sceneDefinitions.value = payload.scenes?.definitions || []
   sceneItems.value = (payload.scenes?.items || []).map((item) => {
-    const providerIds = normalizeSceneProviderIds(item.providerIds || [])
+    const providerIds = normalizeSceneProviderIds(item.providerIds || [], item.key)
     const normalizedRouting = normalizeSceneRoutingConfig({
       key: item.key,
       models: dedupeStrings(item.models || item.modelFallback || []),
@@ -1228,6 +1276,7 @@ function buildProviderPayload(provider: ProviderDraftItem) {
     id: normalized.id,
     name: normalized.name,
     type: normalized.type,
+    capability: normalized.capability,
     provider: normalized.provider,
     baseURL: normalized.baseURL,
     enabled: normalized.enabled,
@@ -1249,7 +1298,7 @@ async function saveConsole() {
         providers: providers.value.map(item => buildProviderPayload(item)),
         scenes: {
           items: sceneItems.value.map((item) => {
-            const providerIds = normalizeSceneProviderIds(item.providerIds)
+            const providerIds = normalizeSceneProviderIds(item.providerIds, item.key)
             const normalizedRouting = normalizeSceneRoutingConfig(item, providerIds)
             return {
               key: item.key,
@@ -1333,7 +1382,7 @@ function syncProviderType(type: ProviderType) {
     providerEditorForm.models = []
     providerEditorForm.visionModel = ''
   }
-  if (providerEditorForm.capability === 'llm')
+  if (providerEditorForm.capability !== 'search')
     providerEditorForm.models = providerEditorForm.models.map(item => normalizeModelItem(item, type))
 }
 
@@ -1343,7 +1392,7 @@ function handleProviderTypeChange(value: string | number | boolean | Record<stri
 
 function handleSceneProviderIdsChange(value: string | number | boolean | Array<string | number> | undefined) {
   const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
-  const providerIds = normalizeSceneProviderIds(values)
+  const providerIds = normalizeSceneProviderIds(values, sceneEditorForm.key)
   const normalizedRouting = normalizeSceneRoutingConfig(sceneEditorForm, providerIds)
   sceneEditorForm.providerIds = providerIds
   sceneEditorForm.models = normalizedRouting.models
@@ -1644,7 +1693,11 @@ async function testProvider() {
   providerEditorTestLoading.value = true
   providerEditorTestMessage.value = ''
   try {
-    const testModel = providerEditorForm.models.find(item => item.enabled)?.model || ''
+    const testModel = providerEditorForm.models.find(item => item.enabled && modelHasCapability(item, 'chat'))?.model || ''
+    if (!testModel) {
+      Message.warning('当前 Provider 没有可用于聊天连通性测试的模型。')
+      return
+    }
     const data = await requestApi<{
       providerId: string
       provider: string
@@ -1679,7 +1732,7 @@ function openSceneDrawer(record: SceneItem) {
   sceneEditorForm.label = record.label
   sceneEditorForm.description = record.description
   sceneEditorForm.enabled = Boolean(record.enabled)
-  sceneEditorForm.providerIds = dedupeStrings(record.providerIds || [])
+  sceneEditorForm.providerIds = normalizeSceneProviderIds(record.providerIds || [], record.key)
   sceneEditorForm.loadBalanceStrategy = record.loadBalanceStrategy || 'round_robin'
   sceneEditorForm.models = dedupeStrings(record.models || record.modelFallback || [])
   sceneEditorForm.modelFallback = dedupeStrings(record.modelFallback || [])
@@ -1696,7 +1749,7 @@ function saveSceneDrawer() {
   const index = sceneItems.value.findIndex(item => item.key === sceneEditorForm.key)
   if (index < 0)
     return
-  const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds)
+  const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds, sceneEditorForm.key)
   const normalizedRouting = normalizeSceneRoutingConfig(sceneEditorForm, providerIds)
   const next = [...sceneItems.value]
   next.splice(index, 1, {
@@ -1732,9 +1785,9 @@ function closeSceneBatchDrawer() {
 }
 
 function applySceneBatchConfig() {
-  const providerIds = normalizeSceneProviderIds(sceneBatchForm.providerIds)
   const normalizedBatch = normalizeSceneBatchRoutingConfig(sceneBatchForm)
   sceneItems.value = sceneItems.value.map((item) => {
+    const providerIds = normalizeSceneProviderIds(sceneBatchForm.providerIds, item.key)
     const normalizedRouting = normalizeSceneRoutingConfig({
       key: item.key,
       models: normalizedBatch.models,
@@ -1754,8 +1807,8 @@ function applySceneBatchConfig() {
 }
 
 function applyCurrentSceneConfigToAll() {
-  const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds)
   sceneItems.value = sceneItems.value.map((item) => {
+    const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds, item.key)
     const normalizedRouting = normalizeSceneRoutingConfig({
       key: item.key,
       models: sceneEditorForm.models,
@@ -1775,7 +1828,7 @@ function applyCurrentSceneConfigToAll() {
 
 async function testScene(scene: SceneItem) {
   if (!sceneCanRunChatTest(scene)) {
-    Message.info('Embedding 场景只配置向量模型路由，无需执行对话测试。')
+    Message.info(`${modelCapabilityLabel(sceneRequiredCapability(scene.key))} 场景只配置模型路由，无需执行对话测试。`)
     return
   }
   sceneTesting[scene.key] = true
@@ -1961,7 +2014,7 @@ onMounted(async () => {
                   <div class="space-y-1">
                     <a-tag>{{ normalizeProviderTypeLabel(scope.record.type) }}</a-tag>
                     <div class="text-xs text-slate-500">
-                      {{ scope.record.capability === 'llm' ? 'llm' : 'search-only' }}
+                      {{ scope.record.capability }}
                     </div>
                   </div>
                 </template>
@@ -2048,6 +2101,9 @@ onMounted(async () => {
                     </a-tag>
                     <a-tag v-if="sceneUsageHint(scope.record)" :color="sceneUsageHintColor(scope.record)">
                       {{ sceneUsageHint(scope.record) }}
+                    </a-tag>
+                    <a-tag size="small" :color="modelCapabilityColor(sceneRequiredCapability(scope.record.key))">
+                      {{ modelCapabilityLabel(sceneRequiredCapability(scope.record.key)) }}
                     </a-tag>
                   </div>
                   <div class="text-xs text-slate-500">
@@ -2364,7 +2420,7 @@ onMounted(async () => {
           </div>
 
           <div class="text-sm text-slate-500 flex flex-wrap gap-3 items-center">
-            <span>能力：{{ providerEditorForm.capability === 'llm' ? 'llm' : 'search-only' }}</span>
+            <span>能力：{{ providerEditorForm.capability }}</span>
             <span>模型池拉取时间：{{ formatTime(providerEditorForm.fetchedAt) }}</span>
             <span>当前模型数：{{ providerEditorForm.models.length }}</span>
             <span>API Key：{{ providerEditorForm.apiKeyConfigured ? '已配置' : '未配置' }}</span>
@@ -2794,7 +2850,7 @@ onMounted(async () => {
               multiple
               allow-search
               allow-clear
-              placeholder="只能选择 llm Provider"
+              placeholder="按场景能力过滤 Provider"
               @change="handleSceneProviderIdsChange"
             >
               <a-option
@@ -2803,7 +2859,7 @@ onMounted(async () => {
                 :value="item.id"
                 :disabled="!item.enabled"
               >
-                {{ item.name }} <span class="text-xs text-slate-400">({{ item.provider }})</span>
+                {{ item.name }} <span class="text-xs text-slate-400">({{ item.provider }} · {{ item.capability }})</span>
               </a-option>
             </a-select>
           </a-form-item>
@@ -2941,7 +2997,7 @@ onMounted(async () => {
                 :value="item.id"
                 :disabled="!item.enabled"
               >
-                {{ item.name }}
+                {{ item.name }} <span class="text-xs text-slate-400">({{ item.capability }})</span>
               </a-option>
             </a-select>
           </a-form-item>
