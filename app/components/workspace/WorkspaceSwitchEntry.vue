@@ -1,9 +1,23 @@
 <script setup lang="ts">
-import type { ApiResponse, BillingCycle, BillingPlan, WorkspaceWithQuota } from '~~/shared/types/domain'
+import type {
+  ApiResponse,
+  BillingCycle,
+  BillingPlan,
+  WorkspaceBillingEstimate,
+  WorkspaceWithQuota,
+} from '~~/shared/types/domain'
+import { writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 interface CreateWorkspaceResponse {
   team: WorkspaceWithQuota['workspace']
   quota: WorkspaceWithQuota['quota']
+}
+
+interface CreateWorkspaceCheckoutResponse {
+  order: {
+    id: string
+  }
+  estimate: WorkspaceBillingEstimate
 }
 
 const props = withDefaults(defineProps<{
@@ -30,6 +44,7 @@ const emit = defineEmits<{
 }>()
 
 const authApiFetch = useAuthApiFetch()
+const router = useRouter()
 
 const switchRootRef = ref<HTMLElement | null>(null)
 const popupVisible = ref(false)
@@ -37,6 +52,7 @@ const createDialogVisible = ref(false)
 const creatingWorkspace = ref(false)
 const createWorkspaceName = ref('')
 const createError = ref('')
+const createPlanError = ref('')
 const internalWorkspaceOptions = ref<WorkspaceWithQuota[]>([])
 const billingPlans = ref<BillingPlan[]>([])
 const billingPlansLoading = ref(false)
@@ -79,6 +95,10 @@ const selectedCreatePlan = computed(() => {
   return billingPlans.value.find(plan => plan.id === createSelectedPlanId.value) || billingPlans.value[0] || null
 })
 
+const canSubmitCreateWorkspace = computed(() => {
+  return Boolean(createWorkspaceName.value.trim() && createSelectedPlanId.value && !billingPlansLoading.value)
+})
+
 function upsertWorkspaceOption(option: WorkspaceWithQuota) {
   const filtered = internalWorkspaceOptions.value.filter(item => item.workspace.id !== option.workspace.id)
   internalWorkspaceOptions.value = [option, ...filtered]
@@ -87,6 +107,7 @@ function upsertWorkspaceOption(option: WorkspaceWithQuota) {
 function openPopup() {
   popupVisible.value = true
   createError.value = ''
+  createPlanError.value = ''
 }
 
 function closePopup() {
@@ -132,6 +153,7 @@ function selectWorkspace(workspaceId: string) {
 function openCreateDialog() {
   closePopup()
   createError.value = ''
+  createPlanError.value = ''
   createDialogVisible.value = true
   void loadBillingPlans()
 }
@@ -141,12 +163,23 @@ function closeCreateDialog() {
     return
   createDialogVisible.value = false
   createError.value = ''
+  createPlanError.value = ''
 }
 
 async function submitCreateWorkspace() {
   const normalizedName = createWorkspaceName.value.trim()
   if (!normalizedName) {
     createError.value = '请输入空间名称。'
+    return
+  }
+  if (billingPlansLoading.value) {
+    createError.value = '套餐仍在加载，请稍后再创建。'
+    return
+  }
+
+  const selectedPlanId = createSelectedPlanId.value
+  if (!selectedPlanId) {
+    createError.value = createPlanError.value || '请选择一个可用套餐。'
     return
   }
 
@@ -161,15 +194,13 @@ async function submitCreateWorkspace() {
       },
     })
 
-    if (createSelectedPlanId.value) {
-      await authApiFetch<ApiResponse<unknown>>(`/teams/${response.data.team.id}/billing/checkout`, {
-        method: 'POST',
-        body: {
-          planId: createSelectedPlanId.value,
-          billingCycle: createBillingCycle.value,
-        },
-      })
-    }
+    const checkoutResponse = await authApiFetch<ApiResponse<CreateWorkspaceCheckoutResponse>>(`/teams/${response.data.team.id}/billing/checkout`, {
+      method: 'POST',
+      body: {
+        planId: selectedPlanId,
+        billingCycle: createBillingCycle.value,
+      },
+    })
 
     const workspaceOption: WorkspaceWithQuota = {
       workspace: response.data.team,
@@ -177,16 +208,28 @@ async function submitCreateWorkspace() {
         ? {
             ...response.data.quota,
             workspaceId: response.data.team.id,
+            planTier: checkoutResponse.data.estimate.planTier,
+            resetCycle: checkoutResponse.data.estimate.billingCycle,
+            seatLimit: Math.max(checkoutResponse.data.estimate.includedSeats, checkoutResponse.data.estimate.seatUsed),
+            aiQuotaTotal: checkoutResponse.data.estimate.aiQuotaTotal,
           }
         : null,
     }
 
     upsertWorkspaceOption(workspaceOption)
+    writeActiveWorkspacePreference(workspaceOption.workspace.id)
     createWorkspaceName.value = ''
     createDialogVisible.value = false
     popupVisible.value = false
     emit('workspaceCreated', workspaceOption)
-    emit('update:modelValue', workspaceOption.workspace.id)
+    await router.push({
+      path: `/team/${workspaceOption.workspace.id}/billing`,
+      query: {
+        checkout: 'success',
+        orderId: checkoutResponse.data.order.id,
+        created: '1',
+      },
+    })
   }
   catch (error: any) {
     createError.value = String(error?.data?.message || '创建项目空间失败，请稍后重试。')
@@ -200,15 +243,20 @@ async function loadBillingPlans(): Promise<void> {
   if (billingPlansLoading.value || billingPlans.value.length > 0)
     return
   billingPlansLoading.value = true
+  createPlanError.value = ''
   try {
     const response = await authApiFetch<ApiResponse<BillingPlan[]>>('/billing/plans')
     billingPlans.value = response.data || []
     createSelectedPlanId.value = billingPlans.value.find(plan => plan.planTier === 'business_team')?.id
       || billingPlans.value[0]?.id
       || ''
+    if (!createSelectedPlanId.value)
+      createPlanError.value = '当前没有可用套餐，请稍后再试或联系管理员。'
   }
   catch {
     billingPlans.value = []
+    createSelectedPlanId.value = ''
+    createPlanError.value = '套餐加载失败，请稍后再试。'
   }
   finally {
     billingPlansLoading.value = false
@@ -355,17 +403,20 @@ onBeforeUnmount(() => {
         <p v-if="billingPlansLoading" class="text-xs text-slate-500">
           正在加载套餐...
         </p>
-        <div v-else class="grid gap-2">
+        <p v-else-if="createPlanError" class="text-xs text-rose-600">
+          {{ createPlanError }}
+        </p>
+        <div v-else class="gap-2 grid">
           <button
             v-for="plan in billingPlans"
             :key="plan.id"
             type="button"
-            class="text-left px-3 py-2 border rounded-lg transition-colors"
+            class="px-3 py-2 text-left border rounded-lg transition-colors"
             :class="createSelectedPlanId === plan.id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'"
             @click="createSelectedPlanId = plan.id"
           >
             <span class="text-[0.6875rem] text-slate-500">{{ plan.planTier === 'business_team' ? 'Business' : 'Personal' }}</span>
-            <strong class="text-sm text-slate-900 block mt-0.5">{{ plan.name }}</strong>
+            <strong class="text-sm text-slate-900 mt-0.5 block">{{ plan.name }}</strong>
             <span class="text-xs text-slate-500">{{ formatPlanPrice(plan.basePriceCents) }} / {{ cycleLabel(createBillingCycle) }} · 席位 {{ plan.includedSeats }} · AI {{ plan.includedAiQuota }}</span>
           </button>
         </div>
@@ -398,10 +449,11 @@ onBeforeUnmount(() => {
           size="small"
           type="primary"
           :loading="creatingWorkspace"
-          :disabled="!createWorkspaceName.trim()"
+          :disabled="!canSubmitCreateWorkspace"
+          data-testid="workspace-create-submit-button"
           @click="submitCreateWorkspace"
         >
-          创建
+          创建并完成结算
         </a-button>
       </div>
     </div>
