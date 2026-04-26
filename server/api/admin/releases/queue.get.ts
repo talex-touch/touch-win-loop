@@ -5,7 +5,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { listReleaseQueue } from '~~/server/utils/release-store'
+import { listReleaseQueueResult } from '~~/server/utils/release-store'
 
 function normalizeScopeKind(raw: unknown): ReleaseScopeKind | undefined {
   const value = String(raw || '').trim()
@@ -54,10 +54,10 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const scopeKind = normalizeScopeKind(query.scopeKind)
   const statuses = normalizeStatuses(query.statuses)
-  const limit = Math.max(1, Math.min(200, Number(query.limit || 100)))
+  const limit = Math.max(1, Math.min(500, Number(query.limit || 100)))
 
   const items = await withClient(event, async (db) => {
-    return listReleaseQueue(db, {
+    return listReleaseQueueResult(db, {
       scopeKind,
       statuses,
       limit,

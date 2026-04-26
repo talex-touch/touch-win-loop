@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  AdminReleaseQueueResult,
   ApiResponse,
   AuthMeResult,
   ContestReleaseContestSnapshot,
@@ -11,6 +12,7 @@ import type {
   ContestWorkflowTimelineItem,
   PolicyLibraryItemSnapshot,
   PolicyLibraryReleaseSnapshot,
+  ReleaseQueueStatusStats,
   ReleaseReviewLog,
   ReleaseScopeKind,
   ReleaseVersion,
@@ -96,13 +98,14 @@ const trackDetailVisible = ref(false)
 const reviewLogDrawerVisible = ref(false)
 const detail = ref<ReleaseVersionDetail | null>(null)
 const versions = ref<ReleaseVersion[]>([])
+const queueStats = ref<ReleaseQueueStatusStats | null>(null)
+const queueTotal = ref<number | null>(null)
 const currentUserId = ref('')
 const selectedTrack = ref<ContestReleaseTrackSnapshot | null>(null)
 const selectedReviewLog = ref<ReleaseReviewLog | null>(null)
 
 const statusFilter = ref<ReleaseVersionStatus | ''>('')
 const selectedVersionId = ref('')
-
 const statusOptions: Array<{ value: ReleaseVersionStatus | '', label: string }> = [
   { value: '', label: '全部状态' },
   { value: 'pending_first_review', label: '待初审' },
@@ -124,12 +127,25 @@ const selectedVersion = computed(() => {
 })
 
 const summaryStats = computed(() => {
-  return {
+  return queueStats.value || {
     pendingFirst: versions.value.filter(item => item.status === 'pending_first_review').length,
     pendingSecond: versions.value.filter(item => item.status === 'pending_second_review').length,
     approved: versions.value.filter(item => item.status === 'approved').length,
     published: versions.value.filter(item => item.status === 'published').length,
+    rejected: versions.value.filter(item => item.status === 'rejected').length,
+    superseded: versions.value.filter(item => item.status === 'superseded').length,
+    total: versions.value.length,
   }
+})
+
+const queueLoadedText = computed(() => {
+  if (queueTotal.value === null)
+    return ''
+  const loadedCount = versions.value.length
+  const total = queueTotal.value
+  if (total > loadedCount)
+    return `共 ${total} 个匹配版本，当前加载 ${loadedCount} 条；顶部统计为全量口径。`
+  return `共 ${total} 个匹配版本，已全部加载；顶部统计为全量口径。`
 })
 
 function formatDateTime(value?: string | null): string {
@@ -327,6 +343,16 @@ function reviewLogPayloadText(item: ReleaseReviewLog | null): string {
   return JSON.stringify(item.payload, null, 2)
 }
 
+function isReleaseQueueResult(value: unknown): value is AdminReleaseQueueResult {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Array.isArray((value as AdminReleaseQueueResult).items)
+    && (value as AdminReleaseQueueResult).stats,
+  )
+}
+
 async function loadCurrentUser() {
   try {
     const data = await requestApi<AuthMeResult>(
@@ -345,19 +371,30 @@ async function loadVersions() {
   loading.value = true
   errorText.value = ''
   try {
-    const data = await requestApi<ReleaseVersion[]>(
+    const data = await requestApi<ReleaseVersion[] | AdminReleaseQueueResult>(
       endpoint(props.fetchPath),
       {
         query: props.fetchQuery,
       },
       '版本列表加载失败。',
     )
-    versions.value = data || []
+    if (isReleaseQueueResult(data)) {
+      versions.value = data.items || []
+      queueStats.value = data.stats
+      queueTotal.value = data.total
+    }
+    else {
+      versions.value = data || []
+      queueStats.value = null
+      queueTotal.value = null
+    }
     if (!selectedVersion.value && versions.value[0])
       selectedVersionId.value = versions.value[0].id
   }
   catch (error: any) {
     versions.value = []
+    queueStats.value = null
+    queueTotal.value = null
     errorText.value = String(error?.data?.message || '版本列表加载失败。')
   }
   finally {
@@ -391,6 +428,7 @@ async function openDetail(versionId: string) {
     detailLoading.value = false
   }
 }
+
 
 function openTrackDetail(item: ContestReleaseTrackSnapshot) {
   selectedTrack.value = item
@@ -559,6 +597,9 @@ onMounted(() => {
           </button>
         </div>
       </div>
+      <p v-if="queueLoadedText" class="text-[11px] text-slate-500 mt-2">
+        {{ queueLoadedText }}
+      </p>
     </div>
 
     <div class="gap-0 grid md:grid-cols-4">

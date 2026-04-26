@@ -1,6 +1,7 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
   AdminContestListItem,
+  AdminReleaseQueueResult,
   ContestLevel,
   ContestReleaseContestSnapshot,
   ContestReleaseResourceSnapshot,
@@ -18,6 +19,7 @@ import type {
   PolicyLibraryReleaseSnapshot,
   PublishCheckResult,
   ReleaseDiffSummary,
+  ReleaseQueueStatusStats,
   ReleaseReviewAction,
   ReleaseReviewLog,
   ReleaseScopeKind,
@@ -97,6 +99,11 @@ interface ReleaseReviewLogRow {
   created_at: string
 }
 
+interface ReleaseQueueStatsRow {
+  status: ReleaseVersionStatus
+  item_count: number | string
+}
+
 interface FeishuExternalRefRow {
   scope: 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy'
   external_id: string
@@ -130,6 +137,7 @@ const MANUAL_TRACK_EXTERNAL_ID_PREFIX = 'manual:track:'
 const MANUAL_CONTEST_TIMELINE_EXTERNAL_ID_PREFIX = 'manual:contest_timeline:'
 const MANUAL_TRACK_TIMELINE_EXTERNAL_ID_PREFIX = 'manual:track_timeline:'
 const MANUAL_RESOURCE_EXTERNAL_ID_PREFIX = 'manual:resource:'
+const DEFAULT_RELEASE_QUEUE_STATUSES: ReleaseVersionStatus[] = ['pending_first_review', 'pending_second_review', 'approved']
 
 function normalizeText(value: unknown): string {
   return String(value || '').trim()
@@ -922,12 +930,113 @@ export async function listReleaseQueue(
 ): Promise<ReleaseVersion[]> {
   const statuses: ReleaseVersionStatus[] = input.statuses?.length
     ? input.statuses
-    : ['pending_first_review', 'pending_second_review', 'approved']
+    : DEFAULT_RELEASE_QUEUE_STATUSES
   return listReleaseScopedVersions(db, {
     scopeKind: input.scopeKind,
     statuses,
     limit: input.limit || 100,
   })
+}
+
+function createEmptyReleaseQueueStatusStats(): ReleaseQueueStatusStats {
+  return {
+    pendingFirst: 0,
+    pendingSecond: 0,
+    approved: 0,
+    rejected: 0,
+    published: 0,
+    superseded: 0,
+    total: 0,
+  }
+}
+
+function applyReleaseQueueStatusCount(
+  stats: ReleaseQueueStatusStats,
+  status: ReleaseVersionStatus,
+  count: number,
+): void {
+  if (status === 'pending_first_review')
+    stats.pendingFirst = count
+  else if (status === 'pending_second_review')
+    stats.pendingSecond = count
+  else if (status === 'approved')
+    stats.approved = count
+  else if (status === 'rejected')
+    stats.rejected = count
+  else if (status === 'published')
+    stats.published = count
+  else if (status === 'superseded')
+    stats.superseded = count
+}
+
+async function countReleaseQueueStatusStats(
+  db: Queryable,
+  input: {
+    scopeKind?: ReleaseScopeKind
+    statuses: ReleaseVersionStatus[]
+  },
+): Promise<ReleaseQueueStatusStats> {
+  const where: string[] = ['1=1']
+  const values: unknown[] = []
+
+  if (input.scopeKind) {
+    values.push(input.scopeKind)
+    where.push(`scope_kind = $${values.length}`)
+  }
+
+  if (input.statuses.length) {
+    values.push(input.statuses)
+    where.push(`status = ANY($${values.length}::TEXT[])`)
+  }
+
+  const result = await db.query<ReleaseQueueStatsRow>(
+    `SELECT status, COUNT(*)::INT AS item_count
+     FROM release_versions
+     WHERE ${where.join(' AND ')}
+     GROUP BY status`,
+    values,
+  )
+
+  const stats = createEmptyReleaseQueueStatusStats()
+  for (const row of result.rows) {
+    const count = Math.max(0, Number(row.item_count || 0) || 0)
+    applyReleaseQueueStatusCount(stats, row.status, count)
+    stats.total += count
+  }
+  return stats
+}
+
+export async function listReleaseQueueResult(
+  db: Queryable,
+  input: {
+    scopeKind?: ReleaseScopeKind
+    statuses?: ReleaseVersionStatus[]
+    limit?: number
+  } = {},
+): Promise<AdminReleaseQueueResult> {
+  const statuses: ReleaseVersionStatus[] = input.statuses?.length
+    ? input.statuses
+    : DEFAULT_RELEASE_QUEUE_STATUSES
+  const limit = Math.max(1, Math.min(500, normalizeInteger(input.limit || 100, 100)))
+
+  const [items, stats] = await Promise.all([
+    listReleaseScopedVersions(db, {
+      scopeKind: input.scopeKind,
+      statuses,
+      limit,
+    }),
+    countReleaseQueueStatusStats(db, {
+      scopeKind: input.scopeKind,
+      statuses,
+    }),
+  ])
+
+  return {
+    items,
+    total: stats.total,
+    limit,
+    stats,
+  }
 }
 
 function matchAdminContestListQuery(item: AdminContestListItem, query: string): boolean {

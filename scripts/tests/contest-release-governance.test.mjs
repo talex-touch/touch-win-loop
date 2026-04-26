@@ -136,4 +136,22 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /<a-drawer[\s\S]*v-model:visible="reviewLogDrawerVisible"[\s\S]*title="审批日志详情"/, '审批日志详情应放入独立 drawer')
     assert.doesNotMatch(workbenchSource, /<pre v-if="Object\.keys\(item\.payload \|\| \{\}\)\.length"[\s\S]*JSON\.stringify\(item\.payload/, '审批日志列表不应直接展开 payload')
   })
+
+  it('发布审批队列统计使用全量口径，不受当前列表 limit 截断', async () => {
+    const [typeSource, queueApiSource, releaseStoreSource, workbenchSource] = await Promise.all([
+      readSource('shared/types/domain-legacy.ts'),
+      readSource('server/api/admin/releases/queue.get.ts'),
+      readSource('server/utils/release-store.ts'),
+      readSource('app/components/admin/AdminReleaseWorkbench.vue'),
+    ])
+
+    assert.match(typeSource, /export interface ReleaseQueueStatusStats \{[\s\S]*pendingFirst: number[\s\S]*approved: number[\s\S]*total: number/, '共享类型未声明 release queue 全量状态统计')
+    assert.match(typeSource, /export interface AdminReleaseQueueResult \{[\s\S]*items: ReleaseVersion\[\][\s\S]*stats: ReleaseQueueStatusStats/, '共享类型未声明 release queue 结果对象')
+    assert.match(queueApiSource, /listReleaseQueueResult/, '队列 API 仍返回受 limit 截断的纯列表')
+    assert.match(releaseStoreSource, /export async function listReleaseQueueResult\(/, 'release-store 未提供队列结果聚合函数')
+    assert.match(releaseStoreSource, /COUNT\(\*\)::INT AS item_count[\s\S]*GROUP BY status/, '队列统计未按状态做不带 limit 的聚合')
+    assert.match(workbenchSource, /AdminReleaseQueueResult/, '版本工作台未识别队列结果对象')
+    assert.match(workbenchSource, /queueStats\.value \|\|/, '版本工作台 summary 仍只按当前加载列表计数')
+    assert.match(workbenchSource, /顶部统计为全量口径/, '版本工作台未提示统计与当前加载列表的口径差异')
+  })
 })

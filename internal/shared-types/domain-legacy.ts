@@ -2040,6 +2040,23 @@ export interface ReleaseVersionDetail {
   workflowTimeline?: ContestWorkflowTimelineItem[]
 }
 
+export interface ReleaseQueueStatusStats {
+  pendingFirst: number
+  pendingSecond: number
+  approved: number
+  rejected: number
+  published: number
+  superseded: number
+  total: number
+}
+
+export interface AdminReleaseQueueResult {
+  items: ReleaseVersion[]
+  total: number
+  limit: number
+  stats: ReleaseQueueStatusStats
+}
+
 export interface AdminContestListItem {
   id?: string | null
   scopeId: string
