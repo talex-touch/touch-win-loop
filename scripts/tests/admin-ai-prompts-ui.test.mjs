@@ -35,6 +35,9 @@ it('provider 类型固定包含 LLM 与 search-only 首批枚举', async () => {
   assert.match(source, /value:\s*'dashscope-bailian'[\s\S]*label:\s*'百炼 DashScope'/, '缺少百炼 DashScope 类型')
   assert.match(source, /value:\s*'searchxng'[\s\S]*capability:\s*'search'/, '缺少 SearchXNG search-only 类型')
   assert.match(source, /value:\s*'tavily'[\s\S]*capability:\s*'search'/, '缺少 Tavily search-only 类型')
+  assert.match(source, /providerCapabilityOptions/, '缺少 Provider 能力枚举')
+  assert.match(source, /value:\s*'asr'[\s\S]*label:\s*'ASR only'/, '缺少 ASR Provider 能力')
+  assert.match(source, /value:\s*'tts'[\s\S]*label:\s*'TTS only'/, '缺少 TTS Provider 能力')
 })
 
 it('渠道和模型页不再暴露默认模型入口与联网能力卡片', async () => {
@@ -71,7 +74,10 @@ it('search-only Provider 不参与模型场景路由', async () => {
 
   assert.match(source, /搜索型 Provider，只做 search-only 登记，不参与 AI 场景模型路由。/, '缺少 search-only 限制说明')
   assert.match(source, /按场景能力过滤 Provider/, '场景 Provider 选择应按场景能力过滤')
-  assert.match(source, /llmProviderOptions/, '场景 Provider 下拉应来自 llmProviderOptions')
+  assert.match(source, /routableProviderOptions/, '场景 Provider 下拉应来自可路由 Provider 列表')
+  assert.match(source, /Provider 能力/, 'Provider 抽屉应允许显式选择模型路由能力')
+  assert.match(source, /providerEditorCapabilityLocked/, 'search-only 类型应锁定 Provider 能力')
+  assert.match(source, /providerEditorCanRunChatTest/, 'Provider 连通性测试应仅面向 LLM Provider')
 })
 
 it('场景抽屉支持 Provider 绑定、模型池、回退顺序和故障转移策略', async () => {

@@ -257,7 +257,7 @@ describe('platform-ai-channels', () => {
     expect(visualEmbedding?.embeddingApiStyle).toBe('bailian-multimodal')
   })
 
-  it('ASR/TTS 场景只从允许 Provider 的匹配模型池解析运行时', () => {
+  it('asr/tts 场景只从允许 Provider 的匹配模型池解析运行时', () => {
     const runtime = createRuntime()
     runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
       providers: [
@@ -553,6 +553,29 @@ describe('platform-ai-channels', () => {
     expect(resolved.provider).toBeNull()
     expect(resolved.ai.model).toBe('')
     expect(resolved.usedFallback).toBe(true)
+  })
+
+  it('搜索型 Provider 类型不会被显式能力改成模型路由 Provider', () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'provider_search',
+          name: 'Tavily',
+          type: 'tavily',
+          capability: 'llm',
+          provider: 'tavily',
+          baseURL: 'https://api.tavily.com',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible', capabilities: ['chat'] },
+          ],
+        },
+      ],
+    })
+
+    const registry = resolvePlatformAiRegistry(runtime)
+    expect(registry.providers[0]?.capability).toBe('search')
+    expect(registry.providers[0]?.models).toEqual([])
   })
 
   it('统一 AI 入口会在同模型 Provider 失败后切换下一 Provider，再继续下一模型', async () => {

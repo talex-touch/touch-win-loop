@@ -425,10 +425,13 @@ function normalizeProviderCapability(value: unknown): PlatformAiProviderCapabili
 }
 
 function resolveProviderCapability(type: PlatformAiProviderType, value?: unknown): PlatformAiProviderCapability {
+  if (SEARCH_PROVIDER_TYPES.has(type))
+    return 'search'
+
   const explicit = normalizeProviderCapability(value)
-  if (explicit)
+  if (explicit && explicit !== 'search')
     return explicit
-  return SEARCH_PROVIDER_TYPES.has(type) ? 'search' : 'llm'
+  return 'llm'
 }
 
 function resolveAdapter(
@@ -535,9 +538,9 @@ function normalizeProviderModel(
   fallbackFormat: PlatformAiModelFormat,
   options?: {
     providerType?: PlatformAiProviderType
-  fallbackEmbeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
-  fallbackEmbeddingDimensions?: number
-},
+    fallbackEmbeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+    fallbackEmbeddingDimensions?: number
+  },
 ): PlatformAiProviderModelConfig | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     return null

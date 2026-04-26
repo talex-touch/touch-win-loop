@@ -1,3 +1,4 @@
+import type { PlatformAiProviderCapability } from '~~/server/utils/platform-ai-channels'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { setResponseStatus } from 'h3'
 import { createChatModel } from '~~/server/services/ai/llm-client'
@@ -15,6 +16,7 @@ interface ProviderDraftBody {
   id?: string
   name?: string
   type?: string
+  capability?: PlatformAiProviderCapability
   provider?: string
   clientType?: string
   baseURL?: string

@@ -1,3 +1,4 @@
+import type { PlatformAiProviderCapability } from '~~/server/utils/platform-ai-channels'
 import { setResponseStatus } from 'h3'
 import { discoverProviderModels, resolveDashScopeMultimodalEmbeddingEndpoint } from '~~/server/services/admin-ai/provider-models'
 import { fail, ok } from '~~/server/utils/api'
@@ -15,6 +16,7 @@ interface ProviderDraftBody {
   id?: string
   name?: string
   type?: string
+  capability?: PlatformAiProviderCapability
   provider?: string
   clientType?: string
   baseURL?: string

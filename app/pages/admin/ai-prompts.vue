@@ -245,6 +245,13 @@ const providerTypeOptions: Array<{ value: ProviderType, label: string, capabilit
   { value: 'tavily', label: 'Tavily', capability: 'search' },
 ]
 
+const providerCapabilityOptions: Array<{ value: ProviderCapability, label: string, hint: string }> = [
+  { value: 'llm', label: 'LLM / 多模型', hint: '可承载聊天、视觉、Embedding、ASR、TTS 等模型能力，Scene 仍按模型能力过滤。' },
+  { value: 'asr', label: 'ASR only', hint: '只参与会议 ASR、录音转写等语音识别场景。' },
+  { value: 'tts', label: 'TTS only', hint: '只参与文本转语音、朗读和语音播报场景。' },
+  { value: 'search', label: 'Search only', hint: '搜索型 Provider 固定为 search，不参与模型场景路由。' },
+]
+
 const modelCapabilityOptions: Array<{ value: ModelCapability, label: string, color: string, hint: string }> = [
   { value: 'chat', label: '聊天', color: 'arcoblue', hint: '用于 LLM 对话、文档分析和后台助手场景。' },
   { value: 'vision', label: '视觉', color: 'purple', hint: '用于图片理解、OCR 和视觉投影。' },
@@ -572,11 +579,26 @@ function normalizeProviderCapability(value: unknown): ProviderCapability | null 
   return null
 }
 
+function providerTypeDefaultCapability(type: ProviderType): ProviderCapability {
+  return providerTypeOptions.find(item => item.value === type)?.capability || 'llm'
+}
+
 function resolveProviderCapability(type: ProviderType, value?: unknown): ProviderCapability {
+  if (providerTypeDefaultCapability(type) === 'search')
+    return 'search'
+
   const explicit = normalizeProviderCapability(value)
-  if (explicit)
+  if (explicit && explicit !== 'search')
     return explicit
-  return type === 'searchxng' || type === 'tavily' ? 'search' : 'llm'
+  return 'llm'
+}
+
+function providerCapabilityLabel(value: ProviderCapability): string {
+  return providerCapabilityOptions.find(item => item.value === value)?.label || value
+}
+
+function providerCapabilityHint(value: ProviderCapability): string {
+  return providerCapabilityOptions.find(item => item.value === value)?.hint || ''
 }
 
 function modelCapabilityLabel(value: ModelCapability): string {
@@ -896,7 +918,7 @@ const providerRows = computed(() => {
   return [...providers.value].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
 })
 
-const llmProviderOptions = computed(() => {
+const routableProviderOptions = computed(() => {
   return providers.value
     .filter(item => item.capability !== 'search')
     .map(item => ({
@@ -909,6 +931,14 @@ const llmProviderOptions = computed(() => {
 })
 
 const providerEditorSupportsModels = computed(() => providerEditorForm.capability !== 'search')
+const providerEditorCanRunChatTest = computed(() => providerEditorForm.capability === 'llm')
+const providerEditorCapabilityLocked = computed(() => providerTypeDefaultCapability(providerEditorForm.type) === 'search')
+const providerEditorCapabilityOptions = computed(() => {
+  const values: ProviderCapability[] = providerEditorCapabilityLocked.value
+    ? ['search']
+    : ['llm', 'asr', 'tts']
+  return providerCapabilityOptions.filter(item => values.includes(item.value))
+})
 const providerEditorTypeGuide = computed(() => providerTypeGuides[providerEditorForm.type] || providerTypeGuides['openai-compatible'])
 
 const providerEditorModelRows = computed(() => {
@@ -1371,9 +1401,10 @@ function closeProviderDrawer() {
 }
 
 function syncProviderType(type: ProviderType) {
+  const previousType = providerEditorForm.type
   providerEditorForm.type = type
-  providerEditorForm.capability = resolveProviderCapability(type)
-  if (!providerEditorForm.provider || providerEditorForm.provider === providerEditorForm.type)
+  providerEditorForm.capability = resolveProviderCapability(type, providerEditorForm.capability)
+  if (!providerEditorForm.provider || providerEditorForm.provider === previousType)
     providerEditorForm.provider = type
   if (providerEditorForm.capability === 'search') {
     providerEditorForm.models = []
@@ -1384,6 +1415,12 @@ function syncProviderType(type: ProviderType) {
 
 function handleProviderTypeChange(value: string | number | boolean | Record<string, unknown> | undefined) {
   syncProviderType(String(value || '').trim() as ProviderType)
+}
+
+function handleProviderCapabilityChange(value: string | number | boolean | Record<string, unknown> | undefined) {
+  providerEditorForm.capability = resolveProviderCapability(providerEditorForm.type, value)
+  if (providerEditorForm.capability === 'search')
+    providerEditorForm.models = []
 }
 
 function handleSceneProviderIdsChange(value: string | number | boolean | Array<string | number> | undefined) {
@@ -1682,7 +1719,7 @@ async function pullProviderModels() {
 }
 
 async function testProvider() {
-  if (!providerEditorSupportsModels.value) {
+  if (!providerEditorCanRunChatTest.value) {
     Message.warning('当前 Provider 类型不支持连通性测试。')
     return
   }
@@ -2010,7 +2047,7 @@ onMounted(async () => {
                   <div class="space-y-1">
                     <a-tag>{{ normalizeProviderTypeLabel(scope.record.type) }}</a-tag>
                     <div class="text-xs text-slate-500">
-                      {{ scope.record.capability }}
+                      {{ providerCapabilityLabel(scope.record.capability) }}
                     </div>
                   </div>
                 </template>
@@ -2371,6 +2408,24 @@ onMounted(async () => {
                   </a-option>
                 </a-select>
               </a-form-item>
+              <a-form-item label="Provider 能力">
+                <a-select
+                  v-model="providerEditorForm.capability"
+                  :disabled="providerEditorCapabilityLocked"
+                  @change="handleProviderCapabilityChange"
+                >
+                  <a-option
+                    v-for="item in providerEditorCapabilityOptions"
+                    :key="item.value"
+                    :value="item.value"
+                  >
+                    {{ item.label }}
+                  </a-option>
+                </a-select>
+                <div class="text-xs text-slate-500 leading-relaxed mt-1">
+                  {{ providerCapabilityHint(providerEditorForm.capability) }}
+                </div>
+              </a-form-item>
               <a-form-item label="Provider 标识">
                 <a-input v-model="providerEditorForm.provider" :placeholder="providerEditorTypeGuide.providerPlaceholder" />
               </a-form-item>
@@ -2416,14 +2471,14 @@ onMounted(async () => {
           </div>
 
           <div class="text-sm text-slate-500 flex flex-wrap gap-3 items-center">
-            <span>能力：{{ providerEditorForm.capability }}</span>
+            <span>能力：{{ providerCapabilityLabel(providerEditorForm.capability) }}</span>
             <span>模型池拉取时间：{{ formatTime(providerEditorForm.fetchedAt) }}</span>
             <span>当前模型数：{{ providerEditorForm.models.length }}</span>
             <span>API Key：{{ providerEditorForm.apiKeyConfigured ? '已配置' : '未配置' }}</span>
           </div>
 
           <div class="flex flex-wrap gap-2">
-            <a-button :loading="providerEditorTestLoading" :disabled="!providerEditorSupportsModels" @click="testProvider">
+            <a-button :loading="providerEditorTestLoading" :disabled="!providerEditorCanRunChatTest" @click="testProvider">
               测试 Provider
             </a-button>
             <a-button :loading="providerPullLoading" :disabled="!providerEditorSupportsModels" @click="pullProviderModels">
@@ -2850,7 +2905,7 @@ onMounted(async () => {
               @change="handleSceneProviderIdsChange"
             >
               <a-option
-                v-for="item in llmProviderOptions"
+                v-for="item in routableProviderOptions"
                 :key="item.id"
                 :value="item.id"
                 :disabled="!item.enabled"
@@ -2988,7 +3043,7 @@ onMounted(async () => {
               @change="handleSceneBatchProviderIdsChange"
             >
               <a-option
-                v-for="item in llmProviderOptions"
+                v-for="item in routableProviderOptions"
                 :key="`batch-provider-${item.id}`"
                 :value="item.id"
                 :disabled="!item.enabled"
