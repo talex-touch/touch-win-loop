@@ -37,6 +37,30 @@ describe('feishu-bitable-field-guess', () => {
       }),
       '会议编号',
     )
+    assert.equal(
+      guessFeishuBitableFieldName({
+        entityType: 'contest',
+        targetKey: 'coOrganizer',
+        fields: ['主办方', '协办/承办', '当前届次'],
+      }),
+      '协办/承办',
+    )
+    assert.equal(
+      guessFeishuBitableFieldName({
+        entityType: 'contest',
+        targetKey: 'currentSeason',
+        fields: ['主办方', '协办/承办', '当前届次'],
+      }),
+      '当前届次',
+    )
+    assert.equal(
+      guessFeishuBitableFieldName({
+        entityType: 'track',
+        targetKey: 'currentSeason',
+        fields: ['赛道名称', '当前届次'],
+      }),
+      '当前届次',
+    )
   })
 
   it('会兼容人设槽位数字、中文数字和 prompt 别名', async () => {

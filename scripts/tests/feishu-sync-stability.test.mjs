@@ -19,6 +19,7 @@ describe('飞书多维同步稳定性修复', () => {
     assert.match(serviceSource, /const successfulBusinessExternalIds = new Set<string>\(\)/, '执行链路未改用成功业务实体集合做 prune 保护')
     assert.match(serviceSource, /if \(input\.entityType !== 'persona' && result\.status !== 'skipped' && toText\(result\.externalId\)\)/, '执行链路仍会把被跳过记录算进 prune externalId 集合')
     assert.match(serviceSource, /&& successfulBusinessExternalIds\.size > 0/, 'authoritative prune 未要求本轮至少命中一个有效业务实体')
+    assert.match(serviceSource, /const authoritativePrune = mode === 'full' && deltaRecordIds\.length === 0 && autoSync\.enabled !== true/, '自动同步开启时 full run 不应触发权威清理')
     assert.match(serviceSource, /preserveExternalIds: \[\.\.\.successfulBusinessExternalIds\]/, 'authoritative prune 未使用成功业务实体 externalId 作为保留集合')
     assert.match(serviceSource, /缺少 contestExternalId 映射，也没有默认 contestId 兜底/, '服务端未提供 contest 关联缺失阻断提示')
     assert.match(serviceSource, /缺少 trackExternalId 映射。请先在“映射配置”补齐对应赛道字段后再手动执行。/, '服务端未提供 track timeline 关联缺失阻断提示')

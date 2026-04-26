@@ -25,6 +25,7 @@ const COMMON_TARGET_ALIASES: Record<string, string[]> = {
   coverImageUrl: ['coverImageUrl', 'cover_image_url', '封面', '封面图', '封面图片', '图片链接'],
   location: ['location', '位置', '具体位置', '地点', '赛道位置'],
   organizer: ['organizer', '主办方', '主办单位', '主办'],
+  coOrganizer: ['coOrganizer', 'co_organizer', '协办/承办', '承办/协办', '协办方', '协办单位', '承办单位'],
   undertaker: ['undertaker', '承办方', '承办单位', '承办'],
   participantRequirements: ['participantRequirements', 'participant_requirements', '参赛对象', '适用对象', '参赛要求'],
   teamRule: ['teamRule', 'team_rule', '组队规则', '组队要求'],

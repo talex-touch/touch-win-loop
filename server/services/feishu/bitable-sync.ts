@@ -3886,7 +3886,7 @@ async function runFeishuBitableSyncItemById(
       const mapping = normalizeMapping(task.mapping, task.options, entityType)
       const options = normalizeOptions(task.options, mapping.defaults)
       const autoSync = normalizeAutoSyncConfig(task.autoSync)
-      const authoritativePrune = mode === 'full' && deltaRecordIds.length === 0
+      const authoritativePrune = mode === 'full' && deltaRecordIds.length === 0 && autoSync.enabled !== true
       ensureAutoSyncConfigReady(autoSync)
       validateAutoSyncFields(autoSync, records)
       const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback, autoSync)
