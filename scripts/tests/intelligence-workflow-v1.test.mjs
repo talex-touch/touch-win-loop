@@ -14,6 +14,7 @@ const ENGINE_FILE = resolve(process.cwd(), 'server/services/ai/intelligence-work
 const TOOL_REGISTRY_FILE = resolve(process.cwd(), 'server/services/ai/intelligence-tool-registry.ts')
 const LOOPY_TAB_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLoopyDataTab.vue')
 const LOOPY_WORKFLOWS_VIEW_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLoopyDataWorkflowsView.vue')
+const WORKFLOW_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useProjectIntelligenceWorkflows.ts')
 const WORKFLOWS_INDEX_GET_FILE = resolve(process.cwd(), 'server/api/projects/[id]/intelligence/workflows/index.get.ts')
 const WORKFLOWS_INDEX_POST_FILE = resolve(process.cwd(), 'server/api/projects/[id]/intelligence/workflows/index.post.ts')
 const WORKFLOW_RUN_POST_FILE = resolve(process.cwd(), 'server/api/projects/[id]/intelligence/workflows/[workflowId]/run.post.ts')
@@ -77,6 +78,7 @@ describe('intelligence workflow v1', () => {
       toolRegistrySource,
       loopyTabSource,
       loopyWorkflowsSource,
+      workflowComposableSource,
       workflowsIndexGetSource,
       workflowsIndexPostSource,
       workflowRunPostSource,
@@ -87,6 +89,7 @@ describe('intelligence workflow v1', () => {
       readFile(TOOL_REGISTRY_FILE, 'utf8'),
       readFile(LOOPY_TAB_FILE, 'utf8'),
       readFile(LOOPY_WORKFLOWS_VIEW_FILE, 'utf8'),
+      readFile(WORKFLOW_COMPOSABLE_FILE, 'utf8'),
       readFile(WORKFLOWS_INDEX_GET_FILE, 'utf8'),
       readFile(WORKFLOWS_INDEX_POST_FILE, 'utf8'),
       readFile(WORKFLOW_RUN_POST_FILE, 'utf8'),
@@ -117,6 +120,12 @@ describe('intelligence workflow v1', () => {
     assert.match(loopyTabSource, /id: 'workflows'/, 'Loopy 数据 tab 未新增 workflows 子视图')
     assert.match(loopyWorkflowsSource, /项目级智能工作流/, '缺少项目内 workflow 面板文案')
     assert.match(loopyWorkflowsSource, /continueRun\(run\.id\)/, '工作流面板未暴露 continue 入口')
-    assert.match(loopyWorkflowsSource, /approveChange\(change\.id\)/, '工作流面板未暴露审批动作')
+    assert.match(loopyWorkflowsSource, /change\.destructive/, '工作流面板未展示破坏性变更风险')
+    assert.match(loopyWorkflowsSource, /workflowChangeSecondConfirmIds/, '工作流面板未维护破坏性变更二次确认状态')
+    assert.match(loopyWorkflowsSource, /approveWorkflowChange\(change\)/, '工作流面板未通过本地状态机审批变更')
+    assert.match(loopyWorkflowsSource, /workflowDeleteSecondConfirmId/, '工作流面板未维护删除二次确认状态')
+    assert.match(loopyWorkflowsSource, /deleteSelectedWorkflow\(selectedWorkflow\)/, '工作流面板未通过本地状态机删除工作流')
+    assert.doesNotMatch(workflowComposableSource, /destructiveConfirm:\s*true/, '工作流审批 composable 不应自动确认破坏性变更')
+    assert.match(workflowComposableSource, /destructiveConfirm:\s*Boolean\(options\.destructiveConfirm\)/, '工作流审批 composable 未把破坏性确认交给调用方显式传入')
   })
 })

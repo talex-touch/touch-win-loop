@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  AiProjectChangeRequest,
   AiWorkflowContextSource,
   AiWorkflowDefinition,
   AiWorkflowDefinitionPayload,
@@ -72,6 +73,8 @@ const {
 
 const selectedWorkflowId = ref('')
 const editingDraft = ref<DraftState | null>(null)
+const workflowChangeSecondConfirmIds = ref<string[]>([])
+const workflowDeleteSecondConfirmId = ref('')
 const toolInputDraftMap = reactive<Record<string, string>>({})
 
 function createLocalId(): string {
@@ -132,16 +135,19 @@ function applyDraft(nextDraft: DraftState | null): void {
 }
 
 function selectWorkflow(workflow: AiWorkflowDefinition | null): void {
+  workflowDeleteSecondConfirmId.value = ''
   selectedWorkflowId.value = workflow?.id || ''
   applyDraft(createDraftFromWorkflow(workflow))
 }
 
 function selectTemplate(template: AiWorkflowTemplatePreset | null): void {
+  workflowDeleteSecondConfirmId.value = ''
   selectedWorkflowId.value = ''
   applyDraft(createDraftFromTemplate(template) as DraftState | null)
 }
 
 function createNewWorkflow(): void {
+  workflowDeleteSecondConfirmId.value = ''
   selectedWorkflowId.value = ''
   applyDraft(createEmptyWorkflowDraft())
 }
@@ -272,6 +278,20 @@ async function runSelectedWorkflow(workflowId?: string): Promise<void> {
   })
 }
 
+async function deleteSelectedWorkflow(workflow: AiWorkflowDefinition | null): Promise<void> {
+  const workflowId = String(workflow?.id || '').trim()
+  if (!workflowId)
+    return
+  if (workflowDeleteSecondConfirmId.value !== workflowId) {
+    workflowDeleteSecondConfirmId.value = workflowId
+    Message.warning('删除会归档该智能工作流，请再次点击删除确认。')
+    return
+  }
+  const deleted = await deleteWorkflow(workflowId)
+  if (deleted)
+    workflowDeleteSecondConfirmId.value = ''
+}
+
 function formatDateTime(value?: string | null): string {
   const normalized = String(value || '').trim()
   if (!normalized)
@@ -303,6 +323,34 @@ function resolveStatusLabel(status: string): string {
 
 function hasPendingReview(run: AiWorkflowRun): boolean {
   return (run.steps || []).some(step => step.reviewContext?.changeRequests?.some(change => change.status === 'pending'))
+}
+
+function requiresWorkflowChangeSecondConfirm(change: AiProjectChangeRequest): boolean {
+  return Boolean(change.destructive && workflowChangeSecondConfirmIds.value.includes(change.id))
+}
+
+async function approveWorkflowChange(change: AiProjectChangeRequest): Promise<void> {
+  const changeId = String(change.id || '').trim()
+  if (!changeId)
+    return
+  if (change.destructive && !workflowChangeSecondConfirmIds.value.includes(changeId)) {
+    workflowChangeSecondConfirmIds.value = [...workflowChangeSecondConfirmIds.value, changeId]
+    Message.warning('该提案包含破坏性操作，请再次点击批准确认执行。')
+    return
+  }
+  const approved = await approveChange(changeId, {
+    destructiveConfirm: Boolean(change.destructive),
+  })
+  if (approved)
+    workflowChangeSecondConfirmIds.value = workflowChangeSecondConfirmIds.value.filter(item => item !== changeId)
+}
+
+async function rejectWorkflowChange(change: AiProjectChangeRequest): Promise<void> {
+  const changeId = String(change.id || '').trim()
+  if (!changeId)
+    return
+  workflowChangeSecondConfirmIds.value = workflowChangeSecondConfirmIds.value.filter(item => item !== changeId)
+  await rejectChange(changeId)
 }
 
 const selectedWorkflow = computed(() => workflows.value.find(item => item.id === selectedWorkflowId.value) || null)
@@ -426,9 +474,9 @@ watch(workflows, (items) => {
                 class="workflow-editor__danger"
                 type="button"
                 :disabled="deletingWorkflowId === selectedWorkflow.id"
-                @click="deleteWorkflow(selectedWorkflow.id)"
+                @click="deleteSelectedWorkflow(selectedWorkflow)"
               >
-                {{ deletingWorkflowId === selectedWorkflow?.id ? '删除中...' : '删除' }}
+                {{ deletingWorkflowId === selectedWorkflow?.id ? '删除中...' : workflowDeleteSecondConfirmId === selectedWorkflow?.id ? '再次确认删除' : '删除' }}
               </button>
               <button
                 class="workflow-editor__secondary"
@@ -675,7 +723,10 @@ watch(workflows, (items) => {
                 class="workflow-runs__review-card"
               >
                 <div>
-                  <strong>{{ change.title }}</strong>
+                  <div class="workflow-runs__review-title">
+                    <strong>{{ change.title }}</strong>
+                    <span v-if="change.destructive" class="workflow-runs__destructive-pill">破坏性</span>
+                  </div>
                   <p>{{ change.summary }}</p>
                 </div>
                 <div class="workflow-runs__review-actions">
@@ -684,15 +735,15 @@ watch(workflows, (items) => {
                     v-if="change.status === 'pending'"
                     type="button"
                     :disabled="mutatingChangeId === change.id"
-                    @click="approveChange(change.id)"
+                    @click="approveWorkflowChange(change)"
                   >
-                    批准
+                    {{ requiresWorkflowChangeSecondConfirm(change) ? '再次确认批准' : '批准' }}
                   </button>
                   <button
                     v-if="change.status === 'pending'"
                     type="button"
                     :disabled="mutatingChangeId === change.id"
-                    @click="rejectChange(change.id)"
+                    @click="rejectWorkflowChange(change)"
                   >
                     拒绝
                   </button>
@@ -1079,6 +1130,23 @@ watch(workflows, (items) => {
   border: 1px solid #e0e7f1;
   border-radius: 12px;
   background: rgba(249, 251, 254, 0.96);
+}
+
+.workflow-runs__review-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.workflow-runs__destructive-pill {
+  padding: 2px 6px;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fff1f2;
+  color: #be123c;
+  font-size: 10px;
+  font-weight: 800;
 }
 
 @media (max-width: 1080px) {

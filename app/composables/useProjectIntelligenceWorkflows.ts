@@ -231,10 +231,10 @@ export function useProjectIntelligenceWorkflows(projectId: MaybeRefString) {
     }
   }
 
-  async function approveChange(changeId: string): Promise<void> {
+  async function approveChange(changeId: string, options: { destructiveConfirm?: boolean } = {}): Promise<boolean> {
     const normalizedChangeId = normalizeString(changeId)
     if (!resolvedProjectId.value || !normalizedChangeId || mutatingChangeId.value)
-      return
+      return false
 
     mutatingChangeId.value = normalizedChangeId
     try {
@@ -243,15 +243,17 @@ export function useProjectIntelligenceWorkflows(projectId: MaybeRefString) {
         {
           method: 'POST',
           body: {
-            destructiveConfirm: true,
+            destructiveConfirm: Boolean(options.destructiveConfirm),
           },
         },
       )
       Message.success('提案已批准。')
       await loadRuns()
+      return true
     }
     catch (fetchError: any) {
       Message.error(String(fetchError?.data?.message || '批准提案失败，请稍后重试。').trim() || '批准提案失败，请稍后重试。')
+      return false
     }
     finally {
       mutatingChangeId.value = ''
