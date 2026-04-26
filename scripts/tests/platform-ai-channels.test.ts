@@ -4,6 +4,7 @@ import { resolveDefenseRealtimeQwenApiKey } from '~~/server/utils/defense-realti
 import {
   buildPlatformAiChannelsJson,
   buildPlatformAiRegistryJson,
+  getPlatformAiChannelDefinitions,
   inferPlatformAiModelCapabilities,
   resolveAiRuntimeForChannel,
   resolvePlatformAiRegistry,
@@ -237,7 +238,87 @@ describe('platform-ai-channels', () => {
     expect(inferPlatformAiModelCapabilities({ model: 'text-embedding-v4' })).toEqual(['embedding'])
     expect(inferPlatformAiModelCapabilities({ model: 'qwen3-vl-embedding' })).toEqual(['embedding'])
     expect(inferPlatformAiModelCapabilities({ model: 'tongyi-embedding-vision-plus' })).toEqual(['embedding'])
+    expect(inferPlatformAiModelCapabilities({ model: 'gpt-4o-mini-transcribe' })).toEqual(['asr'])
+    expect(inferPlatformAiModelCapabilities({ model: 'tts-1' })).toEqual(['tts'])
     expect(inferPlatformAiModelCapabilities({ model: 'wanx2.1-t2i-turbo' })).toEqual(['image-gen'])
+  })
+
+  it('场景定义声明所需模型能力和允许的 Provider 类型', () => {
+    const definitions = getPlatformAiChannelDefinitions()
+    const meetingAsr = definitions.find(item => item.key === 'meeting_asr')
+    const speechTts = definitions.find(item => item.key === 'speech_tts')
+    const visualEmbedding = definitions.find(item => item.key === 'knowledge_visual_embedding')
+
+    expect(meetingAsr?.requiredModelCapability).toBe('asr')
+    expect(meetingAsr?.allowedProviderCapabilities).toEqual(['llm', 'asr'])
+    expect(speechTts?.requiredModelCapability).toBe('tts')
+    expect(speechTts?.allowedProviderCapabilities).toEqual(['llm', 'tts'])
+    expect(visualEmbedding?.requiredModelCapability).toBe('embedding')
+    expect(visualEmbedding?.embeddingApiStyle).toBe('bailian-multimodal')
+  })
+
+  it('ASR/TTS 场景只从允许 Provider 的匹配模型池解析运行时', () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'provider_chat',
+          name: 'Chat Provider',
+          type: 'openai-compatible',
+          provider: 'openai-compatible',
+          baseURL: 'https://chat.example',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible', capabilities: ['chat'] },
+            { model: 'tts-1', enabled: true, format: 'openai-compatible', capabilities: ['tts'] },
+          ],
+        },
+        {
+          id: 'provider_asr',
+          name: 'ASR Provider',
+          type: 'openai-compatible',
+          capability: 'asr',
+          provider: 'openai-compatible',
+          baseURL: 'https://asr.example',
+          models: [
+            { model: 'whisper-1', enabled: true, format: 'openai-compatible', capabilities: ['asr'] },
+          ],
+        },
+      ],
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'meeting_asr',
+          providerIds: ['provider_asr', 'provider_chat'],
+          models: ['whisper-1', 'gpt-4.1-mini'],
+          modelFallback: ['whisper-1', 'gpt-4.1-mini'],
+          enabled: true,
+        },
+        {
+          key: 'speech_tts',
+          providerIds: ['provider_chat'],
+          models: ['tts-1', 'whisper-1'],
+          modelFallback: ['tts-1', 'whisper-1'],
+          enabled: true,
+        },
+        {
+          key: 'project_chat',
+          providerIds: ['provider_asr'],
+          models: ['whisper-1'],
+          modelFallback: ['whisper-1'],
+          enabled: true,
+        },
+      ],
+    })
+
+    const registry = resolvePlatformAiRegistry(runtime)
+    expect(registry.channels.find(item => item.key === 'meeting_asr')?.models).toEqual(['whisper-1'])
+    expect(registry.channels.find(item => item.key === 'speech_tts')?.models).toEqual(['tts-1'])
+    expect(registry.channels.find(item => item.key === 'project_chat')?.providerIds).toEqual([])
+
+    expect(resolveAiRuntimeForChannel(runtime, 'meeting_asr').ai.model).toBe('whisper-1')
+    expect(resolveAiRuntimeForChannel(runtime, 'speech_tts').ai.model).toBe('tts-1')
+    expect(resolveAiRuntimeForChannel(runtime, 'project_chat').ai.model).toBe('')
   })
 
   it('保存 Provider registry 时不再持久化 defaults，也不会把旧默认模型写回模型池', () => {

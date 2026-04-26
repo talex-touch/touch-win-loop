@@ -8,7 +8,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { resolvePlatformAiChannelModelCapability, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
+import { getPlatformAiChannelDefinitions, resolvePlatformAiChannelModelCapability, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 
 interface ChannelTestBody {
@@ -20,30 +20,7 @@ const DEFAULT_CHANNEL: PlatformAiChannelKey = 'project_chat'
 
 function resolveChannelKey(raw: unknown): PlatformAiChannelKey {
   const text = String(raw || '').trim() as PlatformAiChannelKey
-  const allowed: PlatformAiChannelKey[] = [
-    'contest_filter',
-    'project_chat',
-    'topic_proposal',
-    'defense',
-    'workspace_dialog_ask',
-    'workspace_auto_optimize',
-    'workspace_issue_discovery',
-    'workspace_document_summarize',
-    'workspace_document_rewrite',
-    'workspace_document_continue',
-    'workspace_document_expand',
-    'workspace_document_complete_context',
-    'workspace_document_restructure',
-    'workspace_canvas_generate',
-    'workspace_canvas_complete',
-    'workspace_canvas_refine',
-    'admin_general',
-    'admin_publish_assistant',
-    'knowledge_embedding',
-    'knowledge_visual_embedding',
-    'knowledge_query_planner',
-    'document_analysis',
-  ]
+  const allowed = getPlatformAiChannelDefinitions().map(item => item.key)
   return allowed.includes(text) ? text : DEFAULT_CHANNEL
 }
 

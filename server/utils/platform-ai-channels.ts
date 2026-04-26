@@ -8,10 +8,10 @@ import { normalizePlatformAiBaseURL } from '~~/server/utils/platform-ai-base-url
 import { normalizePlatformAiClientType, normalizeProjectKnowledgeEmbeddingApiStyle } from '~~/server/utils/platform-ai-client'
 
 export type PlatformAiProviderAdapter = 'openai-compatible' | 'response'
-export type PlatformAiProviderCapability = 'llm' | 'search'
+export type PlatformAiProviderCapability = 'llm' | 'search' | 'asr' | 'tts'
 export type PlatformAiProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'searchxng' | 'tavily'
 export type PlatformAiModelFormat = 'openai-compatible' | 'response'
-export type PlatformAiModelCapability = 'chat' | 'vision' | 'embedding' | 'image-gen' | 'video-gen'
+export type PlatformAiModelCapability = 'chat' | 'vision' | 'embedding' | 'asr' | 'tts' | 'image-gen' | 'video-gen'
 export type PlatformAiPricingSource = 'provider' | 'manual' | 'none'
 export type PlatformAiLoadBalanceStrategy = 'round_robin'
 export type PlatformAiFailoverStrategy = 'model_then_provider'
@@ -40,6 +40,8 @@ export type PlatformAiChannelKey
     | 'knowledge_query_planner'
     | 'knowledge_visual_projection'
     | 'document_analysis'
+    | 'meeting_asr'
+    | 'speech_tts'
 
 export interface PlatformAiProviderModelConfig {
   model: string
@@ -98,6 +100,9 @@ export interface PlatformAiChannelDefinition {
   key: PlatformAiChannelKey
   label: string
   description: string
+  requiredModelCapability: PlatformAiModelCapability
+  allowedProviderCapabilities: PlatformAiProviderCapability[]
+  embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
 }
 
 export interface PlatformAiResolvedRegistry {
@@ -168,30 +173,75 @@ export interface PlatformAiChannelRunResult<T> {
 const PLATFORM_AI_REGISTRY_VERSION = 3
 const DEFAULT_PROVIDER_ID = 'provider_1'
 
+function defineChannel(
+  definition: Omit<PlatformAiChannelDefinition, 'requiredModelCapability' | 'allowedProviderCapabilities'> & {
+    requiredModelCapability?: PlatformAiModelCapability
+    allowedProviderCapabilities?: PlatformAiProviderCapability[]
+  },
+): PlatformAiChannelDefinition {
+  const requiredModelCapability = definition.requiredModelCapability || 'chat'
+  return {
+    ...definition,
+    requiredModelCapability,
+    allowedProviderCapabilities: definition.allowedProviderCapabilities || ['llm'],
+  }
+}
+
 const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
-  { key: 'contest_filter', label: '选赛过滤', description: '竞赛筛选与推荐排序' },
-  { key: 'project_chat', label: '项目聊天', description: '项目草案对话与改写' },
-  { key: 'topic_proposal', label: '选题助手', description: '命题建议与路线生成' },
-  { key: 'defense', label: '答辩模拟', description: '评委问答与评分反馈' },
-  { key: 'workspace_dialog_ask', label: '工作台-对话询问', description: '工作台只读问答' },
-  { key: 'workspace_auto_optimize', label: '工作台-自动优化', description: '工作台提案优化' },
-  { key: 'workspace_issue_discovery', label: '工作台-寻疑发现', description: '工作台问题扫描' },
-  { key: 'workspace_document_summarize', label: '文档总结', description: '基于当前选区生成精炼摘要' },
-  { key: 'workspace_document_rewrite', label: '文档润写', description: '对当前选区进行润写改写' },
-  { key: 'workspace_document_continue', label: '文档续写', description: '基于当前上下文续写文档内容' },
-  { key: 'workspace_document_expand', label: '文档扩写', description: '对当前选区做扩写和展开' },
-  { key: 'workspace_document_complete_context', label: '文档补全上下文', description: '补全文档缺失上下文与衔接内容' },
-  { key: 'workspace_document_restructure', label: '文档结构整理', description: '重整结构与层次，保持内容可直接落文' },
-  { key: 'workspace_canvas_generate', label: '画布生成', description: '生成流程图、脑图、ER 图或架构图结构源' },
-  { key: 'workspace_canvas_complete', label: '画布补全', description: '基于现有图结构补全缺失节点与关系' },
-  { key: 'workspace_canvas_refine', label: '画布续改', description: '基于现有图结构重写和优化结构源' },
-  { key: 'admin_general', label: '管理助手-通用', description: '后台管理通用任务' },
-  { key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议' },
-  { key: 'knowledge_embedding', label: '知识库文本 Embedding', description: '知识库文本向量与检索索引' },
-  { key: 'knowledge_visual_embedding', label: '知识库视觉 Embedding', description: '图片、视频、多图与图文融合向量' },
-  { key: 'knowledge_query_planner', label: '知识检索规划', description: '项目知识查询意图、召回策略与证据链规划' },
-  { key: 'knowledge_visual_projection', label: '知识库视觉投影', description: '图片、截图、OCR 与视觉摘要提取' },
-  { key: 'document_analysis', label: '文档分析', description: '文档解析、预览与重解析' },
+  defineChannel({ key: 'contest_filter', label: '选赛过滤', description: '竞赛筛选与推荐排序' }),
+  defineChannel({ key: 'project_chat', label: '项目聊天', description: '项目草案对话与改写' }),
+  defineChannel({ key: 'topic_proposal', label: '选题助手', description: '命题建议与路线生成' }),
+  defineChannel({ key: 'defense', label: '答辩模拟', description: '评委问答与评分反馈' }),
+  defineChannel({ key: 'workspace_dialog_ask', label: '工作台-对话询问', description: '工作台只读问答' }),
+  defineChannel({ key: 'workspace_auto_optimize', label: '工作台-自动优化', description: '工作台提案优化' }),
+  defineChannel({ key: 'workspace_issue_discovery', label: '工作台-寻疑发现', description: '工作台问题扫描' }),
+  defineChannel({ key: 'workspace_document_summarize', label: '文档总结', description: '基于当前选区生成精炼摘要' }),
+  defineChannel({ key: 'workspace_document_rewrite', label: '文档润写', description: '对当前选区进行润写改写' }),
+  defineChannel({ key: 'workspace_document_continue', label: '文档续写', description: '基于当前上下文续写文档内容' }),
+  defineChannel({ key: 'workspace_document_expand', label: '文档扩写', description: '对当前选区做扩写和展开' }),
+  defineChannel({ key: 'workspace_document_complete_context', label: '文档补全上下文', description: '补全文档缺失上下文与衔接内容' }),
+  defineChannel({ key: 'workspace_document_restructure', label: '文档结构整理', description: '重整结构与层次，保持内容可直接落文' }),
+  defineChannel({ key: 'workspace_canvas_generate', label: '画布生成', description: '生成流程图、脑图、ER 图或架构图结构源' }),
+  defineChannel({ key: 'workspace_canvas_complete', label: '画布补全', description: '基于现有图结构补全缺失节点与关系' }),
+  defineChannel({ key: 'workspace_canvas_refine', label: '画布续改', description: '基于现有图结构重写和优化结构源' }),
+  defineChannel({ key: 'admin_general', label: '管理助手-通用', description: '后台管理通用任务' }),
+  defineChannel({ key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议' }),
+  defineChannel({
+    key: 'knowledge_embedding',
+    label: '知识库文本 Embedding',
+    description: '知识库文本向量与检索索引',
+    requiredModelCapability: 'embedding',
+    embeddingApiStyle: 'openai-compatible-text',
+  }),
+  defineChannel({
+    key: 'knowledge_visual_embedding',
+    label: '知识库视觉 Embedding',
+    description: '图片、视频、多图与图文融合向量',
+    requiredModelCapability: 'embedding',
+    embeddingApiStyle: 'bailian-multimodal',
+  }),
+  defineChannel({ key: 'knowledge_query_planner', label: '知识检索规划', description: '项目知识查询意图、召回策略与证据链规划' }),
+  defineChannel({
+    key: 'knowledge_visual_projection',
+    label: '知识库视觉投影',
+    description: '图片、截图、OCR 与视觉摘要提取',
+    requiredModelCapability: 'vision',
+  }),
+  defineChannel({ key: 'document_analysis', label: '文档分析', description: '文档解析、预览与重解析' }),
+  defineChannel({
+    key: 'meeting_asr',
+    label: '会议 ASR',
+    description: '会议字幕、录音转写与语音识别',
+    requiredModelCapability: 'asr',
+    allowedProviderCapabilities: ['llm', 'asr'],
+  }),
+  defineChannel({
+    key: 'speech_tts',
+    label: '语音 TTS',
+    description: '文本转语音、朗读与语音播报',
+    requiredModelCapability: 'tts',
+    allowedProviderCapabilities: ['llm', 'tts'],
+  }),
 ]
 
 const LEGACY_DOCUMENT_ASSIST_KEY = 'workspace_document_assist'
@@ -206,7 +256,7 @@ const DOCUMENT_ASSIST_CHANNEL_KEYS: PlatformAiChannelKey[] = [
 
 const SEARCH_PROVIDER_TYPES = new Set<PlatformAiProviderType>(['searchxng', 'tavily'])
 const LEGACY_ROUND_ROBIN_POINTERS = new Map<string, number>()
-const MODEL_CAPABILITY_ORDER: PlatformAiModelCapability[] = ['chat', 'vision', 'embedding', 'image-gen', 'video-gen']
+const MODEL_CAPABILITY_ORDER: PlatformAiModelCapability[] = ['chat', 'vision', 'embedding', 'asr', 'tts', 'image-gen', 'video-gen']
 
 function toText(value: unknown): string {
   return String(value || '').trim()
@@ -267,8 +317,12 @@ function normalizeModelCapability(value: unknown): PlatformAiModelCapability | n
   const normalized = toText(value).toLowerCase()
   if (normalized === 'llm' || normalized === 'text-generation' || normalized === 'chat-completions')
     return 'chat'
-  if (normalized === 'chat' || normalized === 'vision' || normalized === 'embedding' || normalized === 'image-gen' || normalized === 'video-gen')
+  if (normalized === 'chat' || normalized === 'vision' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'image-gen' || normalized === 'video-gen')
     return normalized
+  if (normalized === 'speech-to-text' || normalized === 'speech_to_text' || normalized === 'transcription' || normalized === 'transcribe')
+    return 'asr'
+  if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis' || normalized === 'speech_synthesis')
+    return 'tts'
   if (normalized === 'image_generation' || normalized === 'image-generation' || normalized === 'image')
     return 'image-gen'
   if (normalized === 'video_generation' || normalized === 'video-generation' || normalized === 'video')
@@ -303,7 +357,13 @@ export function inferPlatformAiModelCapabilities(input: {
   if (/(?:^|[-_:./\s])(?:text-)?embed(?:ding)?(?:[-_:./\s]|$)|embedding|bge|gte|e5-|multimodal-embedding/.test(text))
     result.add('embedding')
 
-  if (!result.has('embedding') && /(?:^|[-_:./\s])(?:qwen[-_.:]?vl|vl|vision|gpt-4o|gpt-4\.1|gpt-4[-_.:]?vision|gemini[-_.:]?pro[-_.:]?vision)(?:[-_:./\s]|$)/.test(text))
+  if (/(?:^|[-_:./\s])(?:whisper|transcribe|transcription|speech-to-text|asr|audio-transcriptions?|gpt-4o-(?:mini-)?transcribe)(?:[-_:./\s]|$)/.test(text))
+    result.add('asr')
+
+  if (/(?:^|[-_:./\s])(?:tts|text-to-speech|speech-synthesis|speech-generation|gpt-4o-(?:mini-)?tts)(?:[-_:./\s]|$)/.test(text))
+    result.add('tts')
+
+  if (!result.has('embedding') && !result.has('asr') && !result.has('tts') && /(?:^|[-_:./\s])(?:qwen[-_.:]?vl|vl|vision|gpt-4o|gpt-4\.1|gpt-4[-_.:]?vision|gemini[-_.:]?pro[-_.:]?vision)(?:[-_:./\s]|$)/.test(text))
     result.add('vision')
 
   if (/wanx|(?:^|[-_:./\s])(?:dall[-_.:]?e|gpt-image|image-generation|stable-diffusion|flux|cogview|t2i)(?:[-_:./\s]|$)/.test(text))
@@ -312,7 +372,7 @@ export function inferPlatformAiModelCapabilities(input: {
   if (/(?:^|[-_:./\s])(?:sora|kling|cogvideo|video-generation|text-to-video|image-to-video|t2v|i2v|wan.*video)(?:[-_:./\s]|$)/.test(text))
     result.add('video-gen')
 
-  if (!result.has('embedding') && !result.has('image-gen') && !result.has('video-gen'))
+  if (!result.has('embedding') && !result.has('image-gen') && !result.has('video-gen') && !result.has('asr') && !result.has('tts'))
     result.add('chat')
 
   return MODEL_CAPABILITY_ORDER.filter(item => result.has(item))
@@ -354,7 +414,21 @@ function resolvePlatformAiProviderType(value: unknown, providerValue?: unknown):
   return 'openai-compatible'
 }
 
-function resolveProviderCapability(type: PlatformAiProviderType): PlatformAiProviderCapability {
+function normalizeProviderCapability(value: unknown): PlatformAiProviderCapability | null {
+  const normalized = toText(value).toLowerCase()
+  if (normalized === 'llm' || normalized === 'search' || normalized === 'asr' || normalized === 'tts')
+    return normalized
+  if (normalized === 'speech-to-text' || normalized === 'speech_to_text' || normalized === 'transcription')
+    return 'asr'
+  if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis')
+    return 'tts'
+  return null
+}
+
+function resolveProviderCapability(type: PlatformAiProviderType, value?: unknown): PlatformAiProviderCapability {
+  const explicit = normalizeProviderCapability(value)
+  if (explicit)
+    return explicit
   return SEARCH_PROVIDER_TYPES.has(type) ? 'search' : 'llm'
 }
 
@@ -691,7 +765,7 @@ function normalizeProvider(
   const source = raw as Record<string, unknown>
   const providerRaw = toText(source.provider || source.providerName || source.name || source.type)
   const type = resolvePlatformAiProviderType(source.type || source.providerType, providerRaw)
-  const capability = resolveProviderCapability(type)
+  const capability = resolveProviderCapability(type, source.capability)
   const provider = providerRaw || type
   const adapter = resolveAdapter(source.adapter, provider, type)
   const formatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
@@ -699,7 +773,7 @@ function normalizeProvider(
   const embeddingDimensions = clampInt(source.embeddingDimensions, runtime.ai.embeddingDimensions, 0, 16384)
   const visionModel = toText(source.visionModel || runtime.ai.visionModel)
 
-  let models = capability === 'llm' && Array.isArray(source.models)
+  let models = capability !== 'search' && Array.isArray(source.models)
     ? source.models
         .map(item => normalizeProviderModel(item, formatFallback, {
           providerType: type,
@@ -855,6 +929,20 @@ function resolveChannelDefinition(key: PlatformAiChannelKey): PlatformAiChannelD
   return CHANNEL_DEFINITIONS.find(item => item.key === key) || CHANNEL_DEFINITIONS[0]!
 }
 
+function providerCanServeModelCapability(provider: PlatformAiProviderConfig, capability: PlatformAiModelCapability): boolean {
+  if (provider.capability === 'search')
+    return false
+  if (provider.capability === 'llm')
+    return true
+  return provider.capability === capability
+}
+
+function providerCanServeChannel(provider: PlatformAiProviderConfig, key: PlatformAiChannelKey): boolean {
+  const definition = resolveChannelDefinition(key)
+  return definition.allowedProviderCapabilities.includes(provider.capability)
+    && providerCanServeModelCapability(provider, definition.requiredModelCapability)
+}
+
 function resolvePrimaryLlmProvider(providers: PlatformAiProviderConfig[]): PlatformAiProviderConfig | null {
   return providers.find(provider => provider.capability === 'llm' && provider.enabled)
     || providers.find(provider => provider.capability === 'llm')
@@ -906,7 +994,7 @@ function normalizeChannelModelsAndFallback(
   modelFallback: string[]
 } {
   const providerIdSet = new Set(providerIds)
-  const eligibleProviders = providers.filter(provider => provider.capability === 'llm' && (providerIdSet.size === 0 || providerIdSet.has(provider.id)))
+  const eligibleProviders = providers.filter(provider => providerCanServeChannel(provider, key) && (providerIdSet.size === 0 || providerIdSet.has(provider.id)))
   const explicitModels = dedupeStrings(input.models)
   const explicitFallback = dedupeStrings(input.modelFallback)
   const modelSeed = explicitModels.length > 0
@@ -990,7 +1078,7 @@ function normalizeChannel(
   const hasExplicitRoutingConfig = Array.isArray(source.models) || Array.isArray(source.modelFallback) || source.model !== undefined
   const sanitizedProviderIds = explicitProviderIds.filter((providerId) => {
     const provider = providers.find(item => item.id === providerId)
-    return provider?.capability === 'llm'
+    return Boolean(provider && providerCanServeChannel(provider, key))
   })
   const providerIds = hasExplicitProviderBinding
     ? sanitizedProviderIds
@@ -1097,7 +1185,7 @@ function resolveProviderModel(
   model: string,
   capability: PlatformAiModelCapability = 'chat',
 ): PlatformAiProviderModelConfig | null {
-  if (!provider || provider.capability !== 'llm')
+  if (!provider || !providerCanServeModelCapability(provider, capability))
     return null
   const normalizedModel = toText(model)
   if (!normalizedModel)
@@ -1124,19 +1212,11 @@ function buildAiRuntimeFromModel(
 }
 
 export function resolvePlatformAiChannelModelCapability(key: PlatformAiChannelKey): PlatformAiModelCapability {
-  if (key === 'knowledge_embedding' || key === 'knowledge_visual_embedding')
-    return 'embedding'
-  if (key === 'knowledge_visual_projection')
-    return 'vision'
-  return 'chat'
+  return resolveChannelDefinition(key).requiredModelCapability
 }
 
 export function resolvePlatformAiChannelEmbeddingApiStyle(key: PlatformAiChannelKey): ProjectKnowledgeEmbeddingApiStyle | null {
-  if (key === 'knowledge_embedding')
-    return 'openai-compatible-text'
-  if (key === 'knowledge_visual_embedding')
-    return 'bailian-multimodal'
-  return null
+  return resolveChannelDefinition(key).embeddingApiStyle || null
 }
 
 function platformAiModelMatchesChannel(
@@ -1172,10 +1252,10 @@ export function resolvePlatformAiRuntimeByCapability(
 ): PlatformAiResolvedCapabilityRuntime | null {
   const registry = resolvePlatformAiRegistry(runtime)
   const preferred = toText(preferredModel)
-  const enabledProviders = registry.providers.filter(provider => provider.capability === 'llm' && provider.enabled)
+  const enabledProviders = registry.providers.filter(provider => provider.enabled && providerCanServeModelCapability(provider, capability))
   const providers = enabledProviders.length > 0
     ? enabledProviders
-    : registry.providers.filter(provider => provider.capability === 'llm')
+    : registry.providers.filter(provider => providerCanServeModelCapability(provider, capability))
 
   const modelOrder = dedupeStrings([
     preferred,
@@ -1224,7 +1304,7 @@ function resolveEligibleChannelProviders(
   const requestedProviderIds = channel.providerIds
   return requestedProviderIds
     .map(providerId => providerMap.get(providerId) || null)
-    .filter((provider): provider is PlatformAiProviderConfig => Boolean(provider && provider.capability === 'llm' && provider.enabled))
+    .filter((provider): provider is PlatformAiProviderConfig => Boolean(provider && provider.enabled && providerCanServeChannel(provider, channel.key)))
 }
 
 function resolveChannelCandidates(
@@ -1313,7 +1393,7 @@ function toSerializableChannels(items: PlatformAiChannelConfig[]): PlatformAiCha
 
 function buildModelCatalogJson(providers: PlatformAiProviderConfig[]): string {
   const groups = providers
-    .filter(provider => provider.capability === 'llm')
+    .filter(provider => provider.capability !== 'search')
     .map((provider) => {
       const options = provider.models
         .filter(item => item.enabled)
@@ -1346,7 +1426,7 @@ function buildModelCatalogJson(providers: PlatformAiProviderConfig[]): string {
 
 function buildModelPricingJson(providers: PlatformAiProviderConfig[]): string {
   const items = providers
-    .filter(provider => provider.capability === 'llm')
+    .filter(provider => provider.capability !== 'search')
     .flatMap(provider => provider.models
       .filter(model => model.inputPricePer1M !== null || model.outputPricePer1M !== null)
       .map(model => ({
