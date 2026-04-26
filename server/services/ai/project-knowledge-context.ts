@@ -4,19 +4,24 @@ import type {
   ProjectKnowledgeCitation,
   ProjectKnowledgeCitationLocator,
   ProjectKnowledgeCitationSourceScope,
+  ProjectKnowledgeEmbeddingStatus,
   ProjectKnowledgeIndexSourceStatus,
+  ProjectKnowledgeMessagePayload,
   ProjectKnowledgeModality,
   ProjectKnowledgeProjectionType,
+  ProjectKnowledgeRetrievalPlan,
   ProjectKnowledgeScopeType,
   ProjectKnowledgeSourceStatus,
   Resource,
 } from '~~/shared/types/domain'
-import type { ProjectKnowledgeMessagePayload } from '~~/shared/types/domain'
+import { buildProjectKnowledgeEvidenceContext } from '~~/server/services/ai/project-knowledge-evidence-context'
+import { buildProjectKnowledgeRetrievalPlan } from '~~/server/services/ai/project-knowledge-query-planner'
 import { buildProjectResourceLocalContext } from '~~/server/services/ai/project-resource-context'
 import {
   createKnowledgeEmbedding,
   extractKnowledgeKeywords,
 } from '~~/server/services/knowledge-ai'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
   buildProjectKnowledgeIndexDashboard,
   listProjectKnowledgeSearchChunks,
@@ -58,10 +63,14 @@ interface ProjectKnowledgeChunkHit {
 
 const VISUAL_QUERY_HINTS = ['截图', '界面', '海报', '页面', '版式', '图里', '这张图', '图片', '视觉', '布局', '封面', '图表']
 const MEETING_QUERY_HINTS = ['会议', '讨论', '老师说', '刚才提到', '刚刚提到', '会上', '纪要', '转写', '录音', '录屏']
+const EVIDENCE_PATHS_SECTION_TITLE = '结构化证据路径'
+const SEMANTIC_SUMMARY_SECTION_TITLE = '语义主题摘要'
 
 export interface ProjectKnowledgeContextResult extends ProjectKnowledgeMessagePayload {
   summaryText: string
 }
+
+type ProjectKnowledgeSearchChunkLike = Awaited<ReturnType<typeof listProjectKnowledgeSearchChunks>>[number]
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -239,6 +248,69 @@ function resolveChunkProjectionType(metadata: Record<string, unknown>): ProjectK
   return undefined
 }
 
+function resolveChunkEmbeddingStatus(metadata: Record<string, unknown>): ProjectKnowledgeEmbeddingStatus {
+  const normalized = normalizeString(metadata.embeddingStatus)
+  if (normalized === 'native' || normalized === 'derived' || normalized === 'fallback' || normalized === 'missing' || normalized === 'failed')
+    return normalized
+  if (metadata.embeddingFallbackUsed === true)
+    return 'fallback'
+  if (metadata.embeddingFallbackUsed === false)
+    return 'native'
+  return 'missing'
+}
+
+function matchesRetrievalPlanFilters(
+  chunk: ProjectKnowledgeSearchChunkLike,
+  retrievalPlan: ProjectKnowledgeRetrievalPlan,
+): boolean {
+  const metadata = chunk.metadata
+  const modality = resolveChunkModality(metadata) || 'unknown'
+  const projectionType = resolveChunkProjectionType(metadata)
+  const embeddingStatus = resolveChunkEmbeddingStatus(metadata)
+
+  if (retrievalPlan.preferredModalities.length > 0 && !retrievalPlan.preferredModalities.includes(modality))
+    return false
+  if (retrievalPlan.preferredProjectionTypes.length > 0 && (!projectionType || !retrievalPlan.preferredProjectionTypes.includes(projectionType)))
+    return false
+  if (retrievalPlan.preferredEmbeddingStatuses?.length && !retrievalPlan.preferredEmbeddingStatuses.includes(embeddingStatus))
+    return false
+  return true
+}
+
+function normalizeQueryVariants(query: string, retrievalPlan: ProjectKnowledgeRetrievalPlan): string[] {
+  const variants = [query, ...(retrievalPlan.queryVariants || [])]
+    .map(item => normalizeString(item))
+    .filter(Boolean)
+  return [...new Set(variants)].slice(0, 4)
+}
+
+function dedupeChunks(chunks: ProjectKnowledgeSearchChunkLike[]): ProjectKnowledgeSearchChunkLike[] {
+  const seen = new Set<string>()
+  const result: ProjectKnowledgeSearchChunkLike[] = []
+  for (const chunk of chunks) {
+    if (seen.has(chunk.id))
+      continue
+    seen.add(chunk.id)
+    result.push(chunk)
+  }
+  return result
+}
+
+function shouldAttachEvidenceContext(retrievalPlan: ProjectKnowledgeRetrievalPlan): boolean {
+  return retrievalPlan.intent === 'evidence_trace'
+    || retrievalPlan.intent === 'relation_explore'
+    || retrievalPlan.intent === 'global_summary'
+}
+
+function formatEvidenceContextSummary(summaryText: string): string {
+  const normalized = normalizeString(summaryText)
+  if (!normalized)
+    return ''
+  if (normalized.includes(EVIDENCE_PATHS_SECTION_TITLE) || normalized.includes(SEMANTIC_SUMMARY_SECTION_TITLE))
+    return normalized
+  return `${EVIDENCE_PATHS_SECTION_TITLE}：\n${normalized}`
+}
+
 function calcChunkPriorityBoost(hit: Pick<ProjectKnowledgeChunkHit, 'chunkKind' | 'projectionType' | 'fallbackUsed'>): number {
   let boost = 0
   if (hit.chunkKind === 'document_page' || hit.projectionType === 'document_text')
@@ -327,14 +399,14 @@ function resolveCitationSourceScope(hit: ProjectKnowledgeChunkHit): ProjectKnowl
 function buildCitationLocator(hit: ProjectKnowledgeChunkHit): ProjectKnowledgeCitationLocator | null {
   const nodeId = normalizeString(
     hit.metadata.nodeId
-      || hit.metadata.primaryNodeId
-      || (Array.isArray(hit.metadata.nodeIds) ? hit.metadata.nodeIds[0] : ''),
+    || hit.metadata.primaryNodeId
+    || (Array.isArray(hit.metadata.nodeIds) ? hit.metadata.nodeIds[0] : ''),
   )
   const anchorId = normalizeString(
     hit.metadata.anchorId
-      || hit.metadata.anchor
-      || hit.metadata.sectionAnchorId
-      || hit.metadata.headingId,
+    || hit.metadata.anchor
+    || hit.metadata.sectionAnchorId
+    || hit.metadata.headingId,
   )
   const utteranceRange = normalizeString(hit.metadata.utteranceRange)
   const page = hit.pageNumber == null ? undefined : hit.pageNumber
@@ -430,51 +502,69 @@ export async function buildProjectKnowledgeLocalContext(
   }
 
   const query = normalizeString(input.query) || [input.contestName, input.trackName, input.major].map(item => normalizeString(item)).filter(Boolean).join(' ')
-  const tokens = buildQueryTokens(query)
-  const [dashboard, queryEmbeddingResult] = await Promise.all([
+  const runtime = (await readEffectiveRuntimeSettings(input.event)).runtime
+  const retrievalPlan = await buildProjectKnowledgeRetrievalPlan({
+    runtime,
+    event: input.event,
+    query,
+    limit: input.limit,
+  })
+  const queryVariants = normalizeQueryVariants(query, retrievalPlan)
+  const tokens = buildQueryTokens(queryVariants.join('\n'))
+  const [dashboard, queryEmbeddingResultsByVariant] = await Promise.all([
     buildProjectKnowledgeIndexDashboard(db, {
       projectId,
       syncSources: false,
     }),
-    query
-      ? createKnowledgeEmbedding({
-          text: query,
-          inputType: 'text',
-          event: input.event,
-        })
-      : Promise.resolve({
-          embedding: [],
-          provider: '',
-          model: '',
-          fallbackUsed: true,
-          attempts: 1,
-          clientType: 'openai-compatible' as const,
-          apiStyle: 'openai-compatible-text' as const,
-          inputType: 'text' as const,
-          dimensions: 0,
-          fusionUsed: false,
-          runtimeVersion: '',
-          signature: {
-            provider: '',
-            model: '',
-            apiStyle: 'openai-compatible-text' as const,
-            dimensions: 0,
-            inputType: 'text' as const,
-            fusionUsed: false,
-            runtimeVersion: '',
-          },
-          failureReason: 'EMPTY_QUERY',
-        }),
+    Promise.all(queryVariants.map(async (variant) => {
+      const result = await createKnowledgeEmbedding({
+        text: variant,
+        inputType: 'text',
+        event: input.event,
+      })
+      return {
+        query: variant,
+        result,
+      }
+    })),
   ])
-  const queryEmbedding = queryEmbeddingResult.embedding
-  const preselectedChunks = queryEmbedding.length > 0 && !queryEmbeddingResult.fallbackUsed
-    ? await listProjectKnowledgeSearchChunksByVectorPreselect(db, {
+  const fallbackEmbeddingResult = {
+    embedding: [],
+    provider: '',
+    model: '',
+    fallbackUsed: true,
+    attempts: 1,
+    clientType: 'openai-compatible' as const,
+    apiStyle: 'openai-compatible-text' as const,
+    inputType: 'text' as const,
+    dimensions: 0,
+    fusionUsed: false,
+    runtimeVersion: '',
+    signature: {
+      provider: '',
+      model: '',
+      apiStyle: 'openai-compatible-text' as const,
+      dimensions: 0,
+      inputType: 'text' as const,
+      fusionUsed: false,
+      runtimeVersion: '',
+    },
+    failureReason: 'EMPTY_QUERY',
+  }
+  const queryEmbeddingResult = queryEmbeddingResultsByVariant[0]?.result || fallbackEmbeddingResult
+  const queryEmbeddings = queryEmbeddingResultsByVariant
+    .map(item => item.result.embedding)
+    .filter(item => item.length > 0)
+  const preselectedChunks = dedupeChunks((await Promise.all(
+    queryEmbeddingResultsByVariant
+      .filter(item => item.result.embedding.length > 0 && !item.result.fallbackUsed)
+      .map(item => listProjectKnowledgeSearchChunksByVectorPreselect(db, {
         projectId,
         includeStale: true,
-        embedding: queryEmbedding,
-        limit: Math.max(18, Math.min(60, Number(input.limit || 6) * 6)),
-      }).catch(() => [])
-    : []
+        embedding: item.result.embedding,
+        limit: Math.max(18, Math.min(80, Number(retrievalPlan.retrievalBudget || input.limit || 6) * 6)),
+      }).catch(() => [])),
+  )).flat())
   const chunks = preselectedChunks.length > 0
     ? preselectedChunks
     : await listProjectKnowledgeSearchChunks(db, {
@@ -519,6 +609,7 @@ export async function buildProjectKnowledgeLocalContext(
 
   const queryIntent = detectQueryIntent(query, tokens)
   const scoredHits = chunks
+    .filter(chunk => matchesRetrievalPlanFilters(chunk, retrievalPlan))
     .map((chunk) => {
       const metadataText = flattenMetadataText(chunk.metadata)
       const modality = resolveChunkModality(chunk.metadata)
@@ -533,7 +624,9 @@ export async function buildProjectKnowledgeLocalContext(
         citationLabel: chunk.citationLabel,
         sectionLabel: chunk.sectionLabel || '',
       })
-      const cosine = cosineSimilarity(queryEmbedding, chunk.embedding)
+      const cosine = queryEmbeddings.reduce((best, embedding) => {
+        return Math.max(best, cosineSimilarity(embedding, chunk.embedding))
+      }, 0)
       const vectorScore = cosine > 0 ? (cosine + 1) / 2 : 0
       const statusBonus = chunk.sourceStatus === 'ready' ? 0.12 : 0.02
       const pageBonus = chunk.pageNumber ? 0.03 : 0
@@ -611,10 +704,31 @@ export async function buildProjectKnowledgeLocalContext(
       citations: [],
       warning,
       usedFallback: true,
+      retrievalPlan,
+      evidencePaths: [],
     }
   }
 
   const citations = selectedHits.map(buildCitation)
+  const evidenceContext = shouldAttachEvidenceContext(retrievalPlan)
+    ? await buildProjectKnowledgeEvidenceContext(db, {
+        projectId,
+        retrievalPlan,
+        hits: selectedHits.map(hit => ({
+          chunkId: hit.chunkId,
+          sourceId: hit.sourceId,
+          citationLabel: hit.citationLabel,
+          resourceTitle: hit.resourceTitle,
+        })),
+        limit: 8,
+      }).catch(() => ({
+        summaryText: '',
+        evidencePaths: [],
+      }))
+    : {
+        summaryText: '',
+        evidencePaths: [],
+      }
   const lines = [
     `项目知识检索结果（命中 ${selectedHits.length} 条）：`,
     ...selectedHits.map((hit, index) => {
@@ -626,6 +740,7 @@ export async function buildProjectKnowledgeLocalContext(
     }),
     '引用规则：回答引用以上资料时，请直接保留对应方括号标签，不要编造新的 citation。',
     '如果命中视觉投影、OCR 投影或会议转写投影，请明确说明这是投影结果，不要表述为原始正文摘录。',
+    formatEvidenceContextSummary(evidenceContext.summaryText),
     warning ? `提示：${warning}` : '',
   ].filter(Boolean)
 
@@ -634,5 +749,7 @@ export async function buildProjectKnowledgeLocalContext(
     citations,
     warning,
     usedFallback: degradedResultUsed,
+    retrievalPlan,
+    evidencePaths: evidenceContext.evidencePaths,
   }
 }

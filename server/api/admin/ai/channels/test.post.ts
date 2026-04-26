@@ -41,6 +41,7 @@ function resolveChannelKey(raw: unknown): PlatformAiChannelKey {
     'admin_publish_assistant',
     'knowledge_embedding',
     'knowledge_visual_embedding',
+    'knowledge_query_planner',
     'document_analysis',
   ]
   return allowed.includes(text) ? text : DEFAULT_CHANNEL

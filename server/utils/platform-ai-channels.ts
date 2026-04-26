@@ -37,6 +37,7 @@ export type PlatformAiChannelKey
     | 'admin_publish_assistant'
     | 'knowledge_embedding'
     | 'knowledge_visual_embedding'
+    | 'knowledge_query_planner'
     | 'knowledge_visual_projection'
     | 'document_analysis'
 
@@ -188,6 +189,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
   { key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议' },
   { key: 'knowledge_embedding', label: '知识库文本 Embedding', description: '知识库文本向量与检索索引' },
   { key: 'knowledge_visual_embedding', label: '知识库视觉 Embedding', description: '图片、视频、多图与图文融合向量' },
+  { key: 'knowledge_query_planner', label: '知识检索规划', description: '项目知识查询意图、召回策略与证据链规划' },
   { key: 'knowledge_visual_projection', label: '知识库视觉投影', description: '图片、截图、OCR 与视觉摘要提取' },
   { key: 'document_analysis', label: '文档分析', description: '文档解析、预览与重解析' },
 ]

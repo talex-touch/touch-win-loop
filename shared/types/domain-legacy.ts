@@ -402,6 +402,9 @@ export type ProjectKnowledgeEmbeddingStatus = 'native' | 'derived' | 'fallback' 
 export type ProjectKnowledgeProvenanceSourceType = 'native' | 'ocr' | 'asr' | 'vision_summary' | 'fallback_template'
 export type ProjectKnowledgeRelationType = 'belongs_to' | 'derived_from' | 'similar_to' | 'aligned_to' | 'references' | 'duplicated_with'
 export type ProjectKnowledgeRelationNodeType = 'source' | 'chunk'
+export type ProjectKnowledgeRetrievalIntent = 'direct_answer' | 'evidence_trace' | 'global_summary' | 'relation_explore' | 'visual_lookup' | 'meeting_lookup'
+export type ProjectKnowledgeRetrievalPlannerSource = 'llm' | 'heuristic' | 'fallback'
+export type ProjectKnowledgeRetrievalModalityFilter = ProjectKnowledgeModality | 'unknown'
 export type ProjectKnowledgeAnalyticsJobType = 'relations_refresh' | 'snapshot_capture' | 'semantic_layout_refresh'
 export type ProjectKnowledgeAnalyticsJobStatus = 'pending' | 'processing' | 'succeeded' | 'failed' | 'cancelled'
 export type ProjectKnowledgeSnapshotType = 'hourly' | 'manual'
@@ -647,10 +650,40 @@ export interface ProjectKnowledgeCitation {
   quote?: string
 }
 
+export interface ProjectKnowledgeRetrievalPlan {
+  intent: ProjectKnowledgeRetrievalIntent
+  queryVariants: string[]
+  preferredModalities: ProjectKnowledgeRetrievalModalityFilter[]
+  preferredProjectionTypes: ProjectKnowledgeProjectionType[]
+  preferredEmbeddingStatuses?: ProjectKnowledgeEmbeddingStatus[]
+  relationTypes: ProjectKnowledgeRelationType[]
+  retrievalBudget: number
+  plannerSource: ProjectKnowledgeRetrievalPlannerSource
+  reasoning?: string
+}
+
+export interface ProjectKnowledgeEvidencePath {
+  id: string
+  relationType: ProjectKnowledgeRelationType
+  sourceNodeType: ProjectKnowledgeRelationNodeType
+  sourceNodeId: string
+  sourceLabel: string
+  targetNodeType: ProjectKnowledgeRelationNodeType
+  targetNodeId: string
+  targetLabel: string
+  score: number
+  evidenceMetric: string
+  evidenceModel: string
+  citationChunkId?: string
+  summary: string
+}
+
 export interface ProjectKnowledgeMessagePayload {
   citations: ProjectKnowledgeCitation[]
   warning: string
   usedFallback: boolean
+  retrievalPlan?: ProjectKnowledgeRetrievalPlan | null
+  evidencePaths?: ProjectKnowledgeEvidencePath[]
 }
 
 export interface ProjectKnowledgeIndexTaskSnapshot {
