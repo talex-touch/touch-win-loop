@@ -19,6 +19,7 @@ const WORKFLOWS_INDEX_GET_FILE = resolve(process.cwd(), 'server/api/projects/[id
 const WORKFLOWS_INDEX_POST_FILE = resolve(process.cwd(), 'server/api/projects/[id]/intelligence/workflows/index.post.ts')
 const WORKFLOW_RUN_POST_FILE = resolve(process.cwd(), 'server/api/projects/[id]/intelligence/workflows/[workflowId]/run.post.ts')
 const WORKFLOW_CONTINUE_POST_FILE = resolve(process.cwd(), 'server/api/projects/[id]/intelligence/workflow-runs/[runId]/continue.post.ts')
+const WORKFLOW_DELETE_FILE = resolve(process.cwd(), 'server/api/projects/[id]/intelligence/workflows/[workflowId].delete.ts')
 
 describe('intelligence workflow v1', () => {
   it('schema 与显式迁移已补齐 workflow definition/run/run step 三张表', async () => {
@@ -83,6 +84,7 @@ describe('intelligence workflow v1', () => {
       workflowsIndexPostSource,
       workflowRunPostSource,
       workflowContinuePostSource,
+      workflowDeleteSource,
     ] = await Promise.all([
       readFile(STORE_FILE, 'utf8'),
       readFile(ENGINE_FILE, 'utf8'),
@@ -94,6 +96,7 @@ describe('intelligence workflow v1', () => {
       readFile(WORKFLOWS_INDEX_POST_FILE, 'utf8'),
       readFile(WORKFLOW_RUN_POST_FILE, 'utf8'),
       readFile(WORKFLOW_CONTINUE_POST_FILE, 'utf8'),
+      readFile(WORKFLOW_DELETE_FILE, 'utf8'),
     ])
 
     assert.match(toolRegistrySource, /key: 'context\.get_workspace_context'/, '缺少 context.get_workspace_context 工具')
@@ -125,7 +128,13 @@ describe('intelligence workflow v1', () => {
     assert.match(loopyWorkflowsSource, /approveWorkflowChange\(change\)/, '工作流面板未通过本地状态机审批变更')
     assert.match(loopyWorkflowsSource, /workflowDeleteSecondConfirmId/, '工作流面板未维护删除二次确认状态')
     assert.match(loopyWorkflowsSource, /deleteSelectedWorkflow\(selectedWorkflow\)/, '工作流面板未通过本地状态机删除工作流')
+    assert.match(loopyWorkflowsSource, /deleteWorkflow\(workflowId,[\s\S]*destructiveConfirm:\s*true/, '工作流面板二次确认后未显式传递删除确认')
     assert.doesNotMatch(workflowComposableSource, /destructiveConfirm:\s*true/, '工作流审批 composable 不应自动确认破坏性变更')
-    assert.match(workflowComposableSource, /destructiveConfirm:\s*Boolean\(options\.destructiveConfirm\)/, '工作流审批 composable 未把破坏性确认交给调用方显式传入')
+    assert.match(workflowComposableSource, /async function deleteWorkflow\(workflowId: string, options: \{ destructiveConfirm\?: boolean \} = \{\}\): Promise<boolean>/, '工作流删除 composable 未暴露显式确认参数')
+    assert.match(workflowComposableSource, /async function deleteWorkflow[\s\S]*method:\s*'DELETE'[\s\S]*destructiveConfirm:\s*Boolean\(options\.destructiveConfirm\)/, '工作流删除 composable 未把二次确认交给调用方显式传入')
+    assert.match(workflowComposableSource, /async function approveChange[\s\S]*destructiveConfirm:\s*Boolean\(options\.destructiveConfirm\)/, '工作流审批 composable 未把破坏性确认交给调用方显式传入')
+    assert.match(workflowDeleteSource, /const body = await readBody<DeleteWorkflowBody>/, 'workflow 删除 API 未读取确认请求体')
+    assert.match(workflowDeleteSource, /if \(!destructiveConfirm\)/, 'workflow 删除 API 未在服务端校验二次确认')
+    assert.match(workflowDeleteSource, /40997/, 'workflow 删除 API 缺少二次确认冲突响应')
   })
 })

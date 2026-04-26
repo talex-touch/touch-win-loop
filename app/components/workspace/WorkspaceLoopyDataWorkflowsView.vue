@@ -287,7 +287,9 @@ async function deleteSelectedWorkflow(workflow: AiWorkflowDefinition | null): Pr
     Message.warning('删除会归档该智能工作流，请再次点击删除确认。')
     return
   }
-  const deleted = await deleteWorkflow(workflowId)
+  const deleted = await deleteWorkflow(workflowId, {
+    destructiveConfirm: true,
+  })
   if (deleted)
     workflowDeleteSecondConfirmId.value = ''
 }

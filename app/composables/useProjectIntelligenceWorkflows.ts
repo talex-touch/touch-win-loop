@@ -150,7 +150,7 @@ export function useProjectIntelligenceWorkflows(projectId: MaybeRefString) {
     }
   }
 
-  async function deleteWorkflow(workflowId: string): Promise<boolean> {
+  async function deleteWorkflow(workflowId: string, options: { destructiveConfirm?: boolean } = {}): Promise<boolean> {
     const normalizedWorkflowId = normalizeString(workflowId)
     if (!resolvedProjectId.value || !normalizedWorkflowId || deletingWorkflowId.value)
       return false
@@ -161,6 +161,9 @@ export function useProjectIntelligenceWorkflows(projectId: MaybeRefString) {
         endpoint(`/projects/${resolvedProjectId.value}/intelligence/workflows/${normalizedWorkflowId}`),
         {
           method: 'DELETE',
+          body: {
+            destructiveConfirm: Boolean(options.destructiveConfirm),
+          },
         },
       )
       Message.success('工作流已删除。')

@@ -1,10 +1,24 @@
 import { setResponseStatus } from 'h3'
+import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
 import { archiveAiWorkflowDefinition } from '~~/server/utils/project-intelligence-workflow-store'
+
+interface DeleteWorkflowBody {
+  destructiveConfirm?: boolean
+}
+
+function normalizeBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean')
+    return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === 'true' || normalized === '1' || normalized === 'yes'
+  }
+  return false
+}
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -12,6 +26,8 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const projectId = String(getRouterParam(event, 'id') || '').trim()
   const workflowId = String(getRouterParam(event, 'workflowId') || '').trim()
+  const body = await readBody<DeleteWorkflowBody>(event).catch((): DeleteWorkflowBody => ({}))
+  const destructiveConfirm = normalizeBoolean(body.destructiveConfirm)
 
   if (!projectId || !workflowId) {
     setResponseStatus(event, 400)
@@ -22,6 +38,17 @@ export default defineEventHandler(async (event) => {
       fallbackUsed: false,
       attempts: 1,
     }, 40098)
+  }
+
+  if (!destructiveConfirm) {
+    setResponseStatus(event, 409)
+    return fail('删除智能工作流需二次确认。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40997)
   }
 
   const archived = await withTransaction(event, async (db) => {
