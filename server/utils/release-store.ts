@@ -219,16 +219,13 @@ function inferLatestTimelineSeason(timelines: Array<{ year?: unknown }>): string
 }
 
 function resolveContestReleaseEffectiveMetadata(snapshot: ContestReleaseSnapshot): {
-  organizer: string
   participantRequirements: string
   currentSeason: string
 } {
   const contest = snapshot.contest
   return {
-    organizer: normalizeText(contest?.organizer) || joinUniqueTexts(snapshot.tracks.map(item => item.organizer)),
     participantRequirements: normalizeText(contest?.participantRequirements) || joinUniqueTexts(snapshot.tracks.map(item => item.participantRequirements)),
     currentSeason: normalizeText(contest?.currentSeason)
-      || joinUniqueTexts(snapshot.tracks.map(item => item.currentSeason))
       || inferLatestTimelineSeason([...snapshot.timelines, ...snapshot.trackTimelines]),
   }
 }
@@ -1525,11 +1522,6 @@ export async function getContestReleasePublishCheck(
   if (!hasLevel)
     pushBlocker('CONTEST_LEVEL_REQUIRED', '赛事级别不能为空。', 'level')
 
-  const hasOrganizer = Boolean(effectiveMetadata.organizer)
-  checks.push(hasOrganizer)
-  if (!hasOrganizer)
-    pushBlocker('CONTEST_ORGANIZER_REQUIRED', '主办方不能为空。', 'organizer')
-
   const hasOfficialUrl = Boolean(normalizeText(contest.officialUrl))
   checks.push(hasOfficialUrl)
   if (!hasOfficialUrl)
@@ -1570,36 +1562,38 @@ export async function getContestReleasePublishCheck(
   if (!hasRubrics)
     pushBlocker('CONTEST_RUBRICS_REQUIRED', '至少需要 1 条评分规则。', 'rubrics')
 
-  const hasDedupKey = hasName && hasOrganizer && hasOfficialUrl
-  if (!hasDedupKey) {
-    pushWarning('CONTEST_DEDUPE_KEY_INCOMPLETE', '去重键不完整（名称+主办方+官网），发布前建议补全。', 'officialUrl')
+  const contestExternalId = normalizeText(contest.externalId) || normalizeText(input.version.scopeId)
+  const currentContestId = normalizeText(input.version.liveEntityId) || normalizeText(contest.liveId)
+  const existingExternalRef = contestExternalId
+    ? await getFeishuExternalRef(db, {
+        scope: 'contest',
+        externalId: contestExternalId,
+      })
+    : null
+  const existingExternalRefContestId = normalizeText(existingExternalRef?.entityId)
+  if (existingExternalRefContestId && currentContestId && existingExternalRefContestId !== currentContestId) {
+    pushBlocker(
+      'CONTEST_DUPLICATED',
+      `检测到重复竞赛（ID: ${existingExternalRefContestId}），请核对唯一编号/赛事名称。`,
+      'externalId',
+    )
   }
-  else {
-    const rows = await db.query<{ id: string, name: string, organizer: string, official_url: string }>(
-      `SELECT id, name, organizer, official_url
+
+  if (hasName) {
+    const compareContestId = currentContestId || existingExternalRefContestId
+    const rows = await db.query<{ id: string, name: string }>(
+      `SELECT id, name
        FROM contests
        WHERE status <> 'archived'
          AND id <> $1`,
-      [normalizeText(input.version.liveEntityId) || normalizeText(contest.liveId) || ''],
+      [compareContestId || ''],
     )
-    const targetKey = [
-      normalizeCompareValue(contest.name),
-      normalizeCompareValue(effectiveMetadata.organizer),
-      normalizeCompareValue(contest.officialUrl),
-    ].join('|')
-    const duplicate = rows.rows.find((row) => {
-      const rowKey = [
-        normalizeCompareValue(row.name),
-        normalizeCompareValue(row.organizer),
-        normalizeCompareValue(row.official_url),
-      ].join('|')
-      return rowKey === targetKey
-    })
+    const duplicate = rows.rows.find(row => normalizeCompareValue(row.name) === normalizeCompareValue(contest.name))
     if (duplicate) {
       pushBlocker(
         'CONTEST_DUPLICATED',
-        `检测到重复竞赛（ID: ${duplicate.id}），请核对名称/主办方/官网组合。`,
-        'officialUrl',
+        `检测到重复竞赛（ID: ${duplicate.id}），请核对唯一编号/赛事名称。`,
+        'name',
       )
     }
   }
@@ -1798,13 +1792,8 @@ async function buildContestLiveBaseSnapshot(
     externalId: contestExternalId || detail.contest.id,
     name: detail.contest.name,
     level: detail.contest.level as ContestLevel,
-    organizer: detail.contest.organizer || '',
-    coOrganizer: detail.contest.coOrganizer || '',
     officialUrl: detail.contest.officialUrl || '',
     summary: detail.contest.summary || '',
-    participantRequirements: detail.contest.participantRequirements || '',
-    teamRule: detail.contest.teamRule || '',
-    currentSeason: detail.contest.currentSeason || '',
     disciplines: detail.contest.disciplines || [],
     aliases: detail.contest.aliases || [],
     keywords: detail.contest.keywords || [],
@@ -2129,13 +2118,8 @@ export async function createContestManualReleaseDraft(
     externalId: scopeId,
     name: liveDetail.contest.name,
     level: liveDetail.contest.level as ContestLevel,
-    organizer: liveDetail.contest.organizer || '',
-    coOrganizer: liveDetail.contest.coOrganizer || '',
     officialUrl: liveDetail.contest.officialUrl || '',
     summary: liveDetail.contest.summary || '',
-    participantRequirements: liveDetail.contest.participantRequirements || '',
-    teamRule: liveDetail.contest.teamRule || '',
-    currentSeason: liveDetail.contest.currentSeason || '',
     disciplines: liveDetail.contest.disciplines || [],
     aliases: liveDetail.contest.aliases || [],
     keywords: liveDetail.contest.keywords || [],
@@ -3437,12 +3421,9 @@ async function publishContestRelease(
         patch: {
           name: snapshot.contest.name,
           level: snapshot.contest.level,
-          organizer: effectiveMetadata.organizer,
-          coOrganizer: normalizeText(snapshot.contest.coOrganizer),
           officialUrl: normalizeText(snapshot.contest.officialUrl),
           summary: normalizeText(snapshot.contest.summary),
           participantRequirements: effectiveMetadata.participantRequirements,
-          teamRule: normalizeText(snapshot.contest.teamRule),
           currentSeason: effectiveMetadata.currentSeason,
           disciplines: snapshot.contest.disciplines || [],
           aliases: snapshot.contest.aliases || [],
@@ -3461,12 +3442,9 @@ async function publishContestRelease(
         actorUserId: input.actorUserId,
         name: snapshot.contest.name,
         level: snapshot.contest.level,
-        organizer: effectiveMetadata.organizer,
-        coOrganizer: normalizeText(snapshot.contest.coOrganizer),
         officialUrl: normalizeText(snapshot.contest.officialUrl),
         summary: normalizeText(snapshot.contest.summary),
         participantRequirements: effectiveMetadata.participantRequirements,
-        teamRule: normalizeText(snapshot.contest.teamRule),
         currentSeason: effectiveMetadata.currentSeason,
         disciplines: snapshot.contest.disciplines || [],
         aliases: snapshot.contest.aliases || [],

@@ -660,12 +660,10 @@ function resolveContestPublishEffectiveMetadata(input: {
   timelines: ContestTimeline[]
   trackTimelines: Array<{ year?: unknown }>
 }): {
-  organizer: string
   participantRequirements: string
   currentSeason: string
 } {
   return {
-    organizer: normalizeString(input.contest.organizer) || joinUniqueStrings((input.contest.tracks || []).map(item => item.organizer)),
     participantRequirements: normalizeString(input.contest.participantRequirements) || joinUniqueStrings((input.contest.tracks || []).map(item => item.participantRequirements)),
     currentSeason: normalizeString(input.contest.currentSeason)
       || inferLatestTimelineSeason([...input.timelines, ...input.trackTimelines]),
@@ -2634,11 +2632,6 @@ export async function getContestPublishCheck(
   if (!hasLevel)
     pushBlocker('CONTEST_LEVEL_REQUIRED', '赛事级别不能为空。', 'level')
 
-  const hasOrganizer = Boolean(effectiveMetadata.organizer)
-  checks.push(hasOrganizer)
-  if (!hasOrganizer)
-    pushBlocker('CONTEST_ORGANIZER_REQUIRED', '主办方不能为空。', 'organizer')
-
   const hasOfficialUrl = Boolean(normalizeString(contest.officialUrl))
   checks.push(hasOfficialUrl)
   if (!hasOfficialUrl)
@@ -2680,36 +2673,51 @@ export async function getContestPublishCheck(
   if (!hasRubrics)
     pushBlocker('CONTEST_RUBRICS_REQUIRED', '至少需要 1 条评分规则。', 'rubrics')
 
-  const hasDedupKey = hasName && hasOrganizer && hasOfficialUrl
-  if (!hasDedupKey) {
-    pushWarning('CONTEST_DEDUPE_KEY_INCOMPLETE', '去重键不完整（名称+主办方+官网），发布前建议补全。', 'officialUrl')
+  const externalRefRows = await db.query<{ external_id: string }>(
+    `SELECT external_id
+     FROM feishu_external_refs
+     WHERE provider = 'feishu_bitable'
+       AND scope = 'contest'
+       AND entity_id = $1
+     LIMIT 1`,
+    [input.contestId],
+  )
+  const contestExternalId = normalizeString(externalRefRows.rows[0]?.external_id)
+  if (contestExternalId) {
+    const duplicateExternalRefRows = await db.query<{ entity_id: string }>(
+      `SELECT entity_id
+       FROM feishu_external_refs
+       WHERE provider = 'feishu_bitable'
+         AND scope = 'contest'
+         AND external_id = $1
+         AND entity_id <> $2
+       LIMIT 1`,
+      [contestExternalId, input.contestId],
+    )
+    const duplicateExternalRef = duplicateExternalRefRows.rows[0]
+    if (duplicateExternalRef?.entity_id) {
+      pushBlocker(
+        'CONTEST_DUPLICATED',
+        `检测到重复竞赛（ID: ${duplicateExternalRef.entity_id}），请核对唯一编号/赛事名称。`,
+        'externalId',
+      )
+    }
   }
-  else {
-    const rows = await db.query<{ id: string, name: string, organizer: string, official_url: string }>(
-      `SELECT id, name, organizer, official_url
+
+  if (hasName) {
+    const rows = await db.query<{ id: string, name: string }>(
+      `SELECT id, name
        FROM contests
        WHERE id <> $1
          AND status <> 'archived'`,
       [input.contestId],
     )
-    const targetKey = [
-      normalizeCompareValue(contest.name),
-      normalizeCompareValue(effectiveMetadata.organizer),
-      normalizeCompareValue(contest.officialUrl),
-    ].join('|')
-    const duplicate = rows.rows.find((row) => {
-      const rowKey = [
-        normalizeCompareValue(row.name),
-        normalizeCompareValue(row.organizer),
-        normalizeCompareValue(row.official_url),
-      ].join('|')
-      return rowKey === targetKey
-    })
+    const duplicate = rows.rows.find(row => normalizeCompareValue(row.name) === normalizeCompareValue(contest.name))
     if (duplicate) {
       pushBlocker(
         'CONTEST_DUPLICATED',
-        `检测到重复竞赛（ID: ${duplicate.id}），请核对名称/主办方/官网组合。`,
-        'officialUrl',
+        `检测到重复竞赛（ID: ${duplicate.id}），请核对唯一编号/赛事名称。`,
+        'name',
       )
     }
   }

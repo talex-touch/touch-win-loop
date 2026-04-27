@@ -32,9 +32,18 @@ describe('飞书多维表格版本草稿链路', () => {
 
     assert.match(componentSource, /timelineText（时间节点）/, '竞赛映射未使用统一时间节点字段')
     assert.match(componentSource, /recommendedFor（适配人群）/, '竞赛映射缺少适配人群字段')
+    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*organizer（主办方）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露主办方字段')
+    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*coOrganizer（协办\/承办）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露协办/承办字段')
+    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*participantRequirements（参赛对象）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露参赛对象字段')
+    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*teamRule（组队规则）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露组队规则字段')
+    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*currentSeason（当前届次）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露当前届次字段')
     assert.match(configSource, /if \(entityType === 'contest'\) \{[\s\S]*timelineText:\s*''[\s\S]*recommendedFor:\s*''/, '竞赛默认模板未切到 timelineText / recommendedFor')
+    assert.doesNotMatch(configSource, /if \(entityType === 'contest'\) \{[\s\S]*organizer:\s*''[\s\S]*\n\s{2}if \(entityType === 'track'\)/, '竞赛默认模板不应包含主办方字段')
+    assert.doesNotMatch(configSource, /if \(entityType === 'contest'\) \{[\s\S]*(coOrganizer|participantRequirements|teamRule|currentSeason):\s*''[\s\S]*\n\s{2}if \(entityType === 'track'\)/, '竞赛默认模板不应包含飞书竞赛库没有的字段')
     assert.match(serviceSource, /const timelineText = toText\(timelineTextRaw\)[\s\S]*registrationWindow[\s\S]*submissionDeadline/, '竞赛同步未兼容旧时间字段并收敛到 timelineText')
     assert.match(serviceSource, /const timelines = buildContestReleaseTimelines\(input\.externalId, timelineText\)/, '竞赛同步未从统一时间文本构建节点快照')
+    assert.doesNotMatch(serviceSource, /async function applyContestRecord[\s\S]*input\.resolver\.getText\('organizer'\)[\s\S]*async function applyTrackRecord/, '竞赛库同步不应读取 organizer')
+    assert.doesNotMatch(serviceSource, /async function applyContestRecord[\s\S]*input\.resolver\.getText\('(coOrganizer|participantRequirements|teamRule|currentSeason)'\)[\s\S]*async function applyTrackRecord/, '竞赛库同步不应读取飞书竞赛库没有的字段')
   })
 
   it('资料库、政策库与人设库映射已经切到当前字段集，并打通新实体链路', async () => {
@@ -99,7 +108,7 @@ describe('飞书多维表格版本草稿链路', () => {
     const serviceSource = await readSource('server/services/feishu/bitable-sync.ts')
 
     assert.match(serviceSource, /upsertContestReleaseDraft/, '竞赛相关同步未写入 release draft')
-    assert.match(serviceSource, /entityId: draft\.version\.id/, '同步返回结果未回填 release version id')
+    assert.match(serviceSource, /entityId: draft\.version\?\.id \|\| ''/, '同步返回结果未回填 release version id')
     assert.match(serviceSource, /scopeKind: 'contest'/, '竞赛预检未基于 contest release scope 判断')
     assert.match(serviceSource, /upsertPolicyLibraryReleaseDraft/, '政策同步未写入 policy library release draft')
     assert.doesNotMatch(serviceSource, /syncContestDerivedTimelineNodes\(/, '同步链路不应回退到直接写 live 时间节点')

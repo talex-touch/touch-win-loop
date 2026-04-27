@@ -3,7 +3,6 @@ import type {
   AdminReleaseQueueResult,
   ApiResponse,
   AuthMeResult,
-  ContestReleaseContestSnapshot,
   ContestReleaseResourceSnapshot,
   ContestReleaseSnapshot,
   ContestReleaseTimelineSnapshot,
@@ -392,84 +391,46 @@ function metadataText(value: unknown): string {
   return String(value || '').trim()
 }
 
-function joinUniqueMetadata(values: unknown[]): string {
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const value of values) {
-    const normalized = metadataText(value)
-    if (!normalized || seen.has(normalized))
-      continue
-    seen.add(normalized)
-    result.push(normalized)
-  }
-  return result.join('；')
-}
-
-function inferTimelineSeason(items: Array<ContestReleaseTimelineSnapshot | ContestReleaseTrackTimelineSnapshot>): string {
-  const years = items
-    .map(item => Number(item.year || 0))
-    .filter(year => Number.isFinite(year) && year >= 1900)
-  if (years.length === 0)
-    return ''
-  return String(Math.max(...years))
-}
-
 function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
   if (!snapshot)
     return []
 
   const contest = snapshot.contest
-  const organizer = metadataText(contest?.organizer)
-  const participantRequirements = metadataText(contest?.participantRequirements)
-  const currentSeason = metadataText(contest?.currentSeason)
-  const trackOrganizer = joinUniqueMetadata(snapshot.tracks.map(item => item.organizer))
-  const trackParticipantRequirements = joinUniqueMetadata(snapshot.tracks.map(item => item.participantRequirements))
-  const trackCurrentSeason = joinUniqueMetadata(snapshot.tracks.map(item => item.currentSeason))
-  const timelineCurrentSeason = inferTimelineSeason([...snapshot.timelines, ...snapshot.trackTimelines])
 
   return [
-    {
-      key: 'organizer',
-      label: '主办方',
-      value: organizer || trackOrganizer || '-',
-      source: organizer ? '概览字段' : trackOrganizer ? '赛道字段回填' : '未填写',
-    },
-    {
-      key: 'participantRequirements',
-      label: '参赛对象/限制',
-      value: participantRequirements || trackParticipantRequirements || '-',
-      source: participantRequirements ? '概览字段' : trackParticipantRequirements ? '赛道字段回填' : '未填写',
-    },
-    {
-      key: 'currentSeason',
-      label: '当前届次',
-      value: currentSeason || trackCurrentSeason || timelineCurrentSeason || '-',
-      source: currentSeason ? '概览字段' : trackCurrentSeason ? '赛道字段回填' : timelineCurrentSeason ? '时间线年份推断' : '未填写',
-    },
     { key: 'name', label: '赛事名称', value: metadataText(contest?.name) || '-', source: '概览字段' },
     { key: 'level', label: '赛事级别', value: metadataText(contest?.level) || '-', source: '概览字段' },
-    { key: 'coOrganizer', label: '协办/承办', value: metadataText(contest?.coOrganizer) || '-', source: '概览字段' },
     { key: 'officialUrl', label: '官网地址', value: metadataText(contest?.officialUrl) || '-', source: '概览字段' },
-    { key: 'teamRule', label: '组队规则', value: metadataText(contest?.teamRule) || '-', source: '概览字段' },
     { key: 'summary', label: '竞赛简介', value: metadataText(contest?.summary) || '-', source: '概览字段' },
   ]
 }
 
-function trackFormRows(item: ContestReleaseTrackSnapshot | null) {
+function trackTimelineText(items: ContestReleaseTrackTimelineSnapshot[]) {
+  return items
+    .map(item => `${item.year} · ${item.nodeType} · ${item.startAt || '-'} ~ ${item.endAt || '-'}${item.note ? ` · ${item.note}` : ''}`)
+    .join('\n') || '-'
+}
+
+function trackFormRows(item: ContestReleaseTrackSnapshot | null, snapshot: ContestReleaseSnapshot | null) {
   if (!item)
     return []
+  const trackTimelines = (snapshot?.trackTimelines || [])
+    .filter(timeline => timeline.trackExternalId === item.externalId)
   return [
     { label: '赛道编号', value: item.externalId || '-' },
     { label: '赛道名称', value: item.name || '-' },
+    { label: '封面', value: item.coverImageUrl || '-' },
     { label: '具体位置', value: item.location || '-' },
     { label: '主办方', value: item.organizer || '-' },
     { label: '承办方', value: item.undertaker || '-' },
+    { label: '赛道简介', value: item.summary || '-' },
     { label: '参赛对象', value: item.participantRequirements || '-' },
     { label: '组队规则', value: item.teamRule || '-' },
-    { label: '适合专业', value: arrayText(item.suitableMajors) },
-    { label: '奖项比例', value: item.awardRatio || '-' },
-    { label: '证明材料', value: arrayText(item.evidenceRequirements) },
-    { label: '评分要点', value: arrayText(item.scoringPoints) },
+    { label: '时间节点', value: trackTimelineText(trackTimelines) },
+    { label: '相关专业', value: arrayText(item.suitableMajors) },
+    { label: '获奖比例', value: item.awardRatio || '-' },
+    { label: '必备项', value: arrayText(item.evidenceRequirements) },
+    { label: '加分项', value: arrayText(item.scoringPoints) },
     { label: '扣分项', value: arrayText(item.deductionItems) },
     { label: '提交内容', value: arrayText(item.deliverableTypes) },
   ]
@@ -683,35 +644,26 @@ async function claimSecondReview() {
   }
 }
 
-function contestSummaryRows(contest: ContestReleaseContestSnapshot | null) {
+function contestSummaryRows(snapshot: ContestReleaseSnapshot | null) {
+  const contest = snapshot?.contest || null
   if (!contest)
     return []
   return [
     { label: '竞赛编号', value: contest.externalId || '-' },
     { label: '竞赛名称', value: contest.name || '-' },
     { label: '级别', value: contest.level || '-' },
-    { label: '主办方', value: contest.organizer || '-' },
-    { label: '协办/承办', value: contest.coOrganizer || '-' },
-    { label: '官网地址', value: contest.officialUrl || '-' },
-    { label: '届次', value: contest.currentSeason || '-' },
-    { label: '参赛对象', value: contest.participantRequirements || '-' },
-    { label: '组队规则', value: contest.teamRule || '-' },
     { label: '学科门类', value: (contest.disciplines || []).join('、') || '-' },
-    { label: '关键词', value: (contest.keywords || []).join('、') || '-' },
-    { label: '适配人群', value: (contest.recommendedFor || []).join('、') || '-' },
+    { label: '官网地址', value: contest.officialUrl || '-' },
     { label: '竞赛简介', value: contest.summary || '-' },
+    { label: '关键词', value: (contest.keywords || []).join('、') || '-' },
+    { label: '时间节点', value: contestTimelineText(snapshot?.timelines || []) },
+    { label: '适配人群', value: (contest.recommendedFor || []).join('、') || '-' },
   ]
 }
 
 function contestTimelineText(items: ContestReleaseTimelineSnapshot[]) {
   return items
     .map(item => `${item.year} · ${item.nodeType} · ${item.startAt || '-'} ~ ${item.endAt || '-'}${item.note ? ` · ${item.note}` : ''}`)
-    .join('\n') || '-'
-}
-
-function trackTimelineText(items: ContestReleaseTrackTimelineSnapshot[]) {
-  return items
-    .map(item => `${item.trackExternalId} · ${item.year} · ${item.nodeType} · ${item.startAt || '-'} ~ ${item.endAt || '-'}${item.note ? ` · ${item.note}` : ''}`)
     .join('\n') || '-'
 }
 
@@ -1217,15 +1169,9 @@ onMounted(() => {
               </button>
             </div>
             <div class="mt-3 gap-2 grid md:grid-cols-2">
-              <p v-for="item in contestSummaryRows(detailContestSnapshot.contest || null)" :key="item.label" class="text-slate-700">
+              <p v-for="item in contestSummaryRows(detailContestSnapshot)" :key="item.label" class="text-slate-700 whitespace-pre-wrap">
                 <span class="text-slate-400">{{ item.label }}：</span>{{ item.value }}
               </p>
-            </div>
-            <div class="mt-3">
-              <p class="text-slate-400 mb-1">
-                时间节点
-              </p>
-              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ contestTimelineText(detailContestSnapshot.timelines) }}</pre>
             </div>
           </div>
 
@@ -1281,12 +1227,6 @@ onMounted(() => {
               </template>
             </a-table>
             <a-empty v-else description="当前版本没有赛道变更" />
-            <div class="mt-3">
-              <p class="text-slate-400 mb-1">
-                赛道时间节点
-              </p>
-              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ trackTimelineText(detailContestSnapshot.trackTimelines) }}</pre>
-            </div>
           </div>
 
           <div class="p-3 border border-slate-200 rounded">
@@ -1487,29 +1427,20 @@ onMounted(() => {
           <h3 class="text-sm text-slate-900 font-semibold">
             同版本赛道/时间线
           </h3>
-          <div class="mt-3 gap-2 grid md:grid-cols-3">
+          <div class="mt-3 gap-2 grid md:grid-cols-2">
             <p class="text-slate-600">
               赛道数量：{{ detailContestSnapshot.tracks.length }}
             </p>
             <p class="text-slate-600">
               赛事时间节点：{{ detailContestSnapshot.timelines.length }}
             </p>
-            <p class="text-slate-600">
-              赛道时间节点：{{ detailContestSnapshot.trackTimelines.length }}
-            </p>
           </div>
-          <div class="mt-3 gap-3 grid md:grid-cols-2">
+          <div class="mt-3">
             <div>
               <p class="text-slate-400 mb-1">
                 时间节点
               </p>
               <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ contestTimelineText(detailContestSnapshot.timelines) }}</pre>
-            </div>
-            <div>
-              <p class="text-slate-400 mb-1">
-                赛道时间节点
-              </p>
-              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ trackTimelineText(detailContestSnapshot.trackTimelines) }}</pre>
             </div>
           </div>
         </section>
@@ -1565,7 +1496,7 @@ onMounted(() => {
     >
       <a-form v-if="selectedTrack" :model="selectedTrack" layout="vertical" class="text-xs">
         <div class="gap-3 grid md:grid-cols-2">
-          <a-form-item v-for="item in trackFormRows(selectedTrack)" :key="item.label" :label="item.label">
+          <a-form-item v-for="item in trackFormRows(selectedTrack, detailContestSnapshot)" :key="item.label" :label="item.label">
             <a-textarea
               :model-value="item.value"
               :auto-size="{ minRows: item.value.length > 80 ? 2 : 1, maxRows: 6 }"

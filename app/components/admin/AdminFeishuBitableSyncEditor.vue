@@ -193,15 +193,10 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
   contest: [
     { key: 'externalId', label: 'externalId（主键）' },
     { key: 'name', label: 'name（竞赛名称）' },
-    { key: 'organizer', label: 'organizer（主办方）' },
-    { key: 'coOrganizer', label: 'coOrganizer（协办/承办）' },
     { key: 'level', label: 'level（级别）' },
     { key: 'disciplines', label: 'disciplines（学科门类）' },
     { key: 'officialUrl', label: 'officialUrl（官网地址）' },
     { key: 'summary', label: 'summary（竞赛简介）' },
-    { key: 'participantRequirements', label: 'participantRequirements（参赛对象）' },
-    { key: 'teamRule', label: 'teamRule（组队规则）' },
-    { key: 'currentSeason', label: 'currentSeason（当前届次）' },
     { key: 'keywords', label: 'keywords（关键词）' },
     { key: 'timelineText', label: 'timelineText（时间节点）' },
     { key: 'recommendedFor', label: 'recommendedFor（适配人群）' },
@@ -217,7 +212,6 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'summary', label: 'summary（赛道简介）' },
     { key: 'participantRequirements', label: 'participantRequirements（参赛对象）' },
     { key: 'teamRule', label: 'teamRule（组队规则）' },
-    { key: 'currentSeason', label: 'currentSeason（当前届次）' },
     { key: 'timelineText', label: 'timelineText（时间节点）' },
     { key: 'suitableMajors', label: 'suitableMajors（相关专业）' },
     { key: 'awardRatio', label: 'awardRatio（获奖比例）' },
@@ -4805,7 +4799,7 @@ watch(() => props.selectedItemId, (value) => {
                         {{ option.label }}
                       </a-option>
                     </a-select>
-                    <a-select v-model="currentItemIssueFilters.reasonCode" size="small" allow-clear :popup-container="selectPopupContainer" class="min-w-[220px] max-w-[320px]">
+                    <a-select v-model="currentItemIssueFilters.reasonCode" size="small" allow-clear :popup-container="selectPopupContainer" class="max-w-[320px] min-w-[220px]">
                       <a-option v-for="option in currentItemIssueReasonOptions" :key="`current-issue-reason-${option.value || 'all'}`" :value="option.value">
                         <div class="flex flex-col">
                           <span>{{ option.label }}</span>
@@ -5285,7 +5279,7 @@ watch(() => props.selectedItemId, (value) => {
                     {{ option.label }}
                   </a-option>
                 </a-select>
-                <a-select v-model="currentItemLogIssueFilters.reasonCode" size="small" allow-clear :popup-container="selectPopupContainer" class="min-w-[220px] max-w-[320px]">
+                <a-select v-model="currentItemLogIssueFilters.reasonCode" size="small" allow-clear :popup-container="selectPopupContainer" class="max-w-[320px] min-w-[220px]">
                   <a-option v-for="option in currentItemLogIssueReasonOptions" :key="`log-issue-reason-${option.value || 'all'}`" :value="option.value">
                     <div class="flex flex-col">
                       <span>{{ option.label }}</span>

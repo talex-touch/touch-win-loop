@@ -215,7 +215,6 @@ function buildPublishFixArtifact(input: {
   const fixMap: Record<string, { module: AdminAgentArtifact['module'], action: string }> = {
     CONTEST_NAME_REQUIRED: { module: 'overview', action: '补全赛事名称。' },
     CONTEST_LEVEL_REQUIRED: { module: 'overview', action: '补全赛事级别。' },
-    CONTEST_ORGANIZER_REQUIRED: { module: 'overview', action: '补全主办方。' },
     CONTEST_OFFICIAL_URL_REQUIRED: { module: 'overview', action: '补全官网链接。' },
     CONTEST_SUMMARY_REQUIRED: { module: 'overview', action: '补全赛事简介。' },
     CONTEST_PARTICIPANT_REQUIREMENTS_REQUIRED: { module: 'overview', action: '补全参赛对象/限制。' },
@@ -224,7 +223,7 @@ function buildPublishFixArtifact(input: {
     CONTEST_TRACKS_REQUIRED: { module: 'tracks', action: '新增至少 1 个赛道。' },
     CONTEST_TIMELINES_REQUIRED: { module: 'timelines', action: '新增至少 1 条时间节点。' },
     CONTEST_RUBRICS_REQUIRED: { module: 'rubrics', action: '新增至少 1 条评分规则。' },
-    CONTEST_DUPLICATED: { module: 'overview', action: '核对名称+主办方+官网去重键。' },
+    CONTEST_DUPLICATED: { module: 'overview', action: '核对唯一编号和赛事名称。' },
   }
 
   const blockerFixes = input.blockers.map((item) => {
