@@ -2,6 +2,7 @@ import type { Queryable } from '~~/server/utils/db'
 import type {
   AdminContestListItem,
   AdminReleaseQueueResult,
+  ContestAuditAggregates,
   ContestLevel,
   ContestReleaseContestSnapshot,
   ContestReleaseResourceSnapshot,
@@ -11,6 +12,7 @@ import type {
   ContestReleaseTrackTimelineSnapshot,
   ContestStatus,
   ContestWorkflowTimelineItem,
+  ContestWorkflowTimelineResult,
   ContestWorkflowTimelineSource,
   FeishuBitableSyncCleanupLegacySummary,
   FeishuBitableSyncItemEntityType,
@@ -1294,6 +1296,139 @@ export async function listReleaseQueueResult(
   }
 }
 
+export async function listContestAuditAggregates(
+  db: Queryable,
+  input: {
+    versions: ReleaseVersion[]
+    actorUserId?: string
+    recentLimit?: number
+    reviewerLimit?: number
+    windowDays?: ReleaseQueueInsightsWindowDays
+    rankingMode?: ReleaseQueueReviewerRankingMode
+  },
+): Promise<ContestAuditAggregates> {
+  const reviewActions: ReleaseReviewAction[] = [
+    'first_review_approved',
+    'second_review_claimed',
+    'second_review_approved',
+    'rejected',
+    'published',
+  ]
+  const rankingMode = input.rankingMode || 'total_actions'
+  const windowDays = input.windowDays === 7 || input.windowDays === 30 ? input.windowDays : 0
+  const currentUserId = normalizeText(input.actorUserId)
+  const versionIds = input.versions.map(item => item.id).filter(Boolean)
+  const reviewerLimit = Math.max(1, Math.min(20, normalizeInteger(input.reviewerLimit || 8, 8)))
+  const recentLimit = Math.max(1, Math.min(20, normalizeInteger(input.recentLimit || 8, 8)))
+  const rankingOrderSql = rankingMode === 'second_review_approved'
+    ? 'ORDER BY second_review_approved_count DESC, total_actions DESC, published_count DESC, MAX(l.created_at) DESC'
+    : rankingMode === 'published'
+      ? 'ORDER BY published_count DESC, total_actions DESC, second_review_approved_count DESC, MAX(l.created_at) DESC'
+      : 'ORDER BY total_actions DESC, published_count DESC, second_review_approved_count DESC, MAX(l.created_at) DESC'
+
+  const emptyCurrentUserResult = currentUserId
+    ? await db.query<ReleaseQueueCurrentUserRow>(
+        `SELECT id, username, avatar_url
+         FROM users
+         WHERE id = $1
+         LIMIT 1`,
+        [currentUserId],
+      )
+    : { rows: [] as ReleaseQueueCurrentUserRow[] }
+
+  if (versionIds.length === 0) {
+    return {
+      windowDays,
+      rankingMode,
+      currentUser: emptyCurrentUserResult.rows[0] ? createZeroReleaseQueueReviewerStats(emptyCurrentUserResult.rows[0]) : null,
+      reviewers: [],
+      recentReviews: [],
+    }
+  }
+
+  const where: string[] = [
+    'l.action = ANY($1::TEXT[])',
+    'rv.id = ANY($2::TEXT[])',
+  ]
+  const values: unknown[] = [reviewActions, versionIds]
+
+  if (windowDays > 0) {
+    values.push(windowDays)
+    where.push(`l.created_at >= NOW() - ($${values.length}::INT * INTERVAL '1 day')`)
+  }
+
+  const reviewerStatsSql = `SELECT
+        l.actor_user_id,
+        u.username AS actor_name,
+        u.avatar_url,
+        SUM(CASE WHEN l.action = 'first_review_approved' THEN 1 ELSE 0 END)::INT AS first_review_approved_count,
+        SUM(CASE WHEN l.action = 'second_review_claimed' THEN 1 ELSE 0 END)::INT AS second_review_claimed_count,
+        SUM(CASE WHEN l.action = 'second_review_approved' THEN 1 ELSE 0 END)::INT AS second_review_approved_count,
+        SUM(CASE WHEN l.action = 'rejected' THEN 1 ELSE 0 END)::INT AS rejected_count,
+        SUM(CASE WHEN l.action = 'published' THEN 1 ELSE 0 END)::INT AS published_count,
+        COUNT(*)::INT AS total_actions,
+        MAX(l.created_at)::TEXT AS last_action_at
+       FROM release_review_logs l
+       JOIN release_versions rv ON rv.id = l.release_version_id
+       LEFT JOIN users u ON u.id = l.actor_user_id
+       WHERE ${where.join(' AND ')}
+         AND COALESCE(l.actor_user_id, '') <> ''`
+
+  const [reviewersResult, recentResult, currentUserStatsResult] = await Promise.all([
+    db.query<ReleaseQueueReviewerStatsRow>(
+      `${reviewerStatsSql}
+       GROUP BY l.actor_user_id, u.username, u.avatar_url
+       ${rankingOrderSql}
+       LIMIT ${reviewerLimit}`,
+      values,
+    ),
+    db.query<ReleaseQueueRecentReviewRow>(
+      `SELECT
+        l.id,
+        l.release_version_id,
+        rv.scope_kind,
+        rv.scope_id,
+        rv.scope_title,
+        rv.version_number,
+        l.actor_user_id,
+        u.username AS actor_name,
+        u.avatar_url,
+        l.action,
+        l.created_at::TEXT
+       FROM release_review_logs l
+       JOIN release_versions rv ON rv.id = l.release_version_id
+       LEFT JOIN users u ON u.id = l.actor_user_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY l.created_at DESC
+       LIMIT ${recentLimit}`,
+      values,
+    ),
+    currentUserId
+      ? db.query<ReleaseQueueReviewerStatsRow>(
+          `${reviewerStatsSql}
+           AND l.actor_user_id = $${values.length + 1}
+           GROUP BY l.actor_user_id, u.username, u.avatar_url
+           LIMIT 1`,
+          [...values, currentUserId],
+        )
+      : Promise.resolve({ rows: [] } as { rows: ReleaseQueueReviewerStatsRow[] }),
+  ])
+
+  const currentUser = currentUserStatsResult.rows[0]
+    ? mapReleaseQueueReviewerStats(currentUserStatsResult.rows[0])
+    : emptyCurrentUserResult.rows[0]
+      ? createZeroReleaseQueueReviewerStats(emptyCurrentUserResult.rows[0])
+      : null
+
+  return {
+    windowDays,
+    rankingMode,
+    currentUser,
+    reviewers: reviewersResult.rows.map(mapReleaseQueueReviewerStats),
+    recentReviews: recentResult.rows.map(mapReleaseQueueRecentReviewItem),
+  }
+}
+
 function matchAdminContestListQuery(item: AdminContestListItem, query: string): boolean {
   const normalized = normalizeText(query).toLowerCase()
   if (!normalized)
@@ -1635,11 +1770,14 @@ export async function listContestWorkflowTimeline(
   db: Queryable,
   input: {
     contestId: string
+    actorUserId?: string
     page?: number
     pageSize?: number
     action?: string
+    windowDays?: ReleaseQueueInsightsWindowDays
+    rankingMode?: ReleaseQueueReviewerRankingMode
   },
-): Promise<{ items: ContestWorkflowTimelineItem[], total: number, page: number, pageSize: number }> {
+): Promise<ContestWorkflowTimelineResult> {
   const page = Math.max(1, normalizeInteger(input.page || 1, 1))
   const pageSize = Math.max(1, Math.min(100, normalizeInteger(input.pageSize || 20, 20)))
   const actionFilter = normalizeText(input.action).toLowerCase()
@@ -1665,9 +1803,10 @@ export async function listContestWorkflowTimeline(
 
   const versionIds = versions.map(item => item.id)
   const versionMap = new Map(versions.map(item => [item.id, item]))
-  const releaseLogResult = versionIds.length
-    ? await db.query<ReleaseReviewLogRow>(
-        `SELECT
+  const [releaseLogResult, aggregates] = await Promise.all([
+    versionIds.length
+      ? db.query<ReleaseReviewLogRow>(
+          `SELECT
           id,
           release_version_id,
           actor_user_id,
@@ -1677,9 +1816,16 @@ export async function listContestWorkflowTimeline(
          FROM release_review_logs
          WHERE release_version_id = ANY($1::TEXT[])
          ORDER BY created_at DESC`,
-        [versionIds],
-      )
-    : { rows: [] as ReleaseReviewLogRow[] }
+          [versionIds],
+        )
+      : Promise.resolve({ rows: [] as ReleaseReviewLogRow[] }),
+    listContestAuditAggregates(db, {
+      versions,
+      actorUserId: input.actorUserId,
+      windowDays: input.windowDays,
+      rankingMode: input.rankingMode,
+    }),
+  ])
 
   const items = [
     ...auditResult.rows.map(mapAuditRowToWorkflowTimelineItem),
@@ -1708,6 +1854,7 @@ export async function listContestWorkflowTimeline(
 
   const offset = (page - 1) * pageSize
   return {
+    aggregates,
     items: items.slice(offset, offset + pageSize),
     total: items.length,
     page,

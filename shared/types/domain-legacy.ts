@@ -2130,6 +2130,22 @@ export interface ReleaseQueueInsights {
   recentReviews: ReleaseQueueRecentReviewItem[]
 }
 
+export interface ContestAuditAggregates {
+  windowDays: ReleaseQueueInsightsWindowDays
+  rankingMode: ReleaseQueueReviewerRankingMode
+  currentUser: ReleaseQueueReviewerStats | null
+  reviewers: ReleaseQueueReviewerStats[]
+  recentReviews: ReleaseQueueRecentReviewItem[]
+}
+
+export interface ContestWorkflowTimelineResult {
+  items: ContestWorkflowTimelineItem[]
+  total: number
+  page: number
+  pageSize: number
+  aggregates: ContestAuditAggregates
+}
+
 export interface AdminReleaseQueueResult {
   items: ReleaseVersion[]
   total: number

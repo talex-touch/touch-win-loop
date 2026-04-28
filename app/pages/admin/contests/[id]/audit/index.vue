@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import type { ApiResponse, ContestWorkflowTimelineItem } from '~~/shared/types/domain'
+import type {
+  ApiResponse,
+  ContestAuditAggregates,
+  ContestWorkflowTimelineItem,
+  ContestWorkflowTimelineResult,
+  ReleaseQueueInsightsWindowDays,
+  ReleaseQueueRecentReviewItem,
+  ReleaseQueueReviewerRankingMode,
+  ReleaseQueueReviewerStats,
+} from '~~/shared/types/domain'
 
 definePageMeta({
   layout: 'admin',
 })
-
-interface AuditPagePayload {
-  items: ContestWorkflowTimelineItem[]
-  total: number
-  page: number
-  pageSize: number
-}
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
@@ -29,24 +31,60 @@ const actionFilter = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const windowDays = ref<ReleaseQueueInsightsWindowDays>(0)
+const rankingMode = ref<ReleaseQueueReviewerRankingMode>('total_actions')
+const aggregates = ref<ContestAuditAggregates>(createEmptyAggregates())
+
+const windowOptions: Array<{ value: ReleaseQueueInsightsWindowDays, label: string }> = [
+  { value: 0, label: '累计' },
+  { value: 7, label: '近 7 天' },
+  { value: 30, label: '近 30 天' },
+]
+
+const rankingOptions: Array<{ value: ReleaseQueueReviewerRankingMode, label: string }> = [
+  { value: 'total_actions', label: '按总审核' },
+  { value: 'second_review_approved', label: '按二审通过' },
+  { value: 'published', label: '按发布次数' },
+]
+
+const currentUserStats = computed(() => aggregates.value.currentUser)
+const reviewerRanking = computed(() => aggregates.value.reviewers || [])
+const recentReviews = computed(() => aggregates.value.recentReviews || [])
+const windowLabel = computed(() => windowOptions.find(item => item.value === windowDays.value)?.label || '累计')
+
+function createEmptyAggregates(): ContestAuditAggregates {
+  return {
+    windowDays: 0,
+    rankingMode: 'total_actions',
+    currentUser: null,
+    reviewers: [],
+    recentReviews: [],
+  }
+}
 
 async function loadLogs() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await unsafeFetch<ApiResponse<AuditPagePayload>>(endpoint(`/admin/contests/${contestId.value}/audit`), {
+    const response = await unsafeFetch<ApiResponse<ContestWorkflowTimelineResult>>(endpoint(`/admin/contests/${contestId.value}/audit`), {
       query: {
         action: actionFilter.value.trim(),
         page: page.value,
         pageSize: pageSize.value,
+        rankingMode: rankingMode.value,
+        windowDays: windowDays.value,
       },
     })
     logs.value = response.data.items || []
     total.value = Number(response.data.total || 0)
+    aggregates.value = response.data.aggregates || createEmptyAggregates()
+    rankingMode.value = aggregates.value.rankingMode
+    windowDays.value = aggregates.value.windowDays
   }
   catch (error: any) {
     logs.value = []
     total.value = 0
+    aggregates.value = createEmptyAggregates()
     errorText.value = String(error?.data?.message || '流程时间线加载失败。')
   }
   finally {
@@ -61,6 +99,42 @@ function formatTime(value?: string): string {
   if (Number.isNaN(date.getTime()))
     return value
   return date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
+}
+
+function reviewActionLabel(action: ReleaseQueueRecentReviewItem['action']): string {
+  if (action === 'sync_generated')
+    return '飞书同步生成草稿'
+  if (action === 'manual_generated')
+    return '人工生成草稿'
+  if (action === 'sync_draft_overwritten')
+    return '飞书同步覆盖草稿'
+  if (action === 'first_review_approved')
+    return '初审通过'
+  if (action === 'second_review_claimed')
+    return '领取二审'
+  if (action === 'second_review_approved')
+    return '二审通过'
+  if (action === 'rejected')
+    return '驳回'
+  return '终审/发布'
+}
+
+function reviewActionColor(action: ReleaseQueueRecentReviewItem['action']): string {
+  if (action === 'first_review_approved')
+    return 'gold'
+  if (action === 'second_review_claimed')
+    return 'arcoblue'
+  if (action === 'second_review_approved')
+    return 'green'
+  if (action === 'rejected')
+    return 'red'
+  if (action === 'published')
+    return 'purple'
+  return 'gray'
+}
+
+function reviewerMetricText(item: ReleaseQueueReviewerStats): string {
+  return `总 ${item.totalActions} / 二审 ${item.secondReviewApprovedCount} / 终审 ${item.publishedCount}`
 }
 
 function sourceLabel(source: ContestWorkflowTimelineItem['source']): string {
@@ -87,7 +161,7 @@ function sourceColor(source: ContestWorkflowTimelineItem['source']): string {
   return 'gray'
 }
 
-watch([page, pageSize], () => {
+watch([page, pageSize, rankingMode, windowDays], () => {
   void loadLogs()
 })
 
@@ -111,6 +185,138 @@ onMounted(loadLogs)
         </button>
       </div>
     </section>
+
+    <div class="gap-4 grid lg:grid-cols-3">
+      <section class="p-4 border border-slate-200 rounded-lg bg-white">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm text-slate-900 font-semibold">
+            我的审核统计
+          </h2>
+          <span class="text-[11px] text-slate-500">{{ windowLabel }}</span>
+        </div>
+        <div v-if="currentUserStats" class="text-xs mt-3 gap-3 grid grid-cols-3">
+          <div>
+            <p class="text-slate-400">
+              初审通过
+            </p>
+            <p class="text-base text-slate-900 font-semibold mt-1">
+              {{ currentUserStats.firstReviewApprovedCount }}
+            </p>
+          </div>
+          <div>
+            <p class="text-slate-400">
+              二审通过
+            </p>
+            <p class="text-base text-slate-900 font-semibold mt-1">
+              {{ currentUserStats.secondReviewApprovedCount }}
+            </p>
+          </div>
+          <div>
+            <p class="text-slate-400">
+              终审/发布
+            </p>
+            <p class="text-base text-slate-900 font-semibold mt-1">
+              {{ currentUserStats.publishedCount }}
+            </p>
+          </div>
+          <div>
+            <p class="text-slate-400">
+              领取二审
+            </p>
+            <p class="text-base text-slate-900 font-semibold mt-1">
+              {{ currentUserStats.secondReviewClaimedCount }}
+            </p>
+          </div>
+          <div>
+            <p class="text-slate-400">
+              驳回
+            </p>
+            <p class="text-base text-slate-900 font-semibold mt-1">
+              {{ currentUserStats.rejectedCount }}
+            </p>
+          </div>
+          <div>
+            <p class="text-slate-400">
+              累计动作
+            </p>
+            <p class="text-base text-slate-900 font-semibold mt-1">
+              {{ currentUserStats.totalActions }}
+            </p>
+          </div>
+        </div>
+        <p v-if="currentUserStats?.lastActionAt" class="text-[11px] text-slate-500 mt-3">
+          最近参与：{{ formatTime(currentUserStats.lastActionAt) }}
+        </p>
+        <a-empty v-if="!currentUserStats && !loading" description="暂无个人审核记录" class="py-4" />
+      </section>
+
+      <section class="p-4 border border-slate-200 rounded-lg bg-white">
+        <div class="flex gap-2 items-center justify-between">
+          <h2 class="text-sm text-slate-900 font-semibold">
+            管理员审核排名
+          </h2>
+          <a-select v-model="rankingMode" size="mini" class="w-[112px]">
+            <a-option v-for="option in rankingOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </a-option>
+          </a-select>
+        </div>
+        <div v-if="reviewerRanking.length" class="mt-3 space-y-2">
+          <div v-for="(reviewer, index) in reviewerRanking" :key="reviewer.userId" class="flex gap-2 items-center">
+            <div class="text-[11px] text-slate-400 font-medium w-5">
+              {{ index + 1 }}
+            </div>
+            <a-avatar :size="24" :image-url="reviewer.avatarUrl || undefined">
+              {{ reviewer.actorName.slice(0, 1) }}
+            </a-avatar>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs text-slate-900 font-medium truncate">
+                {{ reviewer.actorName }}
+              </p>
+              <p class="text-[11px] text-slate-500">
+                {{ reviewerMetricText(reviewer) }}
+              </p>
+            </div>
+          </div>
+        </div>
+        <a-empty v-else-if="!loading" description="暂无审核排名" class="py-4" />
+      </section>
+
+      <section class="p-4 border border-slate-200 rounded-lg bg-white">
+        <div class="flex gap-2 items-center justify-between">
+          <h2 class="text-sm text-slate-900 font-semibold">
+            近期审核流
+          </h2>
+          <a-select v-model="windowDays" size="mini" class="w-[96px]">
+            <a-option v-for="option in windowOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </a-option>
+          </a-select>
+        </div>
+        <div v-if="recentReviews.length" class="mt-3 space-y-3">
+          <div v-for="item in recentReviews" :key="item.id" class="space-y-1">
+            <div class="flex gap-2 items-center">
+              <a-avatar :size="22" :image-url="item.avatarUrl || undefined">
+                {{ item.actorName.slice(0, 1) }}
+              </a-avatar>
+              <p class="text-xs text-slate-900 font-medium flex-1 min-w-0 truncate">
+                {{ item.actorName }}
+              </p>
+              <a-tag size="small" :color="reviewActionColor(item.action)">
+                {{ reviewActionLabel(item.action) }}
+              </a-tag>
+            </div>
+            <p class="text-[11px] text-slate-600 truncate">
+              {{ item.scopeTitle || item.scopeId }} · V{{ item.versionNumber }}
+            </p>
+            <p class="text-[11px] text-slate-500">
+              {{ formatTime(item.createdAt) }}
+            </p>
+          </div>
+        </div>
+        <a-empty v-else-if="!loading" description="暂无近期审核" class="py-4" />
+      </section>
+    </div>
 
     <section class="p-4 border border-slate-200 rounded-lg bg-white">
       <div class="gap-2 grid md:grid-cols-[1fr_auto]">
