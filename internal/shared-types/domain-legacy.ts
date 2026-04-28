@@ -1878,6 +1878,7 @@ export interface ReleaseSyncSource {
   syncItemId: string
   syncRunId?: string | null
   recordId?: string | null
+  preservedFields?: string[]
 }
 
 export interface ContestReleaseContestSnapshot {

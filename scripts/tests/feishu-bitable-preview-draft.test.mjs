@@ -29,14 +29,15 @@ describe('飞书多维表格版本草稿链路', () => {
     const componentSource = await readSource('app/components/admin/AdminFeishuBitableSyncEditor.vue')
     const configSource = await readSource('shared/utils/feishu-bitable-sync-config.ts')
     const serviceSource = await readSource('server/services/feishu/bitable-sync.ts')
+    const contestMappingBlock = componentSource.match(/const MAPPING_OPTIONS:[\s\S]*?contest:\s*\[([\s\S]*?)\],\n\s{2}track:/)?.[1] || ''
 
     assert.match(componentSource, /timelineText（时间节点）/, '竞赛映射未使用统一时间节点字段')
     assert.match(componentSource, /recommendedFor（适配人群）/, '竞赛映射缺少适配人群字段')
-    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*organizer（主办方）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露主办方字段')
-    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*coOrganizer（协办\/承办）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露协办/承办字段')
-    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*participantRequirements（参赛对象）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露参赛对象字段')
-    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*teamRule（组队规则）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露组队规则字段')
-    assert.doesNotMatch(componentSource, /contest:\s*\[[\s\S]*currentSeason（当前届次）[\s\S]*\],\n\s{2}track:/, '竞赛库映射不应暴露当前届次字段')
+    assert.doesNotMatch(contestMappingBlock, /organizer（主办方）/, '竞赛库映射不应暴露主办方字段')
+    assert.doesNotMatch(contestMappingBlock, /coOrganizer（协办\/承办）/, '竞赛库映射不应暴露协办/承办字段')
+    assert.doesNotMatch(contestMappingBlock, /participantRequirements（参赛对象）/, '竞赛库映射不应暴露参赛对象字段')
+    assert.doesNotMatch(contestMappingBlock, /teamRule（组队规则）/, '竞赛库映射不应暴露组队规则字段')
+    assert.doesNotMatch(contestMappingBlock, /currentSeason（当前届次）/, '竞赛库映射不应暴露当前届次字段')
     assert.match(configSource, /if \(entityType === 'contest'\) \{[\s\S]*timelineText:\s*''[\s\S]*recommendedFor:\s*''/, '竞赛默认模板未切到 timelineText / recommendedFor')
     assert.doesNotMatch(configSource, /if \(entityType === 'contest'\) \{[\s\S]*organizer:\s*''[\s\S]*\n\s{2}if \(entityType === 'track'\)/, '竞赛默认模板不应包含主办方字段')
     assert.doesNotMatch(configSource, /if \(entityType === 'contest'\) \{[\s\S]*(coOrganizer|participantRequirements|teamRule|currentSeason):\s*''[\s\S]*\n\s{2}if \(entityType === 'track'\)/, '竞赛默认模板不应包含飞书竞赛库没有的字段')
@@ -127,6 +128,21 @@ describe('飞书多维表格版本草稿链路', () => {
     assert.doesNotMatch(configSource, /trackRelationInfo:\s*''/, '资料默认模板仍保留旧赛道关联文本字段')
     assert.doesNotMatch(componentSource, /judgeType（评委类型）/, '人设模板仍保留旧评委类型字段')
     assert.doesNotMatch(configSource, /judgeType:\s*''/, '人设默认模板仍保留旧评委类型字段')
+  })
+
+  it('映射 Drawer 会直接解释当前库支持字段、旧字段残留和本地保留字段', async () => {
+    const componentSource = await readSource('app/components/admin/AdminFeishuBitableSyncEditor.vue')
+    const configSource = await readSource('shared/utils/feishu-bitable-sync-config.ts')
+
+    assert.match(configSource, /export function listDefaultSyncItemTargetFieldKeys/, '共享配置缺少默认 target field 列表 helper')
+    assert.match(componentSource, /字段边界/, '映射 Drawer 未展示字段边界视图')
+    assert.match(componentSource, /当前实体支持/, '字段边界视图未展示当前实体支持字段')
+    assert.match(componentSource, /配置里不属于当前库/, '字段边界视图未展示旧字段残留')
+    assert.match(componentSource, /本地\/发布保留/, '字段边界视图未展示本地保留字段')
+    assert.match(componentSource, /contest\.organizer 不从 Feishu contest 库写回/, '字段边界未说明 contest.organizer 的写回边界')
+    assert.match(componentSource, /track\.organizer 是支持字段/, '字段边界未说明 track.organizer 是支持字段')
+    assert.match(componentSource, /currentSeason 不作为 Feishu target/, '字段边界未说明 currentSeason 不作为 Feishu target')
+    assert.match(componentSource, /整理为当前实体模板/, '旧字段残留提示未指向现有清理动作')
   })
 
   it('后台会提示人设同步已抓取源行但零产出的排查方向', async () => {

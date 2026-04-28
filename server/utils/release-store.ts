@@ -61,6 +61,7 @@ import {
   listPolicyLibraryItems,
   patchPolicyLibraryItem,
 } from '~~/server/utils/policy-store'
+import { mergeContestManualPreservedFields } from '~~/server/utils/release-contest-preservation'
 import {
   sanitizeContestReleaseResourceMetadata,
   sanitizeContestReleaseResourceSnapshot,
@@ -245,6 +246,7 @@ function normalizeReleaseSyncSource(value: unknown): ReleaseSyncSource | undefin
     syncItemId,
     syncRunId: normalizeText(source.syncRunId) || null,
     recordId: normalizeText(source.recordId) || null,
+    preservedFields: normalizeStringArray(source.preservedFields),
   }
 }
 
@@ -252,12 +254,17 @@ function buildReleaseSyncSource(input: {
   syncItemId: string
   syncRunId?: string | null
   recordId?: string | null
+  preservedFields?: string[]
 }): ReleaseSyncSource {
-  return {
+  const preservedFields = normalizeStringArray(input.preservedFields)
+  const source: ReleaseSyncSource = {
     syncItemId: normalizeText(input.syncItemId),
     syncRunId: normalizeText(input.syncRunId) || null,
     recordId: normalizeText(input.recordId) || null,
   }
+  if (preservedFields.length > 0)
+    source.preservedFields = preservedFields
+  return source
 }
 
 function attachReleaseSyncSource<T extends { syncSource?: ReleaseSyncSource }>(
@@ -266,6 +273,7 @@ function attachReleaseSyncSource<T extends { syncSource?: ReleaseSyncSource }>(
     syncItemId: string
     syncRunId?: string | null
     recordId?: string | null
+    preservedFields?: string[]
   },
 ): T {
   return {
@@ -1797,8 +1805,13 @@ async function buildContestLiveBaseSnapshot(
     externalId: contestExternalId || detail.contest.id,
     name: detail.contest.name,
     level: detail.contest.level as ContestLevel,
+    organizer: detail.contest.organizer || '',
+    coOrganizer: detail.contest.coOrganizer || '',
     officialUrl: detail.contest.officialUrl || '',
     summary: detail.contest.summary || '',
+    participantRequirements: detail.contest.participantRequirements || '',
+    teamRule: detail.contest.teamRule || '',
+    currentSeason: detail.contest.currentSeason || '',
     disciplines: detail.contest.disciplines || [],
     aliases: detail.contest.aliases || [],
     keywords: detail.contest.keywords || [],
@@ -2421,8 +2434,15 @@ export async function upsertContestReleaseDraft(
 
   if (input.entityType === 'contest') {
     existed = Boolean(base.contest)
-    current.contest = input.contest
-      ? attachReleaseSyncSource(input.contest, syncSource)
+    const mergedContest = input.contest
+      ? mergeContestManualPreservedFields(input.contest, current.contest || base.contest)
+      : null
+    const preservedContestFields = mergedContest?.preservedFields || []
+    current.contest = mergedContest
+      ? attachReleaseSyncSource(mergedContest.contest, {
+          ...syncSource,
+          preservedFields: preservedContestFields,
+        })
       : null
     current.timelines = [
       ...current.timelines.filter(item =>
@@ -3419,6 +3439,11 @@ async function publishContestRelease(
   const effectiveMetadata = resolveContestReleaseEffectiveMetadata(snapshot)
   if (snapshot.contest) {
     if (contestId) {
+      const liveContestBeforePublish = await getContestDetail(db, {
+        contestId,
+        includeInternal: true,
+      })
+      const liveContest = liveContestBeforePublish?.contest
       const patched = await patchAdminContest(db, {
         actorUserId: input.actorUserId,
         contestId,
@@ -3428,8 +3453,8 @@ async function publishContestRelease(
           level: snapshot.contest.level,
           officialUrl: normalizeText(snapshot.contest.officialUrl),
           summary: normalizeText(snapshot.contest.summary),
-          participantRequirements: effectiveMetadata.participantRequirements,
-          currentSeason: effectiveMetadata.currentSeason,
+          participantRequirements: effectiveMetadata.participantRequirements || normalizeText(liveContest?.participantRequirements),
+          currentSeason: effectiveMetadata.currentSeason || normalizeText(liveContest?.currentSeason),
           disciplines: snapshot.contest.disciplines || [],
           aliases: snapshot.contest.aliases || [],
           keywords: snapshot.contest.keywords || [],

@@ -28,11 +28,12 @@ import type {
   FeishuTaskLatestRunSummary,
   FeishuTaskScheduleMode,
 } from '~~/shared/types/domain'
-import { guessFeishuBitableFieldName } from '~~/shared/utils/feishu-bitable-field-guess'
+import { guessFeishuBitableFieldName, normalizeFeishuBitableFieldGuessKey } from '~~/shared/utils/feishu-bitable-field-guess'
 import {
   buildDefaultSyncItemConfig,
   buildSuggestedSyncItemName,
   isSyncItemConfigEmpty,
+  listDefaultSyncItemTargetFieldKeys,
   listRequiredSyncItemFieldGroups,
   suggestSyncItemEntityType,
 } from '~~/shared/utils/feishu-bitable-sync-config'
@@ -46,6 +47,25 @@ interface MappingWizardBinding {
   targetKey: string
   sourceField: string
   transform: string
+}
+
+interface MappingSchemaBoundarySupportedField {
+  key: string
+  label: string
+  required: boolean
+}
+
+interface MappingSchemaBoundaryConfiguredField {
+  key: string
+  label: string
+  sourceText: string
+}
+
+interface MappingSchemaBoundaryLocalField {
+  key: string
+  label: string
+  description: string
+  matchedFields: string[]
 }
 
 interface SelectOption<T extends string = string> {
@@ -277,6 +297,60 @@ const ENTITY_TYPE_OPTIONS: SelectOption<FeishuBitableSyncItemEntityType>[] = [
   { value: 'policy', label: '政策' },
   { value: 'track_timeline', label: '赛道时间线（兼容）' },
 ]
+
+const LOCAL_SCHEMA_BOUNDARY_FIELDS: Partial<Record<FeishuBitableSyncItemEntityType, Array<{
+  key: string
+  label: string
+  description: string
+  aliases: string[]
+}>>> = {
+  track: [
+    {
+      key: 'organizer',
+      label: 'organizer（主办方）',
+      description: 'track.organizer 是支持字段，会从赛道库写入赛道主办方。',
+      aliases: ['organizer', '主办方', '主办单位', '主办'],
+    },
+    {
+      key: 'currentSeason',
+      label: 'currentSeason（当前届次）',
+      description: 'currentSeason 不作为 Feishu target；赛道库不会写回竞赛届次，发布侧按时间线年份兜底。',
+      aliases: ['currentSeason', '当前届次', '届次', '当前赛季', '赛季'],
+    },
+  ],
+  contest: [
+    {
+      key: 'organizer',
+      label: 'organizer（主办方）',
+      description: 'contest.organizer 不从 Feishu contest 库写回；本地人工保留，赛道主办方请用 track.organizer。',
+      aliases: ['organizer', '主办方', '主办单位', '主办'],
+    },
+    {
+      key: 'coOrganizer',
+      label: 'coOrganizer（协办方）',
+      description: '竞赛协办方属于本地人工保留字段，当前 Feishu contest 库不会写回。',
+      aliases: ['coOrganizer', '协办方', '协办单位', '协办'],
+    },
+    {
+      key: 'teamRule',
+      label: 'teamRule（组队规则）',
+      description: '竞赛组队规则属于本地人工保留字段，当前 Feishu contest 库不会写回。',
+      aliases: ['teamRule', '组队规则', '组队要求'],
+    },
+    {
+      key: 'participantRequirements',
+      label: 'participantRequirements（参赛对象）',
+      description: '竞赛参赛对象不会从 Feishu contest 库直接写回；发布时会从赛道 participantRequirements 聚合兜底。',
+      aliases: ['participantRequirements', '参赛对象', '参赛要求', '适用对象'],
+    },
+    {
+      key: 'currentSeason',
+      label: 'currentSeason（当前届次）',
+      description: 'currentSeason 不作为 Feishu target；发布侧目前通过时间线年份兜底，不从 Feishu 的 currentSeason 列直接写回。',
+      aliases: ['currentSeason', '当前届次', '届次', '当前赛季', '赛季'],
+    },
+  ],
+}
 
 const SCHEDULE_MODE_OPTIONS: SelectOption<FeishuTaskScheduleMode>[] = [
   { value: 'interval', label: '固定间隔' },
@@ -872,21 +946,28 @@ const selectPopupContainer = computed(() => 'body')
 const mappingSelectPopupContainer = computed(() => 'body')
 const writebackSelectPopupContainer = computed(() => 'body')
 const autoSyncSelectPopupContainer = computed(() => 'body')
+const schemaBoundarySupportedFields = computed<MappingSchemaBoundarySupportedField[]>(() => {
+  return listDefaultSyncItemTargetFieldKeys(itemForm.entityType).map(key => ({
+    key,
+    label: mappingOptionLabelByEntityType(itemForm.entityType, key),
+    required: isRequiredMappingField(itemForm.entityType, key),
+  }))
+})
+const configuredMappingTargetFields = computed(() => buildConfiguredMappingTargetFields(parseJsonTextLoose(itemForm.mappingText)))
+const unsupportedConfiguredMappingFields = computed(() => {
+  const supportedKeys = new Set(schemaBoundarySupportedFields.value.map(item => item.key))
+  return configuredMappingTargetFields.value.filter(item => !supportedKeys.has(item.key))
+})
+const localSchemaBoundaryFields = computed<MappingSchemaBoundaryLocalField[]>(() => {
+  return (LOCAL_SCHEMA_BOUNDARY_FIELDS[itemForm.entityType] || []).map(item => ({
+    key: item.key,
+    label: item.label,
+    description: item.description,
+    matchedFields: findInspectionFieldsByAliases(item.aliases),
+  }))
+})
 const unexpectedConfiguredMappingLabels = computed(() => {
-  const parsed = pickMappingFromRaw(parseJsonTextLoose(itemForm.mappingText))
-  const supportedKeys = new Set(activeMappingOptions.value.map(item => item.key))
-  const configuredKeys = new Set<string>()
-  for (const key of Object.keys(parsed.fieldMap))
-    configuredKeys.add(key)
-  if (parsed.externalIdField)
-    configuredKeys.add('externalId')
-  if (parsed.contestExternalIdField)
-    configuredKeys.add('contestExternalId')
-  if (parsed.trackExternalIdField)
-    configuredKeys.add('trackExternalId')
-  return [...configuredKeys]
-    .filter(key => !supportedKeys.has(key))
-    .map(key => mappingOptionLabelByEntityType(itemForm.entityType, key))
+  return unsupportedConfiguredMappingFields.value.map(item => item.label)
 })
 
 function optionFieldGroups(entityType: FeishuBitableSyncItemEntityType) {
@@ -2479,6 +2560,44 @@ function pickMappingFromRaw(raw: Record<string, unknown>) {
     contestExternalIdField,
     trackExternalIdField,
   }
+}
+
+function buildConfiguredMappingTargetFields(raw: Record<string, unknown>): MappingSchemaBoundaryConfiguredField[] {
+  const parsed = pickMappingFromRaw(raw)
+  const sourceByKey = new Map<string, string>()
+  if (parsed.externalIdField)
+    sourceByKey.set('externalId', parsed.externalIdField)
+  if (parsed.contestExternalIdField)
+    sourceByKey.set('contestExternalId', parsed.contestExternalIdField)
+  if (parsed.trackExternalIdField)
+    sourceByKey.set('trackExternalId', parsed.trackExternalIdField)
+  for (const [key, sourceField] of Object.entries(parsed.fieldMap)) {
+    if (sourceField)
+      sourceByKey.set(key, sourceField)
+  }
+
+  const keys = new Set([...sourceByKey.keys(), ...Object.keys(parsed.computedMap)])
+  return [...keys].map((key) => {
+    const sourceField = sourceByKey.get(key) || ''
+    const transform = parsed.computedMap[key] || ''
+    const sourceText = sourceField && transform
+      ? `${sourceField} / transform`
+      : sourceField || (transform ? 'transform' : '-')
+    return {
+      key,
+      label: mappingOptionLabelByEntityType(itemForm.entityType, key),
+      sourceText,
+    }
+  })
+}
+
+function findInspectionFieldsByAliases(aliases: string[]): string[] {
+  const aliasSet = new Set(aliases.map(alias => normalizeFeishuBitableFieldGuessKey(alias)).filter(Boolean))
+  if (!aliasSet.size)
+    return []
+  return fieldInspection.value
+    .map(field => toText(field.fieldName))
+    .filter(fieldName => fieldName && aliasSet.has(normalizeFeishuBitableFieldGuessKey(fieldName)))
 }
 
 function buildManualRunRelationGuardText(
@@ -5388,6 +5507,92 @@ watch(() => props.selectedItemId, (value) => {
             </div>
           </div>
           <a-empty v-else description="当前视图暂无可巡检字段" />
+        </section>
+
+        <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+          <div>
+            <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+              字段边界
+            </h3>
+            <p class="text-[11px] text-slate-500 m-0 mt-1">
+              这里只解释当前 entityType 的字段边界，不改变同步配置。contest.organizer 不从 Feishu contest 库写回；track.organizer 是支持字段；currentSeason 不作为 Feishu target。
+            </p>
+          </div>
+          <div class="gap-3 grid lg:grid-cols-3">
+            <div class="p-3 border border-slate-200 rounded space-y-2">
+              <div class="flex gap-2 items-center justify-between">
+                <h4 class="text-[11px] text-slate-900 font-semibold m-0">
+                  当前实体支持
+                </h4>
+                <span class="text-[10px] text-slate-400">{{ schemaBoundarySupportedFields.length }} 项</span>
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                <a-tag
+                  v-for="field in schemaBoundarySupportedFields"
+                  :key="field.key"
+                  size="small"
+                  :color="field.required ? 'gold' : 'arcoblue'"
+                >
+                  {{ field.label }}{{ field.required ? ' · 重点' : '' }}
+                </a-tag>
+              </div>
+            </div>
+
+            <div class="p-3 border border-slate-200 rounded space-y-2">
+              <div class="flex gap-2 items-center justify-between">
+                <h4 class="text-[11px] text-slate-900 font-semibold m-0">
+                  配置里不属于当前库
+                </h4>
+                <span class="text-[10px] text-slate-400">{{ unsupportedConfiguredMappingFields.length }} 项</span>
+              </div>
+              <div v-if="unsupportedConfiguredMappingFields.length" class="space-y-1.5">
+                <div
+                  v-for="field in unsupportedConfiguredMappingFields"
+                  :key="field.key"
+                  class="text-[11px] text-slate-700 px-2 py-1 border border-amber-200 rounded bg-amber-50"
+                >
+                  <div class="text-amber-800 font-medium">
+                    {{ field.label }}
+                  </div>
+                  <div class="text-[10px] text-amber-700 break-all">
+                    来源：{{ field.sourceText }}。可用“整理为当前实体模板”清理。
+                  </div>
+                </div>
+              </div>
+              <p v-else class="text-[11px] text-slate-500 m-0">
+                当前 JSON / wizard 没有旧字段残留。
+              </p>
+            </div>
+
+            <div class="p-3 border border-slate-200 rounded space-y-2">
+              <div class="flex gap-2 items-center justify-between">
+                <h4 class="text-[11px] text-slate-900 font-semibold m-0">
+                  本地/发布保留
+                </h4>
+                <span class="text-[10px] text-slate-400">{{ localSchemaBoundaryFields.length }} 项</span>
+              </div>
+              <div v-if="localSchemaBoundaryFields.length" class="space-y-1.5">
+                <div
+                  v-for="field in localSchemaBoundaryFields"
+                  :key="field.key"
+                  class="text-[11px] text-slate-700 px-2 py-1 border border-slate-200 rounded"
+                >
+                  <div class="text-slate-900 font-medium">
+                    {{ field.label }}
+                  </div>
+                  <div class="text-[10px] text-slate-500">
+                    {{ field.description }}
+                  </div>
+                  <div v-if="field.matchedFields.length" class="text-[10px] text-sky-700 mt-1 break-all">
+                    巡检命中：{{ field.matchedFields.join(' / ') }}
+                  </div>
+                </div>
+              </div>
+              <p v-else class="text-[11px] text-slate-500 m-0">
+                当前实体没有额外的本地保留字段提示。
+              </p>
+            </div>
+          </div>
         </section>
 
         <section class="p-4 border border-slate-200 rounded bg-white space-y-3">

@@ -57,6 +57,7 @@ describe('feishu-bitable-sync-config', () => {
   it('能按来源名称猜测 entityType 并生成推荐同步项名称', async () => {
     const {
       buildSuggestedSyncItemName,
+      listDefaultSyncItemTargetFieldKeys,
       listRequiredSyncItemFieldGroups,
       listRequiredSyncItemFieldKeys,
       suggestSyncItemEntityType,
@@ -75,6 +76,14 @@ describe('feishu-bitable-sync-config', () => {
     assert.equal(buildSuggestedSyncItemName('policy', '政策库', ''), '政策库 · 政策同步')
     assert.deepEqual(listRequiredSyncItemFieldKeys('contest'), ['externalId', 'name', 'officialUrl'])
     assert.deepEqual(listRequiredSyncItemFieldKeys('track'), ['externalId', 'contestExternalId', 'name'])
+    assert.deepEqual(
+      listDefaultSyncItemTargetFieldKeys('contest'),
+      ['externalId', 'name', 'level', 'disciplines', 'officialUrl', 'summary', 'keywords', 'timelineText', 'recommendedFor'],
+    )
+    assert.equal(listDefaultSyncItemTargetFieldKeys('contest').includes('organizer'), false)
+    assert.equal(listDefaultSyncItemTargetFieldKeys('contest').includes('currentSeason'), false)
+    assert.equal(listDefaultSyncItemTargetFieldKeys('track').includes('organizer'), true)
+    assert.equal(listDefaultSyncItemTargetFieldKeys('track').includes('currentSeason'), false)
     assert.deepEqual(listRequiredSyncItemFieldKeys('policy'), ['externalId', 'meetingName'])
     assert.deepEqual(listRequiredSyncItemFieldKeys('persona'), ['externalId', 'contestExternalId', 'object'])
     assert.deepEqual(

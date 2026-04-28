@@ -245,6 +245,20 @@ export function listRequiredSyncItemFieldKeys(entityType: FeishuBitableSyncItemE
   return [...(REQUIRED_MAPPING_FIELD_KEYS[entityType] || [])]
 }
 
+export function listDefaultSyncItemTargetFieldKeys(entityType: FeishuBitableSyncItemEntityType): string[] {
+  const mapping = buildDefaultSyncItemConfig(entityType).mapping as Record<string, unknown>
+  const fieldMap = mapping.fieldMap && typeof mapping.fieldMap === 'object' && !Array.isArray(mapping.fieldMap)
+    ? mapping.fieldMap as Record<string, unknown>
+    : {}
+  const keys = [
+    mapping.externalIdField !== undefined ? 'externalId' : '',
+    mapping.contestExternalIdField !== undefined ? 'contestExternalId' : '',
+    mapping.trackExternalIdField !== undefined ? 'trackExternalId' : '',
+    ...Object.keys(fieldMap),
+  ].filter(Boolean)
+  return [...new Set(keys)]
+}
+
 export function listRequiredSyncItemFieldGroups(entityType: FeishuBitableSyncItemEntityType): FeishuRequiredSyncItemFieldGroup[] {
   return (REQUIRED_MAPPING_FIELD_GROUPS[entityType] || [])
     .map(group => ({

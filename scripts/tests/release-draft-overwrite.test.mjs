@@ -332,6 +332,22 @@ describe('release draft 覆盖与审批边界', () => {
     )
   })
 
+  it('竞赛主快照同步会对飞书源表缺失的人工字段做显式保留', async () => {
+    const releaseStoreSource = await readFile(
+      resolve(process.cwd(), 'server/utils/release-store.ts'),
+      'utf8',
+    )
+    const typeSource = await readFile(
+      resolve(process.cwd(), 'shared/types/domain-legacy.ts'),
+      'utf8',
+    )
+
+    assert.match(typeSource, /export interface ReleaseSyncSource \{[\s\S]*preservedFields\?: string\[\]/, 'ReleaseSyncSource 未声明 preservedFields 审计字段')
+    assert.match(releaseStoreSource, /mergeContestManualPreservedFields/, 'release-store 未调用竞赛人工字段保留工具')
+    assert.match(releaseStoreSource, /preservedFields: preservedContestFields/, '竞赛同步未把保留字段写入 syncSource')
+    assert.match(releaseStoreSource, /input\.contest,[\s\S]*current\.contest \|\| base\.contest/, '竞赛同步未用当前或基线竞赛快照作为人工字段保留来源')
+  })
+
   databaseTest('pending_first_review 草稿在新一轮有 diff 的同步下会生成新版本并替换旧未发布版本', async () => {
     const first = await createPolicyDraft(tempPool, {
       syncItemId: 'sync_policy_reuse',
@@ -553,5 +569,62 @@ describe('release draft 覆盖与审批边界', () => {
       false,
       '聚合后的竞赛草稿不能丢失已同步赛道快照',
     )
+  })
+
+  databaseTest('竞赛库同步缺失人工字段时会保留已有竞赛人工字段并标记 preservedFields', async () => {
+    const manualContest = buildContestSnapshot({
+      organizer: '人工主办单位',
+      coOrganizer: '人工协办单位',
+      participantRequirements: '人工参赛对象',
+      teamRule: '人工组队规则',
+      currentSeason: '2026 人工届次',
+    })
+    const first = await createContestEntityDraft(tempPool, {
+      syncItemId: 'sync_item_contest_manual_preserve',
+      runId: 'run_contest_manual_preserve_1',
+      entityType: 'contest',
+      contestExternalId: 'contest_ext_agg',
+      scopeTitle: '聚合测试竞赛',
+      contest: manualContest,
+      timelines: [buildContestTimeline()],
+    })
+    assert.ok(first.version, '首版竞赛草稿应生成')
+
+    const syncedContest = buildContestSnapshot({
+      summary: '竞赛库下一轮同步摘要。',
+    })
+    for (const field of ['organizer', 'coOrganizer', 'participantRequirements', 'teamRule', 'currentSeason'])
+      delete syncedContest[field]
+
+    const second = await createContestEntityDraft(tempPool, {
+      syncItemId: 'sync_item_contest_manual_preserve',
+      runId: 'run_contest_manual_preserve_2',
+      entityType: 'contest',
+      contestExternalId: 'contest_ext_agg',
+      scopeTitle: '聚合测试竞赛',
+      contest: syncedContest,
+      timelines: [buildContestTimeline()],
+    })
+    assert.ok(second.version, '缺失人工字段但有其他 diff 的竞赛同步应生成新草稿')
+
+    const versions = await listContestReleaseVersions(tempPool)
+    assert.equal(versions.length, 2)
+    assert.equal(versions[0]?.status, 'superseded')
+    assert.equal(versions[0]?.superseded_by_version_id, second.version.id)
+
+    const contest = versions[1]?.snapshot_json?.contest
+    assert.equal(contest?.summary, '竞赛库下一轮同步摘要。')
+    assert.equal(contest?.organizer, '人工主办单位')
+    assert.equal(contest?.coOrganizer, '人工协办单位')
+    assert.equal(contest?.participantRequirements, '人工参赛对象')
+    assert.equal(contest?.teamRule, '人工组队规则')
+    assert.equal(contest?.currentSeason, '2026 人工届次')
+    assert.deepEqual(contest?.syncSource?.preservedFields, [
+      'organizer',
+      'coOrganizer',
+      'participantRequirements',
+      'teamRule',
+      'currentSeason',
+    ])
   })
 })
