@@ -744,6 +744,7 @@ async function listReleaseScopedVersions(
     liveEntityId?: string
     statuses?: ReleaseVersionStatus[]
     limit?: number
+    includeSnapshot?: boolean
   } = {},
 ): Promise<ReleaseVersion[]> {
   const where: string[] = ['1=1']
@@ -771,6 +772,9 @@ async function listReleaseScopedVersions(
 
   const limit = Math.max(1, Math.min(200, normalizeInteger(input.limit || 50, 50)))
   values.push(limit)
+  const snapshotSelect = input.includeSnapshot === false
+    ? `'{}'::JSONB AS snapshot_json`
+    : 'snapshot_json'
 
   const result = await db.query<ReleaseVersionRow>(
     `SELECT
@@ -781,7 +785,7 @@ async function listReleaseScopedVersions(
       scope_title,
       version_number,
       status,
-      snapshot_json,
+      ${snapshotSelect},
       diff_summary_json,
       sync_item_id,
       sync_run_id,
@@ -1257,6 +1261,7 @@ export async function listReleaseQueueResult(
       scopeKind: input.scopeKind,
       statuses,
       limit,
+      includeSnapshot: false,
     }),
     countReleaseQueueStatusStats(db, {
       scopeKind: input.scopeKind,

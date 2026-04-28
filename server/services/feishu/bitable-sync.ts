@@ -1232,6 +1232,14 @@ function parseTimelineNodeTypeFromLabel(value: string): TimelineNodeType {
   return mapTimelineNodeType(value) || 'other'
 }
 
+function inferTimelineYearFromText(value: string): number {
+  const matched = value.match(/\b(20\d{2}|21\d{2})\b/)
+  const year = Number(matched?.[1] || 0)
+  return Number.isInteger(year) && year >= 2000 && year <= 2100
+    ? year
+    : new Date().getFullYear()
+}
+
 function parseTimelineTextLines(raw: string): Array<{
   rawLine: string
   nodeType: TimelineNodeType
@@ -1256,19 +1264,16 @@ function parseTimelineTextLines(raw: string): Array<{
     const colonIndex = line.search(/[:：]/)
     const label = colonIndex >= 0 ? line.slice(0, colonIndex).trim() : ''
     const body = colonIndex >= 0 ? line.slice(colonIndex + 1).trim() : line
-    const nodeType = label ? parseTimelineNodeTypeFromLabel(label) : 'registration'
+    const nodeType = label ? parseTimelineNodeTypeFromLabel(label) : parseTimelineNodeTypeFromLabel(line)
     const tokens = body.match(/\d{4}[./-]\d{1,2}[./-]\d{1,2}/g) || []
     const first = tokens[0] || ''
     const second = tokens[1] || ''
     const firstStart = first ? formatTimelineDateToIso(first, 'start') : null
     const firstEnd = first ? formatTimelineDateToIso(first, 'end') : null
     const secondEnd = second ? formatTimelineDateToIso(second, 'end') : null
-    const inferredYear = first ? Number(first.replace(/[./]/g, '-').slice(0, 4)) : new Date().getFullYear()
+    const inferredYear = first ? Number(first.replace(/[./]/g, '-').slice(0, 4)) : inferTimelineYearFromText(line)
     const startAt = second ? firstStart : (nodeType === 'registration' ? firstStart : null)
     const endAt = second ? secondEnd : firstEnd
-
-    if (!startAt && !endAt)
-      continue
 
     result.push({
       rawLine: line,
@@ -2122,6 +2127,7 @@ async function applyTrackRecord(
     undertaker,
     participantRequirements,
     teamRule,
+    timelineText,
     awardRatio,
     suitableMajors,
     deliverableTypes,

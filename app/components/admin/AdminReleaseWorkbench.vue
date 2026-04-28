@@ -22,6 +22,7 @@ import type {
   ReleaseVersion,
   ReleaseVersionDetail,
   ReleaseVersionStatus,
+  TimelineNodeType,
 } from '~~/shared/types/domain'
 
 const props = withDefaults(defineProps<{
@@ -211,6 +212,27 @@ function formatDateTime(value?: string | null): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
+function formatDate(value?: string | null): string {
+  if (!value)
+    return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return value
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function timelineNodeTypeLabel(type: TimelineNodeType): string {
+  if (type === 'registration')
+    return '报名'
+  if (type === 'submission')
+    return '提交'
+  if (type === 'preliminary')
+    return '初赛'
+  if (type === 'final')
+    return '决赛'
+  return '其他'
+}
+
 function statusLabel(status: ReleaseVersionStatus): string {
   if (status === 'pending_first_review')
     return '待初审'
@@ -391,6 +413,10 @@ function metadataText(value: unknown): string {
   return String(value || '').trim()
 }
 
+function isCoverPreviewUrl(value: string): boolean {
+  return /^(https?:)?\/\//.test(value) || value.startsWith('/')
+}
+
 function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
   if (!snapshot)
     return []
@@ -405,10 +431,37 @@ function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
   ]
 }
 
+function formatTimelineSnapshotItem(item: ContestReleaseTimelineSnapshot | ContestReleaseTrackTimelineSnapshot): string {
+  const note = metadataText(item.note)
+  if (note)
+    return note
+
+  const startAt = formatDate(item.startAt)
+  const endAt = formatDate(item.endAt)
+  const dateText = startAt && endAt
+    ? `${startAt} 至 ${endAt}`
+    : startAt
+      ? `开始 ${startAt}`
+      : endAt
+        ? `截至 ${endAt}`
+        : ''
+  return [
+    item.year ? `${item.year}年` : '',
+    timelineNodeTypeLabel(item.nodeType),
+    dateText,
+  ].filter(Boolean).join(' · ') || '-'
+}
+
 function trackTimelineText(items: ContestReleaseTrackTimelineSnapshot[]) {
   return items
-    .map(item => `${item.year} · ${item.nodeType} · ${item.startAt || '-'} ~ ${item.endAt || '-'}${item.note ? ` · ${item.note}` : ''}`)
+    .map(formatTimelineSnapshotItem)
     .join('\n') || '-'
+}
+
+function trackTimelineReviewText(items: ContestReleaseTrackTimelineSnapshot[], fallbackText?: string) {
+  if (items.length)
+    return trackTimelineText(items)
+  return metadataText(fallbackText) || '-'
 }
 
 function trackFormRows(item: ContestReleaseTrackSnapshot | null, snapshot: ContestReleaseSnapshot | null) {
@@ -426,7 +479,7 @@ function trackFormRows(item: ContestReleaseTrackSnapshot | null, snapshot: Conte
     { label: '赛道简介', value: item.summary || '-' },
     { label: '参赛对象', value: item.participantRequirements || '-' },
     { label: '组队规则', value: item.teamRule || '-' },
-    { label: '时间节点', value: trackTimelineText(trackTimelines) },
+    { label: '时间节点', value: trackTimelineReviewText(trackTimelines, item.timelineText) },
     { label: '相关专业', value: arrayText(item.suitableMajors) },
     { label: '获奖比例', value: item.awardRatio || '-' },
     { label: '必备项', value: arrayText(item.evidenceRequirements) },
@@ -663,7 +716,7 @@ function contestSummaryRows(snapshot: ContestReleaseSnapshot | null) {
 
 function contestTimelineText(items: ContestReleaseTimelineSnapshot[]) {
   return items
-    .map(item => `${item.year} · ${item.nodeType} · ${item.startAt || '-'} ~ ${item.endAt || '-'}${item.note ? ` · ${item.note}` : ''}`)
+    .map(formatTimelineSnapshotItem)
     .join('\n') || '-'
 }
 
@@ -1497,6 +1550,9 @@ onMounted(() => {
       <a-form v-if="selectedTrack" :model="selectedTrack" layout="vertical" class="text-xs">
         <div class="gap-3 grid md:grid-cols-2">
           <a-form-item v-for="item in trackFormRows(selectedTrack, detailContestSnapshot)" :key="item.label" :label="item.label">
+            <div v-if="item.label === '封面' && isCoverPreviewUrl(item.value)" class="mb-2 h-[148px] w-full overflow-hidden rounded border border-slate-200 bg-slate-50">
+              <img :src="item.value" alt="赛道封面" class="h-full w-full object-contain">
+            </div>
             <a-textarea
               :model-value="item.value"
               :auto-size="{ minRows: item.value.length > 80 ? 2 : 1, maxRows: 6 }"
