@@ -946,12 +946,33 @@ const resourceDetailRows = computed<ResourceAttributeField[]>(() => {
   ]
 })
 
+const resourceKnowledgeVisualNode = computed(() => {
+  const sourceId = String(resourceKnowledgeStatus.value?.id || '').trim()
+  if (!sourceId)
+    return null
+  return (props.projectKnowledgeDashboard?.visuals?.starfieldNodes || [])
+    .find(node => node.id === `source:${sourceId}`) || null
+})
+
+const projectKnowledgeHealthState = computed(() =>
+  String(props.projectKnowledgeDashboard?.diagnostics?.healthState || '').trim(),
+)
+
 const resourceKnowledgeHeadline = computed(() => {
   const status = resourceKnowledgeStatus.value
   if (!status)
     return '可查看当前资源的索引状态、阶段、进度和错误信息。'
-  if (status.status === 'ready')
+  if (status.status === 'ready') {
+    const visualNode = resourceKnowledgeVisualNode.value
+    const healthState = projectKnowledgeHealthState.value
+    if (visualNode?.fallbackOnly || healthState === 'fallback_only')
+      return '索引完成，但当前仅有 Fallback embedding，不代表真实语义检索可用。'
+    if ((visualNode && !visualNode.realEmbeddingReady) || healthState === 'missing_runtime' || healthState === 'worker_inactive' || healthState === 'queued_but_not_running')
+      return '索引完成，但真实 embedding 就绪信号不足，需确认 Loopy 向量运行时。'
+    if (healthState === 'partial')
+      return '索引完成，但项目级索引仍部分降级，检索可靠性需结合 Loopy 状态判断。'
     return '索引完成，可参与正式知识检索。'
+  }
   if (status.status === 'stale')
     return '内容已更新，等待重新索引。'
   if (status.status === 'failed')
@@ -1018,17 +1039,9 @@ const resourceKnowledgeRows = computed<ResourceAttributeField[]>(() => {
   ]
 })
 
-const resourceKnowledgeVisualNode = computed(() => {
-  const sourceId = String(resourceKnowledgeStatus.value?.id || '').trim()
-  if (!sourceId)
-    return null
-  return (props.projectKnowledgeDashboard?.visuals?.starfieldNodes || [])
-    .find(node => node.id === `source:${sourceId}`) || null
-})
-
 const resourceKnowledgeProjectNotice = computed(() => {
   const diagnostics = props.projectKnowledgeDashboard?.diagnostics
-  const healthState = String(diagnostics?.healthState || '').trim()
+  const healthState = projectKnowledgeHealthState.value
   if (!healthState || healthState === 'healthy' || healthState === 'empty_project')
     return ''
 
@@ -1063,7 +1076,7 @@ const resourceKnowledgeTrustNotice = computed(() => {
 
 const resourceKnowledgeTrustNoticeClass = computed(() => {
   const status = String(resourceKnowledgeStatus.value?.status || '').trim()
-  const healthState = String(props.projectKnowledgeDashboard?.diagnostics?.healthState || '').trim()
+  const healthState = projectKnowledgeHealthState.value
   if (status === 'failed' || healthState === 'missing_runtime' || healthState === 'worker_inactive' || healthState === 'queued_but_not_running')
     return 'border-rose-200 bg-rose-50 text-rose-700'
   if (status === 'stale' || resourceKnowledgeVisualNode.value?.fallbackOnly || healthState === 'fallback_only' || healthState === 'partial')

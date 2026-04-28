@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import type {
   AiChatMessage,
+  AiChatSession,
   AiChatSessionContextSnapshot,
   AiChatSessionRunState,
-  AiChatSession,
   AiContestFilterResult,
   AiDefenseJudgeRound,
   AiDefensePersona,
@@ -23,6 +23,7 @@ import type {
   AiWorkspaceInlineCompletionResult,
   AiWorkspaceRequest,
   AiWorkspaceResult,
+  AiWorkspaceSceneDraft,
   AiWorkspaceStreamEvent,
   AiWorkspaceStreamEventType,
   AiWorkspaceWorkflowDraft,
@@ -41,12 +42,12 @@ import type {
   DefenseRealtimeProvider,
   DefenseRealtimeSessionMeta,
   Project,
-  ProjectInvitationSummary,
-  ProjectIssue,
-  ProjectIssueReport,
   ProjectExportJob,
   ProjectExportJobDiagnostics,
   ProjectExportProfile,
+  ProjectInvitationSummary,
+  ProjectIssue,
+  ProjectIssueReport,
   ProjectMeetingDetail,
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
@@ -84,17 +85,17 @@ import type {
   WorkspaceAiMode,
   WorkspaceAiUsageHistory,
   WorkspaceBillingEstimate,
+  WorkspaceContextualAssistantKey,
   WorkspaceFontSizePreset,
   WorkspaceMemberRole,
   WorkspaceOpenTabState,
   WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
-import type { AiWorkspaceSceneDraft, WorkspaceContextualAssistantKey } from '~~/shared/types/domain'
-import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
 import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
 import type { WorkspacePreviewMode } from '~/composables/useWorkspaceProjectResources'
+import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type {
   MappingTone,
   WorkspaceKeyword,
@@ -209,8 +210,8 @@ import {
   serializeDrawioCollabValue,
 } from '~/utils/workspace-drawio'
 import {
-  isDeviceArrangementResource,
   isDesignCanvasResource,
+  isDeviceArrangementResource,
   isLegacyDeviceArrangementResource,
   resolveCollabPurpose,
   resolveCollabResourceIcon,
@@ -732,7 +733,7 @@ const skippedLegacyDeviceArrangementResourceIds = new Set<string>()
 const activeChatStreamAbortController = ref<AbortController | null>(null)
 const deletingChatSessionId = ref('')
 const chatMessagesLoading = ref(false)
-type ProjectExportJobsPayload = {
+interface ProjectExportJobsPayload {
   profiles: ProjectExportProfile[]
   jobs: ProjectExportJob[]
   diagnostics: ProjectExportJobDiagnostics | null
@@ -7196,7 +7197,7 @@ async function createCollabResource(
 
     const createdResource = response.data?.resource
     const snapshot = response.data?.snapshot
-      if (createdResource?.id) {
+    if (createdResource?.id) {
       await openProjectCollabResource(createdResource.id, snapshot || null, {
         surface: purpose === 'design'
           ? 'design'

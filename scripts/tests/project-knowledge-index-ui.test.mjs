@@ -26,6 +26,9 @@ describe('project knowledge index ui', () => {
     assert.match(source, /resourceKnowledgeTrustNotice/, '资源属性弹窗未展示索引可信度提示')
     assert.match(source, /fallbackOnly/, '资源属性弹窗未消费 fallback-only embedding 信号')
     assert.match(source, /realEmbeddingReady/, '资源属性弹窗未消费真实 embedding 就绪信号')
+    assert.match(source, /索引完成，但当前仅有 Fallback embedding/, '资源索引标题未避免把 fallback-only ready 包装成正式检索可用')
+    assert.match(source, /真实 embedding 就绪信号不足/, '资源索引标题未避免把缺真实 embedding ready 包装成正式检索可用')
+    assert.match(source, /项目级索引仍部分降级/, '资源索引标题未避免把 partial ready 包装成完全健康')
     assert.match(source, /workspace-resource-knowledge-trust-notice/, '资源属性弹窗缺少稳定的索引可信度提示锚点')
   })
 
