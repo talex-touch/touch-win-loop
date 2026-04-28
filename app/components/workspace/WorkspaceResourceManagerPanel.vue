@@ -1080,9 +1080,10 @@ const resourceKnowledgeTrustNotice = computed(() => {
 const resourceKnowledgeTrustNoticeClass = computed(() => {
   const status = String(resourceKnowledgeStatus.value?.status || '').trim()
   const healthState = projectKnowledgeHealthState.value
+  const visualNode = resourceKnowledgeVisualNode.value
   if (status === 'failed' || healthState === 'missing_runtime' || healthState === 'worker_inactive' || healthState === 'queued_but_not_running')
     return 'border-rose-200 bg-rose-50 text-rose-700'
-  if (status === 'stale' || (status === 'ready' && !resourceKnowledgeVisualNode.value) || resourceKnowledgeVisualNode.value?.fallbackOnly || healthState === 'fallback_only' || healthState === 'partial')
+  if (status === 'stale' || (status === 'ready' && (!visualNode || !visualNode.realEmbeddingReady)) || visualNode?.fallbackOnly || healthState === 'fallback_only' || healthState === 'partial')
     return 'border-amber-200 bg-amber-50 text-amber-800'
   return 'border-sky-200 bg-sky-50 text-sky-800'
 })
