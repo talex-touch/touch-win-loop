@@ -22,6 +22,11 @@ describe('project knowledge index ui', () => {
     assert.match(source, /知识索引/, 'WorkspaceResourceManagerPanel 缺少知识索引区块')
     assert.match(source, /重新索引/, 'WorkspaceResourceManagerPanel 缺少重新索引入口')
     assert.match(source, /activeProjectId\?: string/, 'WorkspaceResourceManagerPanel 缺少 activeProjectId 入参')
+    assert.match(source, /projectKnowledgeDashboard\?: ProjectKnowledgeIndexDashboard \| null/, 'WorkspaceResourceManagerPanel 缺少项目级 Loopy dashboard 入参')
+    assert.match(source, /resourceKnowledgeTrustNotice/, '资源属性弹窗未展示索引可信度提示')
+    assert.match(source, /fallbackOnly/, '资源属性弹窗未消费 fallback-only embedding 信号')
+    assert.match(source, /realEmbeddingReady/, '资源属性弹窗未消费真实 embedding 就绪信号')
+    assert.match(source, /workspace-resource-knowledge-trust-notice/, '资源属性弹窗缺少稳定的索引可信度提示锚点')
   })
 
   it('知识索引从项目设置迁移到独立 Loopy 数据工作台，并保留 activeProjectId 透传', async () => {
@@ -75,6 +80,8 @@ describe('project knowledge index ui', () => {
     assert.doesNotMatch(semanticSpaceSource, /OrbitControls|THREE/, 'WorkspaceLoopyDataSemanticSpace 仍残留 3D 依赖')
     assert.doesNotMatch(semanticSpaceSource, /WorkspaceLoopyDataNodeDetail/, 'WorkspaceLoopyDataSemanticSpace 仍残留右侧详情栏')
     assert.match(sidebarSource, /activeProjectId\?: string/, 'WorkspaceLeftSidebar 缺少 activeProjectId 入参')
+    assert.match(sidebarSource, /projectKnowledgeDashboard\?: ProjectKnowledgeIndexDashboard \| null/, 'WorkspaceLeftSidebar 未接收项目级 Loopy dashboard')
     assert.match(pageSource, /:active-project-id="activeProjectId"/, '项目工作区未向子组件透传 activeProjectId')
+    assert.match(pageSource, /<WorkspaceLeftSidebar[\s\S]*:project-knowledge-dashboard="projectKnowledgeDashboard"/, '项目工作区未向左侧资源管理器透传 Loopy dashboard')
   })
 })

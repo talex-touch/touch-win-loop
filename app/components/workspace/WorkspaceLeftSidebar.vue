@@ -3,6 +3,7 @@ import type {
   Contest,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectKnowledgeIndexDashboard,
   ProjectMeeting,
   ProjectMeetingMode,
   ProjectMeetingRuntimeHealth,
@@ -13,8 +14,8 @@ import type {
   WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
-import type { ContextMenuRequest } from '~/types/ui-context-menu'
 import type { ProjectUploadActivityItem, ProjectUploadSummary, ProjectUploadTask } from '~/types/project-upload'
+import type { ContextMenuRequest } from '~/types/ui-context-menu'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 import type { WorkspaceOutlineNode, WorkspaceOutlineSection } from '~/utils/workspace-outline'
 import { WORKSPACE_LEFT_SIDEBAR_RAIL_WIDTH } from '~~/shared/utils/workspace-layout'
@@ -56,6 +57,7 @@ const props = withDefaults(defineProps<{
   resourceLibrary?: Resource[]
   linkedContestResourceGroups?: WorkspaceLinkedContestResourceGroup[]
   linkedContestBindingCount?: number
+  projectKnowledgeDashboard?: ProjectKnowledgeIndexDashboard | null
   uploadTasks?: ProjectUploadTask[]
   uploadSummary?: ProjectUploadSummary | null
   uploadDrawerOpen?: boolean
@@ -105,6 +107,7 @@ const props = withDefaults(defineProps<{
   resourceLibrary: () => [],
   linkedContestResourceGroups: () => [],
   linkedContestBindingCount: 0,
+  projectKnowledgeDashboard: null,
   uploadTasks: () => [],
   uploadSummary: null,
   uploadDrawerOpen: false,

@@ -4,6 +4,7 @@ import type {
   Contest,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectKnowledgeIndexDashboard,
   ProjectKnowledgeIndexSourceStatus,
   ProjectMemberSummary,
   ProjectResourceShareDurationPreset,
@@ -11,8 +12,8 @@ import type {
   Resource,
   ResourceCategory,
 } from '~~/shared/types/domain'
-import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type { ProjectUploadTask } from '~/types/project-upload'
+import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 import type { WorkspaceOutlineNode, WorkspaceOutlineRow, WorkspaceOutlineSection } from '~/utils/workspace-outline'
 import { Message } from '@arco-design/web-vue'
@@ -24,6 +25,7 @@ import {
   COLLAB_WORKFLOW_RESOURCE_LABEL,
 } from '~~/shared/utils/collab-resource'
 import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
+import { resolveHealthLabel } from '~/utils/loopy-data-center'
 import {
   isProjectUploadTaskSidebarVisible,
   resolveProjectUploadTaskStatusText,
@@ -110,6 +112,7 @@ const props = withDefaults(defineProps<{
   resourceLibrary?: Resource[]
   linkedContestResourceGroups?: WorkspaceLinkedContestResourceGroup[]
   linkedContestBindingCount?: number
+  projectKnowledgeDashboard?: ProjectKnowledgeIndexDashboard | null
   uploadTasks?: ProjectUploadTask[]
   projectMembers?: ProjectMemberSummary[]
   outlineSections?: WorkspaceOutlineSection[]
@@ -143,6 +146,7 @@ const props = withDefaults(defineProps<{
   resourceLibrary: () => [],
   linkedContestResourceGroups: () => [],
   linkedContestBindingCount: 0,
+  projectKnowledgeDashboard: null,
   uploadTasks: () => [],
   projectMembers: () => [],
   outlineSections: () => [],
@@ -1012,6 +1016,59 @@ const resourceKnowledgeRows = computed<ResourceAttributeField[]>(() => {
       value: String(status.lastError || '-').trim() || '-',
     },
   ]
+})
+
+const resourceKnowledgeVisualNode = computed(() => {
+  const sourceId = String(resourceKnowledgeStatus.value?.id || '').trim()
+  if (!sourceId)
+    return null
+  return (props.projectKnowledgeDashboard?.visuals?.starfieldNodes || [])
+    .find(node => node.id === `source:${sourceId}`) || null
+})
+
+const resourceKnowledgeProjectNotice = computed(() => {
+  const diagnostics = props.projectKnowledgeDashboard?.diagnostics
+  const healthState = String(diagnostics?.healthState || '').trim()
+  if (!healthState || healthState === 'healthy' || healthState === 'empty_project')
+    return ''
+
+  const message = String(diagnostics?.healthMessage || '').trim()
+  return `项目级 Loopy 状态：${resolveHealthLabel(healthState)}${message ? `，${message}` : ''}`
+})
+
+const resourceKnowledgeTrustNotice = computed(() => {
+  const status = resourceKnowledgeStatus.value
+  if (!status)
+    return ''
+
+  const visualNode = resourceKnowledgeVisualNode.value
+  if (status.status === 'ready' && visualNode?.fallbackOnly) {
+    return '当前资源已完成索引，但仅产出 Fallback embedding；可用于排查数据流，不应当作真实语义检索结果。'
+  }
+  if (status.status === 'ready' && visualNode && !visualNode.realEmbeddingReady) {
+    return '当前资源已完成索引，但没有真实 embedding 就绪信号；建议在 Loopy 数据工作台确认向量运行时。'
+  }
+  if (status.status === 'stale') {
+    return '当前资源内容已更新，检索结果可能仍引用旧版本；建议重新索引后再用于 AI 分析。'
+  }
+  if (status.status === 'failed') {
+    return '当前资源未进入可用知识索引；AI 分析会缺少这份资料上下文。'
+  }
+  if (status.status === 'skipped') {
+    return '当前资源暂未纳入主索引，不会作为工作台 AI 的正式检索上下文。'
+  }
+
+  return resourceKnowledgeProjectNotice.value
+})
+
+const resourceKnowledgeTrustNoticeClass = computed(() => {
+  const status = String(resourceKnowledgeStatus.value?.status || '').trim()
+  const healthState = String(props.projectKnowledgeDashboard?.diagnostics?.healthState || '').trim()
+  if (status === 'failed' || healthState === 'missing_runtime' || healthState === 'worker_inactive' || healthState === 'queued_but_not_running')
+    return 'border-rose-200 bg-rose-50 text-rose-700'
+  if (status === 'stale' || resourceKnowledgeVisualNode.value?.fallbackOnly || healthState === 'fallback_only' || healthState === 'partial')
+    return 'border-amber-200 bg-amber-50 text-amber-800'
+  return 'border-sky-200 bg-sky-50 text-sky-800'
 })
 
 function enterProjectResourceBatchEditMode() {
@@ -3832,11 +3889,22 @@ onBeforeUnmount(() => {
                 {{ resourceKnowledgeError }}
               </div>
 
-              <a-descriptions v-else-if="resourceKnowledgeStatus" :column="1" bordered size="small">
-                <a-descriptions-item v-for="item in resourceKnowledgeRows" :key="item.label" :label="item.label">
-                  <span class="workspace-resource-detail__value" :title="item.value">{{ item.value }}</span>
-                </a-descriptions-item>
-              </a-descriptions>
+              <template v-else-if="resourceKnowledgeStatus">
+                <div
+                  v-if="resourceKnowledgeTrustNotice"
+                  class="text-xs leading-5 px-3 py-2 border rounded"
+                  :class="resourceKnowledgeTrustNoticeClass"
+                  data-testid="workspace-resource-knowledge-trust-notice"
+                >
+                  {{ resourceKnowledgeTrustNotice }}
+                </div>
+
+                <a-descriptions :column="1" bordered size="small">
+                  <a-descriptions-item v-for="item in resourceKnowledgeRows" :key="item.label" :label="item.label">
+                    <span class="workspace-resource-detail__value" :title="item.value">{{ item.value }}</span>
+                  </a-descriptions-item>
+                </a-descriptions>
+              </template>
 
               <div v-else class="text-xs text-slate-500">
                 当前资源暂未返回索引快照。

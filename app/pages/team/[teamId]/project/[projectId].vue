@@ -12256,6 +12256,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 :resource-library="resourceLibrary"
                 :linked-contest-resource-groups="linkedContestResourceGroups"
                 :linked-contest-binding-count="projectSettingsBindings.length"
+                :project-knowledge-dashboard="projectKnowledgeDashboard"
                 :upload-tasks="projectUploadTasks"
                 :upload-summary="projectUploadSummary"
                 :upload-drawer-open="uploadDrawerOpen"
