@@ -967,7 +967,7 @@ const resourceKnowledgeHeadline = computed(() => {
     const healthState = projectKnowledgeHealthState.value
     if (visualNode?.fallbackOnly || healthState === 'fallback_only')
       return '索引完成，但当前仅有 Fallback embedding，不代表真实语义检索可用。'
-    if ((visualNode && !visualNode.realEmbeddingReady) || healthState === 'missing_runtime' || healthState === 'worker_inactive' || healthState === 'queued_but_not_running')
+    if (!visualNode || !visualNode.realEmbeddingReady || healthState === 'missing_runtime' || healthState === 'worker_inactive' || healthState === 'queued_but_not_running')
       return '索引完成，但真实 embedding 就绪信号不足，需确认 Loopy 向量运行时。'
     if (healthState === 'partial')
       return '索引完成，但项目级索引仍部分降级，检索可靠性需结合 Loopy 状态判断。'
@@ -1058,7 +1058,10 @@ const resourceKnowledgeTrustNotice = computed(() => {
   if (status.status === 'ready' && visualNode?.fallbackOnly) {
     return '当前资源已完成索引，但仅产出 Fallback embedding；可用于排查数据流，不应当作真实语义检索结果。'
   }
-  if (status.status === 'ready' && visualNode && !visualNode.realEmbeddingReady) {
+  if (status.status === 'ready' && !visualNode) {
+    return '当前资源已完成索引，但项目级 Loopy dashboard 暂未返回对应的 embedding 可信度信号；建议先确认 Loopy 数据工作台。'
+  }
+  if (status.status === 'ready' && !visualNode.realEmbeddingReady) {
     return '当前资源已完成索引，但没有真实 embedding 就绪信号；建议在 Loopy 数据工作台确认向量运行时。'
   }
   if (status.status === 'stale') {
@@ -1079,7 +1082,7 @@ const resourceKnowledgeTrustNoticeClass = computed(() => {
   const healthState = projectKnowledgeHealthState.value
   if (status === 'failed' || healthState === 'missing_runtime' || healthState === 'worker_inactive' || healthState === 'queued_but_not_running')
     return 'border-rose-200 bg-rose-50 text-rose-700'
-  if (status === 'stale' || resourceKnowledgeVisualNode.value?.fallbackOnly || healthState === 'fallback_only' || healthState === 'partial')
+  if (status === 'stale' || (status === 'ready' && !resourceKnowledgeVisualNode.value) || resourceKnowledgeVisualNode.value?.fallbackOnly || healthState === 'fallback_only' || healthState === 'partial')
     return 'border-amber-200 bg-amber-50 text-amber-800'
   return 'border-sky-200 bg-sky-50 text-sky-800'
 })

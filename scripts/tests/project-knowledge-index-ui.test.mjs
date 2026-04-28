@@ -27,6 +27,8 @@ describe('project knowledge index ui', () => {
     assert.match(source, /fallbackOnly/, '资源属性弹窗未消费 fallback-only embedding 信号')
     assert.match(source, /realEmbeddingReady/, '资源属性弹窗未消费真实 embedding 就绪信号')
     assert.match(source, /索引完成，但当前仅有 Fallback embedding/, '资源索引标题未避免把 fallback-only ready 包装成正式检索可用')
+    assert.match(source, /!visualNode \|\| !visualNode\.realEmbeddingReady/, '资源索引标题未把缺项目级 visual node 视为可信度信号不足')
+    assert.match(source, /项目级 Loopy dashboard 暂未返回对应的 embedding 可信度信号/, '资源可信度提示未覆盖缺项目级 visual node 的 ready 状态')
     assert.match(source, /真实 embedding 就绪信号不足/, '资源索引标题未避免把缺真实 embedding ready 包装成正式检索可用')
     assert.match(source, /项目级索引仍部分降级/, '资源索引标题未避免把 partial ready 包装成完全健康')
     assert.match(source, /workspace-resource-knowledge-trust-notice/, '资源属性弹窗缺少稳定的索引可信度提示锚点')
