@@ -24,6 +24,10 @@ import type {
   ReleaseVersionStatus,
   TimelineNodeType,
 } from '~~/shared/types/domain'
+import {
+  syncPreservationSummarySections as buildSyncPreservationSummarySections,
+  syncPreservationSummaryItemText,
+} from '~/utils/release-sync-summary'
 
 const props = withDefaults(defineProps<{
   title: string
@@ -428,9 +432,22 @@ function encodeLocalImagePath(value: string): string {
     .join('/')
 }
 
+function isBareCoverAttachmentName(value: string): boolean {
+  const text = metadataText(value)
+  return Boolean(text && !/[/:?#\\]/.test(text) && /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(text))
+}
+
+function isPreviewableRelativeImagePath(value: string): boolean {
+  const text = metadataText(value)
+  return /\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i.test(text)
+    && (text.startsWith('/') || text.startsWith('./') || text.startsWith('../') || text.includes('/'))
+}
+
 function resolveCoverPreviewSource(value: string): string {
   const text = metadataText(value)
   if (!text || text === '-')
+    return ''
+  if (isBareCoverAttachmentName(text))
     return ''
 
   const directMatch = text.match(/(?:https?:)?\/\/[^\s|"',，]+|data:image\/[^\s|"',，]+|blob:[^\s|"',，]+|\/[^\s|"',，]+/)
@@ -440,12 +457,12 @@ function resolveCoverPreviewSource(value: string): string {
   const localImage = text
     .split(/[\s|,，]+/)
     .map(item => item.trim())
-    .find(item => /\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i.test(item))
+    .find(item => isPreviewableRelativeImagePath(item))
   if (!localImage)
     return ''
   if (localImage.startsWith('/'))
     return localImage
-  return `/${encodeLocalImagePath(localImage)}`
+  return `/${encodeLocalImagePath(localImage.replace(/^\.\/+/, ''))}`
 }
 
 function isCoverPreviewUrl(value: string): boolean {
@@ -465,6 +482,14 @@ function markCoverPreviewFailed(value: string): void {
     ...failedCoverPreviewSources.value,
     [source]: true,
   }
+}
+
+function coverPreviewUnavailableText(value: string): string {
+  if (isBareCoverAttachmentName(value))
+    return '封面字段只有附件文件名，缺少可访问图片地址。'
+  if (coverPreviewFailed(value))
+    return '封面图片地址暂不可访问。'
+  return ''
 }
 
 function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
@@ -514,19 +539,51 @@ function trackTimelineReviewText(items: ContestReleaseTrackTimelineSnapshot[], f
   return metadataText(fallbackText) || '-'
 }
 
+function identityTokens(value: unknown): string[] {
+  const text = metadataText(value)
+  if (!text)
+    return []
+  return [
+    text,
+    ...text.split(/[|,，\n\r\t]+/).map(item => item.trim()).filter(Boolean),
+  ]
+}
+
 function trackIdentityCandidates(item: ContestReleaseTrackSnapshot): string[] {
   const candidates = [
     item.externalId,
     item.liveId || '',
     item.liveId ? `manual:track:${item.liveId}` : '',
+    item.name,
+    item.syncSource?.recordId,
+    item.syncSource?.syncItemId,
   ]
-  return [...new Set(candidates.map(metadataText).filter(Boolean))]
+  return [...new Set(candidates.flatMap(identityTokens))]
+}
+
+function timelineIdentityCandidates(timeline: ContestReleaseTrackTimelineSnapshot): string[] {
+  const candidates = [
+    timeline.trackExternalId,
+    timeline.trackLiveId,
+    timeline.externalId,
+    timeline.syncSource?.recordId,
+    timeline.syncSource?.syncItemId,
+  ]
+  return [...new Set(candidates.flatMap(identityTokens))]
+}
+
+function timelineIdentityMatches(candidate: string, timelineIdentity: string): boolean {
+  return timelineIdentity === candidate
+    || timelineIdentity.startsWith(`derived:track:${candidate}:`)
+    || timelineIdentity.startsWith(`legacy:track:${candidate}:`)
 }
 
 function isTrackTimelineForTrack(timeline: ContestReleaseTrackTimelineSnapshot, item: ContestReleaseTrackSnapshot): boolean {
-  const candidates = new Set(trackIdentityCandidates(item))
-  return candidates.has(metadataText(timeline.trackExternalId))
-    || candidates.has(metadataText(timeline.trackLiveId))
+  const candidates = trackIdentityCandidates(item)
+  const timelineCandidates = timelineIdentityCandidates(timeline)
+  return timelineCandidates.some(timelineIdentity =>
+    candidates.some(candidate => timelineIdentityMatches(candidate, timelineIdentity)),
+  )
 }
 
 interface TrackFormRow {
@@ -569,6 +626,10 @@ function reviewLogPayloadText(item: ReleaseReviewLog | null): string {
   return JSON.stringify(item.payload, null, 2)
 }
 
+function syncPreservationSummarySections(item: ContestWorkflowTimelineItem | ReleaseReviewLog | null) {
+  return buildSyncPreservationSummarySections(item?.payload)
+}
+
 function isReleaseQueueResult(value: unknown): value is AdminReleaseQueueResult {
   return Boolean(
     value
@@ -602,6 +663,7 @@ async function loadVersions() {
       {
         query: {
           ...props.fetchQuery,
+          statuses: statusFilter.value || undefined,
           rankingMode: reviewerRankingMode.value,
           windowDays: insightWindowDays.value,
         },
@@ -823,8 +885,20 @@ function policySummary(item: PolicyLibraryItemSnapshot): string {
   ].filter(Boolean).join(' / ')
 }
 
+watch(statusFilter, (nextStatus) => {
+  const expectedStatusByActionableFilter: Record<typeof actionableFilter.value, ReleaseVersionStatus | ''> = {
+    all: '',
+    pending_first: 'pending_first_review',
+    claimed_second: 'pending_second_review',
+    ready_publish: 'approved',
+  }
+  if (actionableFilter.value !== 'all' && expectedStatusByActionableFilter[actionableFilter.value] !== nextStatus)
+    actionableFilter.value = 'all'
+  selectedVersionId.value = ''
+})
+
 watch(
-  [() => props.fetchPath, insightWindowDays, reviewerRankingMode],
+  [() => props.fetchPath, statusFilter, insightWindowDays, reviewerRankingMode],
   loadVersions,
   { immediate: true },
 )
@@ -1609,6 +1683,21 @@ onMounted(() => {
           <p v-if="item.description" class="text-slate-600 mt-1">
             {{ item.description }}
           </p>
+          <div v-if="syncPreservationSummarySections(item).length" class="mt-2 p-2 border border-slate-200 rounded bg-slate-50 space-y-2">
+            <p class="text-slate-900 font-medium">
+              同步保留摘要
+            </p>
+            <div v-for="section in syncPreservationSummarySections(item)" :key="section.key" class="space-y-1">
+              <p class="text-slate-500">
+                {{ section.title }}
+              </p>
+              <ul class="text-slate-700 pl-4 list-disc space-y-1">
+                <li v-for="(summaryItem, index) in section.items" :key="`${section.key}-${index}`">
+                  {{ syncPreservationSummaryItemText(summaryItem) }}
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
       <a-empty v-else description="暂无流程时间线" />
@@ -1644,8 +1733,8 @@ onMounted(() => {
                 </div>
               </div>
             </div>
-            <p v-else-if="item.kind === 'cover' && coverPreviewFailed(item.value)" class="text-[11px] text-amber-700 mb-2">
-              封面图片地址暂不可访问。
+            <p v-else-if="item.kind === 'cover' && coverPreviewUnavailableText(item.value)" class="text-[11px] text-amber-700 mb-2">
+              {{ coverPreviewUnavailableText(item.value) }}
             </p>
             <a-textarea
               :model-value="item.value"

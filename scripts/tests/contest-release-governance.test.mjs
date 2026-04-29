@@ -236,6 +236,25 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /@click="openRecentReview\(item\)"/, '工作台近期审核列表未绑定详情打开交互')
   })
 
+  it('发布审批工作台状态筛选会回传队列 API，避免已驳回只在默认待审队列内过滤', async () => {
+    const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
+
+    assert.match(workbenchSource, /statuses:\s*statusFilter\.value \|\| undefined/, '状态筛选未作为 statuses 查询参数传给发布审批队列 API')
+    assert.match(workbenchSource, /watch\(\s*\[\(\) => props\.fetchPath,\s*statusFilter,\s*insightWindowDays,\s*reviewerRankingMode\]/, '状态筛选变化后未重新加载队列数据')
+  })
+
+  it('赛道确认表单不会把裸附件文件名当图片地址，并补充多口径时间节点关联', async () => {
+    const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
+
+    assert.match(workbenchSource, /function isBareCoverAttachmentName\(/, '封面预览缺少裸附件文件名识别')
+    assert.match(workbenchSource, /if \(isBareCoverAttachmentName\(text\)\)\s+return ''/, '裸附件文件名不应被转换成根路径图片地址')
+    assert.match(workbenchSource, /function coverPreviewUnavailableText\(/, '封面确认表单缺少不可预览原因提示')
+    assert.match(workbenchSource, /item\.syncSource\?\.recordId/, '赛道时间节点关联未纳入赛道 sync record 口径')
+    assert.match(workbenchSource, /item\.syncSource\?\.syncItemId/, '赛道时间节点关联未纳入赛道 sync item 口径')
+    assert.match(workbenchSource, /item\.name/, '赛道时间节点关联未纳入赛道名称口径')
+    assert.match(workbenchSource, /timeline\.externalId/, '赛道时间节点关联未从节点 externalId 兜底识别派生前缀')
+  })
+
   it('后台赛事列表的四个操作会按 live 与待审版本分流', async () => {
     const pageSource = await readSource('app/pages/admin/contests.vue')
 
