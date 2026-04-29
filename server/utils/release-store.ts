@@ -63,7 +63,10 @@ import {
   listPolicyLibraryItems,
   patchPolicyLibraryItem,
 } from '~~/server/utils/policy-store'
-import { mergeContestManualPreservedFields } from '~~/server/utils/release-contest-preservation'
+import {
+  CONTEST_MANUAL_PRESERVED_FIELDS,
+  mergeContestManualPreservedFields,
+} from '~~/server/utils/release-contest-preservation'
 import {
   sanitizeContestReleaseResourceMetadata,
   sanitizeContestReleaseResourceSnapshot,
@@ -356,6 +359,147 @@ function normalizeCompareValue(value: unknown): string {
   return normalizeText(value).toLowerCase()
 }
 
+interface SyncPreservationSummaryItem {
+  label: string
+  value: string
+  source: 'Feishu 原值' | '本地沿用' | '本地沿用/兜底'
+  reason: string
+}
+
+interface ContestSyncPreservationSummary {
+  feishu: SyncPreservationSummaryItem[]
+  preserved: SyncPreservationSummaryItem[]
+  fallbacks: SyncPreservationSummaryItem[]
+}
+
+const CONTEST_FEISHU_SYNC_FIELD_LABELS: Array<[keyof ContestReleaseContestSnapshot, string]> = [
+  ['name', '赛事名称'],
+  ['level', '赛事级别'],
+  ['officialUrl', '官网地址'],
+  ['summary', '竞赛简介'],
+  ['disciplines', '学科门类'],
+  ['keywords', '关键词'],
+  ['recommendedFor', '适配人群'],
+]
+
+const CONTEST_MANUAL_FIELD_LABELS: Record<string, string> = {
+  organizer: '主办方',
+  coOrganizer: '协办/承办',
+  participantRequirements: '参赛对象',
+  teamRule: '组队规则',
+  currentSeason: '当前届次',
+}
+
+function normalizeSummaryValue(value: unknown): string {
+  if (Array.isArray(value))
+    return value.map(item => normalizeText(item)).filter(Boolean).join('、')
+  return normalizeText(value)
+}
+
+function isTrackTimelineForSnapshotTrack(
+  timeline: ContestReleaseTrackTimelineSnapshot,
+  track: ContestReleaseTrackSnapshot,
+): boolean {
+  const trackExternalId = normalizeText(track.externalId)
+  const trackLiveId = normalizeText(track.liveId)
+  const timelineExternalId = normalizeText(timeline.externalId)
+  const timelineTrackExternalId = normalizeText(timeline.trackExternalId)
+  const timelineTrackLiveId = normalizeText(timeline.trackLiveId)
+  return Boolean(
+    (trackExternalId && timelineTrackExternalId === trackExternalId)
+    || (trackLiveId && timelineTrackLiveId === trackLiveId)
+    || (trackExternalId && timelineExternalId.startsWith(buildTrackDerivedTimelinePrefix(trackExternalId)))
+    || (trackExternalId && timelineExternalId.startsWith(buildTrackLegacyTimelinePrefix(trackExternalId))),
+  )
+}
+
+function buildContestSyncPreservationSummary(version: ReleaseVersion): ContestSyncPreservationSummary | null {
+  if (version.scopeKind !== 'contest')
+    return null
+
+  const snapshot = toContestSnapshot(version.snapshot, version.scopeId)
+  const summary: ContestSyncPreservationSummary = {
+    feishu: [],
+    preserved: [],
+    fallbacks: [],
+  }
+  const contest = snapshot.contest
+  const preservedFields = new Set(contest?.syncSource?.preservedFields || [])
+  const contestRecord = (contest || {}) as Record<string, unknown>
+
+  for (const [field, label] of CONTEST_FEISHU_SYNC_FIELD_LABELS) {
+    if (preservedFields.has(field))
+      continue
+    const value = normalizeSummaryValue(contestRecord[field])
+    if (!value)
+      continue
+    summary.feishu.push({
+      label,
+      value,
+      source: 'Feishu 原值',
+      reason: '来自 Feishu 竞赛库映射字段。',
+    })
+  }
+
+  for (const field of CONTEST_MANUAL_PRESERVED_FIELDS) {
+    if (!preservedFields.has(field))
+      continue
+    const value = normalizeSummaryValue(contestRecord[field])
+    if (!value)
+      continue
+    summary.preserved.push({
+      label: CONTEST_MANUAL_FIELD_LABELS[field] || field,
+      value,
+      source: '本地沿用',
+      reason: 'Feishu 竞赛库没有写回该字段，本次同步沿用现有版本值。',
+    })
+  }
+
+  for (const track of snapshot.tracks) {
+    const trackName = normalizeText(track.name) || normalizeText(track.externalId) || '未命名赛道'
+    const coverValue = normalizeSummaryValue(track.coverImageUrl)
+    if (coverValue) {
+      summary.feishu.push({
+        label: `赛道封面 · ${trackName}`,
+        value: coverValue,
+        source: 'Feishu 原值',
+        reason: '来自 Feishu 赛道库 coverImageUrl；若只有附件名，前端会提示缺少可访问图片地址。',
+      })
+    }
+
+    const matchedTimelines = snapshot.trackTimelines.filter(item => isTrackTimelineForSnapshotTrack(item, track))
+    if (matchedTimelines.length > 0) {
+      const fromCurrentSync = matchedTimelines.some(item =>
+        normalizeText(item.syncSource?.syncRunId) && normalizeText(item.syncSource?.syncRunId) === normalizeText(track.syncSource?.syncRunId),
+      )
+      const target = fromCurrentSync ? summary.feishu : summary.fallbacks
+      target.push({
+        label: `赛道时间节点 · ${trackName}`,
+        value: `${matchedTimelines.length} 个结构化节点`,
+        source: fromCurrentSync ? 'Feishu 原值' : '本地沿用/兜底',
+        reason: fromCurrentSync
+          ? '由本次 Feishu 赛道时间文本或赛道时间线记录解析得到。'
+          : '本次赛道同步未提供新的结构化节点，沿用当前快照中可匹配的赛道时间线。',
+      })
+    }
+    else {
+      const timelineText = normalizeSummaryValue(track.timelineText)
+      if (timelineText) {
+        summary.fallbacks.push({
+          label: `赛道时间节点 · ${trackName}`,
+          value: timelineText,
+          source: '本地沿用/兜底',
+          reason: '未匹配到结构化赛道时间节点，审核表单回退展示赛道 timelineText 原文。',
+        })
+      }
+    }
+  }
+
+  if (!summary.feishu.length && !summary.preserved.length && !summary.fallbacks.length)
+    return null
+  return summary
+}
+
 function workflowTimelineSourceFromReleaseAction(action: ReleaseReviewAction): ContestWorkflowTimelineSource {
   if (action === 'sync_generated' || action === 'sync_draft_overwritten')
     return 'feishu'
@@ -414,6 +558,12 @@ function mapReleaseLogToWorkflowTimelineItem(
   version: ReleaseVersion,
 ): ContestWorkflowTimelineItem {
   const payload = parseJsonObject(log.payload)
+  const syncPreservationSummary = log.action === 'sync_generated' || log.action === 'sync_draft_overwritten'
+    ? buildContestSyncPreservationSummary(version)
+    : null
+  const timelinePayload = syncPreservationSummary
+    ? { ...payload, syncPreservationSummary }
+    : payload
   return {
     id: `release-log:${log.id}`,
     source: workflowTimelineSourceFromReleaseAction(log.action),
@@ -427,7 +577,7 @@ function mapReleaseLogToWorkflowTimelineItem(
     syncItemId: normalizeText(payload.syncItemId || version.syncItemId) || null,
     syncRunId: normalizeText(payload.syncRunId || version.syncRunId) || null,
     recordId: normalizeText(payload.recordId) || null,
-    payload,
+    payload: timelinePayload,
     createdAt: log.createdAt,
   }
 }

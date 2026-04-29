@@ -113,6 +113,15 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(auditPageSource, /近期审核流/, '审计页未展示近期审核流')
     assert.match(auditPageSource, /按总审核|按二审通过|按发布次数/, '审计页未提供排名维度选项')
     assert.match(auditPageSource, /近 7 天|近 30 天|累计/, '审计页未提供统计窗口选项')
+    assert.match(auditPageSource, /const initialLoading = ref\(false\)/, '审计页应只在首次加载展示骨架屏')
+    assert.match(auditPageSource, /const appliedActionFilter = ref\(''\)/, '审计页应拆分输入筛选和已应用筛选，避免重复 reload')
+    assert.match(auditPageSource, /type AuditReloadScope = 'initial' \| 'manual' \| 'timeline' \| 'insights'/, '审计页应区分首次、手动、时间线和洞察刷新范围')
+    assert.match(auditPageSource, /action: appliedActionFilter\.value/, '审计页接口查询应使用已应用筛选值')
+    assert.match(auditPageSource, /function applyActionFilter\(\)/, '审计页筛选提交应收口到轻量 reload 函数')
+    assert.match(auditPageSource, /watch\(\[page, pageSize, appliedActionFilter\]/, '审计页分页和筛选应合并为时间线局部 reload')
+    assert.match(auditPageSource, /watch\(\[rankingMode, windowDays\]/, '审计页排名和窗口切换应合并为洞察局部 reload')
+    assert.match(auditPageSource, /v-if="initialLoading"/, '审计页骨架屏不应绑定所有刷新状态')
+    assert.doesNotMatch(auditPageSource, /v-if="loading"/, '审计页不应再用全局 loading 触发整块骨架屏')
   })
 
   it('版本审批工作台收口为审核入口、二级时间线和赛道确认表单', async () => {
@@ -253,6 +262,27 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /item\.syncSource\?\.syncItemId/, '赛道时间节点关联未纳入赛道 sync item 口径')
     assert.match(workbenchSource, /item\.name/, '赛道时间节点关联未纳入赛道名称口径')
     assert.match(workbenchSource, /timeline\.externalId/, '赛道时间节点关联未从节点 externalId 兜底识别派生前缀')
+  })
+
+  it('赛事审核历史会把同步保留原因整理成可读摘要', async () => {
+    const [releaseStoreSource, bitableSyncSource, auditPageSource, workbenchSource] = await Promise.all([
+      readSource('server/utils/release-store.ts'),
+      readSource('server/services/feishu/bitable-sync.ts'),
+      readSource('app/pages/admin/contests/[id]/audit/index.vue'),
+      readSource('app/components/admin/AdminReleaseWorkbench.vue'),
+    ])
+
+    assert.match(releaseStoreSource, /function buildContestSyncPreservationSummary\(/, 'release-store 未从版本快照整理同步保留摘要')
+    assert.match(releaseStoreSource, /syncPreservationSummary/, '流程时间线 payload 未挂载同步保留摘要')
+    assert.match(releaseStoreSource, /preservedFields: preservedContestFields/, '竞赛 preservedFields 未落到 contest.syncSource')
+    assert.match(bitableSyncSource, /const coverImageUrl = normalizeImageReferenceText\(coverImageRaw\)/, '赛道封面原值未落到 track.coverImageUrl 快照')
+    assert.match(bitableSyncSource, /const trackTimelines = buildTrackReleaseTimelines\(input\.externalId, timelineText\)/, '赛道时间节点未从 Feishu timelineText 构造结构化节点')
+    assert.match(auditPageSource, /function syncPreservationSummarySections\(/, '审计页缺少同步保留摘要渲染 helper')
+    assert.match(auditPageSource, /同步保留摘要/, '审计页未展示同步保留摘要')
+    assert.match(auditPageSource, /Feishu 原值/, '审计页未区分 Feishu 原值')
+    assert.match(auditPageSource, /本地沿用\/兜底/, '审计页未区分本地沿用或兜底')
+    assert.match(workbenchSource, /function syncPreservationSummarySections\(/, '版本详情缺少同步保留摘要渲染 helper')
+    assert.match(workbenchSource, /同步保留摘要/, '版本详情未展示同步保留摘要')
   })
 
   it('后台赛事列表的四个操作会按 live 与待审版本分流', async () => {

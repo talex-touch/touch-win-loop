@@ -9,6 +9,10 @@ import type {
   ReleaseQueueReviewerRankingMode,
   ReleaseQueueReviewerStats,
 } from '~~/shared/types/domain'
+import {
+  syncPreservationSummarySections as buildSyncPreservationSummarySections,
+  syncPreservationSummaryItemText,
+} from '~/utils/release-sync-summary'
 
 definePageMeta({
   layout: 'admin',
@@ -24,16 +28,24 @@ const contestId = computed(() => {
   return Array.isArray(value) ? (value[0] || '') : (value || '')
 })
 
-const loading = ref(false)
+type AuditReloadScope = 'initial' | 'manual' | 'timeline' | 'insights'
+
+const initialLoading = ref(false)
+const timelinePending = ref(false)
+const insightsPending = ref(false)
+const refreshPending = ref(false)
+const hasLoaded = ref(false)
 const errorText = ref('')
 const logs = ref<ContestWorkflowTimelineItem[]>([])
 const actionFilter = ref('')
+const appliedActionFilter = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 const windowDays = ref<ReleaseQueueInsightsWindowDays>(0)
 const rankingMode = ref<ReleaseQueueReviewerRankingMode>('total_actions')
 const aggregates = ref<ContestAuditAggregates>(createEmptyAggregates())
+let activeRequestId = 0
 
 const windowOptions: Array<{ value: ReleaseQueueInsightsWindowDays, label: string }> = [
   { value: 0, label: '累计' },
@@ -51,6 +63,8 @@ const currentUserStats = computed(() => aggregates.value.currentUser)
 const reviewerRanking = computed(() => aggregates.value.reviewers || [])
 const recentReviews = computed(() => aggregates.value.recentReviews || [])
 const windowLabel = computed(() => windowOptions.find(item => item.value === windowDays.value)?.label || '累计')
+const isReloading = computed(() => initialLoading.value || timelinePending.value || insightsPending.value)
+const isActionFilterDirty = computed(() => actionFilter.value.trim() !== appliedActionFilter.value)
 
 function createEmptyAggregates(): ContestAuditAggregates {
   return {
@@ -62,34 +76,84 @@ function createEmptyAggregates(): ContestAuditAggregates {
   }
 }
 
-async function loadLogs() {
-  loading.value = true
+function startReload(scope: AuditReloadScope): number {
+  const shouldShowInitial = scope === 'initial' || !hasLoaded.value
+  if (shouldShowInitial)
+    initialLoading.value = true
+  if (shouldShowInitial || scope === 'manual' || scope === 'timeline')
+    timelinePending.value = true
+  if (shouldShowInitial || scope === 'manual' || scope === 'insights')
+    insightsPending.value = true
+  if (scope === 'manual')
+    refreshPending.value = true
+  activeRequestId += 1
+  return activeRequestId
+}
+
+function finishReload(requestId: number) {
+  if (requestId !== activeRequestId)
+    return
+  initialLoading.value = false
+  timelinePending.value = false
+  insightsPending.value = false
+  refreshPending.value = false
+}
+
+async function loadLogs(scope: AuditReloadScope = 'manual') {
+  const requestId = startReload(scope)
   errorText.value = ''
   try {
     const response = await unsafeFetch<ApiResponse<ContestWorkflowTimelineResult>>(endpoint(`/admin/contests/${contestId.value}/audit`), {
       query: {
-        action: actionFilter.value.trim(),
+        action: appliedActionFilter.value,
         page: page.value,
         pageSize: pageSize.value,
         rankingMode: rankingMode.value,
         windowDays: windowDays.value,
       },
     })
+    if (requestId !== activeRequestId)
+      return
     logs.value = response.data.items || []
     total.value = Number(response.data.total || 0)
     aggregates.value = response.data.aggregates || createEmptyAggregates()
     rankingMode.value = aggregates.value.rankingMode
     windowDays.value = aggregates.value.windowDays
+    hasLoaded.value = true
   }
   catch (error: any) {
-    logs.value = []
-    total.value = 0
-    aggregates.value = createEmptyAggregates()
+    if (requestId !== activeRequestId)
+      return
+    if (!hasLoaded.value) {
+      logs.value = []
+      total.value = 0
+      aggregates.value = createEmptyAggregates()
+    }
     errorText.value = String(error?.data?.message || '流程时间线加载失败。')
   }
   finally {
-    loading.value = false
+    finishReload(requestId)
   }
+}
+
+function refreshAudit() {
+  void loadLogs('manual')
+}
+
+function applyActionFilter() {
+  const nextActionFilter = actionFilter.value.trim()
+  actionFilter.value = nextActionFilter
+  if (appliedActionFilter.value === nextActionFilter) {
+    if (page.value !== 1) {
+      page.value = 1
+      return
+    }
+    void loadLogs('timeline')
+    return
+  }
+  appliedActionFilter.value = nextActionFilter
+  if (page.value !== 1)
+    page.value = 1
 }
 
 function formatTime(value?: string): string {
@@ -161,11 +225,27 @@ function sourceColor(source: ContestWorkflowTimelineItem['source']): string {
   return 'gray'
 }
 
-watch([page, pageSize, rankingMode, windowDays], () => {
-  void loadLogs()
+function syncPreservationSummarySections(item: ContestWorkflowTimelineItem) {
+  return buildSyncPreservationSummarySections(item.payload)
+}
+
+function syncPreservationSummarySectionTitle(section: { key: string, title: string }) {
+  if (section.key === 'feishu')
+    return 'Feishu 原值'
+  if (section.key === 'fallbacks')
+    return '本地沿用/兜底'
+  return section.title
+}
+
+watch([page, pageSize, appliedActionFilter], () => {
+  void loadLogs('timeline')
 })
 
-onMounted(loadLogs)
+watch([rankingMode, windowDays], () => {
+  void loadLogs('insights')
+})
+
+onMounted(() => loadLogs('initial'))
 </script>
 
 <template>
@@ -180,8 +260,8 @@ onMounted(loadLogs)
             合并展示飞书同步、人工编辑、审核与发布事件，帮助追踪每次版本演进。
           </p>
         </div>
-        <button class="dense-btn" @click="loadLogs">
-          刷新
+        <button class="dense-btn" :disabled="isReloading" @click="refreshAudit">
+          {{ refreshPending ? '刷新中' : '刷新' }}
         </button>
       </div>
     </section>
@@ -192,7 +272,10 @@ onMounted(loadLogs)
           <h2 class="text-sm text-slate-900 font-semibold">
             我的审核统计
           </h2>
-          <span class="text-[11px] text-slate-500">{{ windowLabel }}</span>
+          <div class="flex gap-2 items-center">
+            <span v-if="insightsPending && !initialLoading" class="text-[11px] text-slate-400">更新中</span>
+            <span class="text-[11px] text-slate-500">{{ windowLabel }}</span>
+          </div>
         </div>
         <div v-if="currentUserStats" class="text-xs mt-3 gap-3 grid grid-cols-3">
           <div>
@@ -247,7 +330,7 @@ onMounted(loadLogs)
         <p v-if="currentUserStats?.lastActionAt" class="text-[11px] text-slate-500 mt-3">
           最近参与：{{ formatTime(currentUserStats.lastActionAt) }}
         </p>
-        <a-empty v-if="!currentUserStats && !loading" description="暂无个人审核记录" class="py-4" />
+        <a-empty v-if="!currentUserStats && !initialLoading && !insightsPending" description="暂无个人审核记录" class="py-4" />
       </section>
 
       <section class="p-4 border border-slate-200 rounded-lg bg-white">
@@ -255,7 +338,7 @@ onMounted(loadLogs)
           <h2 class="text-sm text-slate-900 font-semibold">
             管理员审核排名
           </h2>
-          <a-select v-model="rankingMode" size="mini" class="w-[112px]">
+          <a-select v-model="rankingMode" size="mini" class="w-[112px]" :disabled="initialLoading || insightsPending">
             <a-option v-for="option in rankingOptions" :key="option.value" :value="option.value">
               {{ option.label }}
             </a-option>
@@ -279,7 +362,7 @@ onMounted(loadLogs)
             </div>
           </div>
         </div>
-        <a-empty v-else-if="!loading" description="暂无审核排名" class="py-4" />
+        <a-empty v-else-if="!initialLoading && !insightsPending" description="暂无审核排名" class="py-4" />
       </section>
 
       <section class="p-4 border border-slate-200 rounded-lg bg-white">
@@ -287,7 +370,7 @@ onMounted(loadLogs)
           <h2 class="text-sm text-slate-900 font-semibold">
             近期审核流
           </h2>
-          <a-select v-model="windowDays" size="mini" class="w-[96px]">
+          <a-select v-model="windowDays" size="mini" class="w-[96px]" :disabled="initialLoading || insightsPending">
             <a-option v-for="option in windowOptions" :key="option.value" :value="option.value">
               {{ option.label }}
             </a-option>
@@ -314,7 +397,7 @@ onMounted(loadLogs)
             </p>
           </div>
         </div>
-        <a-empty v-else-if="!loading" description="暂无近期审核" class="py-4" />
+        <a-empty v-else-if="!initialLoading && !insightsPending" description="暂无近期审核" class="py-4" />
       </section>
     </div>
 
@@ -325,23 +408,27 @@ onMounted(loadLogs)
           size="small"
           allow-clear
           placeholder="按动作/来源模糊筛选，如 sync_generated / published / contest.patch"
-          @press-enter="() => { page = 1; loadLogs() }"
+          @press-enter="applyActionFilter"
         />
-        <button class="dense-btn" @click="() => { page = 1; loadLogs() }">
-          应用筛选
+        <button class="dense-btn" :disabled="initialLoading || timelinePending" @click="applyActionFilter">
+          {{ timelinePending ? '应用中' : (isActionFilterDirty ? '应用筛选' : '刷新筛选') }}
         </button>
       </div>
     </section>
 
-    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
+    <section v-if="initialLoading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
     <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="text-[11px] text-slate-500 mb-3 flex items-center justify-between">
+        <span>共 {{ total }} 条</span>
+        <span v-if="timelinePending">更新时间线中</span>
+      </div>
       <div v-if="logs.length === 0" class="text-sm text-slate-500">
-        当前筛选下暂无流程事件。
+        {{ timelinePending ? '正在更新筛选结果...' : '当前筛选下暂无流程事件。' }}
       </div>
       <div v-else class="space-y-2">
         <article
@@ -371,6 +458,21 @@ onMounted(loadLogs)
           <p class="text-xs text-slate-500 mt-1">
             syncItemId={{ item.syncItemId || '-' }} · syncRunId={{ item.syncRunId || '-' }} · recordId={{ item.recordId || '-' }}
           </p>
+          <div v-if="syncPreservationSummarySections(item).length" class="text-[11px] mt-2 p-2 border border-slate-200 rounded bg-slate-50 space-y-2">
+            <p class="text-slate-900 font-medium">
+              同步保留摘要
+            </p>
+            <div v-for="section in syncPreservationSummarySections(item)" :key="section.key" class="space-y-1">
+              <p class="text-slate-500">
+                {{ syncPreservationSummarySectionTitle(section) }}
+              </p>
+              <ul class="text-slate-700 pl-4 list-disc space-y-1">
+                <li v-for="(summaryItem, index) in section.items" :key="`${section.key}-${index}`">
+                  {{ syncPreservationSummaryItemText(summaryItem) }}
+                </li>
+              </ul>
+            </div>
+          </div>
           <pre class="text-[11px] text-slate-700 mt-2 p-2 rounded bg-slate-50 overflow-x-auto">{{ JSON.stringify(item.payload || {}, null, 2) }}</pre>
         </article>
       </div>
