@@ -117,6 +117,7 @@ const insightWindowDays = ref<ReleaseQueueInsightsWindowDays>(0)
 const reviewerRankingMode = ref<ReleaseQueueReviewerRankingMode>('total_actions')
 const actionableFilter = ref<'all' | 'pending_first' | 'claimed_second' | 'ready_publish'>('all')
 const selectedVersionId = ref('')
+const failedCoverPreviewSources = ref<Record<string, true>>({})
 const routeVersionId = computed(() => {
   const value = route.query.versionId
   return Array.isArray(value) ? String(value[0] || '').trim() : String(value || '').trim()
@@ -142,6 +143,12 @@ const reviewerRankingOptions: Array<{ value: ReleaseQueueReviewerRankingMode, la
   { value: 'total_actions', label: '按总审核' },
   { value: 'second_review_approved', label: '按二审通过' },
   { value: 'published', label: '按发布次数' },
+]
+
+const coverPreviewFrames = [
+  { key: 'banner', label: '16:9 横幅', className: 'aspect-[16/9]' },
+  { key: 'card', label: '4:3 卡片', className: 'aspect-[4/3]' },
+  { key: 'square', label: '1:1 方图', className: 'aspect-square' },
 ]
 
 const filteredVersions = computed(() => {
@@ -413,8 +420,51 @@ function metadataText(value: unknown): string {
   return String(value || '').trim()
 }
 
+function encodeLocalImagePath(value: string): string {
+  return value
+    .split('/')
+    .filter(Boolean)
+    .map(segment => encodeURIComponent(segment))
+    .join('/')
+}
+
+function resolveCoverPreviewSource(value: string): string {
+  const text = metadataText(value)
+  if (!text || text === '-')
+    return ''
+
+  const directMatch = text.match(/(?:https?:)?\/\/[^\s|"',，]+|data:image\/[^\s|"',，]+|blob:[^\s|"',，]+|\/[^\s|"',，]+/)
+  if (directMatch?.[0])
+    return directMatch[0]
+
+  const localImage = text
+    .split(/[\s|,，]+/)
+    .map(item => item.trim())
+    .find(item => /\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i.test(item))
+  if (!localImage)
+    return ''
+  if (localImage.startsWith('/'))
+    return localImage
+  return `/${encodeLocalImagePath(localImage)}`
+}
+
 function isCoverPreviewUrl(value: string): boolean {
-  return /^(https?:)?\/\//.test(value) || value.startsWith('/')
+  return Boolean(resolveCoverPreviewSource(value))
+}
+
+function coverPreviewFailed(value: string): boolean {
+  const source = resolveCoverPreviewSource(value)
+  return Boolean(source && failedCoverPreviewSources.value[source])
+}
+
+function markCoverPreviewFailed(value: string): void {
+  const source = resolveCoverPreviewSource(value)
+  if (!source)
+    return
+  failedCoverPreviewSources.value = {
+    ...failedCoverPreviewSources.value,
+    [source]: true,
+  }
 }
 
 function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
@@ -464,15 +514,38 @@ function trackTimelineReviewText(items: ContestReleaseTrackTimelineSnapshot[], f
   return metadataText(fallbackText) || '-'
 }
 
+function trackIdentityCandidates(item: ContestReleaseTrackSnapshot): string[] {
+  const candidates = [
+    item.externalId,
+    item.liveId || '',
+    item.liveId ? `manual:track:${item.liveId}` : '',
+  ]
+  return [...new Set(candidates.map(metadataText).filter(Boolean))]
+}
+
+function isTrackTimelineForTrack(timeline: ContestReleaseTrackTimelineSnapshot, item: ContestReleaseTrackSnapshot): boolean {
+  const candidates = new Set(trackIdentityCandidates(item))
+  return candidates.has(metadataText(timeline.trackExternalId))
+    || candidates.has(metadataText(timeline.trackLiveId))
+}
+
+interface TrackFormRow {
+  label: string
+  value: string
+  kind?: 'cover'
+  previewSource?: string
+}
+
 function trackFormRows(item: ContestReleaseTrackSnapshot | null, snapshot: ContestReleaseSnapshot | null) {
   if (!item)
     return []
   const trackTimelines = (snapshot?.trackTimelines || [])
-    .filter(timeline => timeline.trackExternalId === item.externalId)
-  return [
+    .filter(timeline => isTrackTimelineForTrack(timeline, item))
+  const coverValue = item.coverImageUrl || '-'
+  const rows: TrackFormRow[] = [
     { label: '赛道编号', value: item.externalId || '-' },
     { label: '赛道名称', value: item.name || '-' },
-    { label: '封面', value: item.coverImageUrl || '-' },
+    { label: '封面', value: coverValue, kind: 'cover', previewSource: resolveCoverPreviewSource(coverValue) },
     { label: '具体位置', value: item.location || '-' },
     { label: '主办方', value: item.organizer || '-' },
     { label: '承办方', value: item.undertaker || '-' },
@@ -487,6 +560,7 @@ function trackFormRows(item: ContestReleaseTrackSnapshot | null, snapshot: Conte
     { label: '扣分项', value: arrayText(item.deductionItems) },
     { label: '提交内容', value: arrayText(item.deliverableTypes) },
   ]
+  return rows
 }
 
 function reviewLogPayloadText(item: ReleaseReviewLog | null): string {
@@ -1549,10 +1623,30 @@ onMounted(() => {
     >
       <a-form v-if="selectedTrack" :model="selectedTrack" layout="vertical" class="text-xs">
         <div class="gap-3 grid md:grid-cols-2">
-          <a-form-item v-for="item in trackFormRows(selectedTrack, detailContestSnapshot)" :key="item.label" :label="item.label">
-            <div v-if="item.label === '封面' && isCoverPreviewUrl(item.value)" class="mb-2 h-[148px] w-full overflow-hidden rounded border border-slate-200 bg-slate-50">
-              <img :src="item.value" alt="赛道封面" class="h-full w-full object-contain">
+          <a-form-item
+            v-for="item in trackFormRows(selectedTrack, detailContestSnapshot)"
+            :key="item.label"
+            :label="item.label"
+            :class="item.kind === 'cover' ? 'md:col-span-2' : ''"
+          >
+            <div v-if="item.kind === 'cover' && item.previewSource && isCoverPreviewUrl(item.value) && !coverPreviewFailed(item.value)" class="mb-3 p-2 border border-slate-200 rounded bg-slate-50">
+              <div class="border border-slate-200 rounded bg-white h-[180px] w-full overflow-hidden">
+                <img :src="item.previewSource" alt="赛道封面原图" class="h-full w-full object-contain" loading="lazy" @error="markCoverPreviewFailed(item.value)">
+              </div>
+              <div class="mt-2 gap-2 grid md:grid-cols-3">
+                <div v-for="preview in coverPreviewFrames" :key="preview.key">
+                  <p class="text-[11px] text-slate-500 mb-1">
+                    {{ preview.label }}
+                  </p>
+                  <div class="border border-slate-200 rounded bg-white w-full overflow-hidden" :class="preview.className">
+                    <img :src="item.previewSource" alt="赛道封面比例预览" class="h-full w-full object-cover" loading="lazy" @error="markCoverPreviewFailed(item.value)">
+                  </div>
+                </div>
+              </div>
             </div>
+            <p v-else-if="item.kind === 'cover' && coverPreviewFailed(item.value)" class="text-[11px] text-amber-700 mb-2">
+              封面图片地址暂不可访问。
+            </p>
             <a-textarea
               :model-value="item.value"
               :auto-size="{ minRows: item.value.length > 80 ? 2 : 1, maxRows: 6 }"

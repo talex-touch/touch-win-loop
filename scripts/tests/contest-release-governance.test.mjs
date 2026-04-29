@@ -160,9 +160,13 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /trackTimelineText/, '审核工作台应在赛道快照字段中渲染时间节点文本')
     assert.match(workbenchSource, /trackTimelineReviewText/, '审核工作台应使用审核友好的时间节点格式')
     assert.match(workbenchSource, /formatTimelineSnapshotItem/, '审核工作台应把时间节点格式化为中文可读文本')
+    assert.match(workbenchSource, /isTrackTimelineForTrack/, '赛道确认表单应按多口径关联时间节点')
     assert.match(workbenchSource, /item\.timelineText/, '赛道时间节点为空时应回退展示赛道库原始 timelineText')
     assert.match(workbenchSource, /isCoverPreviewUrl/, '赛道确认表单应支持封面图片预览')
+    assert.match(workbenchSource, /resolveCoverPreviewSource/, '赛道确认表单应从封面字段解析可预览地址')
+    assert.match(workbenchSource, /coverPreviewFrames/, '封面预览应覆盖常用裁切比例')
     assert.match(workbenchSource, /object-contain/, '封面预览应适配不同尺寸图片')
+    assert.match(workbenchSource, /object-cover/, '封面预览应展示最终裁切效果')
 
     assert.match(workbenchSource, /reviewLogDrawerVisible/, '审批日志详情应使用独立 drawer 状态')
     assert.match(workbenchSource, /selectedReviewLog/, '审批日志详情应按单条日志打开')
