@@ -40,6 +40,7 @@ import { createHash } from 'node:crypto'
 import jsonata from 'jsonata'
 import {
   batchUpdateFeishuBitableRecords,
+  getFeishuBitableRecordById,
   getFeishuTenantAccessToken,
   listFeishuBitableRecords,
   listFeishuBitableRecordsByIds,
@@ -386,11 +387,33 @@ function toText(raw: unknown): string {
   return ''
 }
 
+function pickRecordFieldText(source: Record<string, unknown>): string {
+  const direct = toText(
+    source.text
+    ?? source.name
+    ?? source.url
+    ?? source.value
+    ?? source.record_id
+    ?? source.recordId
+    ?? source.id
+    ?? '',
+  )
+  if (direct)
+    return direct
+
+  const linkedRecordIds = source.record_ids ?? source.recordIds ?? source.link_record_ids ?? source.linkRecordIds
+  if (Array.isArray(linkedRecordIds))
+    return linkedRecordIds.map(item => toText(item)).find(Boolean) || ''
+  return toText(linkedRecordIds)
+}
+
 function toStringArray(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     const result: string[] = []
     for (const item of raw) {
-      const normalized = toText(typeof item === 'object' && item ? ((item as any).text ?? (item as any).name ?? (item as any).url ?? item) : item)
+      const normalized = toText(typeof item === 'object' && item && !Array.isArray(item)
+        ? pickRecordFieldText(item as Record<string, unknown>)
+        : item)
       if (normalized)
         result.push(normalized)
     }
@@ -443,7 +466,7 @@ function normalizeSpecialText(raw: unknown): string {
   }
   if (raw && typeof raw === 'object') {
     const objectRaw = raw as Record<string, unknown>
-    return toText(objectRaw.text ?? objectRaw.name ?? objectRaw.url ?? '')
+    return pickRecordFieldText(objectRaw)
   }
   return toText(raw)
 }
@@ -455,6 +478,52 @@ function buildFeishuAttachmentPreviewUrl(fileToken: unknown, fileName?: unknown)
   const name = toText(fileName)
   const query = name ? `?name=${encodeURIComponent(name)}` : ''
   return `/api/admin/integrations/feishu/bitable/attachments/${encodeURIComponent(token)}${query}`
+}
+
+function pickFeishuAttachmentFileToken(source: Record<string, unknown>): string {
+  return toText(
+    source.file_token
+    ?? source.fileToken
+    ?? source.token
+    ?? source.file_key
+    ?? source.fileKey
+    ?? source.attachment_token
+    ?? source.attachmentToken
+    ?? '',
+  )
+}
+
+function pickFeishuAttachmentFileName(source: Record<string, unknown>): string {
+  return toText(source.name ?? source.file_name ?? source.fileName ?? source.title ?? '')
+}
+
+function collectFeishuAttachmentReferences(raw: unknown): Array<{ fileToken: string, fileName: string }> {
+  if (Array.isArray(raw))
+    return raw.flatMap(item => collectFeishuAttachmentReferences(item))
+
+  if (!raw || typeof raw !== 'object')
+    return []
+
+  const source = raw as Record<string, unknown>
+  const fileToken = pickFeishuAttachmentFileToken(source)
+  const fileName = pickFeishuAttachmentFileName(source)
+  const direct = fileToken ? [{ fileToken, fileName }] : []
+  const nested = ['file', 'attachment', 'value', 'data']
+    .flatMap(key => collectFeishuAttachmentReferences(source[key]))
+  return [...direct, ...nested]
+}
+
+function pickFeishuAttachmentReference(
+  raw: unknown,
+  fileName?: unknown,
+): { fileToken: string, fileName: string } | null {
+  const expectedName = toText(fileName)
+  const references = collectFeishuAttachmentReferences(raw)
+  if (!references.length)
+    return null
+  if (!expectedName)
+    return references[0] || null
+  return references.find(item => item.fileName === expectedName) || references[0] || null
 }
 
 function normalizeImageReferenceText(raw: unknown): string {
@@ -473,8 +542,8 @@ function normalizeImageReferenceText(raw: unknown): string {
   if (raw && typeof raw === 'object') {
     const source = raw as Record<string, unknown>
     const attachmentPreviewUrl = buildFeishuAttachmentPreviewUrl(
-      source.file_token ?? source.fileToken,
-      source.name ?? source.file_name ?? source.fileName,
+      pickFeishuAttachmentFileToken(source),
+      pickFeishuAttachmentFileName(source),
     )
     if (attachmentPreviewUrl)
       return attachmentPreviewUrl
@@ -493,6 +562,60 @@ function normalizeImageReferenceText(raw: unknown): string {
     )
   }
   return toText(raw)
+}
+
+export async function resolveFeishuBitableMappedAttachmentReference(
+  event: H3Event,
+  input: {
+    syncItemId: string
+    recordId: string
+    targetKey: string
+    fileName?: string
+  },
+): Promise<{ tenantAccessToken: string, fileToken: string, fileName: string } | null> {
+  const syncItemId = toText(input.syncItemId)
+  const recordId = toText(input.recordId)
+  const targetKey = toText(input.targetKey)
+  if (!syncItemId || !recordId || !targetKey)
+    return null
+
+  const context = await withClient(event, async (db) => {
+    const [config, task] = await Promise.all([
+      readFeishuIntegrationConfig(db),
+      getFeishuBitableSyncItemById(db, syncItemId),
+    ])
+    return { config, task }
+  })
+  if (!context.config.enabled || !context.task)
+    return null
+
+  const appToken = toText(context.task.appToken || context.task.source?.appToken)
+  const tableId = toText(context.task.tableId || context.task.source?.tableId)
+  if (!appToken || !tableId)
+    return null
+
+  const tenantAccessToken = await getFeishuTenantAccessToken(context.config)
+  const record = await getFeishuBitableRecordById({
+    tenantAccessToken,
+    appToken,
+    tableId,
+    recordId,
+  })
+  if (!record)
+    return null
+
+  const mapping = normalizeMapping(context.task.mapping, context.task.options, context.task.entityType)
+  const resolver = createRecordResolver(record, mapping)
+  const raw = await resolver.getValue(targetKey)
+  const attachment = pickFeishuAttachmentReference(raw, input.fileName)
+  if (!attachment)
+    return null
+
+  return {
+    tenantAccessToken,
+    fileToken: attachment.fileToken,
+    fileName: attachment.fileName || toText(input.fileName) || `${attachment.fileToken}.bin`,
+  }
 }
 
 function normalizePreviewCell(raw: unknown): string {
