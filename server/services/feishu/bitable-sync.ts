@@ -448,6 +448,37 @@ function normalizeSpecialText(raw: unknown): string {
   return toText(raw)
 }
 
+function normalizeImageReferenceText(raw: unknown): string {
+  if (Array.isArray(raw)) {
+    const fallback: string[] = []
+    for (const item of raw) {
+      const normalized = normalizeImageReferenceText(item)
+      if (!normalized)
+        continue
+      if (/^(?:https?:)?\/\//.test(normalized) || normalized.startsWith('/'))
+        return normalized
+      fallback.push(normalized)
+    }
+    return fallback[0] || ''
+  }
+  if (raw && typeof raw === 'object') {
+    const source = raw as Record<string, unknown>
+    return toText(
+      source.url
+      ?? source.downloadUrl
+      ?? source.download_url
+      ?? source.tmpUrl
+      ?? source.tmp_url
+      ?? source.link
+      ?? source.href
+      ?? source.text
+      ?? source.name
+      ?? '',
+    )
+  }
+  return toText(raw)
+}
+
 function normalizePreviewCell(raw: unknown): string {
   if (raw === undefined || raw === null)
     return ''
@@ -2073,7 +2104,7 @@ async function applyTrackRecord(
   const [
     name,
     summary,
-    coverImageUrl,
+    coverImageRaw,
     location,
     organizer,
     undertaker,
@@ -2089,7 +2120,7 @@ async function applyTrackRecord(
   ] = await Promise.all([
     input.resolver.getText('name'),
     input.resolver.getText('summary'),
-    input.resolver.getText('coverImageUrl'),
+    input.resolver.getValue('coverImageUrl'),
     input.resolver.getText('location'),
     input.resolver.getText('organizer'),
     input.resolver.getText('undertaker'),
@@ -2116,6 +2147,7 @@ async function applyTrackRecord(
     }
   }
 
+  const coverImageUrl = normalizeImageReferenceText(coverImageRaw)
   const trackSnapshot: ContestReleaseTrackSnapshot = {
     externalId: input.externalId,
     contestExternalId: contestLink.contestExternalId,

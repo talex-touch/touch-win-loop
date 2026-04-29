@@ -2022,8 +2022,6 @@ async function buildContestLiveBaseSnapshot(
     if (!trackExternalId && !includeUnmanaged)
       continue
     const derivedManaged = isManagedDerivedTrackTimelineNote(item.note)
-    if (!includeUnmanaged && !ref && !derivedManaged)
-      continue
 
     snapshotTrackTimelines.push({
       externalId: ref?.external_id
@@ -2606,16 +2604,18 @@ export async function upsertContestReleaseDraft(
     const trackResult = upsertSnapshotItem(current.tracks, attachReleaseSyncSource(input.track, syncSource))
     current.tracks = trackResult.items
     existed = trackResult.existed
-    current.trackTimelines = [
-      ...current.trackTimelines.filter(item =>
-        item.trackExternalId !== input.track!.externalId
-        || (
-          !item.externalId.startsWith(buildTrackDerivedTimelinePrefix(input.track!.externalId))
-          && !item.externalId.startsWith(buildTrackLegacyTimelinePrefix(input.track!.externalId))
+    if ((input.trackTimelines || []).length > 0) {
+      current.trackTimelines = [
+        ...current.trackTimelines.filter(item =>
+          item.trackExternalId !== input.track!.externalId
+          || (
+            !item.externalId.startsWith(buildTrackDerivedTimelinePrefix(input.track!.externalId))
+            && !item.externalId.startsWith(buildTrackLegacyTimelinePrefix(input.track!.externalId))
+          ),
         ),
-      ),
-      ...(input.trackTimelines || []).map(item => attachReleaseSyncSource(item, syncSource)),
-    ]
+        ...(input.trackTimelines || []).map(item => attachReleaseSyncSource(item, syncSource)),
+      ]
+    }
   }
 
   if (input.entityType === 'track_timeline' && input.trackTimelines?.[0]) {
