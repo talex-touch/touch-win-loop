@@ -19,6 +19,7 @@ import type {
   ReleaseQueueStatusStats,
   ReleaseReviewLog,
   ReleaseScopeKind,
+  ReleaseSyncSource,
   ReleaseVersion,
   ReleaseVersionDetail,
   ReleaseVersionStatus,
@@ -469,13 +470,13 @@ function isCoverPreviewUrl(value: string): boolean {
   return Boolean(resolveCoverPreviewSource(value))
 }
 
-function coverPreviewFailed(value: string): boolean {
-  const source = resolveCoverPreviewSource(value)
+function coverPreviewFailed(value: string, previewSource = ''): boolean {
+  const source = previewSource || resolveCoverPreviewSource(value)
   return Boolean(source && failedCoverPreviewSources.value[source])
 }
 
-function markCoverPreviewFailed(value: string): void {
-  const source = resolveCoverPreviewSource(value)
+function markCoverPreviewFailed(value: string, previewSource = ''): void {
+  const source = previewSource || resolveCoverPreviewSource(value)
   if (!source)
     return
   failedCoverPreviewSources.value = {
@@ -484,12 +485,34 @@ function markCoverPreviewFailed(value: string): void {
   }
 }
 
-function coverPreviewUnavailableText(value: string): string {
+function coverPreviewUnavailableText(value: string, previewSource = ''): string {
+  if (previewSource && coverPreviewFailed(value, previewSource)) {
+    if (previewSource.includes('/api/admin/integrations/feishu/bitable/attachments/resolve?'))
+      return '封面附件预览暂不可访问，请检查飞书附件权限或重新同步。'
+    return '封面图片地址暂不可访问。'
+  }
   if (isBareCoverAttachmentName(value))
     return '封面字段只有附件文件名，缺少可访问图片地址。'
   if (coverPreviewFailed(value))
     return '封面图片地址暂不可访问。'
   return ''
+}
+
+function buildMappedCoverPreviewSource(
+  value: string,
+  syncSource: ReleaseSyncSource | undefined,
+  targetKey: string,
+): string {
+  const text = metadataText(value)
+  if (!isBareCoverAttachmentName(text) || !syncSource?.syncItemId || !syncSource.recordId)
+    return ''
+  const params = new URLSearchParams({
+    syncItemId: syncSource.syncItemId,
+    recordId: syncSource.recordId,
+    targetKey,
+    name: text,
+  })
+  return `/api/admin/integrations/feishu/bitable/attachments/resolve?${params.toString()}`
 }
 
 function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
@@ -630,10 +653,12 @@ function trackFormRows(item: ContestReleaseTrackSnapshot | null, snapshot: Conte
   const trackTimelines = (snapshot?.trackTimelines || [])
     .filter(timeline => isTrackTimelineForTrack(timeline, item))
   const coverValue = item.coverImageUrl || '-'
+  const coverPreviewSource = (isCoverPreviewUrl(coverValue) ? resolveCoverPreviewSource(coverValue) : '')
+    || buildMappedCoverPreviewSource(coverValue, item.syncSource, 'coverImageUrl')
   const rows: TrackFormRow[] = [
     { label: '赛道编号', value: item.externalId || '-' },
     { label: '赛道名称', value: item.name || '-' },
-    { label: '封面', value: coverValue, kind: 'cover', previewSource: resolveCoverPreviewSource(coverValue) },
+    { label: '封面', value: coverValue, kind: 'cover', previewSource: coverPreviewSource },
     { label: '具体位置', value: item.location || '-' },
     { label: '主办方', value: item.organizer || '-' },
     { label: '承办方', value: item.undertaker || '-' },
@@ -1749,9 +1774,9 @@ onMounted(() => {
             :label="item.label"
             :class="item.kind === 'cover' ? 'md:col-span-2' : ''"
           >
-            <div v-if="item.kind === 'cover' && item.previewSource && isCoverPreviewUrl(item.value) && !coverPreviewFailed(item.value)" class="mb-3 p-2 border border-slate-200 rounded bg-slate-50">
+            <div v-if="item.kind === 'cover' && item.previewSource && !coverPreviewFailed(item.value, item.previewSource)" class="mb-3 p-2 border border-slate-200 rounded bg-slate-50">
               <div class="border border-slate-200 rounded bg-white h-[180px] w-full overflow-hidden">
-                <img :src="item.previewSource" alt="赛道封面原图" class="h-full w-full object-contain" loading="lazy" @error="markCoverPreviewFailed(item.value)">
+                <img :src="item.previewSource" alt="赛道封面原图" class="h-full w-full object-contain" loading="lazy" @error="markCoverPreviewFailed(item.value, item.previewSource)">
               </div>
               <div class="mt-2 gap-2 grid md:grid-cols-3">
                 <div v-for="preview in coverPreviewFrames" :key="preview.key">
@@ -1759,13 +1784,13 @@ onMounted(() => {
                     {{ preview.label }}
                   </p>
                   <div class="border border-slate-200 rounded bg-white w-full overflow-hidden" :class="preview.className">
-                    <img :src="item.previewSource" alt="赛道封面比例预览" class="h-full w-full object-cover" loading="lazy" @error="markCoverPreviewFailed(item.value)">
+                    <img :src="item.previewSource" alt="赛道封面比例预览" class="h-full w-full object-cover" loading="lazy" @error="markCoverPreviewFailed(item.value, item.previewSource)">
                   </div>
                 </div>
               </div>
             </div>
-            <p v-else-if="item.kind === 'cover' && coverPreviewUnavailableText(item.value)" class="text-[11px] text-amber-700 mb-2">
-              {{ coverPreviewUnavailableText(item.value) }}
+            <p v-else-if="item.kind === 'cover' && coverPreviewUnavailableText(item.value, item.previewSource)" class="text-[11px] text-amber-700 mb-2">
+              {{ coverPreviewUnavailableText(item.value, item.previewSource) }}
             </p>
             <a-textarea
               :model-value="item.value"
