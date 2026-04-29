@@ -6,6 +6,7 @@ import type {
   FeishuDirectoryFetchStatus,
   FeishuDirectoryStatus,
 } from '~~/shared/types/domain'
+import { Buffer } from 'node:buffer'
 
 const DEFAULT_FEISHU_API_BASE_URL = 'https://open.feishu.cn'
 const DEFAULT_GROUP_MEMBER_PAGE_SIZE = 200
@@ -161,6 +162,12 @@ interface BitableGetRecordData {
     record_id?: string
     fields?: Record<string, unknown>
   }
+}
+
+export interface FeishuDriveMediaDownload {
+  buffer: Buffer
+  contentType: string
+  contentDisposition: string
 }
 
 interface FeishuWikiNodeData {
@@ -1306,6 +1313,31 @@ export async function getFeishuBitableRecordById(input: {
   return {
     recordId: normalizedId,
     fields: record?.fields || {},
+  }
+}
+
+export async function downloadFeishuDriveMedia(input: {
+  tenantAccessToken: string
+  fileToken: string
+}): Promise<FeishuDriveMediaDownload> {
+  const fileToken = String(input.fileToken || '').trim()
+  if (!fileToken)
+    throw new Error('FEISHU_FILE_TOKEN_REQUIRED')
+
+  const response = await fetch(`${DEFAULT_FEISHU_API_BASE_URL}/open-apis/drive/v1/medias/${encodeURIComponent(fileToken)}/download`, {
+    method: 'GET',
+    headers: {
+      authorization: `Bearer ${input.tenantAccessToken}`,
+    },
+  })
+
+  if (!response.ok)
+    throw new Error(`FEISHU_MEDIA_DOWNLOAD_${response.status}`)
+
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type') || 'application/octet-stream',
+    contentDisposition: response.headers.get('content-disposition') || '',
   }
 }
 

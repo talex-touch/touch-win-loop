@@ -448,6 +448,15 @@ function normalizeSpecialText(raw: unknown): string {
   return toText(raw)
 }
 
+function buildFeishuAttachmentPreviewUrl(fileToken: unknown, fileName?: unknown): string {
+  const token = toText(fileToken)
+  if (!token)
+    return ''
+  const name = toText(fileName)
+  const query = name ? `?name=${encodeURIComponent(name)}` : ''
+  return `/api/admin/integrations/feishu/bitable/attachments/${encodeURIComponent(token)}${query}`
+}
+
 function normalizeImageReferenceText(raw: unknown): string {
   if (Array.isArray(raw)) {
     const fallback: string[] = []
@@ -463,6 +472,13 @@ function normalizeImageReferenceText(raw: unknown): string {
   }
   if (raw && typeof raw === 'object') {
     const source = raw as Record<string, unknown>
+    const attachmentPreviewUrl = buildFeishuAttachmentPreviewUrl(
+      source.file_token ?? source.fileToken,
+      source.name ?? source.file_name ?? source.fileName,
+    )
+    if (attachmentPreviewUrl)
+      return attachmentPreviewUrl
+
     return toText(
       source.url
       ?? source.downloadUrl

@@ -253,15 +253,25 @@ describe('赛事版本流与前台可见性收口', () => {
   })
 
   it('赛道确认表单不会把裸附件文件名当图片地址，并补充多口径时间节点关联', async () => {
-    const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
+    const [workbenchSource, bitableSyncSource, attachmentApiSource] = await Promise.all([
+      readSource('app/components/admin/AdminReleaseWorkbench.vue'),
+      readSource('server/services/feishu/bitable-sync.ts'),
+      readSource('server/api/admin/integrations/feishu/bitable/attachments/[fileToken].get.ts'),
+    ])
 
     assert.match(workbenchSource, /function isBareCoverAttachmentName\(/, '封面预览缺少裸附件文件名识别')
     assert.match(workbenchSource, /if \(isBareCoverAttachmentName\(text\)\)\s+return ''/, '裸附件文件名不应被转换成根路径图片地址')
     assert.match(workbenchSource, /function coverPreviewUnavailableText\(/, '封面确认表单缺少不可预览原因提示')
+    assert.match(bitableSyncSource, /function buildFeishuAttachmentPreviewUrl\(/, '附件 file_token 缺少本地受控预览 URL 构造')
+    assert.match(bitableSyncSource, /buildFeishuAttachmentPreviewUrl\([\s\S]*source\.file_token/, '赛道封面附件未从 file_token 生成可预览地址')
+    assert.match(attachmentApiSource, /downloadFeishuDriveMedia/, '飞书附件预览 API 未代理下载附件内容')
     assert.match(workbenchSource, /item\.syncSource\?\.recordId/, '赛道时间节点关联未纳入赛道 sync record 口径')
     assert.match(workbenchSource, /item\.syncSource\?\.syncItemId/, '赛道时间节点关联未纳入赛道 sync item 口径')
     assert.match(workbenchSource, /item\.name/, '赛道时间节点关联未纳入赛道名称口径')
     assert.match(workbenchSource, /timeline\.externalId/, '赛道时间节点关联未从节点 externalId 兜底识别派生前缀')
+    assert.match(workbenchSource, /function mergedContestTimelineReviewText\(/, '概览抽屉缺少合并赛事与赛道时间节点的展示 helper')
+    assert.match(workbenchSource, /snapshot\.trackTimelines/, '概览抽屉未纳入赛道结构化时间节点')
+    assert.match(workbenchSource, /track\.timelineText/, '概览抽屉未用赛道原始 timelineText 兜底')
   })
 
   it('赛事审核历史会把同步保留原因整理成可读摘要', async () => {

@@ -586,6 +586,37 @@ function isTrackTimelineForTrack(timeline: ContestReleaseTrackTimelineSnapshot, 
   )
 }
 
+function mergedContestTimelineReviewText(snapshot: ContestReleaseSnapshot | null) {
+  if (!snapshot)
+    return '-'
+
+  const sections: string[] = []
+  const contestText = contestTimelineText(snapshot.timelines)
+  if (contestText !== '-')
+    sections.push(contestText)
+
+  const matchedTrackTimelineIds = new Set<string>()
+  for (const track of snapshot.tracks) {
+    const trackTimelines = snapshot.trackTimelines.filter((timeline) => {
+      const matched = isTrackTimelineForTrack(timeline, track)
+      if (matched)
+        matchedTrackTimelineIds.add(timeline.externalId)
+      return matched
+    })
+    const text = trackTimelineReviewText(trackTimelines, track.timelineText)
+    if (text === '-')
+      continue
+    const trackName = metadataText(track.name) || metadataText(track.externalId) || '未命名赛道'
+    sections.push(`${trackName}：\n${text}`)
+  }
+
+  const unmatchedTrackTimelines = snapshot.trackTimelines.filter(item => !matchedTrackTimelineIds.has(item.externalId))
+  if (unmatchedTrackTimelines.length > 0)
+    sections.push(`未关联赛道：\n${trackTimelineText(unmatchedTrackTimelines)}`)
+
+  return sections.join('\n\n') || '-'
+}
+
 interface TrackFormRow {
   label: string
   value: string
@@ -1641,7 +1672,7 @@ onMounted(() => {
               <p class="text-slate-400 mb-1">
                 时间节点
               </p>
-              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ contestTimelineText(detailContestSnapshot.timelines) }}</pre>
+              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ mergedContestTimelineReviewText(detailContestSnapshot) }}</pre>
             </div>
           </div>
         </section>
