@@ -20,6 +20,7 @@ import { buildProjectResourceLocalContext } from '~~/server/services/ai/project-
 import {
   createKnowledgeEmbedding,
   extractKnowledgeKeywords,
+  resolveKnowledgeEmbeddingFailureReason,
 } from '~~/server/services/knowledge-ai'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
@@ -511,23 +512,6 @@ export async function buildProjectKnowledgeLocalContext(
   })
   const queryVariants = normalizeQueryVariants(query, retrievalPlan)
   const tokens = buildQueryTokens(queryVariants.join('\n'))
-  const [dashboard, queryEmbeddingResultsByVariant] = await Promise.all([
-    buildProjectKnowledgeIndexDashboard(db, {
-      projectId,
-      syncSources: false,
-    }),
-    Promise.all(queryVariants.map(async (variant) => {
-      const result = await createKnowledgeEmbedding({
-        text: variant,
-        inputType: 'text',
-        event: input.event,
-      })
-      return {
-        query: variant,
-        result,
-      }
-    })),
-  ])
   const fallbackEmbeddingResult = {
     embedding: [],
     provider: '',
@@ -551,6 +535,34 @@ export async function buildProjectKnowledgeLocalContext(
     },
     failureReason: 'EMPTY_QUERY',
   }
+  const [dashboard, queryEmbeddingResultsByVariant] = await Promise.all([
+    buildProjectKnowledgeIndexDashboard(db, {
+      projectId,
+      syncSources: false,
+    }),
+    Promise.all(queryVariants.map(async (variant) => {
+      try {
+        const result = await createKnowledgeEmbedding({
+          text: variant,
+          inputType: 'text',
+          event: input.event,
+        })
+        return {
+          query: variant,
+          result,
+        }
+      }
+      catch (error) {
+        return {
+          query: variant,
+          result: {
+            ...fallbackEmbeddingResult,
+            failureReason: resolveKnowledgeEmbeddingFailureReason(error),
+          },
+        }
+      }
+    })),
+  ])
   const queryEmbeddingResult = queryEmbeddingResultsByVariant[0]?.result || fallbackEmbeddingResult
   const queryEmbeddings = queryEmbeddingResultsByVariant
     .map(item => item.result.embedding)

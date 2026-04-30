@@ -22,7 +22,9 @@ describe('project knowledge embedding governance', () => {
     assert.match(source, /function resolveKnowledgeEmbeddingFailureReason\(/, 'knowledge-ai 未归一化 embedding 失败原因')
     assert.match(source, /export async function resolveKnowledgeEmbeddingRuntimeProfile\(/, 'knowledge-ai 未暴露统一 runtime profile 解析函数')
     assert.match(source, /resolvePlatformAiChannelEmbeddingApiStyle\(embeddingChannelKey\) \|\| undefined/, 'knowledge-ai 未把 channel apiStyle 的 null fallback 收口为 undefined')
-    assert.match(source, /failureReason: 'EMBEDDING_RUNTIME_NOT_CONFIGURED'/, 'knowledge-ai 未在 runtime 不可用时写入 failureReason')
+    assert.match(source, /throw new Error\('EMBEDDING_RUNTIME_NOT_CONFIGURED'\)/, 'knowledge-ai 未在 runtime 不可用时阻断写入')
+    assert.doesNotMatch(source, /buildDeterministicKnowledgeEmbedding/, 'knowledge-ai 仍保留 deterministic embedding 伪向量')
+    assert.doesNotMatch(source, /fallback: \(\) => .*Embedding/, 'knowledge-ai 仍在 embedding 请求失败时生成 fallback 向量')
     assert.match(source, /getKnowledgeEmbeddingCache\(\)\.set\(cacheKey, \{/, 'knowledge-ai 未在查询路径写入 embedding cache')
   })
 
@@ -57,7 +59,8 @@ describe('project knowledge embedding governance', () => {
     const source = await readFile(KNOWLEDGE_CONTEXT_FILE, 'utf8')
 
     assert.match(source, /listProjectKnowledgeSearchChunksByVectorPreselect/, 'knowledge context 未接入向量预选')
-    assert.match(source, /const preselectedChunks = queryEmbedding\.length > 0 && !queryEmbeddingResult\.fallbackUsed/, 'knowledge context 未在真实 query embedding 下优先走 vector preselect')
+    assert.match(source, /\.filter\(item => item\.result\.embedding\.length > 0 && !item\.result\.fallbackUsed\)/, 'knowledge context 未在真实 query embedding 下优先走 vector preselect')
+    assert.match(source, /catch \(error\)[\s\S]*failureReason: resolveKnowledgeEmbeddingFailureReason\(error\)/, 'knowledge context 未把 query embedding 失败收敛为空向量告警')
     assert.match(source, /Query embedding 当前处于 degraded 状态/, 'knowledge context 未显式标记 query embedding degraded')
     assert.match(source, /知识索引当前状态：\$\{dashboard\.diagnostics\.healthMessage\}/, 'knowledge context 未把 dashboard degraded 状态写入 warning')
     assert.match(source, /usedFallback: degradedResultUsed/, 'knowledge context 未把 degraded 查询结果回传为 usedFallback')

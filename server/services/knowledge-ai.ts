@@ -123,16 +123,6 @@ export function extractKnowledgeKeywords(text: string, limit = 8): string[] {
     .map(item => item[0])
 }
 
-export function buildDeterministicKnowledgeEmbedding(text: string, dimensions = 1536): number[] {
-  const digest = createHash('sha256').update(text).digest()
-  const values: number[] = []
-  for (let index = 0; index < dimensions; index += 1) {
-    const byte = digest[index % digest.length] || 0
-    values.push(Number((((byte / 255) * 2) - 1).toFixed(6)))
-  }
-  return values
-}
-
 interface KnowledgeEmbeddingCacheEntry {
   cacheKey: string
   expiresAt: number
@@ -220,7 +210,7 @@ function cloneKnowledgeEmbeddingResult(value: KnowledgeEmbeddingResult): Knowled
   }
 }
 
-function resolveKnowledgeEmbeddingFailureReason(error: unknown, fallback = 'EMBEDDING_REQUEST_FAILED'): string {
+export function resolveKnowledgeEmbeddingFailureReason(error: unknown, fallback = 'EMBEDDING_REQUEST_FAILED'): string {
   if (error instanceof Error)
     return toKnowledgeText(error.message) || fallback
   return toKnowledgeText(error) || fallback
@@ -451,39 +441,11 @@ async function createOpenAiCompatibleTextEmbedding(input: {
   dimensions: number
   runtimeVersion: string
 }): Promise<KnowledgeEmbeddingResult> {
-  if (!input.text) {
-    return createKnowledgeEmbeddingResult({
-      embedding: [],
-      provider: input.provider,
-      model: input.model,
-      fallbackUsed: true,
-      attempts: 1,
-      clientType: 'openai-compatible',
-      apiStyle: 'openai-compatible-text',
-      inputType: 'text',
-      dimensions: input.dimensions,
-      fusionUsed: false,
-      runtimeVersion: input.runtimeVersion,
-      failureReason: 'EMBEDDING_EMPTY_INPUT',
-    })
-  }
+  if (!input.text)
+    throw new Error('EMBEDDING_EMPTY_INPUT')
 
-  if (!input.apiKey || !input.model || !input.endpoint) {
-    return createKnowledgeEmbeddingResult({
-      embedding: buildDeterministicKnowledgeEmbedding(input.text, input.dimensions),
-      provider: input.provider,
-      model: input.model,
-      fallbackUsed: true,
-      attempts: 1,
-      clientType: 'openai-compatible',
-      apiStyle: 'openai-compatible-text',
-      inputType: 'text',
-      dimensions: input.dimensions,
-      fusionUsed: false,
-      runtimeVersion: input.runtimeVersion,
-      failureReason: 'EMBEDDING_RUNTIME_NOT_CONFIGURED',
-    })
-  }
+  if (!input.apiKey || !input.model || !input.endpoint)
+    throw new Error('EMBEDDING_RUNTIME_NOT_CONFIGURED')
 
   const result = await runWithRetry<number[]>({
     maxRetries: input.maxRetries,
@@ -516,7 +478,6 @@ async function createOpenAiCompatibleTextEmbedding(input: {
         clearTimeout(timer)
       }
     },
-    fallback: () => buildDeterministicKnowledgeEmbedding(input.text, input.dimensions),
   })
 
   return createKnowledgeEmbeddingResult({
@@ -531,7 +492,6 @@ async function createOpenAiCompatibleTextEmbedding(input: {
     dimensions: result.data.length || input.dimensions,
     fusionUsed: false,
     runtimeVersion: input.runtimeVersion,
-    failureReason: result.fallbackUsed ? resolveKnowledgeEmbeddingFailureReason(result.lastError) : '',
   })
 }
 
@@ -708,20 +668,7 @@ export async function createKnowledgeEmbedding(input: {
     })
   }
   else if (!profile.runtimeConfigured || !profile.model || !profile.endpoint || !profile.normalizedApiKey) {
-    result = createKnowledgeEmbeddingResult({
-      embedding: profile.sourceText ? buildDeterministicKnowledgeEmbedding(profile.sourceText, profile.dimensions) : [],
-      provider: profile.provider,
-      model: profile.model,
-      fallbackUsed: true,
-      attempts: 1,
-      clientType: 'openai-compatible',
-      apiStyle: 'openai-compatible-text',
-      inputType: 'text',
-      dimensions: profile.dimensions,
-      fusionUsed: false,
-      runtimeVersion: profile.runtimeVersion,
-      failureReason: 'EMBEDDING_RUNTIME_NOT_CONFIGURED',
-    })
+    throw new Error('EMBEDDING_RUNTIME_NOT_CONFIGURED')
   }
   else {
     result = await createOpenAiCompatibleTextEmbedding({
