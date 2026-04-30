@@ -20,7 +20,7 @@ export default defineEventHandler(async (event) => {
   const publicBaseUrl = String(runtime.onlyOffice.sourceBaseURL || '').trim()
   const { user } = await requireAuth(event)
   const syncId = String(getRouterParam(event, 'id') || '').trim()
-  const body = await readBody<CreateConfigShareBody>(event).catch(() => ({} as CreateConfigShareBody))
+  const body: CreateConfigShareBody = (await readBody<CreateConfigShareBody>(event).catch(() => undefined)) ?? {}
 
   const canWrite = await checkPlatformPermission(event, user, 'contest.write')
   if (!canWrite) {
