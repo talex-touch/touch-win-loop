@@ -2,6 +2,8 @@ import type { RuntimeSettings } from '~~/server/utils/env'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { normalizePlatformAiApiKey, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
+import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { buildApiEndpoint, isHttpUrl } from '~~/shared/utils/api-url'
 
 export interface MeetingAsrSession {
@@ -77,7 +79,6 @@ const EMBEDDED_ASR_STATE_KEY = Symbol.for('winloop.meeting.embedded-asr.state.v1
 const EMBEDDED_ASR_MIN_CHUNK_MS = 4000
 const EMBEDDED_ASR_RETRY_DELAY_MS = 3000
 const EMBEDDED_ASR_TIMEOUT_MS = 20000
-const EMBEDDED_ASR_FALLBACK_MODELS = ['gpt-4o-mini-transcribe', 'whisper-1']
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -187,6 +188,26 @@ function buildAsrProviderEndpoint(serviceUrl: string, suffix: '/healthz' | '/mod
   return `${normalized}${suffix}`
 }
 
+function resolveOpenAiCompatibleAsrRuntime(runtime: RuntimeSettings): ReturnType<typeof resolveAiRuntimeForChannel>['ai'] {
+  const ai = resolveAiRuntimeForChannel(runtime, 'meeting_asr').ai
+  if (!normalizeString(ai.provider) || !normalizeString(ai.baseURL) || !normalizeString(ai.model))
+    throw new Error('MEETING_ASR_CHANNEL_NOT_CONFIGURED')
+  return ai
+}
+
+function buildOpenAiCompatibleAsrEndpoint(ai: ReturnType<typeof resolveOpenAiCompatibleAsrRuntime>): string {
+  return buildAsrProviderEndpoint(resolvePlatformAiRequestBaseURL(ai.baseURL, ai.provider), '/audio/transcriptions')
+}
+
+function resolveOpenAiCompatibleAsrProbeEndpoint(runtime: RuntimeSettings): string {
+  try {
+    return buildOpenAiCompatibleAsrEndpoint(resolveOpenAiCompatibleAsrRuntime(runtime))
+  }
+  catch {
+    return ''
+  }
+}
+
 function rewriteLoopbackSourceBaseUrl(rawUrl: string): string {
   const normalized = normalizeString(rawUrl)
   if (!normalized)
@@ -277,54 +298,52 @@ async function transcribeOpenAiCompatibleChunk(input: {
   eventSeq: number
   wavBuffer: Buffer
 }): Promise<EmbeddedTranscriptionResult> {
-  const endpoint = buildAsrProviderEndpoint(input.runtime.meeting.asr.serviceUrl, '/audio/transcriptions')
-  const apiKey = normalizeString(input.runtime.meeting.asr.apiKey)
-  let lastError: Error | null = null
+  const result = await runWithPlatformAiChannelFallback(input.runtime, 'meeting_asr', async ({ ai }) => {
+    const endpoint = buildOpenAiCompatibleAsrEndpoint(ai)
+    const sceneModel = normalizeString(ai.model)
+    const apiKey = normalizePlatformAiApiKey(ai.apiKey)
+    if (!endpoint || !sceneModel)
+      throw new Error('MEETING_ASR_CHANNEL_NOT_CONFIGURED')
 
-  for (const model of EMBEDDED_ASR_FALLBACK_MODELS) {
     const wavBytes = new Uint8Array(input.wavBuffer.byteLength)
     wavBytes.set(input.wavBuffer)
     const formData = new FormData()
-    formData.set('model', model)
+    formData.set('model', sceneModel)
     formData.set('file', new Blob([wavBytes], { type: 'audio/wav' }), `${input.sessionId}-${input.participantIdentity}-${input.eventSeq}.wav`)
 
-    try {
-      const response = await fetchWithTimeout({
-        url: endpoint,
-        init: {
-          method: 'POST',
-          headers: apiKey
-            ? {
-                authorization: `Bearer ${apiKey}`,
-              }
-            : undefined,
-          body: formData,
-        },
-      })
-      const raw = await response.text().catch(() => '')
-      if (!response.ok) {
-        const error = new Error(`OPENAI_COMPATIBLE_ASR_HTTP_${response.status}:${summarizeProbeResponse(raw, 'request failed')}`) as Error & { statusCode?: number }
-        error.statusCode = response.status
-        throw error
-      }
-
-      const payload = raw ? JSON.parse(raw) as Record<string, unknown> : {}
-      return {
-        text: normalizeString(payload.text),
-        language: normalizeString(payload.language),
-        model,
-      }
+    const response = await fetchWithTimeout({
+      url: endpoint,
+      init: {
+        method: 'POST',
+        headers: apiKey
+          ? {
+              authorization: `Bearer ${apiKey}`,
+            }
+          : undefined,
+        body: formData,
+      },
+    })
+    const raw = await response.text().catch(() => '')
+    if (!response.ok) {
+      const error = new Error(`OPENAI_COMPATIBLE_ASR_HTTP_${response.status}:${summarizeProbeResponse(raw, 'request failed')}`) as Error & { statusCode?: number }
+      error.statusCode = response.status
+      throw error
     }
-    catch (error: any) {
-      lastError = error instanceof Error ? error : new Error('OPENAI_COMPATIBLE_ASR_FAILED')
-      const statusCode = Number(error?.statusCode || 0)
-      if (statusCode === 400 || statusCode === 404)
-        continue
-      break
-    }
-  }
 
-  throw lastError || new Error('OPENAI_COMPATIBLE_ASR_FAILED')
+    const payload = raw ? JSON.parse(raw) as Record<string, unknown> : {}
+    return {
+      text: normalizeString(payload.text),
+      language: normalizeString(payload.language),
+      model: sceneModel,
+    }
+  }, {
+    shouldContinueOnError: ({ error }) => {
+      const statusCode = Number((error as { statusCode?: number } | null)?.statusCode || 0)
+      return statusCode === 400 || statusCode === 404
+    },
+  })
+
+  return result.data
 }
 
 async function emitEmbeddedCaptionEvent(input: {
@@ -520,10 +539,7 @@ function createHttpMeetingAsrGateway(runtime: RuntimeSettings): MeetingAsrGatewa
 }
 
 function createOpenAiCompatibleMeetingAsrGateway(runtime: RuntimeSettings): MeetingAsrGateway {
-  const serviceUrl = normalizeString(runtime.meeting.asr.serviceUrl).replace(/\/+$/g, '')
-  if (!serviceUrl)
-    throw new Error('MEETING_ASR_SERVICE_URL_MISSING')
-
+  resolveOpenAiCompatibleAsrRuntime(runtime)
   const state = getEmbeddedAsrState()
 
   return {
@@ -596,7 +612,7 @@ export async function probeMeetingAsrGateway(runtime = readRuntimeSettings()): P
   const provider = normalizeString(runtime.meeting.asr.provider).toLowerCase()
   const serviceUrl = normalizeString(runtime.meeting.asr.serviceUrl).replace(/\/+$/g, '')
   const endpoint = provider === 'openai-compatible'
-    ? buildAsrProviderEndpoint(serviceUrl, '/audio/transcriptions')
+    ? resolveOpenAiCompatibleAsrProbeEndpoint(runtime)
     : buildAsrProviderEndpoint(serviceUrl, '/healthz')
   const startedAt = Date.now()
 

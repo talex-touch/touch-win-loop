@@ -107,10 +107,9 @@ pnpm meeting:asr:dev
 
 - ASR
   - `provider = openai-compatible`
-  - `serviceUrl = https://api.openai.com/v1`
-  - `apiKey = <你的转写服务密钥>`
+  - 在 `/admin/ai-prompts` 的 AI 场景 `meeting_asr` 绑定 ASR Provider 与模型
 
-这条链路下，应用会直接消费会议 PCM 分片并调用 `audio/transcriptions`，不再依赖额外的 ASR bridge 环境变量。
+这条链路下，应用会直接消费会议 PCM 分片，并按 `meeting_asr` 场景解析到的 Provider/模型调用 `audio/transcriptions`，不再依赖额外的 ASR bridge 环境变量。
 
 默认情况下，`ASR dev bridge` 只负责把 `/sessions/start|frame|finish` 协议跑通，并记录帧计数；它不生成伪字幕。
 
@@ -184,16 +183,14 @@ pnpm meeting:asr:dev
 
 - 不需要额外起 ASR bridge。
 - 应用内会按参与者缓存 PCM 分片，达到阈值后直接请求：
-  - `POST <serviceUrl>/audio/transcriptions`
-- 当前默认会优先尝试：
-  - `gpt-4o-mini-transcribe`
-  - 若不支持，再回退 `whisper-1`
+  - `POST <meeting_asr Provider baseURL>/audio/transcriptions`
+- Provider、API Key 与模型只来自 AI 场景 `meeting_asr` 的绑定，不再从会议 ASR 配置读取默认模型或转写密钥。
 - 适合直接接 OpenAI 或兼容其音频转写接口的服务。
 
 公共最小要求：
 
-- `serviceUrl`
-- 可选 `apiKey`
+- `http` provider 需要 `serviceUrl`
+- `openai-compatible` provider 需要 AI 场景 `meeting_asr` 已绑定可用 ASR Provider/模型
 - 可选 `webhookSecret`
 
 ## 后台配置入口
@@ -220,8 +217,8 @@ pnpm meeting:asr:dev
   - `roomPrefix` 可选
 - ASR
   - `provider = http` 或 `openai-compatible`
-  - `serviceUrl`
-  - `apiKey` 可选
+  - `provider = http` 时填写 `serviceUrl`，`apiKey` 可选
+  - `provider = openai-compatible` 时在 AI 场景 `meeting_asr` 维护 Provider、API Key 与模型
   - `webhookSecret` 可选
 
 说明：
@@ -240,7 +237,7 @@ pnpm meeting:asr:dev
    - 线上可使用自建或托管 LiveKit
 2. 选择 ASR 路线。
    - `http`：对接独立 ASR bridge / worker
-   - `openai-compatible`：应用内直接调用 `audio/transcriptions`
+   - `openai-compatible`：应用内按 `meeting_asr` 场景绑定直接调用 `audio/transcriptions`
 3. 进入后台管理页 `/admin/meeting-providers` 保存 RTC / ASR / worker 配置。
 4. 点击“测试连通性”。
    - RTC 通过只代表房间/录制控制链路可达

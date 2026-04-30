@@ -140,7 +140,7 @@ function applyLocalAsrBridgePreset(): void {
 
 function applyOpenAiCompatibleAsrPreset(): void {
   form.asrProvider = 'openai-compatible'
-  form.asrServiceUrl = 'https://api.openai.com/v1'
+  form.asrServiceUrl = ''
 }
 
 function applyPayload(nextPayload: MeetingProvidersPayload): void {
@@ -561,22 +561,22 @@ onMounted(async () => {
             </select>
           </label>
           <label class="block space-y-1">
-            <span class="text-slate-600">Service URL</span>
-            <input v-model="form.asrServiceUrl" class="admin-input" placeholder="http://127.0.0.1:8790 或 https://api.openai.com/v1">
+            <span class="text-slate-600">Service URL（仅 http）</span>
+            <input v-model="form.asrServiceUrl" class="admin-input" :disabled="form.asrProvider === 'openai-compatible'" placeholder="http://127.0.0.1:8790">
           </label>
         </div>
         <p class="text-[10px] text-slate-500 m-0">
-          `http` 表示外部 ASR 网关；`openai-compatible` 表示应用内直接调用 `audio/transcriptions`，不再依赖独立 bridge。
+          `http` 表示外部 ASR 网关；`openai-compatible` 表示应用内调用 AI 场景 `meeting_asr` 绑定的 Provider/模型，不再从会议配置读取转写 URL、API Key 或默认模型。
         </p>
         <div class="gap-3 grid md:grid-cols-2">
           <label class="block space-y-1">
-            <span class="text-slate-600">API Key</span>
+            <span class="text-slate-600">API Key（仅 http）</span>
             <select v-model="form.asrApiKeyMode" class="admin-select">
               <option value="keep">保持</option>
               <option value="replace">替换</option>
               <option value="clear">清空</option>
             </select>
-            <input v-model="form.asrApiKey" class="admin-input" :disabled="form.asrApiKeyMode !== 'replace'" placeholder="仅在替换时填写">
+            <input v-model="form.asrApiKey" class="admin-input" :disabled="form.asrApiKeyMode !== 'replace' || form.asrProvider === 'openai-compatible'" placeholder="仅在替换时填写">
             <span class="text-[10px] text-slate-500">已配置：{{ payload.asr.apiKeyConfigured ? '是' : '否' }}</span>
           </label>
           <label class="block space-y-1">

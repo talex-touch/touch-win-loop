@@ -2,6 +2,7 @@ import type { RuntimeSettings } from '~~/server/utils/env'
 import type { ProjectMeetingRuntimeHealth } from '~~/shared/types/domain'
 import { getMeetingAsrGateway } from '~~/server/services/meeting/asr-gateway'
 import { getRtcProviderGateway } from '~~/server/services/meeting/rtc-provider'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -34,8 +35,13 @@ export function listMeetingAsrConfigIssues(runtime: RuntimeSettings): string[] {
     return [`ASR provider "${provider}" 暂不支持`]
 
   const issues: string[] = []
-  if (!normalizeString(runtime.meeting.asr.serviceUrl))
+  if (provider === 'http' && !normalizeString(runtime.meeting.asr.serviceUrl))
     issues.push('ASR serviceUrl 未配置')
+  if (provider === 'openai-compatible') {
+    const asrRuntime = resolveAiRuntimeForChannel(runtime, 'meeting_asr').ai
+    if (!normalizeString(asrRuntime.provider) || !normalizeString(asrRuntime.baseURL) || !normalizeString(asrRuntime.model))
+      issues.push('meeting_asr 场景未绑定可用 ASR Provider/模型')
+  }
   return issues
 }
 
@@ -87,6 +93,13 @@ export function resolveMeetingRuntimeError(error: unknown): { status: number, me
     return {
       status: 503,
       message: '会议转写服务未配置，当前无法启动会议。',
+    }
+  }
+
+  if (message === 'MEETING_ASR_CHANNEL_NOT_CONFIGURED') {
+    return {
+      status: 503,
+      message: '会议 ASR 场景未绑定可用 Provider/模型，请先在 AI 场景配置中接通 meeting_asr。',
     }
   }
 

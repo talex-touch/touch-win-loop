@@ -62,8 +62,8 @@
   - `provider = http`
     - `serviceUrl = http://127.0.0.1:8790`
   - `provider = openai-compatible`
-    - `serviceUrl = https://api.openai.com/v1`
-    - `apiKey = <你的转写服务密钥>`
+    - 在 `/admin/ai-prompts` 的 AI 场景 `meeting_asr` 绑定 ASR Provider 与模型
+    - 会议 ASR 配置只负责选择内置转写模式与 webhook secret
 
 注意：
 
@@ -176,27 +176,22 @@ pnpm meeting:asr:dev
 如果你不想再维护一个单独的 ASR bridge，可以直接在后台把 ASR 配成：
 
 - `provider = openai-compatible`
-- `serviceUrl = https://api.openai.com/v1`
-- `apiKey = <你的转写服务密钥>`
+- 在 AI Provider 中维护转写服务的 `baseURL` / `apiKey`
+- 在 AI 场景 `meeting_asr` 绑定对应 ASR Provider 与模型
 
 这条路线下：
 
 - 会议 Web 客户端仍然上传 PCM 音频帧到应用服务
 - 应用内按参与者缓存分片
-- 达到阈值后直接调用 `audio/transcriptions`
+- 达到阈值后按 `meeting_asr` 场景解析到的 Provider/模型调用 `audio/transcriptions`
 - 再由应用自己回写 `/api/internal/meetings/asr-events`
-
-当前默认会优先尝试：
-
-- `gpt-4o-mini-transcribe`
-- 若不支持，再回退 `whisper-1`
 
 这样可以做到：
 
 - 不额外依赖 `MEETING_ASR_DEV_TRANSCRIBE_*` 环境变量
-- ASR 仍然完全通过后台会议配置切换
+- ASR Provider、密钥和模型完全跟随 AI 场景配置
 - 本地只需起 `LiveKit + 应用服务`
-- 管理页“测试连通性”会直接发一段最小 `wav` 到 `audio/transcriptions`，能更早发现 key / model / endpoint 问题
+- 管理页“测试连通性”会直接发一段最小 `wav` 到 `meeting_asr` 绑定 Provider 的 `audio/transcriptions`，能更早发现 key / model / endpoint 问题
 
 ## 4. 在后台填写会议配置
 
@@ -220,8 +215,7 @@ pnpm meeting:asr:dev
 
 - ASR
   - `provider = openai-compatible`
-  - `serviceUrl = https://api.openai.com/v1`
-  - `apiKey = <你的转写服务密钥>`
+  - 在 AI 场景 `meeting_asr` 绑定 ASR Provider 与模型
 - Worker
   - 默认值即可
 
