@@ -1410,6 +1410,37 @@ function inferTimelineYearFromText(value: string): number {
     : new Date().getFullYear()
 }
 
+function collectExplicitTimelineDateTokens(value: string): string[] {
+  const text = toText(value)
+  if (!text)
+    return []
+
+  const dateMatches: Array<{ index: number, token: string }> = []
+  const seen = new Set<string>()
+  const pushToken = (token: string, index: number | undefined) => {
+    const normalized = toText(token)
+    if (!normalized || seen.has(normalized))
+      return
+    seen.add(normalized)
+    dateMatches.push({
+      index: Number.isFinite(index) ? Number(index) : text.indexOf(token),
+      token: normalized,
+    })
+  }
+
+  const chineseDatePattern = /\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日/g
+  for (const match of text.matchAll(chineseDatePattern))
+    pushToken(match[0], match.index)
+
+  const numericDatePattern = /\d{4}([./-])\d{1,2}\1\d{1,2}/g
+  for (const match of text.matchAll(numericDatePattern))
+    pushToken(match[0], match.index)
+
+  return dateMatches
+    .sort((left, right) => left.index - right.index)
+    .map(item => item.token)
+}
+
 function parseTimelineTextLines(raw: string): Array<{
   rawLine: string
   nodeType: TimelineNodeType
@@ -1435,7 +1466,7 @@ function parseTimelineTextLines(raw: string): Array<{
     const label = colonIndex >= 0 ? line.slice(0, colonIndex).trim() : ''
     const body = colonIndex >= 0 ? line.slice(colonIndex + 1).trim() : line
     const nodeType = label ? parseTimelineNodeTypeFromLabel(label) : parseTimelineNodeTypeFromLabel(line)
-    const tokens = body.match(/\d{4}[./-]\d{1,2}[./-]\d{1,2}/g) || []
+    const tokens = collectExplicitTimelineDateTokens(body)
     const first = tokens[0] || ''
     const second = tokens[1] || ''
     const firstStart = first ? formatTimelineDateToIso(first, 'start') : null
