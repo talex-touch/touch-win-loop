@@ -16,7 +16,7 @@ definePageMeta({
   layout: 'admin',
 })
 
-type BuildValueSource = 'env' | 'runtime' | 'fallback' | 'missing'
+type BuildValueSource = 'env' | 'runtime' | 'missing'
 type AccentTone = 'blue' | 'emerald' | 'violet' | 'amber' | 'rose' | 'slate'
 
 interface FeishuIntegrationConfigView extends FeishuIntegrationConfig {
@@ -101,8 +101,6 @@ function buildValueSourceLabel(source: BuildValueSource): string {
     return '环境变量'
   if (source === 'runtime')
     return '构建推导'
-  if (source === 'fallback')
-    return '集成兜底'
   return '未命中'
 }
 

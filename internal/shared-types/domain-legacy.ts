@@ -5261,8 +5261,6 @@ export interface FeishuIntegrationConfig {
   startupNotifyEnabled: boolean
   startupNotifyChatId: string
   startupNotifyRemark: string
-  startupFallbackVersion: string
-  startupFallbackCommitSha: string
   updatedAt: string
   updatedByUserId: string
 }

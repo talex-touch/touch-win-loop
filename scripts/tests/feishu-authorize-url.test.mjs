@@ -15,8 +15,6 @@ function createConfig(overrides = {}) {
     startupNotifyEnabled: false,
     startupNotifyChatId: '',
     startupNotifyRemark: '',
-    startupFallbackVersion: '',
-    startupFallbackCommitSha: '',
     updatedAt: '',
     updatedByUserId: '',
     ...overrides,

@@ -62,8 +62,6 @@ async function runStartupNotify(): Promise<void> {
     const { version, commitSha } = resolveFeishuStartupBuildInfo({
       runtimeVersion: runtime.build.version,
       runtimeCommitSha: runtime.build.commitSha,
-      fallbackVersion: config.startupFallbackVersion,
-      fallbackCommitSha: config.startupFallbackCommitSha,
     })
     if (!version || !commitSha) {
       console.warn('[feishu-startup-notify] version or commit sha is empty, skip.', {

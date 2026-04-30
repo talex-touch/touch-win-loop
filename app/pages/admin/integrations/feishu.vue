@@ -30,7 +30,7 @@ definePageMeta({
 })
 
 type SecretMode = 'keep' | 'replace' | 'clear'
-type BuildValueSource = 'env' | 'runtime' | 'fallback' | 'missing'
+type BuildValueSource = 'env' | 'runtime' | 'missing'
 type CreateSyncSourceMode = 'url' | 'manual'
 
 interface FeishuIntegrationConfigView extends FeishuIntegrationConfig {
@@ -219,8 +219,6 @@ const configForm = reactive({
   startupNotifyEnabled: false,
   startupNotifyChatId: '',
   startupNotifyRemark: '',
-  startupFallbackVersion: '',
-  startupFallbackCommitSha: '',
   appSecretMode: 'keep' as SecretMode,
   appSecret: '',
   eventTokenMode: 'keep' as SecretMode,
@@ -373,8 +371,6 @@ function buildValueSourceLabel(source: BuildValueSource | undefined): string {
     return '环境变量'
   if (source === 'runtime')
     return '构建推导'
-  if (source === 'fallback')
-    return '集成配置兜底'
   return '未命中'
 }
 
@@ -660,8 +656,6 @@ function fillConfigForm(payload: FeishuIntegrationConfig) {
   configForm.startupNotifyEnabled = Boolean(payload.startupNotifyEnabled)
   configForm.startupNotifyChatId = payload.startupNotifyChatId || ''
   configForm.startupNotifyRemark = payload.startupNotifyRemark || ''
-  configForm.startupFallbackVersion = payload.startupFallbackVersion || ''
-  configForm.startupFallbackCommitSha = payload.startupFallbackCommitSha || ''
   startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions(startupNotifyChatOptions.value, payload.startupNotifyChatId || '')
   resetSecretInputs()
 }
@@ -1196,8 +1190,6 @@ async function saveConfig() {
           startupNotifyEnabled: configForm.startupNotifyEnabled,
           startupNotifyChatId: configForm.startupNotifyChatId.trim(),
           startupNotifyRemark: configForm.startupNotifyRemark.trim(),
-          startupFallbackVersion: configForm.startupFallbackVersion.trim(),
-          startupFallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
           appSecretMode: configForm.appSecretMode,
           appSecret: configForm.appSecret,
           eventTokenMode: configForm.eventTokenMode,
@@ -1247,8 +1239,6 @@ async function testStartupNotify() {
         body: {
           chatId,
           remark: configForm.startupNotifyRemark.trim(),
-          fallbackVersion: configForm.startupFallbackVersion.trim(),
-          fallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
         },
       },
       '启动通知测试失败。',
@@ -2580,32 +2570,10 @@ onMounted(initializePage)
                   placeholder="例如：已优化启动流程，准备回归验证。"
                 />
               </label>
-
-              <label class="text-[10px] text-slate-600 font-medium block">
-                兜底 Version
-                <a-input
-                  v-model="configForm.startupFallbackVersion"
-                  class="mt-1"
-                  allow-clear
-                  size="small"
-                  placeholder="v2026.03.29-main"
-                />
-              </label>
-
-              <label class="text-[10px] text-slate-600 font-medium block">
-                兜底 Commit SHA
-                <a-input
-                  v-model="configForm.startupFallbackCommitSha"
-                  class="mt-1"
-                  allow-clear
-                  size="small"
-                  placeholder="fe77787"
-                />
-              </label>
             </div>
 
             <p class="text-[10px] text-slate-500 m-0">
-              版本优先级：CI/CD 环境变量（WINLOOP_BUILD_VERSION / WINLOOP_BUILD_COMMIT_SHA）> 构建推导（git）> 集成配置兜底值。
+              版本来源：CI/CD 环境变量（WINLOOP_BUILD_VERSION / WINLOOP_BUILD_COMMIT_SHA）或构建推导（git）；缺失时启动通知会阻断发送。
             </p>
           </div>
         </section>

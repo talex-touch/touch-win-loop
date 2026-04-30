@@ -11,14 +11,12 @@ function sleep(ms: number): Promise<void> {
 export function resolveFeishuStartupBuildInfo(input: {
   runtimeVersion?: string
   runtimeCommitSha?: string
-  fallbackVersion?: string
-  fallbackCommitSha?: string
 }): {
   version: string
   commitSha: string
 } {
-  const version = toText(input.runtimeVersion) || toText(input.fallbackVersion)
-  const commitSha = toText(input.runtimeCommitSha) || toText(input.fallbackCommitSha)
+  const version = toText(input.runtimeVersion)
+  const commitSha = toText(input.runtimeCommitSha)
   return {
     version,
     commitSha,

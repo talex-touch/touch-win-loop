@@ -296,8 +296,6 @@ export interface FeishuIntegrationConfigInternal {
   startupNotifyEnabled: boolean
   startupNotifyChatId: string
   startupNotifyRemark: string
-  startupFallbackVersion: string
-  startupFallbackCommitSha: string
   updatedAt: string
   updatedByUserId: string
 }
@@ -534,8 +532,6 @@ function normalizeFeishuConfigInternal(raw: unknown): FeishuIntegrationConfigInt
     startupNotifyEnabled: hasOwn(source, 'startupNotifyEnabled') ? toBoolean(source.startupNotifyEnabled, false) : false,
     startupNotifyChatId: hasOwn(source, 'startupNotifyChatId') ? toText(source.startupNotifyChatId) : '',
     startupNotifyRemark: hasOwn(source, 'startupNotifyRemark') ? toText(source.startupNotifyRemark) : '',
-    startupFallbackVersion: hasOwn(source, 'startupFallbackVersion') ? toText(source.startupFallbackVersion) : '',
-    startupFallbackCommitSha: hasOwn(source, 'startupFallbackCommitSha') ? toText(source.startupFallbackCommitSha) : '',
     updatedAt: hasOwn(source, 'updatedAt') ? toText(source.updatedAt) : '',
     updatedByUserId: hasOwn(source, 'updatedByUserId') ? toText(source.updatedByUserId) : '',
   }
@@ -907,8 +903,6 @@ export function toPublicFeishuIntegrationConfig(config: FeishuIntegrationConfigI
     startupNotifyEnabled: Boolean(config.startupNotifyEnabled),
     startupNotifyChatId: toText(config.startupNotifyChatId),
     startupNotifyRemark: toText(config.startupNotifyRemark),
-    startupFallbackVersion: toText(config.startupFallbackVersion),
-    startupFallbackCommitSha: toText(config.startupFallbackCommitSha),
     updatedAt: config.updatedAt,
     updatedByUserId: config.updatedByUserId,
   }
