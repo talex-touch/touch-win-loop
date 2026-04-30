@@ -100,6 +100,7 @@ async function requestApi<T>(
 const loading = ref(false)
 const detailLoading = ref(false)
 const actionLoading = ref(false)
+const refreshFromFeishuLoading = ref(false)
 const errorText = ref('')
 const successText = ref('')
 const rejectReason = ref('')
@@ -108,6 +109,7 @@ const timelineVisible = ref(false)
 const metadataDrawerVisible = ref(false)
 const trackDetailVisible = ref(false)
 const reviewLogDrawerVisible = ref(false)
+const resourcePreviewDrawerVisible = ref(false)
 const detail = ref<ReleaseVersionDetail | null>(null)
 const versions = ref<ReleaseVersion[]>([])
 const queueStats = ref<ReleaseQueueStatusStats | null>(null)
@@ -116,6 +118,7 @@ const insights = ref<ReleaseQueueInsights | null>(null)
 const currentUserId = ref('')
 const selectedTrack = ref<ContestReleaseTrackSnapshot | null>(null)
 const selectedReviewLog = ref<ReleaseReviewLog | null>(null)
+const selectedResourcePreview = ref<ResourcePreviewState | null>(null)
 
 const statusFilter = ref<ReleaseVersionStatus | ''>('')
 const insightWindowDays = ref<ReleaseQueueInsightsWindowDays>(0)
@@ -123,6 +126,8 @@ const reviewerRankingMode = ref<ReleaseQueueReviewerRankingMode>('total_actions'
 const actionableFilter = ref<'all' | 'pending_first' | 'claimed_second' | 'ready_publish'>('all')
 const selectedVersionId = ref('')
 const failedCoverPreviewSources = ref<Record<string, true>>({})
+const releaseDetailDrawerWidth = 'min(1180px, calc(100vw - 48px))'
+const secondaryDrawerWidth = 'min(860px, calc(100vw - 48px))'
 const routeVersionId = computed(() => {
   const value = route.query.versionId
   return Array.isArray(value) ? String(value[0] || '').trim() : String(value || '').trim()
@@ -155,6 +160,14 @@ const coverPreviewFrames = [
   { key: 'card', label: '4:3 卡片', className: 'aspect-[4/3]' },
   { key: 'square', label: '1:1 方图', className: 'aspect-square' },
 ]
+
+interface ResourcePreviewState {
+  title: string
+  summary: string
+  fileName: string
+  previewUrl: string
+  sourceText: string
+}
 
 const filteredVersions = computed(() => {
   return versions.value.filter((item) => {
@@ -337,6 +350,20 @@ function diffSummaryText(version: ReleaseVersion): string {
   return `新增 ${version.diffSummary.createdCount} / 更新 ${version.diffSummary.updatedCount} / 移除 ${version.diffSummary.removedCount}`
 }
 
+function rejectedSummaryText(version: ReleaseVersion): string {
+  if (version.status !== 'rejected')
+    return '-'
+  return String(version.rejectReason || '').trim() || '未填写驳回原因'
+}
+
+function rejectedMetaText(version: ReleaseVersion): string {
+  if (version.status !== 'rejected')
+    return ''
+  const rejectedBy = normalizeUserId(version.rejectedByUserId) || '未知管理员'
+  const rejectedAt = formatDateTime(version.rejectedAt)
+  return rejectedAt === '-' ? `驳回人：${rejectedBy}` : `驳回人：${rejectedBy} · 驳回时间：${rejectedAt}`
+}
+
 function previewTitle(version: ReleaseVersion): string {
   return `${scopeKindLabel(version.scopeKind)} · ${version.scopeTitle || version.scopeId}`
 }
@@ -423,6 +450,25 @@ function arrayText(items?: string[] | null): string {
 
 function metadataText(value: unknown): string {
   return String(value || '').trim()
+}
+
+function keywordTags(value: unknown): string[] {
+  const rawItems = Array.isArray(value) ? value : [value]
+  const seen = new Set<string>()
+  const tags: string[] = []
+  for (const rawItem of rawItems) {
+    const text = metadataText(rawItem)
+    if (!text)
+      continue
+    for (const item of text.split(/[、,，;；\n\r\t|]+/)) {
+      const normalized = metadataText(item)
+      if (!normalized || seen.has(normalized))
+        continue
+      seen.add(normalized)
+      tags.push(normalized)
+    }
+  }
+  return tags
 }
 
 function encodeLocalImagePath(value: string): string {
@@ -515,17 +561,111 @@ function buildMappedCoverPreviewSource(
   return `/api/admin/integrations/feishu/bitable/attachments/resolve?${params.toString()}`
 }
 
+function buildMappedResourcePreviewSource(item: ContestReleaseResourceSnapshot): string {
+  const text = metadataText(item.url)
+  if (!item.syncSource?.syncItemId || !item.syncSource.recordId)
+    return ''
+  const params = new URLSearchParams({
+    syncItemId: item.syncSource.syncItemId,
+    recordId: item.syncSource.recordId,
+    targetKey: 'attachment',
+  })
+  if (text)
+    params.set('name', text)
+  return `/api/admin/integrations/feishu/bitable/attachments/resolve?${params.toString()}`
+}
+
+function resolveResourcePreviewSource(item: ContestReleaseResourceSnapshot): string {
+  const text = metadataText(item.url)
+  if (!text || text === '-')
+    return buildMappedResourcePreviewSource(item)
+  const directMatch = text.match(/(?:https?:)?\/\/[^\s|"',，]+|data:[^\s|"',，]+|blob:[^\s|"',，]+|\/[^\s|"',，]+/)
+  if (directMatch?.[0])
+    return directMatch[0]
+  return buildMappedResourcePreviewSource(item)
+}
+
+function resourcePreviewFileName(item: ContestReleaseResourceSnapshot): string {
+  const source = metadataText(item.url)
+  const fromSource = source.split(/[/?#]/).filter(Boolean).pop() || ''
+  return metadataText(fromSource) || metadataText(item.title) || metadataText(item.externalId) || '资料文件'
+}
+
+function resourcePreviewCandidateTexts(item: ResourcePreviewState | null): string[] {
+  return item
+    ? [item.previewUrl, item.fileName, item.sourceText].map(value => metadataText(value)).filter(Boolean)
+    : []
+}
+
+function isResourcePreviewImage(item: ResourcePreviewState | null): boolean {
+  return resourcePreviewCandidateTexts(item).some(text => /\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#\s].*)?$/i.test(text))
+}
+
+function isResourcePreviewPdf(item: ResourcePreviewState | null): boolean {
+  return resourcePreviewCandidateTexts(item).some(text => /\.pdf(?:[?#\s].*)?$/i.test(text))
+}
+
+function openResourcePreview(item: ContestReleaseResourceSnapshot) {
+  selectedResourcePreview.value = {
+    title: metadataText(item.title) || metadataText(item.externalId) || '未命名资料',
+    summary: metadataText(item.summary),
+    fileName: resourcePreviewFileName(item),
+    previewUrl: resolveResourcePreviewSource(item),
+    sourceText: metadataText(item.url) || '-',
+  }
+  resourcePreviewDrawerVisible.value = true
+}
+
+function joinUniqueMetadataTexts(items: unknown[]): string {
+  const seen = new Set<string>()
+  const values: string[] = []
+  for (const item of items) {
+    const text = metadataText(item)
+    if (!text || seen.has(text))
+      continue
+    seen.add(text)
+    values.push(text)
+  }
+  return values.join('；')
+}
+
+function inferLatestTimelineSeason(snapshot: ContestReleaseSnapshot): string {
+  const years = [...snapshot.timelines, ...snapshot.trackTimelines]
+    .map(item => Number(item.year || 0))
+    .filter(year => Number.isFinite(year) && year >= 1900)
+  if (!years.length)
+    return ''
+  return String(Math.max(...years))
+}
+
+function contestParticipantRequirementsText(snapshot: ContestReleaseSnapshot): string {
+  return metadataText(snapshot.contest?.participantRequirements)
+    || joinUniqueMetadataTexts(snapshot.tracks.map(item => item.participantRequirements))
+}
+
+function contestCurrentSeasonText(snapshot: ContestReleaseSnapshot): string {
+  return metadataText(snapshot.contest?.currentSeason)
+    || inferLatestTimelineSeason(snapshot)
+}
+
 function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
   if (!snapshot)
     return []
 
   const contest = snapshot.contest
+  const feishuContestSource = 'Feishu contest 支持字段'
 
   return [
-    { key: 'name', label: '赛事名称', value: metadataText(contest?.name) || '-', source: '概览字段' },
-    { key: 'level', label: '赛事级别', value: metadataText(contest?.level) || '-', source: '概览字段' },
-    { key: 'officialUrl', label: '官网地址', value: metadataText(contest?.officialUrl) || '-', source: '概览字段' },
-    { key: 'summary', label: '竞赛简介', value: metadataText(contest?.summary) || '-', source: '概览字段' },
+    { key: 'name', label: '赛事名称', value: metadataText(contest?.name) || '-', source: feishuContestSource },
+    { key: 'level', label: '赛事级别', value: metadataText(contest?.level) || '-', source: feishuContestSource },
+    { key: 'officialUrl', label: '官网地址', value: metadataText(contest?.officialUrl) || '-', source: feishuContestSource },
+    { key: 'summary', label: '竞赛简介', value: metadataText(contest?.summary) || '-', source: feishuContestSource },
+    { key: 'disciplines', label: '学科门类', value: arrayText(contest?.disciplines), source: feishuContestSource },
+    { key: 'keywords', label: '关键词', value: keywordTags(contest?.keywords).join('、') || '-', source: feishuContestSource, kind: 'keywords' },
+    { key: 'recommendedFor', label: '适配人群', value: arrayText(contest?.recommendedFor), source: feishuContestSource },
+    { key: 'organizer', label: '主办方', value: metadataText(contest?.organizer) || '-', source: '本地/发布保留：contest.organizer 不从 Feishu contest 库写回' },
+    { key: 'participantRequirements', label: '参赛对象', value: contestParticipantRequirementsText(snapshot) || '-', source: '本地/发布保留：contest.participantRequirements 不从 Feishu contest 库写回；缺失时按同版本赛道参赛对象聚合' },
+    { key: 'currentSeason', label: '当前届次', value: contestCurrentSeasonText(snapshot) || '-', source: '本地/发布保留：currentSeason 不作为 Feishu target；缺失时按时间线年份推断' },
   ]
 }
 
@@ -809,7 +949,11 @@ async function openDetail(versionId: string) {
 }
 
 function toggleActionableFilter(nextFilter: 'pending_first' | 'claimed_second' | 'ready_publish') {
-  actionableFilter.value = actionableFilter.value === nextFilter ? 'all' : nextFilter
+  if (actionableFilter.value === nextFilter) {
+    clearActionableFilter()
+    return
+  }
+  actionableFilter.value = nextFilter
   if (actionableFilter.value === 'pending_first')
     statusFilter.value = 'pending_first_review'
   else if (actionableFilter.value === 'claimed_second')
@@ -818,6 +962,12 @@ function toggleActionableFilter(nextFilter: 'pending_first' | 'claimed_second' |
     statusFilter.value = 'approved'
   else
     statusFilter.value = ''
+  selectedVersionId.value = ''
+}
+
+function clearActionableFilter() {
+  actionableFilter.value = 'all'
+  statusFilter.value = ''
   selectedVersionId.value = ''
 }
 
@@ -911,6 +1061,72 @@ async function claimSecondReview() {
   }
 }
 
+function canRefreshCurrentVersionFromFeishu(): boolean {
+  const version = detail.value?.version
+  if (!version)
+    return false
+  const hasRefreshableSource = (source: ReleaseSyncSource | undefined) => {
+    return Boolean(source?.recordId && (source.syncItemId || version.syncItemId))
+  }
+
+  if (detailContestSnapshot.value) {
+    const snapshot = detailContestSnapshot.value
+    return [
+      snapshot.contest?.syncSource,
+      ...snapshot.tracks.map(item => item.syncSource),
+      ...snapshot.trackTimelines.map(item => item.syncSource),
+      ...snapshot.resources.map(item => item.syncSource),
+    ].some(hasRefreshableSource)
+  }
+
+  if (detailPolicySnapshot.value)
+    return detailPolicySnapshot.value.items.some(item => hasRefreshableSource(item.syncSource))
+
+  return false
+}
+
+function refreshSummaryText(summary: Record<string, unknown> | undefined): string {
+  if (!summary)
+    return ''
+  const runId = metadataText(summary.runId)
+  const status = metadataText(summary.status)
+  const created = Number(summary.createdCount || 0)
+  const updated = Number(summary.updatedCount || 0)
+  const skipped = Number(summary.skippedCount || 0)
+  const counts = `新增 ${created} / 更新 ${updated} / 跳过 ${skipped}`
+  return [runId ? `批次 ${runId}` : '', status || '', counts].filter(Boolean).join('；')
+}
+
+async function refreshCurrentVersionFromFeishu() {
+  if (!detail.value || !canRefreshCurrentVersionFromFeishu())
+    return
+  const currentVersionId = detail.value.version.id
+  refreshFromFeishuLoading.value = true
+  errorText.value = ''
+  successText.value = ''
+  try {
+    const data = await requestApi<{
+      latestVersionId?: string
+      summary?: Record<string, unknown>
+    }>(
+      endpoint(`/admin/releases/${encodeURIComponent(currentVersionId)}/refresh-from-feishu`),
+      { method: 'POST' },
+      '重新从飞书读取该项失败。',
+    )
+    const latestVersionId = data.latestVersionId || currentVersionId
+    selectedVersionId.value = latestVersionId
+    successText.value = `已重新从飞书读取该项。${refreshSummaryText(data.summary)}`
+    await loadVersions()
+    await openDetail(latestVersionId)
+  }
+  catch (error: any) {
+    errorText.value = String(error?.data?.message || '重新从飞书读取该项失败。')
+  }
+  finally {
+    refreshFromFeishuLoading.value = false
+  }
+}
+
 function contestSummaryRows(snapshot: ContestReleaseSnapshot | null) {
   const contest = snapshot?.contest || null
   if (!contest)
@@ -922,7 +1138,7 @@ function contestSummaryRows(snapshot: ContestReleaseSnapshot | null) {
     { label: '学科门类', value: (contest.disciplines || []).join('、') || '-' },
     { label: '官网地址', value: contest.officialUrl || '-' },
     { label: '竞赛简介', value: contest.summary || '-' },
-    { label: '关键词', value: (contest.keywords || []).join('、') || '-' },
+    { label: '关键词', value: keywordTags(contest?.keywords).join('、') || '-', kind: 'keywords' },
     { label: '时间节点', value: contestTimelineText(snapshot?.timelines || []) },
     { label: '适配人群', value: (contest.recommendedFor || []).join('、') || '-' },
   ]
@@ -991,7 +1207,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="border border-slate-200 rounded-lg bg-white overflow-hidden">
+  <section class="border border-slate-200 rounded-lg bg-white flex flex-col min-h-0 overflow-hidden">
     <div class="px-4 py-3 border-b border-slate-200 bg-slate-50">
       <div class="flex flex-wrap gap-3 items-start justify-between">
         <div>
@@ -1018,7 +1234,7 @@ onMounted(() => {
       </div>
       <div v-if="actionableFilterLabel" class="text-[11px] text-slate-500 mt-2 flex gap-2 items-center">
         <span>{{ actionableFilterLabel }}</span>
-        <button class="text-slate-700 hover:text-slate-900" type="button" @click="actionableFilter = 'all'">
+        <button class="text-slate-700 hover:text-slate-900" type="button" @click="clearActionableFilter">
           清除
         </button>
       </div>
@@ -1027,9 +1243,9 @@ onMounted(() => {
       </p>
     </div>
 
-    <div class="gap-0 grid md:grid-cols-4">
-      <div class="border-b border-slate-200 bg-slate-50/60 md:border-b-0 md:border-r">
-        <div class="space-y-0">
+    <div class="release-workbench__queue-body gap-0 grid h-[calc(100vh-290px)] max-h-[760px] min-h-0 md:grid-cols-4">
+      <div class="border-b border-slate-200 bg-slate-50/60 flex flex-col min-h-0 overflow-hidden md:border-b-0 md:border-r">
+        <div class="flex flex-col min-h-0 space-y-0">
           <div class="grid grid-cols-2">
             <div class="px-3 py-2 border-b border-r border-slate-200">
               <p class="text-[10px] text-slate-400 uppercase">
@@ -1057,208 +1273,226 @@ onMounted(() => {
             </div>
             <div class="px-3 py-2 border-b border-slate-200">
               <p class="text-[10px] text-slate-400 uppercase">
+                已驳回
+              </p>
+              <p class="text-sm text-slate-900 font-semibold mt-1">
+                {{ summaryStats.rejected }}
+              </p>
+            </div>
+            <div class="px-3 py-2 border-b border-r border-slate-200">
+              <p class="text-[10px] text-slate-400 uppercase">
                 已发布
               </p>
               <p class="text-sm text-slate-900 font-semibold mt-1">
                 {{ summaryStats.published }}
               </p>
             </div>
+            <div class="px-3 py-2 border-b border-slate-200">
+              <p class="text-[10px] text-slate-400 uppercase">
+                已替换
+              </p>
+              <p class="text-sm text-slate-900 font-semibold mt-1">
+                {{ summaryStats.superseded }}
+              </p>
+            </div>
           </div>
 
-          <section class="px-3 py-3 border-b border-slate-200">
-            <div class="flex gap-2 items-center justify-between">
-              <h3 class="text-xs text-slate-900 font-semibold">
-                待我处理
-              </h3>
-              <span class="text-[11px] text-slate-500">
-                {{ insightsWindowLabel }}
-              </span>
-            </div>
-            <div v-if="actionableInsights" class="mt-3 text-center gap-2 grid grid-cols-3">
-              <button
-                class="px-2 py-2 text-left border rounded transition"
-                :class="actionableFilter === 'pending_first' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'"
-                type="button"
-                @click="toggleActionableFilter('pending_first')"
-              >
-                <p class="text-[10px] text-slate-400">
-                  可做初审
-                </p>
-                <p class="text-sm text-slate-900 font-semibold mt-1">
-                  {{ actionableInsights.pendingFirstCount }}
-                </p>
-              </button>
-              <button
-                class="px-2 py-2 text-left border rounded transition"
-                :class="actionableFilter === 'claimed_second' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'"
-                type="button"
-                @click="toggleActionableFilter('claimed_second')"
-              >
-                <p class="text-[10px] text-slate-400">
-                  我领的二审
-                </p>
-                <p class="text-sm text-slate-900 font-semibold mt-1">
-                  {{ actionableInsights.claimedSecondCount }}
-                </p>
-              </button>
-              <button
-                class="px-2 py-2 text-left border rounded transition"
-                :class="actionableFilter === 'ready_publish' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'"
-                type="button"
-                @click="toggleActionableFilter('ready_publish')"
-              >
-                <p class="text-[10px] text-slate-400">
-                  待发布
-                </p>
-                <p class="text-sm text-slate-900 font-semibold mt-1">
-                  {{ actionableInsights.readyToPublishCount }}
-                </p>
-              </button>
-            </div>
-            <a-empty v-else-if="!loading" description="暂无待处理项" class="py-4" />
-          </section>
+          <div class="release-workbench__insights-scroll flex-1 min-h-0 overflow-y-auto">
+            <section class="px-3 py-3 border-b border-slate-200">
+              <div class="flex gap-2 items-center justify-between">
+                <h3 class="text-xs text-slate-900 font-semibold">
+                  待我处理
+                </h3>
+                <span class="text-[11px] text-slate-500">
+                  {{ insightsWindowLabel }}
+                </span>
+              </div>
+              <div v-if="actionableInsights" class="mt-3 text-center gap-2 grid grid-cols-3">
+                <button
+                  class="px-2 py-2 text-left border rounded transition"
+                  :class="actionableFilter === 'pending_first' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'"
+                  type="button"
+                  @click="toggleActionableFilter('pending_first')"
+                >
+                  <p class="text-[10px] text-slate-400">
+                    可做初审
+                  </p>
+                  <p class="text-sm text-slate-900 font-semibold mt-1">
+                    {{ actionableInsights.pendingFirstCount }}
+                  </p>
+                </button>
+                <button
+                  class="px-2 py-2 text-left border rounded transition"
+                  :class="actionableFilter === 'claimed_second' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'"
+                  type="button"
+                  @click="toggleActionableFilter('claimed_second')"
+                >
+                  <p class="text-[10px] text-slate-400">
+                    我领的二审
+                  </p>
+                  <p class="text-sm text-slate-900 font-semibold mt-1">
+                    {{ actionableInsights.claimedSecondCount }}
+                  </p>
+                </button>
+                <button
+                  class="px-2 py-2 text-left border rounded transition"
+                  :class="actionableFilter === 'ready_publish' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'"
+                  type="button"
+                  @click="toggleActionableFilter('ready_publish')"
+                >
+                  <p class="text-[10px] text-slate-400">
+                    待发布
+                  </p>
+                  <p class="text-sm text-slate-900 font-semibold mt-1">
+                    {{ actionableInsights.readyToPublishCount }}
+                  </p>
+                </button>
+              </div>
+              <a-empty v-else-if="!loading" description="暂无待处理项" class="py-4" />
+            </section>
 
-          <section class="px-3 py-3 border-b border-slate-200">
-            <div class="flex items-center justify-between">
-              <h3 class="text-xs text-slate-900 font-semibold">
-                我的审核统计
-              </h3>
-              <span v-if="currentUserInsights" class="text-[11px] text-slate-500">
-                {{ reviewerMetricText(currentUserInsights) }}
-              </span>
-            </div>
-            <div v-if="currentUserInsights" class="text-[11px] mt-3 gap-x-3 gap-y-2 grid grid-cols-2">
-              <div class="space-y-0.5">
-                <p class="text-slate-400">
-                  初审通过
-                </p>
-                <p class="text-slate-900 font-medium">
-                  {{ currentUserInsights.firstReviewApprovedCount }}
-                </p>
+            <section class="px-3 py-3 border-b border-slate-200">
+              <div class="flex items-center justify-between">
+                <h3 class="text-xs text-slate-900 font-semibold">
+                  我的审核统计
+                </h3>
+                <span v-if="currentUserInsights" class="text-[11px] text-slate-500">
+                  {{ reviewerMetricText(currentUserInsights) }}
+                </span>
               </div>
-              <div class="space-y-0.5">
-                <p class="text-slate-400">
-                  领取二审
-                </p>
-                <p class="text-slate-900 font-medium">
-                  {{ currentUserInsights.secondReviewClaimedCount }}
-                </p>
-              </div>
-              <div class="space-y-0.5">
-                <p class="text-slate-400">
-                  二审通过
-                </p>
-                <p class="text-slate-900 font-medium">
-                  {{ currentUserInsights.secondReviewApprovedCount }}
-                </p>
-              </div>
-              <div class="space-y-0.5">
-                <p class="text-slate-400">
-                  驳回
-                </p>
-                <p class="text-slate-900 font-medium">
-                  {{ currentUserInsights.rejectedCount }}
-                </p>
-              </div>
-              <div class="space-y-0.5">
-                <p class="text-slate-400">
-                  发布
-                </p>
-                <p class="text-slate-900 font-medium">
-                  {{ currentUserInsights.publishedCount }}
-                </p>
-              </div>
-              <div class="space-y-0.5">
-                <p class="text-slate-400">
-                  累计动作
-                </p>
-                <p class="text-slate-900 font-medium">
-                  {{ currentUserInsights.totalActions }}
-                </p>
-              </div>
-            </div>
-            <p v-if="currentUserInsights?.lastActionAt" class="text-[11px] text-slate-500 mt-3">
-              最近参与：{{ formatDateTime(currentUserInsights.lastActionAt) }}
-            </p>
-            <a-empty v-else-if="!loading" description="暂无个人审核记录" class="py-4" />
-          </section>
-
-          <section class="px-3 py-3 border-b border-slate-200">
-            <div class="flex gap-2 items-center justify-between">
-              <h3 class="text-xs text-slate-900 font-semibold">
-                管理员审核排名
-              </h3>
-              <a-select v-model="reviewerRankingMode" size="mini" class="w-[110px]">
-                <a-option v-for="option in reviewerRankingOptions" :key="option.value" :value="option.value">
-                  {{ option.label }}
-                </a-option>
-              </a-select>
-            </div>
-            <div v-if="rankedReviewerInsights.length" class="mt-3 space-y-2">
-              <div v-for="(reviewer, index) in rankedReviewerInsights" :key="reviewer.userId" class="flex gap-2 items-center">
-                <div class="text-[11px] text-slate-400 font-medium w-5">
-                  {{ index + 1 }}
+              <div v-if="currentUserInsights" class="text-[11px] mt-3 gap-x-3 gap-y-2 grid grid-cols-2">
+                <div class="space-y-0.5">
+                  <p class="text-slate-400">
+                    初审通过
+                  </p>
+                  <p class="text-slate-900 font-medium">
+                    {{ currentUserInsights.firstReviewApprovedCount }}
+                  </p>
                 </div>
-                <a-avatar :size="24" :image-url="reviewer.avatarUrl || undefined">
-                  {{ reviewer.actorName.slice(0, 1) }}
-                </a-avatar>
-                <div class="flex-1 min-w-0">
-                  <p class="text-[11px] text-slate-900 font-medium truncate">
-                    {{ reviewer.actorName }}
+                <div class="space-y-0.5">
+                  <p class="text-slate-400">
+                    领取二审
+                  </p>
+                  <p class="text-slate-900 font-medium">
+                    {{ currentUserInsights.secondReviewClaimedCount }}
+                  </p>
+                </div>
+                <div class="space-y-0.5">
+                  <p class="text-slate-400">
+                    二审通过
+                  </p>
+                  <p class="text-slate-900 font-medium">
+                    {{ currentUserInsights.secondReviewApprovedCount }}
+                  </p>
+                </div>
+                <div class="space-y-0.5">
+                  <p class="text-slate-400">
+                    驳回
+                  </p>
+                  <p class="text-slate-900 font-medium">
+                    {{ currentUserInsights.rejectedCount }}
+                  </p>
+                </div>
+                <div class="space-y-0.5">
+                  <p class="text-slate-400">
+                    发布
+                  </p>
+                  <p class="text-slate-900 font-medium">
+                    {{ currentUserInsights.publishedCount }}
+                  </p>
+                </div>
+                <div class="space-y-0.5">
+                  <p class="text-slate-400">
+                    累计动作
+                  </p>
+                  <p class="text-slate-900 font-medium">
+                    {{ currentUserInsights.totalActions }}
+                  </p>
+                </div>
+              </div>
+              <p v-if="currentUserInsights?.lastActionAt" class="text-[11px] text-slate-500 mt-3">
+                最近参与：{{ formatDateTime(currentUserInsights.lastActionAt) }}
+              </p>
+              <a-empty v-else-if="!loading" description="暂无个人审核记录" class="py-4" />
+            </section>
+
+            <section class="px-3 py-3 border-b border-slate-200">
+              <div class="flex gap-2 items-center justify-between">
+                <h3 class="text-xs text-slate-900 font-semibold">
+                  管理员审核排名
+                </h3>
+                <a-select v-model="reviewerRankingMode" size="mini" class="w-[110px]">
+                  <a-option v-for="option in reviewerRankingOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </a-option>
+                </a-select>
+              </div>
+              <div v-if="rankedReviewerInsights.length" class="mt-3 space-y-2">
+                <div v-for="(reviewer, index) in rankedReviewerInsights" :key="reviewer.userId" class="flex gap-2 items-center">
+                  <div class="text-[11px] text-slate-400 font-medium w-5">
+                    {{ index + 1 }}
+                  </div>
+                  <a-avatar :size="24" :image-url="reviewer.avatarUrl || undefined">
+                    {{ reviewer.actorName.slice(0, 1) }}
+                  </a-avatar>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-[11px] text-slate-900 font-medium truncate">
+                      {{ reviewer.actorName }}
+                    </p>
+                    <p class="text-[11px] text-slate-500">
+                      {{ reviewerMetricText(reviewer) }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <a-empty v-else-if="!loading" description="暂无审核排名" class="py-4" />
+            </section>
+
+            <section class="px-3 py-3">
+              <div class="flex gap-2 items-center justify-between">
+                <h3 class="text-xs text-slate-900 font-semibold">
+                  近期审核
+                </h3>
+                <a-select v-model="insightWindowDays" size="mini" class="w-[96px]">
+                  <a-option v-for="option in insightWindowOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </a-option>
+                </a-select>
+              </div>
+              <div v-if="recentReviewInsights.length" class="mt-3 space-y-3">
+                <button
+                  v-for="item in recentReviewInsights"
+                  :key="item.id"
+                  class="px-2 py-2 text-left border border-transparent rounded w-full block transition space-y-1 hover:border-slate-200 hover:bg-white"
+                  type="button"
+                  @click="openRecentReview(item)"
+                >
+                  <div class="flex gap-2 items-center">
+                    <a-avatar :size="22" :image-url="item.avatarUrl || undefined">
+                      {{ item.actorName.slice(0, 1) }}
+                    </a-avatar>
+                    <p class="text-[11px] text-slate-900 font-medium flex-1 min-w-0 truncate">
+                      {{ item.actorName }}
+                    </p>
+                    <a-tag size="small" :color="reviewActionTagColor(item.action)">
+                      {{ actionLabel(item.action) }}
+                    </a-tag>
+                  </div>
+                  <p class="text-[11px] text-slate-600">
+                    {{ item.scopeTitle || item.scopeId }} · V{{ item.versionNumber }}
                   </p>
                   <p class="text-[11px] text-slate-500">
-                    {{ reviewerMetricText(reviewer) }}
+                    {{ formatDateTime(item.createdAt) }}
                   </p>
-                </div>
+                </button>
               </div>
-            </div>
-            <a-empty v-else-if="!loading" description="暂无审核排名" class="py-4" />
-          </section>
-
-          <section class="px-3 py-3">
-            <div class="flex gap-2 items-center justify-between">
-              <h3 class="text-xs text-slate-900 font-semibold">
-                近期审核
-              </h3>
-              <a-select v-model="insightWindowDays" size="mini" class="w-[96px]">
-                <a-option v-for="option in insightWindowOptions" :key="option.value" :value="option.value">
-                  {{ option.label }}
-                </a-option>
-              </a-select>
-            </div>
-            <div v-if="recentReviewInsights.length" class="mt-3 space-y-3">
-              <button
-                v-for="item in recentReviewInsights"
-                :key="item.id"
-                class="px-2 py-2 text-left border border-transparent rounded w-full block transition space-y-1 hover:border-slate-200 hover:bg-white"
-                type="button"
-                @click="openRecentReview(item)"
-              >
-                <div class="flex gap-2 items-center">
-                  <a-avatar :size="22" :image-url="item.avatarUrl || undefined">
-                    {{ item.actorName.slice(0, 1) }}
-                  </a-avatar>
-                  <p class="text-[11px] text-slate-900 font-medium flex-1 min-w-0 truncate">
-                    {{ item.actorName }}
-                  </p>
-                  <a-tag size="small" :color="reviewActionTagColor(item.action)">
-                    {{ actionLabel(item.action) }}
-                  </a-tag>
-                </div>
-                <p class="text-[11px] text-slate-600">
-                  {{ item.scopeTitle || item.scopeId }} · V{{ item.versionNumber }}
-                </p>
-                <p class="text-[11px] text-slate-500">
-                  {{ formatDateTime(item.createdAt) }}
-                </p>
-              </button>
-            </div>
-            <a-empty v-else-if="!loading" description="暂无近期审核" class="py-4" />
-          </section>
+              <a-empty v-else-if="!loading" description="暂无近期审核" class="py-4" />
+            </section>
+          </div>
         </div>
       </div>
 
-      <div class="p-3 md:col-span-3">
+      <div class="p-3 flex flex-col min-h-0 md:col-span-3">
         <div v-if="errorText" class="text-xs text-rose-600 mb-3 px-3 py-2 border border-rose-200 rounded bg-rose-50">
           {{ errorText }}
         </div>
@@ -1266,96 +1500,112 @@ onMounted(() => {
           {{ successText }}
         </div>
 
-        <a-table
-          v-if="filteredVersions.length"
-          :data="filteredVersions"
-          :pagination="false"
-          :bordered="false"
-          size="small"
-          row-key="id"
-        >
-          <template #columns>
-            <a-table-column title="版本" data-index="versionNumber" :width="92">
-              <template #cell="{ record }">
-                <button class="text-xs text-slate-900 font-semibold text-left hover:text-blue-600" @click="selectedVersionId = record.id; openDetail(record.id)">
-                  V{{ record.versionNumber }}
-                </button>
-              </template>
-            </a-table-column>
-
-            <a-table-column title="范围" data-index="scopeTitle">
-              <template #cell="{ record }">
-                <div class="space-y-1">
-                  <p class="text-xs text-slate-900 font-medium">
-                    {{ record.scopeTitle || record.scopeId }}
-                  </p>
-                  <p class="text-[11px] text-slate-500">
-                    {{ scopeKindLabel(record.scopeKind) }} / {{ record.scopeId }}
-                  </p>
-                </div>
-              </template>
-            </a-table-column>
-
-            <a-table-column title="状态" data-index="status" :width="118">
-              <template #cell="{ record }">
-                <a-tag size="small" :color="statusColor(record.status)">
-                  {{ statusLabel(record.status) }}
-                </a-tag>
-              </template>
-            </a-table-column>
-
-            <a-table-column title="变更摘要" data-index="diffSummary" :width="230">
-              <template #cell="{ record }">
-                <p class="text-xs text-slate-700">
-                  {{ diffSummaryText(record) }}
-                </p>
-              </template>
-            </a-table-column>
-
-            <a-table-column title="同步批次" data-index="syncRunId" :width="170">
-              <template #cell="{ record }">
-                <p class="text-[11px] text-slate-500 break-all">
-                  {{ record.syncRunId || '-' }}
-                </p>
-              </template>
-            </a-table-column>
-
-            <a-table-column title="更新时间" data-index="updatedAt" :width="168">
-              <template #cell="{ record }">
-                <p class="text-[11px] text-slate-500">
-                  {{ formatDateTime(record.updatedAt) }}
-                </p>
-              </template>
-            </a-table-column>
-
-            <a-table-column title="操作" data-index="actions" :width="120" fixed="right">
-              <template #cell="{ record }">
-                <div class="flex flex-wrap gap-2">
-                  <button class="dense-btn" :disabled="actionLoading" @click="selectedVersionId = record.id; openDetail(record.id)">
-                    审核
+        <div class="release-workbench__table-scroll flex-1 min-h-0 overflow-auto">
+          <a-table
+            v-if="filteredVersions.length"
+            :data="filteredVersions"
+            :pagination="false"
+            :bordered="false"
+            size="small"
+            row-key="id"
+          >
+            <template #columns>
+              <a-table-column title="版本" data-index="versionNumber" :width="92">
+                <template #cell="{ record }">
+                  <button class="text-xs text-slate-900 font-semibold text-left hover:text-blue-600" @click="selectedVersionId = record.id; openDetail(record.id)">
+                    V{{ record.versionNumber }}
                   </button>
-                </div>
-              </template>
-            </a-table-column>
-          </template>
-        </a-table>
+                </template>
+              </a-table-column>
 
-        <a-empty v-else-if="!loading" description="当前没有匹配的版本记录" />
+              <a-table-column title="范围" data-index="scopeTitle">
+                <template #cell="{ record }">
+                  <div class="space-y-1">
+                    <p class="text-xs text-slate-900 font-medium">
+                      {{ record.scopeTitle || record.scopeId }}
+                    </p>
+                    <p class="text-[11px] text-slate-500">
+                      {{ scopeKindLabel(record.scopeKind) }} / {{ record.scopeId }}
+                    </p>
+                  </div>
+                </template>
+              </a-table-column>
 
-        <a-skeleton v-if="loading" :animation="true">
-          <a-skeleton-line :rows="6" />
-        </a-skeleton>
+              <a-table-column title="状态" data-index="status" :width="118">
+                <template #cell="{ record }">
+                  <a-tag size="small" :color="statusColor(record.status)">
+                    {{ statusLabel(record.status) }}
+                  </a-tag>
+                </template>
+              </a-table-column>
+
+              <a-table-column title="变更摘要" data-index="diffSummary" :width="230">
+                <template #cell="{ record }">
+                  <p class="text-xs text-slate-700">
+                    {{ diffSummaryText(record) }}
+                  </p>
+                </template>
+              </a-table-column>
+
+              <a-table-column title="驳回摘要" data-index="rejectReason" :width="220">
+                <template #cell="{ record }">
+                  <div v-if="record.status === 'rejected'" class="space-y-1">
+                    <p class="text-xs text-rose-700 line-clamp-2">
+                      {{ rejectedSummaryText(record) }}
+                    </p>
+                    <p class="text-[11px] text-slate-500">
+                      {{ rejectedMetaText(record) }}
+                    </p>
+                  </div>
+                  <span v-else class="text-[11px] text-slate-400">-</span>
+                </template>
+              </a-table-column>
+
+              <a-table-column title="同步批次" data-index="syncRunId" :width="170">
+                <template #cell="{ record }">
+                  <p class="text-[11px] text-slate-500 break-all">
+                    {{ record.syncRunId || '-' }}
+                  </p>
+                </template>
+              </a-table-column>
+
+              <a-table-column title="更新时间" data-index="updatedAt" :width="168">
+                <template #cell="{ record }">
+                  <p class="text-[11px] text-slate-500">
+                    {{ formatDateTime(record.updatedAt) }}
+                  </p>
+                </template>
+              </a-table-column>
+
+              <a-table-column title="操作" data-index="actions" :width="120" fixed="right">
+                <template #cell="{ record }">
+                  <div class="flex flex-wrap gap-2">
+                    <button class="dense-btn" :disabled="actionLoading" @click="selectedVersionId = record.id; openDetail(record.id)">
+                      审核
+                    </button>
+                  </div>
+                </template>
+              </a-table-column>
+            </template>
+          </a-table>
+
+          <a-empty v-else-if="!loading" description="当前没有匹配的版本记录" />
+
+          <a-skeleton v-if="loading" :animation="true">
+            <a-skeleton-line :rows="6" />
+          </a-skeleton>
+        </div>
       </div>
     </div>
 
-    <a-drawer v-model:visible="detailVisible" width="920px" title="版本详情" unmount-on-close>
+    <a-drawer v-model:visible="detailVisible" :width="releaseDetailDrawerWidth" title="版本详情" unmount-on-close>
       <div v-if="detailLoading" class="p-2">
         <a-skeleton :animation="true">
           <a-skeleton-line :rows="8" />
         </a-skeleton>
       </div>
 
-      <div v-else-if="detail" class="text-xs space-y-4">
+      <div v-else-if="detail" class="text-xs pb-8 space-y-4">
         <section class="p-3 border border-slate-200 rounded bg-slate-50">
           <div class="flex flex-wrap gap-2 items-center justify-between">
             <div>
@@ -1372,6 +1622,15 @@ onMounted(() => {
               </a-tag>
               <button class="dense-btn" type="button" @click="timelineVisible = true">
                 查看流程时间线
+              </button>
+              <button
+                v-if="canRefreshCurrentVersionFromFeishu()"
+                class="dense-btn"
+                type="button"
+                :disabled="refreshFromFeishuLoading"
+                @click="refreshCurrentVersionFromFeishu"
+              >
+                {{ refreshFromFeishuLoading ? '读取中...' : '重新从飞书读取该项' }}
               </button>
             </div>
           </div>
@@ -1448,9 +1707,16 @@ onMounted(() => {
               </button>
             </div>
             <div class="mt-3 gap-2 grid md:grid-cols-2">
-              <p v-for="item in contestSummaryRows(detailContestSnapshot)" :key="item.label" class="text-slate-700 whitespace-pre-wrap">
-                <span class="text-slate-400">{{ item.label }}：</span>{{ item.value }}
-              </p>
+              <div v-for="item in contestSummaryRows(detailContestSnapshot)" :key="item.label" class="text-slate-700 whitespace-pre-wrap">
+                <span class="text-slate-400">{{ item.label }}：</span>
+                <span v-if="item.kind === 'keywords'" class="align-middle inline-flex flex-wrap gap-1">
+                  <a-tag v-for="keyword in keywordTags(item.value)" :key="keyword" size="small" color="arcoblue">
+                    {{ keyword }}
+                  </a-tag>
+                  <span v-if="!keywordTags(item.value).length">-</span>
+                </span>
+                <span v-else>{{ item.value }}</span>
+              </div>
             </div>
           </div>
 
@@ -1513,9 +1779,20 @@ onMounted(() => {
               资料库快照
             </h3>
             <div v-if="detailContestSnapshot.resources.length" class="mt-3 space-y-2">
-              <div v-for="item in detailContestSnapshot.resources" :key="item.externalId" class="p-2 border border-slate-200 rounded bg-slate-50">
-                {{ resourceSummary(item) }}
-              </div>
+              <button
+                v-for="item in detailContestSnapshot.resources"
+                :key="item.externalId"
+                class="p-2 text-left border border-slate-200 rounded bg-slate-50 w-full transition hover:border-slate-300 hover:bg-white"
+                type="button"
+                @click="openResourcePreview(item)"
+              >
+                <p class="text-xs text-slate-900 font-medium break-all">
+                  {{ item.title || item.externalId || '未命名资料' }}
+                </p>
+                <p class="text-[11px] text-slate-500 mt-1 break-all">
+                  {{ resourceSummary(item) }}
+                </p>
+              </button>
             </div>
             <a-empty v-else description="当前版本没有资料变更" />
           </div>
@@ -1690,7 +1967,14 @@ onMounted(() => {
           </div>
           <div class="mt-3 gap-3 grid md:grid-cols-2">
             <a-form-item v-for="item in contestMetadataFormRows(detailContestSnapshot)" :key="item.key" :label="item.label">
+              <div v-if="item.kind === 'keywords'" class="px-2 py-1.5 border border-slate-200 rounded bg-white flex flex-wrap gap-1 min-h-[32px] items-center">
+                <a-tag v-for="keyword in keywordTags(item.value)" :key="keyword" size="small" color="arcoblue">
+                  {{ keyword }}
+                </a-tag>
+                <span v-if="!keywordTags(item.value).length" class="text-slate-400">-</span>
+              </div>
               <a-textarea
+                v-else
                 :model-value="item.value"
                 :auto-size="{ minRows: item.value.length > 80 ? 2 : 1, maxRows: 6 }"
                 readonly
@@ -1781,11 +2065,65 @@ onMounted(() => {
       <a-empty v-else description="暂无流程时间线" />
     </a-modal>
 
-    <a-modal
+    <a-drawer
+      v-model:visible="resourcePreviewDrawerVisible"
+      :width="releaseDetailDrawerWidth"
+      title="资料预览"
+      unmount-on-close
+    >
+      <div v-if="selectedResourcePreview" class="text-xs space-y-3">
+        <section class="p-3 border border-slate-200 rounded bg-slate-50">
+          <div class="flex flex-wrap gap-2 items-center justify-between">
+            <div class="min-w-0">
+              <p class="text-sm text-slate-900 font-semibold break-all">
+                {{ selectedResourcePreview.title }}
+              </p>
+              <p class="text-slate-500 mt-1 break-all">
+                {{ selectedResourcePreview.fileName }}
+              </p>
+            </div>
+            <a
+              v-if="selectedResourcePreview.previewUrl"
+              class="dense-btn"
+              :href="selectedResourcePreview.previewUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              新窗口打开
+            </a>
+          </div>
+          <p v-if="selectedResourcePreview.summary" class="text-slate-600 mt-2 whitespace-pre-wrap">
+            {{ selectedResourcePreview.summary }}
+          </p>
+          <p class="text-[11px] text-slate-500 mt-2 break-all">
+            来源：{{ selectedResourcePreview.sourceText }}
+          </p>
+        </section>
+
+        <div v-if="selectedResourcePreview.previewUrl" class="border border-slate-200 rounded bg-slate-50 min-h-[520px] overflow-hidden">
+          <img
+            v-if="isResourcePreviewImage(selectedResourcePreview)"
+            :src="selectedResourcePreview.previewUrl"
+            alt="资料预览"
+            class="bg-white max-h-[70vh] w-full object-contain"
+            loading="lazy"
+          >
+          <iframe
+            v-else-if="isResourcePreviewPdf(selectedResourcePreview) || selectedResourcePreview.previewUrl"
+            :src="selectedResourcePreview.previewUrl"
+            title="资料预览"
+            class="bg-white h-[70vh] w-full"
+          />
+        </div>
+        <a-empty v-else description="当前资料没有可预览的文件地址" />
+      </div>
+      <a-empty v-else description="未选择资料" />
+    </a-drawer>
+
+    <a-drawer
       v-model:visible="trackDetailVisible"
-      :footer="false"
       title="赛道确认表单"
-      width="760px"
+      :width="secondaryDrawerWidth"
       unmount-on-close
     >
       <a-form v-if="selectedTrack" :model="selectedTrack" layout="vertical" class="text-xs">
@@ -1828,6 +2166,6 @@ onMounted(() => {
         </div>
       </a-form>
       <a-empty v-else description="未选择赛道" />
-    </a-modal>
+    </a-drawer>
   </section>
 </template>

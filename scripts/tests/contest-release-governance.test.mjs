@@ -7,6 +7,10 @@ async function readSource(relativePath) {
   return readFile(resolve(process.cwd(), relativePath), 'utf8')
 }
 
+async function readOptionalSource(relativePath) {
+  return readFile(resolve(process.cwd(), relativePath), 'utf8').catch(() => '')
+}
+
 describe('赛事版本流与前台可见性收口', () => {
   it('前台 contests API 不再按 contest.read_internal 放大管理员口径', async () => {
     const [listApiSource, detailApiSource, contestStoreSource] = await Promise.all([
@@ -155,8 +159,12 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /contestMetadataFormRows/, '赛事概览 metadata 应整理成确认表单行')
     assert.match(workbenchSource, /确认概览字段/, '版本详情应提供概览字段确认入口')
     assert.match(workbenchSource, /赛事概览确认表单/, '赛事概览 metadata drawer 应有明确标题')
-    assert.doesNotMatch(workbenchSource, /function contestMetadataFormRows[\s\S]*key: 'organizer'[\s\S]*function trackFormRows/, 'metadata 确认表单不应展示竞赛级主办方')
-    assert.doesNotMatch(workbenchSource, /function contestMetadataFormRows[\s\S]*key: '(participantRequirements|currentSeason|coOrganizer|teamRule)'[\s\S]*function trackFormRows/, 'metadata 确认表单不应展示飞书竞赛库没有的概览字段')
+    for (const field of ['organizer', 'participantRequirements', 'currentSeason'])
+      assert.match(workbenchSource, new RegExp(`function contestMetadataFormRows[\\s\\S]*key: '${field}'[\\s\\S]*function formatTimelineSnapshotItem`), `metadata 确认表单缺少高频概览字段：${field}`)
+    assert.match(workbenchSource, /contest\.organizer 不从 Feishu contest 库写回/, 'metadata 确认表单应解释 organizer 的 Feishu 字段边界')
+    assert.match(workbenchSource, /同版本赛道参赛对象聚合/, 'metadata 确认表单应解释参赛对象的发布校验兜底口径')
+    assert.match(workbenchSource, /currentSeason 不作为 Feishu target/, 'metadata 确认表单应解释 currentSeason 的 Feishu 字段边界')
+    assert.match(workbenchSource, /时间线年份推断/, 'metadata 确认表单应解释当前届次的发布校验兜底口径')
     for (const field of ['竞赛编号', '竞赛名称', '级别', '学科门类', '官网地址', '竞赛简介', '关键词', '时间节点', '适配人群'])
       assert.match(workbenchSource, new RegExp(`function contestSummaryRows[\\s\\S]*label: '${field}'[\\s\\S]*function contestTimelineText`), `竞赛库快照缺少字段：${field}`)
     assert.doesNotMatch(workbenchSource, /function contestSummaryRows[\s\S]*label: '(主办方|参赛对象|届次|协办\/承办|组队规则)'[\s\S]*function contestTimelineText/, '竞赛库快照不应展示飞书竞赛库没有的字段')
@@ -201,11 +209,21 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(typeSource, /export interface AdminReleaseQueueResult \{[\s\S]*items: ReleaseVersion\[\][\s\S]*stats: ReleaseQueueStatusStats/, '共享类型未声明 release queue 结果对象')
     assert.match(queueApiSource, /listReleaseQueueResult/, '队列 API 仍返回受 limit 截断的纯列表')
     assert.match(releaseStoreSource, /export async function listReleaseQueueResult\(/, 'release-store 未提供队列结果聚合函数')
+    assert.match(releaseStoreSource, /const DEFAULT_RELEASE_QUEUE_STATUSES: ReleaseVersionStatus\[\] = \[[^\]]*'pending_first_review'[^\]]*'pending_second_review'[^\]]*'approved'[^\]]*'rejected'[^\]]*'published'[^\]]*'superseded'[^\]]*\]/, '全部状态默认队列未覆盖已驳回、已发布和已替换版本')
     assert.match(releaseStoreSource, /includeSnapshot:\s*false/, '发布审批队列列表不应返回完整 snapshot_json')
     assert.match(releaseStoreSource, /COUNT\(\*\)::INT AS item_count[\s\S]*GROUP BY status/, '队列统计未按状态做不带 limit 的聚合')
     assert.match(workbenchSource, /AdminReleaseQueueResult/, '版本工作台未识别队列结果对象')
     assert.match(workbenchSource, /queueStats\.value \|\|/, '版本工作台 summary 仍只按当前加载列表计数')
+    assert.match(workbenchSource, /已驳回[\s\S]*\{\{ summaryStats\.rejected \}\}/, '版本工作台统计未展示已驳回版本数量')
+    assert.match(workbenchSource, /已替换[\s\S]*\{\{ summaryStats\.superseded \}\}/, '版本工作台统计未展示已替换版本数量')
     assert.match(workbenchSource, /顶部统计为全量口径/, '版本工作台未提示统计与当前加载列表的口径差异')
+  })
+
+  it('发布审批队列清除待处理筛选会恢复真正的全部状态', async () => {
+    const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
+
+    assert.match(workbenchSource, /function clearActionableFilter\(\)[\s\S]*actionableFilter\.value = 'all'[\s\S]*statusFilter\.value = ''/, '待处理筛选清除操作未同步恢复全部状态')
+    assert.match(workbenchSource, /@click="clearActionableFilter"/, '待处理筛选清除按钮未复用统一清除函数')
   })
 
   it('发布审批队列返回审核洞察，并在左侧展示个人统计、管理员排名和近期审核', async () => {
@@ -254,6 +272,75 @@ describe('赛事版本流与前台可见性收口', () => {
 
     assert.match(workbenchSource, /statuses:\s*statusFilter\.value \|\| undefined/, '状态筛选未作为 statuses 查询参数传给发布审批队列 API')
     assert.match(workbenchSource, /watch\(\s*\[\(\) => props\.fetchPath,\s*statusFilter,\s*insightWindowDays,\s*reviewerRankingMode\]/, '状态筛选变化后未重新加载队列数据')
+  })
+
+  it('已驳回版本在发布审批队列列表展示列表级驳回摘要', async () => {
+    const [typeSource, releaseStoreSource, workbenchSource] = await Promise.all([
+      readSource('shared/types/domain-legacy.ts'),
+      readSource('server/utils/release-store.ts'),
+      readSource('app/components/admin/AdminReleaseWorkbench.vue'),
+    ])
+    const tableStart = workbenchSource.indexOf('v-if="filteredVersions.length"')
+    const tableSource = workbenchSource.slice(
+      tableStart,
+      workbenchSource.indexOf('<a-empty v-else-if="!loading"', tableStart),
+    )
+
+    assert.match(typeSource, /export interface ReleaseVersion \{[\s\S]*rejectedByUserId\?: string \| null[\s\S]*rejectedAt\?: string \| null[\s\S]*rejectReason\?: string \| null/, 'ReleaseVersion 合同未暴露驳回人、驳回时间和驳回原因')
+    assert.match(releaseStoreSource, /rejected_by_user_id,[\s\S]*rejected_at::TEXT,[\s\S]*reject_reason/, 'release-store 列表查询未返回驳回人、驳回时间和驳回原因')
+    assert.match(releaseStoreSource, /rejectedByUserId: row\.rejected_by_user_id,[\s\S]*rejectedAt: row\.rejected_at,[\s\S]*rejectReason: row\.reject_reason \|\| null/, 'release-store 未把驳回字段映射到 ReleaseVersion')
+    assert.match(workbenchSource, /function rejectedSummaryText\(version: ReleaseVersion\): string/, '工作台缺少列表级驳回原因摘要格式化')
+    assert.match(workbenchSource, /function rejectedMetaText\(version: ReleaseVersion\): string/, '工作台缺少列表级驳回人和时间格式化')
+    assert.match(tableSource, /驳回摘要/, '发布审批队列列表缺少驳回摘要列')
+    assert.match(tableSource, /record\.status === 'rejected'/, '驳回摘要应只在已驳回版本上展示')
+    assert.match(tableSource, /rejectedSummaryText\(record\)/, '驳回摘要列未展示 rejectReason')
+    assert.match(tableSource, /rejectedMetaText\(record\)/, '驳回摘要列未展示驳回人和驳回时间')
+  })
+
+  it('发布审批工作台支持内部滚动、加宽详情与局部飞书重读', async () => {
+    const [workbenchSource, releaseStoreSource, refreshApiSource] = await Promise.all([
+      readSource('app/components/admin/AdminReleaseWorkbench.vue'),
+      readSource('server/utils/release-store.ts'),
+      readOptionalSource('server/api/admin/releases/[id]/refresh-from-feishu.post.ts'),
+    ])
+
+    assert.match(workbenchSource, /releaseDetailDrawerWidth = 'min\(1180px, calc\(100vw - 48px\)\)'/, '版本详情 drawer 未按计划加宽')
+    assert.match(workbenchSource, /release-workbench__queue-body/, '版本队列主体缺少内部滚动布局容器')
+    assert.match(workbenchSource, /release-workbench__insights-scroll/, '左侧审核洞察区缺少内部滚动容器')
+    assert.match(workbenchSource, /release-workbench__table-scroll/, '右侧版本表缺少内部滚动容器')
+    assert.match(workbenchSource, /function canRefreshCurrentVersionFromFeishu\(/, '工作台缺少飞书单项重读可用性判断')
+    assert.match(workbenchSource, /function refreshCurrentVersionFromFeishu\(/, '工作台缺少飞书单项重读动作')
+    assert.match(workbenchSource, /重新从飞书读取该项/, '版本详情未展示飞书单项重读入口')
+    assert.match(workbenchSource, /refresh-from-feishu/, '前端未调用 release 专用飞书重读接口')
+    assert.match(releaseStoreSource, /export function resolveReleaseVersionRefreshSource\(/, 'release-store 缺少版本重读来源解析 helper')
+    assert.match(refreshApiSource, /resolveReleaseVersionRefreshSource/, '重读 API 未复用 release-store 来源解析')
+    assert.match(refreshApiSource, /runWorkflow/, '重读 API 未复用现有 Feishu workflow')
+    assert.match(refreshApiSource, /mode:\s*'delta'/, '重读 API 未使用单条 delta 同步')
+    assert.match(refreshApiSource, /recordIds:\s*\[refreshSource\.recordId\]/, '重读 API 未按当前版本 recordId 限定同步范围')
+  })
+
+  it('版本详情把关键词和资料预览改成审核友好的紧凑交互', async () => {
+    const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
+
+    assert.match(workbenchSource, /function keywordTags\(/, '版本详情缺少关键词拆分去重 helper')
+    assert.match(workbenchSource, /keywordTags\(contest\?\.keywords\)/, '竞赛快照未使用关键词标签渲染')
+    assert.match(workbenchSource, /keywordTags\(item\.value\)/, '概览确认表单未使用关键词标签渲染')
+    assert.match(workbenchSource, /resourcePreviewDrawerVisible/, '资料库快照缺少预览 drawer 状态')
+    assert.match(workbenchSource, /function openResourcePreview\(item: ContestReleaseResourceSnapshot\)/, '资料库快照缺少点击预览动作')
+    assert.match(workbenchSource, /@click="openResourcePreview\(item\)"/, '资料库文件行未绑定点击预览')
+    assert.match(workbenchSource, /buildMappedResourcePreviewSource/, '资料附件预览未复用飞书映射附件代理')
+    assert.match(workbenchSource, /资料预览/, '资料预览 drawer 缺少明确标题')
+    assert.match(workbenchSource, /isResourcePreviewImage/, '资料预览缺少图片内嵌判断')
+    assert.match(workbenchSource, /isResourcePreviewPdf/, '资料预览缺少 PDF 内嵌判断')
+  })
+
+  it('赛道确认表单改为右侧 drawer', async () => {
+    const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
+    const trackDetailStart = workbenchSource.indexOf('title="赛道确认表单"')
+    const trackDetailSource = workbenchSource.slice(Math.max(0, trackDetailStart - 220), trackDetailStart + 260)
+
+    assert.match(trackDetailSource, /<a-drawer[\s\S]*v-model:visible="trackDetailVisible"/, '赛道确认表单未改为 drawer')
+    assert.doesNotMatch(trackDetailSource, /<a-modal/, '赛道确认表单不应继续使用 modal')
   })
 
   it('赛道确认表单不会把裸附件文件名当图片地址，并补充多口径时间节点关联', async () => {
