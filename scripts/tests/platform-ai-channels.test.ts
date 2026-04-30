@@ -387,6 +387,44 @@ describe('platform-ai-channels', () => {
     expect(registry.providers[0]?.models.some(item => item.model === 'qwen-vl-max')).toBe(false)
   })
 
+  it('旧 registry object 形态不再迁移 sharedProvider 和 modelPool', () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = JSON.stringify({
+      version: 2,
+      sharedProvider: {
+        id: 'legacy_provider',
+        provider: 'newapi',
+        baseURL: 'https://legacy.example',
+      },
+      modelPool: {
+        items: [
+          { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+        ],
+      },
+      defaults: {
+        defaultModel: 'gpt-4.1-mini',
+      },
+    })
+
+    const registry = resolvePlatformAiRegistry(runtime)
+    expect(registry.providers).toEqual([])
+
+    const registryJson = buildPlatformAiRegistryJson(runtime, {
+      sharedProvider: {
+        id: 'legacy_provider',
+        provider: 'newapi',
+        baseURL: 'https://legacy.example',
+      },
+      modelPool: {
+        items: [
+          { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+        ],
+      },
+    })
+    expect(registryJson).not.toMatch(/legacy_provider/)
+    expect(registryJson).not.toMatch(/gpt-4\.1-mini/)
+  })
+
   it('旧场景模型链没有显式 Provider 时保持未接通', () => {
     const runtime = createRuntime()
     runtime.ai.channelsJson = JSON.stringify({

@@ -738,33 +738,6 @@ function parseLegacyProvidersState(raw: unknown, runtime: RuntimeSettings): Plat
   }
 }
 
-function parseStructuredLegacyProviderState(raw: Record<string, unknown>, runtime: RuntimeSettings): PlatformAiResolvedRegistry {
-  const providerSource = raw.provider && typeof raw.provider === 'object' && !Array.isArray(raw.provider)
-    ? raw.provider as Record<string, unknown>
-    : raw.sharedProvider && typeof raw.sharedProvider === 'object' && !Array.isArray(raw.sharedProvider)
-      ? raw.sharedProvider as Record<string, unknown>
-      : raw.upstream && typeof raw.upstream === 'object' && !Array.isArray(raw.upstream)
-        ? raw.upstream as Record<string, unknown>
-        : raw
-  const modelPoolSource = raw.modelPool && typeof raw.modelPool === 'object' && !Array.isArray(raw.modelPool)
-    ? raw.modelPool as Record<string, unknown>
-    : null
-  const provider = normalizeProvider({
-    ...providerSource,
-    models: Array.isArray(providerSource.models)
-      ? providerSource.models
-      : Array.isArray(modelPoolSource?.items)
-        ? modelPoolSource?.items
-        : [],
-    fetchedAt: providerSource.fetchedAt || modelPoolSource?.fetchedAt,
-  }, 0, runtime)
-
-  return {
-    providers: provider ? [provider] : [],
-    channels: [],
-  }
-}
-
 function parseStructuredProviderState(raw: Record<string, unknown>, runtime: RuntimeSettings): PlatformAiResolvedRegistry {
   const sourceProviders = Array.isArray(raw.providers)
     ? raw.providers
@@ -785,17 +758,6 @@ function parseProviderState(raw: unknown, runtime: RuntimeSettings): PlatformAiR
     const record = parsed as Record<string, unknown>
     if (Array.isArray(record.providers) || Number(record.version || 0) >= PLATFORM_AI_REGISTRY_VERSION)
       return parseStructuredProviderState(record, runtime)
-
-    if (
-      Number(record.version || 0) >= 2
-      || record.sharedProvider
-      || record.upstream
-      || record.modelPool
-      || record.defaults
-      || (record.provider && typeof record.provider === 'object' && !Array.isArray(record.provider))
-    ) {
-      return parseStructuredLegacyProviderState(record, runtime)
-    }
   }
 
   return parseLegacyProvidersState(raw, runtime)
@@ -1346,31 +1308,7 @@ export function buildPlatformAiRegistryJson(runtime: RuntimeSettings, raw: unkno
 
   const providers = Array.isArray(parsed.providers)
     ? parsed.providers
-    : (() => {
-        const providerSource = parsed.provider || parsed.sharedProvider || parsed.upstream
-        const modelPoolItems = parsed.modelPool && typeof parsed.modelPool === 'object' && !Array.isArray(parsed.modelPool) && Array.isArray((parsed.modelPool as Record<string, unknown>).items)
-          ? (parsed.modelPool as Record<string, unknown>).items as unknown[]
-          : Array.isArray(parsed.models)
-            ? parsed.models
-            : []
-        if (providerSource && typeof providerSource === 'object' && !Array.isArray(providerSource)) {
-          const providerRecord = providerSource as Record<string, unknown>
-          return [{
-            ...providerRecord,
-            models: Array.isArray(providerRecord.models) ? providerRecord.models : modelPoolItems,
-            fetchedAt: providerRecord.fetchedAt || ((parsed.modelPool as Record<string, unknown> | undefined)?.fetchedAt),
-          }]
-        }
-        const providerName = toText(parsed.providerName || parsed.provider)
-        const baseURL = toText(parsed.baseURL)
-        if (!providerName && !baseURL && modelPoolItems.length === 0)
-          return []
-        return [{
-          provider: providerName,
-          models: modelPoolItems,
-          baseURL,
-        }]
-      })()
+    : []
 
   const structured = parseProviderState(JSON.stringify({
     version: PLATFORM_AI_REGISTRY_VERSION,
