@@ -173,6 +173,11 @@ interface ContestAuditTimelineRow {
   created_at: string
 }
 
+export interface ReleaseVersionRefreshSource {
+  syncItemId: string
+  recordId: string
+}
+
 const MANAGED_NOTE_PREFIX = '[飞书同步:'
 const LEGACY_CONTEST_TIMELINE_PREFIX = 'legacy:contest:'
 const DERIVED_CONTEST_TIMELINE_PREFIX = 'derived:contest:'
@@ -182,7 +187,14 @@ const MANUAL_TRACK_EXTERNAL_ID_PREFIX = 'manual:track:'
 const MANUAL_CONTEST_TIMELINE_EXTERNAL_ID_PREFIX = 'manual:contest_timeline:'
 const MANUAL_TRACK_TIMELINE_EXTERNAL_ID_PREFIX = 'manual:track_timeline:'
 const MANUAL_RESOURCE_EXTERNAL_ID_PREFIX = 'manual:resource:'
-const DEFAULT_RELEASE_QUEUE_STATUSES: ReleaseVersionStatus[] = ['pending_first_review', 'pending_second_review', 'approved']
+const DEFAULT_RELEASE_QUEUE_STATUSES: ReleaseVersionStatus[] = [
+  'pending_first_review',
+  'pending_second_review',
+  'approved',
+  'rejected',
+  'published',
+  'superseded',
+]
 
 function normalizeText(value: unknown): string {
   return String(value || '').trim()
@@ -667,6 +679,53 @@ function toPolicySnapshot(raw: unknown): PolicyLibraryReleaseSnapshot {
   return {
     items: Array.isArray(source.items) ? source.items as PolicyLibraryItemSnapshot[] : [],
   }
+}
+
+function releaseSyncSourceScore(source: ReleaseSyncSource, version: ReleaseVersion): number {
+  let score = 0
+  if (normalizeText(source.syncItemId) && normalizeText(source.syncItemId) === normalizeText(version.syncItemId))
+    score += 4
+  if (normalizeText(source.syncRunId) && normalizeText(source.syncRunId) === normalizeText(version.syncRunId))
+    score += 2
+  return score
+}
+
+function collectReleaseVersionSyncSources(version: ReleaseVersion): ReleaseSyncSource[] {
+  if (version.scopeKind === 'contest') {
+    const snapshot = toContestSnapshot(version.snapshot, version.scopeId)
+    return [
+      snapshot.contest?.syncSource,
+      ...snapshot.tracks.map(item => item.syncSource),
+      ...snapshot.trackTimelines.map(item => item.syncSource),
+      ...snapshot.resources.map(item => item.syncSource),
+    ].filter((item): item is ReleaseSyncSource => Boolean(item))
+  }
+
+  const snapshot = toPolicySnapshot(version.snapshot)
+  return snapshot.items
+    .map(item => item.syncSource)
+    .filter((item): item is ReleaseSyncSource => Boolean(item))
+}
+
+export function resolveReleaseVersionRefreshSource(version: ReleaseVersion): ReleaseVersionRefreshSource | null {
+  const fallbackSyncItemId = normalizeText(version.syncItemId)
+  const candidates = collectReleaseVersionSyncSources(version)
+    .map((source, index) => ({
+      syncItemId: normalizeText(source.syncItemId) || fallbackSyncItemId,
+      recordId: normalizeText(source.recordId),
+      score: releaseSyncSourceScore(source, version),
+      index,
+    }))
+    .filter(item => item.syncItemId && item.recordId)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+
+  const selected = candidates[0]
+  return selected
+    ? {
+        syncItemId: selected.syncItemId,
+        recordId: selected.recordId,
+      }
+    : null
 }
 
 function extractManagedExternalId(note: string): string {
