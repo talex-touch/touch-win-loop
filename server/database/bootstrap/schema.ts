@@ -2565,6 +2565,7 @@ CREATE TABLE IF NOT EXISTS release_review_logs (
     'second_review_claimed',
     'second_review_approved',
     'rejected',
+    'reset_to_first_review',
     'published'
   )),
   payload JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -2584,6 +2585,7 @@ ALTER TABLE release_review_logs
     'second_review_claimed',
     'second_review_approved',
     'rejected',
+    'reset_to_first_review',
     'published'
   ));
 

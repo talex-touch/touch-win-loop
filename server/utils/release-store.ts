@@ -537,6 +537,8 @@ function workflowTimelineTitleFromReleaseAction(action: ReleaseReviewAction): st
     return '二审通过'
   if (action === 'rejected')
     return '版本被驳回'
+  if (action === 'reset_to_first_review')
+    return '重新提交初审'
   return '版本发布'
 }
 
@@ -560,6 +562,8 @@ function buildReleaseTimelineDescription(
     parts.push(`记录 ${recordId}`)
   if (log.action === 'rejected' && normalizeText(payload.reason))
     parts.push(`原因：${normalizeText(payload.reason)}`)
+  if (log.action === 'reset_to_first_review')
+    parts.push('从已驳回退回待初审')
   if (log.action === 'published' && normalizeText(payload.liveEntityId))
     parts.push(`上线实体 ${normalizeText(payload.liveEntityId)}`)
   return parts.join(' / ')
@@ -1329,6 +1333,7 @@ export async function listReleaseQueueInsights(
     'second_review_claimed',
     'second_review_approved',
     'rejected',
+    'reset_to_first_review',
     'published',
   ]
   const where: string[] = [`l.action = ANY($1::TEXT[])`]
@@ -1521,6 +1526,7 @@ export async function listContestAuditAggregates(
     'second_review_claimed',
     'second_review_approved',
     'rejected',
+    'reset_to_first_review',
     'published',
   ]
   const rankingMode = input.rankingMode || 'total_actions'
@@ -3716,6 +3722,49 @@ export async function rejectReleaseVersion(
     action: 'rejected',
     payload: {
       reason: normalizeText(input.reason),
+    },
+  })
+
+  return getReleaseVersionById(db, input.releaseVersionId).then(item => item!)
+}
+
+export async function resetRejectedReleaseToFirstReview(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    releaseVersionId: string
+  },
+): Promise<ReleaseVersion> {
+  const row = await getLockedReleaseVersion(db, input.releaseVersionId)
+  if (!row)
+    throw new Error('RELEASE_VERSION_NOT_FOUND')
+  if (row.status !== 'rejected')
+    throw new Error('RELEASE_RESET_TO_FIRST_REVIEW_STATUS_INVALID')
+
+  await db.query(
+    `UPDATE release_versions
+     SET status = 'pending_first_review',
+         first_review_by_user_id = NULL,
+         first_review_at = NULL,
+         second_review_claimed_by_user_id = NULL,
+         second_review_claimed_at = NULL,
+         second_review_by_user_id = NULL,
+         second_review_at = NULL,
+         rejected_by_user_id = NULL,
+         rejected_at = NULL,
+         reject_reason = '',
+         updated_by_user_id = $2,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [input.releaseVersionId, input.actorUserId],
+  )
+  await insertReleaseReviewLog(db, {
+    releaseVersionId: input.releaseVersionId,
+    actorUserId: input.actorUserId,
+    action: 'reset_to_first_review',
+    payload: {
+      fromStatus: 'rejected',
+      toStatus: 'pending_first_review',
     },
   })
 

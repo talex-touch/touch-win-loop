@@ -303,6 +303,8 @@ function actionLabel(action: ReleaseReviewLog['action']): string {
     return '二审通过'
   if (action === 'rejected')
     return '驳回'
+  if (action === 'reset_to_first_review')
+    return '重新提交初审'
   return '发布'
 }
 
@@ -315,6 +317,8 @@ function reviewActionTagColor(action: ReleaseQueueRecentReviewItem['action']): s
     return 'green'
   if (action === 'rejected')
     return 'red'
+  if (action === 'reset_to_first_review')
+    return 'orange'
   return 'purple'
 }
 
@@ -1000,7 +1004,7 @@ function openReviewLogDetail(item: ReleaseReviewLog) {
 
 async function mutateVersion(
   versionId: string,
-  action: 'approve' | 'reject' | 'publish',
+  action: 'approve' | 'reject' | 'publish' | 'reset-to-first-review',
   body?: Record<string, unknown>,
 ) {
   actionLoading.value = true
@@ -1017,11 +1021,13 @@ async function mutateVersion(
     )
     successText.value = action === 'publish'
       ? '版本已发布，并替换旧版本。'
-      : action === 'reject'
-        ? '版本已驳回。'
-        : body?.stage === 'second'
-          ? '版本已通过二审。'
-          : '版本已通过初审。'
+      : action === 'reset-to-first-review'
+        ? '版本已重新提交初审。'
+        : action === 'reject'
+          ? '版本已驳回。'
+          : body?.stage === 'second'
+            ? '版本已通过二审。'
+            : '版本已通过初审。'
     if (detail.value?.version.id === versionId)
       await openDetail(versionId)
     await loadVersions()
@@ -1577,11 +1583,19 @@ onMounted(() => {
                 </template>
               </a-table-column>
 
-              <a-table-column title="操作" data-index="actions" :width="120" fixed="right">
+              <a-table-column title="操作" data-index="actions" :width="180" fixed="right">
                 <template #cell="{ record }">
                   <div class="flex flex-wrap gap-2">
                     <button class="dense-btn" :disabled="actionLoading" @click="selectedVersionId = record.id; openDetail(record.id)">
                       审核
+                    </button>
+                    <button
+                      v-if="record.status === 'rejected'"
+                      class="dense-btn"
+                      :disabled="actionLoading"
+                      @click="selectedVersionId = record.id; mutateVersion(record.id, 'reset-to-first-review')"
+                    >
+                      重新提交初审
                     </button>
                   </div>
                 </template>
@@ -1891,6 +1905,14 @@ onMounted(() => {
               @click="mutateVersion(detail.version.id, 'reject', { reason: rejectReason })"
             >
               驳回
+            </button>
+            <button
+              v-if="detail.version.status === 'rejected'"
+              class="dense-btn"
+              :disabled="actionLoading"
+              @click="mutateVersion(detail.version.id, 'reset-to-first-review')"
+            >
+              重新提交初审
             </button>
             <button
               v-if="detail.version.status === 'approved'"

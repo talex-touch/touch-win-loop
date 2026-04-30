@@ -297,6 +297,41 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(tableSource, /rejectedMetaText\(record\)/, '驳回摘要列未展示驳回人和驳回时间')
   })
 
+  it('已驳回版本可重新提交到待初审并保留审计日志', async () => {
+    const [typeSource, internalTypeSource, schemaSource, migrationSource, releaseStoreSource, apiSource, workbenchSource] = await Promise.all([
+      readSource('shared/types/domain-legacy.ts'),
+      readSource('internal/shared-types/domain-legacy.ts'),
+      readSource('server/database/bootstrap/schema.ts'),
+      readSource('scripts/migrations/2026-04-30-release-reset-to-first-review.sql'),
+      readSource('server/utils/release-store.ts'),
+      readSource('server/api/admin/releases/[id]/reset-to-first-review.post.ts'),
+      readSource('app/components/admin/AdminReleaseWorkbench.vue'),
+    ])
+    const tableStart = workbenchSource.indexOf('v-if="filteredVersions.length"')
+    const tableSource = workbenchSource.slice(
+      tableStart,
+      workbenchSource.indexOf('<a-empty v-else-if="!loading"', tableStart),
+    )
+
+    assert.match(typeSource, /export type ReleaseReviewAction[\s\S]*'reset_to_first_review'/, '共享类型未声明 reset_to_first_review 审核动作')
+    assert.match(internalTypeSource, /export type ReleaseReviewAction[\s\S]*'reset_to_first_review'/, '内部共享类型未声明 reset_to_first_review 审核动作')
+    assert.match(schemaSource, /release_review_logs_action_check[\s\S]*'reset_to_first_review'/, 'bootstrap schema 未放行 reset_to_first_review 审核动作')
+    assert.match(migrationSource, /ADD CONSTRAINT release_review_logs_action_check[\s\S]*'reset_to_first_review'/, '迁移未扩展 review logs action check')
+    assert.match(releaseStoreSource, /function workflowTimelineTitleFromReleaseAction[\s\S]*reset_to_first_review[\s\S]*重新提交初审/, '流程时间线未展示重新提交初审动作')
+    assert.match(releaseStoreSource, /const reviewActions: ReleaseReviewAction\[\] = \[[\s\S]*'reset_to_first_review'[\s\S]*\]/, '审核洞察未把重新提交初审纳入总审核动作')
+    assert.match(releaseStoreSource, /export async function resetRejectedReleaseToFirstReview\(/, 'release-store 缺少已驳回版本重提函数')
+    assert.match(releaseStoreSource, /if \(row\.status !== 'rejected'\)\s+throw new Error\('RELEASE_RESET_TO_FIRST_REVIEW_STATUS_INVALID'\)/, '重提函数未限制仅已驳回版本可操作')
+    assert.match(releaseStoreSource, /SET status = 'pending_first_review'[\s\S]*first_review_by_user_id = NULL[\s\S]*second_review_claimed_by_user_id = NULL[\s\S]*second_review_by_user_id = NULL[\s\S]*rejected_by_user_id = NULL[\s\S]*reject_reason = ''/, '重提函数未清空初审、二审和驳回字段')
+    assert.match(releaseStoreSource, /action: 'reset_to_first_review'/, '重提函数未写入 reset_to_first_review 审计日志')
+    assert.match(apiSource, /resetRejectedReleaseToFirstReview/, '重提 API 未调用 release-store 重提函数')
+    assert.match(apiSource, /checkPlatformPermission\(event, user, 'contest\.write'\)/, '重提 API 未沿用 contest.write 权限')
+    assert.match(apiSource, /仅已驳回版本允许重新提交初审/, '重提 API 未返回清晰状态错误')
+    assert.match(workbenchSource, /action: 'approve' \| 'reject' \| 'publish' \| 'reset-to-first-review'/, '工作台 mutateVersion 未支持重提动作')
+    assert.match(workbenchSource, /action === 'reset-to-first-review'[\s\S]*版本已重新提交初审/, '工作台未展示重提成功反馈')
+    assert.match(tableSource, /record\.status === 'rejected'[\s\S]*mutateVersion\(record\.id, 'reset-to-first-review'\)[\s\S]*重新提交初审/, '列表操作列未对已驳回版本展示重新提交初审')
+    assert.match(workbenchSource, /detail\.version\.status === 'rejected'[\s\S]*mutateVersion\(detail\.version\.id, 'reset-to-first-review'\)[\s\S]*重新提交初审/, '详情抽屉未对已驳回版本展示重新提交初审')
+  })
+
   it('发布审批工作台支持内部滚动、加宽详情与局部飞书重读', async () => {
     const [workbenchSource, releaseStoreSource, refreshApiSource] = await Promise.all([
       readSource('app/components/admin/AdminReleaseWorkbench.vue'),

@@ -2092,6 +2092,7 @@ export type ReleaseReviewAction
     | 'second_review_claimed'
     | 'second_review_approved'
     | 'rejected'
+    | 'reset_to_first_review'
     | 'published'
 
 export type ContestWorkflowTimelineSource = 'feishu' | 'manual' | 'review' | 'publish' | 'repair'
