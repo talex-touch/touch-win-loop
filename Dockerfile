@@ -3,6 +3,12 @@ FROM node:20-alpine AS build-stage
 WORKDIR /app
 RUN corepack enable
 
+COPY .npmrc package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN --mount=type=cache,id=pnpm-store,target=/root/.pnpm-store \
+    pnpm install --frozen-lockfile
+
+COPY . .
+
 ARG WINLOOP_BUILD_VERSION=
 ARG WINLOOP_BUILD_COMMIT_SHA=
 ARG WINLOOP_SENTRY_ORG=
@@ -15,11 +21,6 @@ ENV WINLOOP_SENTRY_ORG=${WINLOOP_SENTRY_ORG}
 ENV WINLOOP_SENTRY_PROJECT=${WINLOOP_SENTRY_PROJECT}
 ENV WINLOOP_SENTRY_RELEASE=${WINLOOP_SENTRY_RELEASE}
 
-COPY .npmrc package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN --mount=type=cache,id=pnpm-store,target=/root/.pnpm-store \
-    pnpm install --frozen-lockfile
-
-COPY . .
 RUN --mount=type=secret,id=sentry_auth_token,required=false \
     export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)" && \
     pnpm build
