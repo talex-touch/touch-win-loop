@@ -642,7 +642,6 @@ export type ProjectKnowledgeProjectionType
     | 'resource_summary'
     | 'image_summary'
     | 'image_ocr'
-    | 'document_visual_fallback'
     | 'meeting_notes'
     | 'meeting_transcript'
 

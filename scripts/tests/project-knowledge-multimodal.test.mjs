@@ -136,6 +136,7 @@ describe('project knowledge multimodal', () => {
     assert.match(assistantSource, /workspace-assistant-citation-projection/, 'assistant 引用卡缺少投影标签')
     assert.match(assistantSource, /视觉投影/, 'assistant 引用卡缺少视觉投影标签')
     assert.match(assistantSource, /转写投影/, 'assistant 引用卡缺少转写投影标签')
+    assert.doesNotMatch(assistantSource, /document_visual_fallback/, 'assistant 引用卡不应再识别已删除的文档视觉 fallback 投影')
 
     assert.match(workerApiSource, /chunkKinds:/, '知识索引监控 API 未返回 chunkKinds')
     assert.match(workerPageSource, /多模态片段分布/, '知识索引监控页未展示多模态片段分布')

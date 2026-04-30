@@ -23,6 +23,7 @@ describe('project knowledge query planner', () => {
     assert.match(typesSource, /export type ProjectKnowledgeRetrievalIntent[\s\S]*direct_answer[\s\S]*evidence_trace[\s\S]*global_summary[\s\S]*relation_explore[\s\S]*visual_lookup[\s\S]*meeting_lookup/, '共享类型缺少 retrieval intent')
     assert.match(typesSource, /export interface ProjectKnowledgeRetrievalPlan \{[\s\S]*queryVariants: string\[\][\s\S]*preferredModalities: ProjectKnowledgeRetrievalModalityFilter\[\][\s\S]*relationTypes: ProjectKnowledgeRelationType\[\][\s\S]*plannerSource: ProjectKnowledgeRetrievalPlannerSource/, '共享类型缺少 retrieval plan 合同')
     assert.match(typesSource, /retrievalPlan\?: ProjectKnowledgeRetrievalPlan \| null/, 'ProjectKnowledgeMessagePayload 未携带 retrievalPlan')
+    assert.doesNotMatch(typesSource, /document_visual_fallback/, '共享类型仍保留已删除的文档视觉 fallback 投影类型')
   })
 
   it('planner 提供 LLM structured output，并在不可用时回退启发式计划', async () => {
@@ -37,6 +38,7 @@ describe('project knowledge query planner', () => {
     assert.match(source, /MEETING_QUERY_HINTS[\s\S]*会议[\s\S]*转写/, 'planner 缺少会议意图提示词')
     assert.match(source, /RELATION_QUERY_HINTS[\s\S]*关系[\s\S]*证据[\s\S]*来源链/, 'planner 缺少关系与证据链意图提示词')
     assert.match(source, /GLOBAL_QUERY_HINTS[\s\S]*全局[\s\S]*主题/, 'planner 缺少全局总结意图提示词')
+    assert.doesNotMatch(source, /document_visual_fallback/, 'planner 仍会选择已删除的文档视觉 fallback 投影')
   })
 
   it('knowledge context 先生成 retrieval plan，再按 queryVariants 执行检索', async () => {
@@ -47,6 +49,7 @@ describe('project knowledge query planner', () => {
     assert.match(source, /matchesRetrievalPlanFilters/, 'knowledge context 未按 retrieval plan 过滤 chunk')
     assert.match(source, /queryEmbeddingResultsByVariant/, 'knowledge context 未为多个 query variant 建立 embedding 结果')
     assert.match(source, /retrievalPlan,[\s\S]*evidencePaths/, 'knowledge context 返回值未包含 retrievalPlan 与 evidencePaths')
+    assert.doesNotMatch(source, /document_visual_fallback/, 'knowledge context 仍识别已删除的文档视觉 fallback 投影')
   })
 
   it('workspace/project-chat/canvas 继续透传扩展后的 knowledge metadata', async () => {

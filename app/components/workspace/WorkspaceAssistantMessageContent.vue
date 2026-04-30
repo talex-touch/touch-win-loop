@@ -192,7 +192,7 @@ function buildCitationMeta(citation: ProjectKnowledgeCitation): string {
 }
 
 function buildCitationProjectionLabel(citation: ProjectKnowledgeCitation): string {
-  if (citation.projectionType === 'image_summary' || citation.projectionType === 'document_visual_fallback')
+  if (citation.projectionType === 'image_summary')
     return '视觉投影'
   if (citation.projectionType === 'image_ocr')
     return 'OCR'

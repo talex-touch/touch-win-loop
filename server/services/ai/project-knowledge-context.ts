@@ -240,7 +240,6 @@ function resolveChunkProjectionType(metadata: Record<string, unknown>): ProjectK
     || normalized === 'resource_summary'
     || normalized === 'image_summary'
     || normalized === 'image_ocr'
-    || normalized === 'document_visual_fallback'
     || normalized === 'meeting_notes'
     || normalized === 'meeting_transcript'
   ) {
@@ -356,7 +355,7 @@ function calcIntentBoost(input: {
 }
 
 function buildProjectionLabel(hit: Pick<ProjectKnowledgeChunkHit, 'projectionType' | 'modality'>): string {
-  if (hit.projectionType === 'image_summary' || hit.projectionType === 'document_visual_fallback')
+  if (hit.projectionType === 'image_summary')
     return '视觉投影'
   if (hit.projectionType === 'image_ocr')
     return 'OCR 投影'

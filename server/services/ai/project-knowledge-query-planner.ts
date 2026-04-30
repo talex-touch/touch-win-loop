@@ -36,7 +36,6 @@ const projectionTypeSchema = z.enum([
   'resource_summary',
   'image_summary',
   'image_ocr',
-  'document_visual_fallback',
   'meeting_notes',
   'meeting_transcript',
 ])
@@ -125,7 +124,6 @@ function normalizeProjectionTypes(values: unknown): ProjectKnowledgeProjectionTy
       || item === 'resource_summary'
       || item === 'image_summary'
       || item === 'image_ocr'
-      || item === 'document_visual_fallback'
       || item === 'meeting_notes'
       || item === 'meeting_transcript'
   })
@@ -237,7 +235,7 @@ export function buildHeuristicProjectKnowledgeRetrievalPlan(
 
   if (visual) {
     preferredModalities.push('image', 'draw')
-    preferredProjectionTypes.push('image_summary', 'image_ocr', 'document_visual_fallback', 'draw_projection')
+    preferredProjectionTypes.push('image_summary', 'image_ocr', 'draw_projection')
   }
   if (meeting) {
     preferredModalities.push('audio', 'video')
