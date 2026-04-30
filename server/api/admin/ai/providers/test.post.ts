@@ -79,7 +79,7 @@ export default defineEventHandler(async (event) => {
     return fail('当前用户无权测试 AI Provider。', {
       startedAt,
       provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40392)
@@ -120,8 +120,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('当前 Provider 不支持连通性测试。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: resolvedProvider?.provider || '',
+      model: resolvedProvider?.models[0]?.model || '',
       fallbackUsed: false,
       attempts: 1,
     }, 40098)
@@ -161,7 +161,7 @@ export default defineEventHandler(async (event) => {
     return fail('Provider API Key 未配置，无法执行连通性测试。', {
       startedAt,
       provider: providerName,
-      model: preferredModel || runtime.ai.model,
+      model: preferredModel || modelConfig?.model || '',
       fallbackUsed: false,
       attempts: 1,
     }, 40097)
@@ -172,7 +172,7 @@ export default defineEventHandler(async (event) => {
     return fail('当前 Provider 未配置可用模型，无法执行连通性测试。', {
       startedAt,
       provider: resolved.ai.provider,
-      model: runtime.ai.model,
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40099)

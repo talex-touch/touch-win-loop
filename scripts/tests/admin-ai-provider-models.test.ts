@@ -109,6 +109,14 @@ describe('admin-ai provider models', () => {
     expect(postSource).not.toMatch(/runtime\.ai\.model/)
   })
 
+  it('provider 连通性测试不会用旧全局模型填充失败 meta', async () => {
+    const source = await readFile(PROVIDERS_TEST_POST_FILE, 'utf8')
+
+    expect(source).toMatch(/model:\s*preferredModel \|\| modelConfig\?\.model \|\| ''/)
+    expect(source).toMatch(/model:\s*resolvedProvider\?\.models\[0\]\?\.model \|\| ''/)
+    expect(source).not.toMatch(/runtime\.ai\.model/)
+  })
+
   it('非聊天场景测试不会再泄露旧全局 embedding 模型', async () => {
     const source = await readFile(CHANNELS_TEST_POST_FILE, 'utf8')
 
