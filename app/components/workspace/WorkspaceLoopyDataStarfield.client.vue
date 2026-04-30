@@ -114,7 +114,7 @@ function formatDateTime(value?: string): string {
 
     <div class="loopy-starfield__legend">
       <span class="loopy-starfield__legend-item"><i class="loopy-starfield__legend-dot loopy-starfield__legend-dot--ready" />真实索引</span>
-      <span class="loopy-starfield__legend-item"><i class="loopy-starfield__legend-dot loopy-starfield__legend-dot--fallback" />Fallback</span>
+      <span class="loopy-starfield__legend-item"><i class="loopy-starfield__legend-dot loopy-starfield__legend-dot--fallback" />历史 Fallback</span>
       <span class="loopy-starfield__legend-item"><i class="loopy-starfield__legend-dot loopy-starfield__legend-dot--processing" />处理中</span>
       <span class="loopy-starfield__legend-item"><i class="loopy-starfield__legend-dot loopy-starfield__legend-dot--failed" />失败</span>
     </div>
@@ -130,7 +130,7 @@ function formatDateTime(value?: string): string {
           <span>Chunk {{ hoveredNode.chunkCount }}</span>
         </div>
         <div class="loopy-starfield__focus-subtitle">
-          {{ hoveredNode.realEmbeddingReady ? '已产出真实 embedding' : hoveredNode.fallbackOnly ? '仅 fallback embedding' : '尚未形成真实 embedding' }}
+          {{ hoveredNode.realEmbeddingReady ? '已产出真实 embedding' : hoveredNode.fallbackOnly ? '仅历史 fallback embedding，需重建' : '尚未形成真实 embedding' }}
         </div>
         <div class="loopy-starfield__focus-time">
           最近更新时间：{{ formatDateTime(hoveredNode.updatedAt) }}

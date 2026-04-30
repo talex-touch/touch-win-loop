@@ -234,7 +234,7 @@ const semanticSubtitle = computed(() => {
   if (semanticHealthState.value === 'healthy')
     return '真实 embedding 经降维后形成聚类分布，悬停即可查看当前簇的数量、密度、主题和相似度。'
   if (semanticHealthState.value === 'fallback_only')
-    return '当前语义空间只包含 fallback 向量，适合检查索引形状，不适合作为真实语义相似度结论。'
+    return '当前语义空间只包含历史 fallback 向量，需要重建或回填后才可作为真实语义相似度结论。'
   if (semanticHealthState.value === 'partial')
     return '当前语义空间混合了真实向量与待刷新资源，适合定位缺口，结论需要结合索引健康一起判断。'
   if (semanticHealthState.value === 'missing_runtime')
@@ -250,7 +250,7 @@ const semanticHealthNotice = computed(() => {
   if (semanticHealthState.value === 'healthy' && payload.value?.layout?.status !== 'degraded')
     return ''
   if (semanticHealthState.value === 'fallback_only')
-    return '当前布局来自 deterministic fallback embedding，只能辅助排查数据流，不代表真实语义距离。'
+    return '当前布局来自历史 fallback embedding，请重新索引或执行回填后再用于语义距离判断。'
   if (semanticHealthState.value === 'partial')
     return props.dashboard.diagnostics.healthMessage || '真实 embedding 只覆盖部分资源，语义空间仍处于部分可用状态。'
   if (semanticHealthState.value === 'missing_runtime')

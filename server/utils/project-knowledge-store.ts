@@ -740,7 +740,7 @@ function buildProjectKnowledgeHealth(
     issues.push({
       code: 'fallback_only',
       severity: 'warning',
-      message: '当前仅生成 deterministic fallback embedding，索引处于降级可用状态。',
+      message: '当前仅有历史 fallback embedding，需要重新索引或执行回填后才可用于正式知识检索。',
     })
   }
 
@@ -827,7 +827,7 @@ function buildProjectKnowledgeHealth(
   if (fallbackOnly) {
     return {
       healthState: 'fallback_only',
-      healthMessage: '当前只有 fallback embedding，索引为降级可用，不算真实索引健康。',
+      healthMessage: '当前只有历史 fallback embedding，需要重新索引或执行回填后才可用于正式知识检索。',
       issues,
     }
   }
@@ -934,7 +934,7 @@ function buildEmbeddingComposition(
 
   const result = [
     toCountItem('真实 Embedding 资源', realReadySourceCount),
-    toCountItem('Fallback 资源', fallbackOnlySourceCount),
+    toCountItem('历史 Fallback 资源', fallbackOnlySourceCount),
     toCountItem('无 Chunk 资源', noChunkSourceCount),
   ]
   if (unknownSourceCount > 0)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Project, ProjectKnowledgeIndexDashboard, ProjectKnowledgeIndexSourceStatus } from '~~/shared/types/domain'
-import { formatEtaSeconds, formatWorkspaceDateTime as formatDateTime } from '~/utils/workspace-main-panel-formatters'
+import { formatWorkspaceDateTime as formatDateTime, formatEtaSeconds } from '~/utils/workspace-main-panel-formatters'
 
 type ProjectKnowledgeReindexTarget = 'all' | 'stale' | 'failed'
 
@@ -132,7 +132,7 @@ const healthBadgeLabel = computed(() => {
   if (state === 'healthy')
     return '真实索引健康'
   if (state === 'fallback_only')
-    return '降级可用'
+    return '需重建'
   if (state === 'missing_runtime')
     return '缺少运行时'
   if (state === 'worker_inactive')
@@ -197,7 +197,7 @@ const summaryCards = computed(() => {
     { label: 'Task', value: String(diagnostics.value.taskCount) },
     { label: 'Chunk', value: String(diagnostics.value.chunkCount) },
     { label: '真实 Embedding', value: String(diagnostics.value.realEmbeddedChunkCount) },
-    { label: 'Fallback Chunk', value: String(diagnostics.value.fallbackEmbeddedChunkCount) },
+    { label: '历史 Fallback Chunk', value: String(diagnostics.value.fallbackEmbeddedChunkCount) },
     { label: '多模态资源', value: String(diagnostics.value.multimodalIndexedCount) },
     { label: '阻塞资源', value: String(diagnostics.value.multimodalBlockedCount) },
   ]

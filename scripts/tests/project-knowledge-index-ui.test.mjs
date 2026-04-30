@@ -13,6 +13,7 @@ const WORKSPACE_LOOPY_DATA_SEMANTIC_SPACE_FILE = resolve(process.cwd(), 'app/com
 const LEFT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftSidebar.vue')
 const PROJECT_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
 const LOOPY_DATA_CENTER_UTILS_FILE = resolve(process.cwd(), 'app/utils/loopy-data-center.ts')
+const PROJECT_KNOWLEDGE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-knowledge-store.ts')
 
 describe('project knowledge index ui', () => {
   it('资源属性弹窗展示知识索引状态与重新索引入口', async () => {
@@ -26,7 +27,8 @@ describe('project knowledge index ui', () => {
     assert.match(source, /resourceKnowledgeTrustNotice/, '资源属性弹窗未展示索引可信度提示')
     assert.match(source, /fallbackOnly/, '资源属性弹窗未消费 fallback-only embedding 信号')
     assert.match(source, /realEmbeddingReady/, '资源属性弹窗未消费真实 embedding 就绪信号')
-    assert.match(source, /索引完成，但当前仅有 Fallback embedding/, '资源索引标题未避免把 fallback-only ready 包装成正式检索可用')
+    assert.match(source, /历史 Fallback embedding/, '资源索引标题未把 fallback-only ready 标记为历史残留')
+    assert.doesNotMatch(source, /降级可用/, '资源索引标题不应把历史 fallback embedding 包装成降级可用')
     assert.match(source, /!visualNode \|\| !visualNode\.realEmbeddingReady/, '资源索引标题未把缺项目级 visual node 视为可信度信号不足')
     assert.match(source, /项目级 Loopy dashboard 暂未返回对应的 embedding 可信度信号/, '资源可信度提示未覆盖缺项目级 visual node 的 ready 状态')
     assert.match(source, /真实 embedding 就绪信号不足/, '资源索引标题未避免把缺真实 embedding ready 包装成正式检索可用')
@@ -36,7 +38,7 @@ describe('project knowledge index ui', () => {
   })
 
   it('知识索引从项目设置迁移到独立 Loopy 数据工作台，并保留 activeProjectId 透传', async () => {
-    const [settingsSource, mainPanelSource, loopyDataSource, loopyOverviewSource, loopyHealthSource, semanticSpaceSource, loopyDataUtilsSource, sidebarSource, pageSource] = await Promise.all([
+    const [settingsSource, mainPanelSource, loopyDataSource, loopyOverviewSource, loopyHealthSource, semanticSpaceSource, loopyDataUtilsSource, sidebarSource, pageSource, storeSource] = await Promise.all([
       readFile(PROJECT_SETTINGS_TAB_FILE, 'utf8'),
       readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8'),
       readFile(WORKSPACE_LOOPY_DATA_TAB_FILE, 'utf8'),
@@ -46,6 +48,7 @@ describe('project knowledge index ui', () => {
       readFile(LOOPY_DATA_CENTER_UTILS_FILE, 'utf8'),
       readFile(LEFT_SIDEBAR_FILE, 'utf8'),
       readFile(PROJECT_PAGE_FILE, 'utf8'),
+      readFile(PROJECT_KNOWLEDGE_STORE_FILE, 'utf8'),
     ])
 
     assert.doesNotMatch(settingsSource, /知识索引/, 'WorkspaceProjectSettingsTab 仍残留知识索引区块')
@@ -74,10 +77,14 @@ describe('project knowledge index ui', () => {
     assert.match(loopyDataUtilsSource, /export function buildLoopyOverviewContract/, '数据中心缺少主视图字段映射函数')
     assert.match(loopyHealthSource, /完整状态表/, 'WorkspaceLoopyDataHealthView 缺少完整状态表')
     assert.match(loopyHealthSource, /失败项/, 'WorkspaceLoopyDataHealthView 缺少失败项列表')
+    assert.match(loopyHealthSource, /需重建/, 'WorkspaceLoopyDataHealthView 未把 fallback_only 标记为需重建')
+    assert.doesNotMatch(loopyHealthSource, /降级可用/, 'WorkspaceLoopyDataHealthView 不应再把 fallback_only 标记为降级可用')
     assert.match(semanticSpaceSource, /Embedding 空间分布/, 'WorkspaceLoopyDataSemanticSpace 未渲染新标题')
     assert.match(semanticSpaceSource, /semanticHealthNotice/, 'WorkspaceLoopyDataSemanticSpace 缺少语义空间健康提示')
     assert.match(semanticSpaceSource, /semanticSubtitle/, 'WorkspaceLoopyDataSemanticSpace 未按健康态生成标题说明')
     assert.match(semanticSpaceSource, /fallback_only/, 'WorkspaceLoopyDataSemanticSpace 未区分 fallback_only 语义布局')
+    assert.match(semanticSpaceSource, /历史 fallback/, 'WorkspaceLoopyDataSemanticSpace 未把 fallback_only 标记为历史 fallback')
+    assert.doesNotMatch(semanticSpaceSource, /deterministic fallback/, 'WorkspaceLoopyDataSemanticSpace 不应再展示已删除的 deterministic fallback 语义')
     assert.match(semanticSpaceSource, /聚类数/, 'WorkspaceLoopyDataSemanticSpace 缺少聚类数指标卡')
     assert.match(semanticSpaceSource, /平均相似度/, 'WorkspaceLoopyDataSemanticSpace 缺少平均相似度指标卡')
     assert.match(semanticSpaceSource, /最大相似度/, 'WorkspaceLoopyDataSemanticSpace 缺少最大相似度指标卡')
@@ -89,5 +96,7 @@ describe('project knowledge index ui', () => {
     assert.match(sidebarSource, /projectKnowledgeDashboard\?: ProjectKnowledgeIndexDashboard \| null/, 'WorkspaceLeftSidebar 未接收项目级 Loopy dashboard')
     assert.match(pageSource, /:active-project-id="activeProjectId"/, '项目工作区未向子组件透传 activeProjectId')
     assert.match(pageSource, /<WorkspaceLeftSidebar[\s\S]*:project-knowledge-dashboard="projectKnowledgeDashboard"/, '项目工作区未向左侧资源管理器透传 Loopy dashboard')
+    assert.match(storeSource, /历史 fallback embedding/, '项目知识 store 未把 fallback_only 说明为历史残留')
+    assert.doesNotMatch(storeSource, /deterministic fallback embedding|降级可用/, '项目知识 store 不应再把历史 fallback embedding 说明为 deterministic 或降级可用')
   })
 })

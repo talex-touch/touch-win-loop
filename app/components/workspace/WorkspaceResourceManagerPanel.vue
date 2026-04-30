@@ -1017,7 +1017,7 @@ const resourceKnowledgeHeadline = computed(() => {
     const visualNode = resourceKnowledgeVisualNode.value
     const healthState = projectKnowledgeHealthState.value
     if (visualNode?.fallbackOnly || healthState === 'fallback_only')
-      return '索引完成，但当前仅有 Fallback embedding，不代表真实语义检索可用。'
+      return '索引完成，但当前仅有历史 Fallback embedding，需要重建后才可参与正式知识检索。'
     if (!visualNode || !visualNode.realEmbeddingReady || healthState === 'missing_runtime' || healthState === 'worker_inactive' || healthState === 'queued_but_not_running')
       return '索引完成，但真实 embedding 就绪信号不足，需确认 Loopy 向量运行时。'
     if (healthState === 'partial')
@@ -1107,7 +1107,7 @@ const resourceKnowledgeTrustNotice = computed(() => {
 
   const visualNode = resourceKnowledgeVisualNode.value
   if (status.status === 'ready' && visualNode?.fallbackOnly) {
-    return '当前资源已完成索引，但仅产出 Fallback embedding；可用于排查数据流，不应当作真实语义检索结果。'
+    return '当前资源已完成索引，但仅保留历史 Fallback embedding；请重新索引或执行回填后再用于 AI 分析。'
   }
   if (status.status === 'ready' && !visualNode) {
     return '当前资源已完成索引，但项目级 Loopy dashboard 暂未返回对应的 embedding 可信度信号；建议先确认 Loopy 数据工作台。'
