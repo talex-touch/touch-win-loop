@@ -8,6 +8,7 @@ const PROVIDER_MODELS_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/pr
 const PROVIDER_MODELS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/provider-models.get.ts')
 const PROVIDERS_TEST_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers/test.post.ts')
 const PROVIDERS_PATCH_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers.patch.ts')
+const CHANNELS_TEST_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/channels/test.post.ts')
 const AI_PROMPTS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/ai-prompts.vue')
 
 function okJson(data: unknown) {
@@ -94,6 +95,14 @@ describe('admin-ai provider models', () => {
     expect(source).toMatch(/provider\.capability === 'search'/)
     expect(source).toMatch(/Provider API Key 未配置/)
     expect(source).not.toMatch(/共享上游/)
+  })
+
+  it('非聊天场景测试不会再泄露旧全局 embedding 模型', async () => {
+    const source = await readFile(CHANNELS_TEST_POST_FILE, 'utf8')
+
+    expect(source).toMatch(/resolveAiRuntimeForChannel\(runtime, channelKey\)/)
+    expect(source).toMatch(/model:\s*channelRuntime\.ai\.model/)
+    expect(source).not.toMatch(/runtime\.ai\.embeddingModel/)
   })
 
   it('首个成功响应不是模型列表时会继续尝试下一个端点', async () => {

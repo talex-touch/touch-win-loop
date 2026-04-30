@@ -8,7 +8,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { getPlatformAiChannelDefinitions, resolvePlatformAiChannelModelCapability, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
+import { getPlatformAiChannelDefinitions, resolveAiRuntimeForChannel, resolvePlatformAiChannelModelCapability, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 
 interface ChannelTestBody {
@@ -62,13 +62,14 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody<ChannelTestBody>(event).catch(() => ({} as ChannelTestBody))
   const channelKey = resolveChannelKey(body.channelKey)
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, channelKey)
   if (resolvePlatformAiChannelModelCapability(channelKey) !== 'chat') {
     setResponseStatus(event, 400)
     return fail('当前场景不是聊天模型场景，无需执行对话连通性测试。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.embeddingModel,
-      fallbackUsed: false,
+      provider: channelRuntime.ai.provider,
+      model: channelRuntime.ai.model,
+      fallbackUsed: channelRuntime.usedFallback,
       attempts: 1,
     }, 40099)
   }
@@ -143,9 +144,9 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 502)
     return fail(String(error?.message || '场景测试失败。'), {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
+      provider: channelRuntime.ai.provider,
+      model: channelRuntime.ai.model,
+      fallbackUsed: channelRuntime.usedFallback,
       attempts: 1,
     }, 50298)
   }
