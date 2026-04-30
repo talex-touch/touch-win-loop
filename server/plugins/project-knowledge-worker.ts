@@ -157,21 +157,6 @@ function isExternallyReachableMediaUrl(value: string): boolean {
   }
 }
 
-function isDocumentVisualFallbackCandidate(value: string): boolean {
-  const normalized = normalizeString(value).toLowerCase()
-  if (isPdfMimeType(normalized))
-    return true
-  return [
-    'msword',
-    'wordprocessingml',
-    'presentation',
-    'powerpoint',
-    'spreadsheet',
-    'excel',
-    'officedocument',
-  ].some(token => normalized.includes(token))
-}
-
 function hasDocumentAnalysisText(analysis: DocumentAnalysis | null | undefined): boolean {
   const pages = Array.isArray(analysis?.pages) ? analysis?.pages : []
   return pages.some(page => (page.blocks || []).some(block => compactText(normalizeString(block.text)).length > 0))
@@ -666,42 +651,12 @@ async function resolveImageProjectionChunks(context: ProjectKnowledgeTaskContext
     sourceLink: context.resource.sourceLink,
   })
 
-  if (!imageRef) {
-    if (strictMultimodal)
-      throw new Error('BAILIAN_MULTIMODAL_IMAGE_SOURCE_MISSING')
-    return buildFallbackSummaryChunks({
-      title: context.resource.title,
-      summary: context.resource.summary,
-      content: fallbackText,
-      sourceLink: context.resource.sourceLink,
-      metadata: context.resource.metadata,
-      chunkKind: 'image_summary',
-      modality: 'image',
-      projectionType: 'image_summary',
-      projectionSource: 'fallback_metadata',
-      confidence: 0.32,
-      fallbackUsed: true,
-    })
-  }
+  if (!imageRef)
+    throw new Error('KNOWLEDGE_IMAGE_SOURCE_MISSING')
 
   const imageBuffer = await resolveProjectResourceBuffer(imageRef.objectKey)
-  if (!imageBuffer) {
-    if (strictMultimodal)
-      throw new Error('BAILIAN_MULTIMODAL_IMAGE_BUFFER_MISSING')
-    return buildFallbackSummaryChunks({
-      title: context.resource.title,
-      summary: context.resource.summary,
-      content: fallbackText,
-      sourceLink: context.resource.sourceLink,
-      metadata: context.resource.metadata,
-      chunkKind: 'image_summary',
-      modality: 'image',
-      projectionType: 'image_summary',
-      projectionSource: 'fallback_metadata',
-      confidence: 0.32,
-      fallbackUsed: true,
-    })
-  }
+  if (!imageBuffer)
+    throw new Error('KNOWLEDGE_IMAGE_BUFFER_MISSING')
 
   if (strictMultimodal && imageBuffer.length > 5 * 1024 * 1024)
     throw new Error('BAILIAN_MULTIMODAL_IMAGE_TOO_LARGE')
@@ -909,27 +864,6 @@ async function buildResourceChunks(context: ProjectKnowledgeTaskContext, runtime
   }
   else if (isVideoMimeType(mimeType)) {
     chunks.push(...await resolveVideoProjectionChunks(context, runtime))
-  }
-  else if (chunks.length === 0 && isDocumentVisualFallbackCandidate(mimeType)) {
-    chunks.push(...buildFallbackSummaryChunks({
-      title: context.resource.title,
-      summary: context.resource.summary,
-      content: buildVisualFallbackText({
-        title: context.resource.title,
-        summary: context.resource.summary,
-        content: context.resource.content,
-        metadata,
-        sourceLink: context.resource.sourceLink,
-      }),
-      sourceLink: context.resource.sourceLink,
-      metadata,
-      chunkKind: 'image_summary',
-      modality: 'image',
-      projectionType: 'document_visual_fallback',
-      projectionSource: 'fallback_metadata',
-      confidence: 0.3,
-      fallbackUsed: true,
-    }))
   }
 
   if (artifactKind === 'meeting_recording' && normalizeString(metadata.meetingId)) {
