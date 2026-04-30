@@ -9,6 +9,10 @@ const PROVIDER_MODELS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/pro
 const PROVIDERS_TEST_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers/test.post.ts')
 const PROVIDERS_PATCH_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers.patch.ts')
 const CHANNELS_TEST_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/channels/test.post.ts')
+const CHANNELS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/channels.get.ts')
+const MODELS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/models.get.ts')
+const LOGS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/logs.get.ts')
+const AUDITS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/audits.get.ts')
 const AI_PROMPTS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/ai-prompts.vue')
 
 function okJson(data: unknown) {
@@ -124,6 +128,20 @@ describe('admin-ai provider models', () => {
     expect(source).toMatch(/model:\s*channelRuntime\.ai\.model/)
     expect(source).not.toMatch(/runtime\.ai\.model/)
     expect(source).not.toMatch(/runtime\.ai\.embeddingModel/)
+  })
+
+  it('管理端 AI 只读统计接口不会用旧全局模型填充响应 meta', async () => {
+    const sources = await Promise.all([
+      readFile(CHANNELS_GET_FILE, 'utf8'),
+      readFile(MODELS_GET_FILE, 'utf8'),
+      readFile(LOGS_GET_FILE, 'utf8'),
+      readFile(AUDITS_GET_FILE, 'utf8'),
+    ])
+
+    for (const source of sources) {
+      expect(source).toMatch(/model:\s*''/)
+      expect(source).not.toMatch(/runtime\.ai\.model/)
+    }
   })
 
   it('首个成功响应不是模型列表时会继续尝试下一个端点', async () => {
