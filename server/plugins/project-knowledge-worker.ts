@@ -116,10 +116,6 @@ function isPdfMimeType(value: string): boolean {
   return normalizeString(value).toLowerCase().includes('pdf')
 }
 
-function isAudioMimeType(value: string): boolean {
-  return normalizeString(value).toLowerCase().startsWith('audio/')
-}
-
 function isVideoMimeType(value: string): boolean {
   return normalizeString(value).toLowerCase().startsWith('video/')
 }
@@ -261,30 +257,22 @@ function chunkLongText(text: string, size = 1200): string[] {
   return chunks
 }
 
-function buildFallbackSummaryChunks(input: {
+function buildTextProjectionChunks(input: {
   title: string
-  summary: string
   content: string
-  sourceLink: string
   metadata: Record<string, unknown>
-  chunkKind?: ProjectKnowledgeChunkKind
-  modality?: ProjectKnowledgeModality
-  projectionType?: ProjectKnowledgeChunkMetadata['projectionType']
-  projectionSource?: string
+  chunkKind: ProjectKnowledgeChunkKind
+  modality: ProjectKnowledgeModality
+  projectionType: ProjectKnowledgeChunkMetadata['projectionType']
+  projectionSource: string
   confidence?: number
-  fallbackUsed?: boolean
   sectionLabel?: string
 }): WorkerChunk[] {
-  const header = [
-    normalizeString(input.title),
-    normalizeString(input.summary),
-  ].filter(Boolean).join('\n')
-  const bodyChunks = chunkLongText(input.content || header || '')
-  const chunks = bodyChunks.length > 0 ? bodyChunks : [header || normalizeString(input.sourceLink)]
+  const chunks = chunkLongText(input.content)
   return chunks
     .map((content, index) => ({
       chunkIndex: index,
-      chunkKind: input.chunkKind || 'resource_summary',
+      chunkKind: input.chunkKind,
       title: normalizeString(input.title),
       content: compactText(content),
       citationLabel: `${normalizeString(input.title) || '资源'}${chunks.length > 1 ? `/片段${index + 1}` : ''}`,
@@ -292,13 +280,12 @@ function buildFallbackSummaryChunks(input: {
       metadata: {
         ...normalizeRecord(input.metadata),
         ...buildChunkMetadata({
-          modality: input.modality || 'text',
-          projectionType: input.projectionType || 'resource_summary',
-          projectionSource: input.projectionSource || 'fallback_summary',
-          confidence: normalizeConfidence(input.confidence, 0.42),
+          modality: input.modality,
+          projectionType: input.projectionType,
+          projectionSource: input.projectionSource,
+          confidence: normalizeConfidence(input.confidence, 0.72),
           sectionLabel: input.sectionLabel,
-          fallbackUsed: input.fallbackUsed !== false,
-          sourceLink: normalizeString(input.sourceLink),
+          fallbackUsed: false,
         }),
       },
     }))
@@ -442,24 +429,27 @@ function buildDrawChunks(input: {
     extractMetadataText(input.metadata),
   ].filter(Boolean).join('\n')
 
-  return buildFallbackSummaryChunks({
+  return buildTextProjectionChunks({
     title: input.title,
-    summary: input.summary,
     content: text,
-    sourceLink: '',
     metadata: input.metadata,
     chunkKind: 'draw_summary',
     modality: 'draw',
     projectionType: 'draw_projection',
     projectionSource: 'draw_structure',
     confidence: 0.74,
-    fallbackUsed: false,
   }).map((item, index) => ({
     ...item,
     chunkIndex: index,
     chunkKind: 'draw_summary' as const,
     citationLabel: `${normalizeString(input.title) || '画布'}/draw`,
   }))
+}
+
+function ensureExtractableChunks(chunks: WorkerChunk[]): WorkerChunk[] {
+  if (chunks.length === 0)
+    throw new Error('PROJECT_KNOWLEDGE_NO_EXTRACTABLE_CHUNKS')
+  return chunks
 }
 
 function buildVisualFallbackText(input: {
@@ -823,21 +813,7 @@ async function buildResourceChunks(context: ProjectKnowledgeTaskContext, runtime
       projectionType: markdownProjectionType,
       projectionSource: artifactKind === 'meeting_notes' ? 'meeting_notes_resource' : 'markdown_content',
     })
-    if (markdownChunks.length > 0)
-      return markdownChunks
-    return buildFallbackSummaryChunks({
-      title: context.resource.title,
-      summary: context.resource.summary,
-      content: context.resource.content,
-      sourceLink: context.resource.sourceLink,
-      metadata,
-      chunkKind: artifactKind === 'meeting_notes' ? 'meeting_notes' : 'resource_summary',
-      modality: artifactKind === 'meeting_notes' ? 'audio' : 'text',
-      projectionType: artifactKind === 'meeting_notes' ? 'meeting_notes' : 'resource_summary',
-      projectionSource: artifactKind === 'meeting_notes' ? 'meeting_notes_resource' : 'fallback_summary',
-      confidence: artifactKind === 'meeting_notes' ? 0.84 : 0.42,
-      fallbackUsed: artifactKind !== 'meeting_notes',
-    })
+    return ensureExtractableChunks(markdownChunks)
   }
 
   if (context.resource.resourceKind === 'draw') {
@@ -886,25 +862,7 @@ async function buildResourceChunks(context: ProjectKnowledgeTaskContext, runtime
     }
   }
 
-  if (chunks.length === 0) {
-    chunks.push(...buildFallbackSummaryChunks({
-      title: context.resource.title,
-      summary: context.resource.summary,
-      content: context.resource.content,
-      sourceLink: context.resource.sourceLink,
-      metadata,
-      modality: isAudioMimeType(mimeType)
-        ? 'audio'
-        : isVideoMimeType(mimeType)
-          ? 'video'
-          : 'text',
-      projectionType: 'resource_summary',
-      projectionSource: artifactKind === 'meeting_recording' ? 'meeting_recording_metadata' : 'fallback_summary',
-      fallbackUsed: true,
-    }))
-  }
-
-  return reindexChunks(chunks)
+  return ensureExtractableChunks(reindexChunks(chunks))
 }
 
 function estimateEmbeddingEtaSeconds(total: number, indexed: number): number {
