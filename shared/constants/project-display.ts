@@ -3,9 +3,18 @@ import type {
   ProjectDisplayConfig,
   ProjectDisplayIcon,
   ProjectDisplayPresetAccentColor,
+  ProjectDisplaySymbolIcon,
 } from '~~/shared/types/domain'
 
-export const PROJECT_DISPLAY_ICON_OPTIONS: Array<{ value: ProjectDisplayIcon, label: string }> = [
+export type ProjectDisplayIconKind = 'symbol' | 'text' | 'solid'
+
+export interface ProjectDisplayIconOption {
+  value: ProjectDisplayIcon
+  label: string
+  kind: ProjectDisplayIconKind
+}
+
+export const PROJECT_DISPLAY_SYMBOL_ICON_OPTIONS: Array<{ value: ProjectDisplaySymbolIcon, label: string, kind: 'symbol' }> = [
   { value: 'rocket_launch', label: '火箭' },
   { value: 'shield', label: '盾牌' },
   { value: 'lightbulb', label: '灵感' },
@@ -14,6 +23,36 @@ export const PROJECT_DISPLAY_ICON_OPTIONS: Array<{ value: ProjectDisplayIcon, la
   { value: 'science', label: '实验' },
   { value: 'public', label: '全球' },
   { value: 'school', label: '校园' },
+  { value: 'auto_awesome', label: '闪耀' },
+  { value: 'bolt', label: '闪电' },
+  { value: 'code', label: '代码' },
+  { value: 'terminal', label: '终端' },
+  { value: 'data_object', label: '数据' },
+  { value: 'database', label: '数据库' },
+  { value: 'memory', label: '芯片' },
+  { value: 'psychology', label: '认知' },
+  { value: 'smart_toy', label: '智能' },
+  { value: 'draw', label: '绘制' },
+  { value: 'brush', label: '画笔' },
+  { value: 'design_services', label: '设计' },
+  { value: 'dashboard_customize', label: '看板' },
+  { value: 'analytics', label: '分析' },
+  { value: 'monitoring', label: '监控' },
+  { value: 'account_tree', label: '树状' },
+  { value: 'schema', label: '模型' },
+  { value: 'deployed_code', label: '部署' },
+  { value: 'extension', label: '插件' },
+  { value: 'stacks', label: '堆栈' },
+  { value: 'token', label: '令牌' },
+  { value: 'biotech', label: '生物' },
+  { value: 'travel_explore', label: '探索' },
+  { value: 'workspace_premium', label: '奖项' },
+].map(item => ({ ...item, kind: 'symbol' as const }))
+
+export const PROJECT_DISPLAY_ICON_OPTIONS: ProjectDisplayIconOption[] = [
+  ...PROJECT_DISPLAY_SYMBOL_ICON_OPTIONS,
+  { value: 'text', label: '文字', kind: 'text' },
+  { value: 'solid', label: '纯色', kind: 'solid' },
 ]
 
 export const PROJECT_DISPLAY_ACCENT_OPTIONS: Array<{
@@ -40,6 +79,14 @@ export const PROJECT_DISPLAY_ACCENT_OPTIONS: Array<{
 
 const PROJECT_DISPLAY_ICON_SET = new Set(PROJECT_DISPLAY_ICON_OPTIONS.map(item => item.value))
 const PROJECT_DISPLAY_ACCENT_SET = new Set(PROJECT_DISPLAY_ACCENT_OPTIONS.map(item => item.value))
+
+export function getProjectDisplayIconKind(value: string): ProjectDisplayIconKind {
+  if (value === 'text')
+    return 'text'
+  if (value === 'solid')
+    return 'solid'
+  return 'symbol'
+}
 
 function hashText(value: string): number {
   let hash = 0
@@ -68,7 +115,7 @@ export function normalizeProjectDisplayConfig(value: unknown): ProjectDisplayCon
 export function buildFallbackProjectDisplay(seed: string): ProjectDisplayConfig {
   const normalizedSeed = String(seed || '').trim() || 'project'
   const hash = hashText(normalizedSeed)
-  const icon = PROJECT_DISPLAY_ICON_OPTIONS[hash % PROJECT_DISPLAY_ICON_OPTIONS.length]?.value || 'rocket_launch'
+  const icon = PROJECT_DISPLAY_SYMBOL_ICON_OPTIONS[hash % PROJECT_DISPLAY_SYMBOL_ICON_OPTIONS.length]?.value || 'rocket_launch'
   const accentColor = PROJECT_DISPLAY_ACCENT_OPTIONS[hash % PROJECT_DISPLAY_ACCENT_OPTIONS.length]?.value || 'blue'
 
   return {

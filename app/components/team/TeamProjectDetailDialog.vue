@@ -39,25 +39,19 @@ const modelVisible = computed({
     @cancel="emit('close')"
   >
     <div class="space-y-4">
-      <div class="flex gap-3 items-start">
-        <div
-          class="rounded-2xl flex shrink-0 h-11 w-11 items-center justify-center"
-          :style="{
-            color: projectCard?.accentText || 'var(--wl-text-primary)',
-            backgroundColor: projectCard?.accentSoft || 'var(--wl-surface-muted)',
-          }"
-        >
-          <span class="material-symbols-outlined text-xl">{{ projectCard?.displayIcon || 'folder' }}</span>
-        </div>
-        <div class="min-w-0">
-          <div class="text-sm text-slate-900 font-semibold truncate">
-            {{ project?.title || '项目信息' }}
-          </div>
-          <div class="text-xs text-slate-500 mt-1">
-            {{ project?.summary || project?.problemStatement || '当前项目暂无补充说明。' }}
-          </div>
-        </div>
-      </div>
+      <ProjectDisplayPreviewCard
+        :title="project?.title || '项目信息'"
+        :summary="project?.summary || project?.problemStatement || '当前项目暂无补充说明。'"
+        :icon="projectCard?.displayIcon || 'folder'"
+        :monogram="projectCard?.displayMonogram || 'P'"
+        :accent="{
+          solid: projectCard?.accentSolid || '#5b82f6',
+          soft: projectCard?.accentSoft || '#f5f9ff',
+          border: projectCard?.accentBorder || '#dce8ff',
+          text: projectCard?.accentText || '#365fd6',
+        }"
+        compact
+      />
 
       <a-descriptions :column="1" bordered size="small">
         <a-descriptions-item v-for="item in detailRows" :key="item.label" :label="item.label">
