@@ -716,7 +716,7 @@ async function resolveImageProjectionChunks(context: ProjectKnowledgeTaskContext
     metadata: context.resource.metadata,
     visual,
     modality: 'image',
-    projectionSource: visual.fallbackUsed ? 'fallback_metadata' : 'vision_model',
+    projectionSource: 'vision_model',
   }).map((chunk) => {
     if (chunk.chunkKind !== 'image_summary')
       return chunk

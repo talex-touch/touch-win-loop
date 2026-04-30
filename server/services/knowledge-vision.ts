@@ -3,7 +3,7 @@ import type { Buffer } from 'node:buffer'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
-import { extractKnowledgeKeywords, toKnowledgeText } from '~~/server/services/knowledge-ai'
+import { toKnowledgeText } from '~~/server/services/knowledge-ai'
 import { isAiRuntimeConfigured, normalizeAiRuntimeProvider } from '~~/server/utils/ai-runtime'
 import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { normalizePlatformAiClientType } from '~~/server/utils/platform-ai-client'
@@ -36,15 +36,6 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
-function summarizeText(value: string, max = 220): string {
-  const normalized = normalizeString(value).replace(/\s+/g, ' ')
-  if (!normalized)
-    return ''
-  if (normalized.length <= max)
-    return normalized
-  return `${normalized.slice(0, max)}...`
-}
-
 function dedupeStrings(values: string[], limit = 12): string[] {
   const seen = new Set<string>()
   const result: string[] = []
@@ -63,17 +54,6 @@ function dedupeStrings(values: string[], limit = 12): string[] {
   return result
 }
 
-function buildFallbackProjection(textFallback: string): Omit<KnowledgeVisualProjectionResult, 'provider' | 'model' | 'fallbackUsed' | 'attempts'> {
-  const normalized = normalizeString(textFallback)
-  return {
-    summary: summarizeText(normalized) || '视觉投影场景未配置，已回退到文件名与资源元信息摘要。',
-    tags: dedupeStrings(extractKnowledgeKeywords(normalized, 10)),
-    ocrText: '',
-    layout: '',
-    confidence: normalized ? 0.38 : 0.22,
-  }
-}
-
 function toDataUrl(buffer: Buffer, mimeType: string): string {
   const safeMimeType = normalizeString(mimeType) || 'image/png'
   return `data:${safeMimeType};base64,${buffer.toString('base64')}`
@@ -90,21 +70,13 @@ export async function analyzeKnowledgeVisualProjection(input: {
   const visionAi = visionRuntime.ai
   const provider = normalizeAiRuntimeProvider(visionAi.provider)
   const model = normalizeString(visionAi.model)
-  const fallback = buildFallbackProjection(input.textFallback || '')
 
-  if (
-    !input.imageBuffer.length
-    || !isAiRuntimeConfigured(visionAi)
-    || input.imageBuffer.length > MAX_VISION_IMAGE_BYTES
-  ) {
-    return {
-      ...fallback,
-      provider,
-      model,
-      fallbackUsed: true,
-      attempts: 1,
-    }
-  }
+  if (!input.imageBuffer.length)
+    throw new Error('KNOWLEDGE_VISUAL_PROJECTION_EMPTY_IMAGE')
+  if (!isAiRuntimeConfigured(visionAi))
+    throw new Error('KNOWLEDGE_VISUAL_PROJECTION_RUNTIME_NOT_CONFIGURED')
+  if (input.imageBuffer.length > MAX_VISION_IMAGE_BYTES)
+    throw new Error('KNOWLEDGE_VISUAL_PROJECTION_IMAGE_TOO_LARGE')
 
   const chatModel = createChatModel({
     provider,
@@ -162,24 +134,24 @@ export async function analyzeKnowledgeVisualProjection(input: {
         }),
       ]))
     },
-    fallback: () => ({
-      summary: fallback.summary,
-      tags: fallback.tags,
-      ocrText: fallback.ocrText,
-      layout: fallback.layout,
-      confidence: fallback.confidence,
-    }),
   })
 
+  const summary = normalizeString(result.data.summary)
+  const tags = dedupeStrings((result.data.tags || []).map(item => toKnowledgeText(item)).filter(Boolean), 12)
+  const ocrText = normalizeString(result.data.ocrText)
+  const layout = normalizeString(result.data.layout)
+  if (!summary && tags.length === 0 && !ocrText && !layout)
+    throw new Error('KNOWLEDGE_VISUAL_PROJECTION_EMPTY_RESULT')
+
   return {
-    summary: normalizeString(result.data.summary) || fallback.summary,
-    tags: dedupeStrings((result.data.tags || []).map(item => toKnowledgeText(item)).filter(Boolean), 12),
-    ocrText: normalizeString(result.data.ocrText),
-    layout: normalizeString(result.data.layout),
-    confidence: Math.max(0, Math.min(1, Number(result.data.confidence || fallback.confidence))),
+    summary,
+    tags,
+    ocrText,
+    layout,
+    confidence: Math.max(0, Math.min(1, Number(result.data.confidence || 0))),
     provider,
     model,
-    fallbackUsed: result.fallbackUsed,
+    fallbackUsed: false,
     attempts: result.attempts,
   }
 }
