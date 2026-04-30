@@ -93,26 +93,28 @@ function resolveIconKind(value: string) {
               <p class="project-identity-theme-card__label">
                 图标样式
               </p>
-              <div class="project-identity-theme-card__icon-grid" role="listbox" aria-label="项目图标">
-                <button
-                  v-for="option in iconOptions"
-                  :key="`project-icon-${option.value}`"
-                  class="project-identity-theme-card__icon-option"
-                  :class="[
-                    { 'is-active': icon === option.value },
-                    `project-identity-theme-card__icon-option--${resolveIconKind(option.value)}`,
-                  ]"
-                  :disabled="disabled"
-                  type="button"
-                  :aria-label="option.label"
-                  :aria-selected="icon === option.value"
-                  @click="emit('selectIcon', option.value)"
-                >
-                  <span v-if="resolveIconKind(option.value) === 'text'" class="project-identity-theme-card__option-text-icon">{{ monogram }}</span>
-                  <span v-else-if="resolveIconKind(option.value) === 'symbol'" class="material-symbols-outlined">{{ option.value }}</span>
-                  <span v-else class="project-identity-theme-card__option-solid-icon" />
-                  <span>{{ option.label }}</span>
-                </button>
+              <div class="project-identity-theme-card__icon-scroll">
+                <div class="project-identity-theme-card__icon-grid" role="listbox" aria-label="项目图标">
+                  <button
+                    v-for="option in iconOptions"
+                    :key="`project-icon-${option.value}`"
+                    class="project-identity-theme-card__icon-option"
+                    :class="[
+                      { 'is-active': icon === option.value },
+                      `project-identity-theme-card__icon-option--${resolveIconKind(option.value)}`,
+                    ]"
+                    :disabled="disabled"
+                    type="button"
+                    :aria-label="option.label"
+                    :aria-selected="icon === option.value"
+                    @click="emit('selectIcon', option.value)"
+                  >
+                    <span v-if="resolveIconKind(option.value) === 'text'" class="project-identity-theme-card__option-text-icon">{{ monogram }}</span>
+                    <span v-else-if="resolveIconKind(option.value) === 'symbol'" class="material-symbols-outlined">{{ option.value }}</span>
+                    <span v-else class="project-identity-theme-card__option-solid-icon" />
+                    <span>{{ option.label }}</span>
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -290,11 +292,9 @@ function resolveIconKind(value: string) {
   border-radius: 14px;
   box-shadow: 0 18px 45px rgb(15 23 42 / 14%);
   display: grid;
-  gap: 18px;
-  max-height: min(620px, calc(100vh - 96px));
-  overflow-y: auto;
-  padding: 16px;
-  width: 420px;
+  gap: 16px;
+  padding: 14px;
+  width: 360px;
 }
 
 .project-identity-theme-card__label {
@@ -305,10 +305,16 @@ function resolveIconKind(value: string) {
   margin: 0 0 10px;
 }
 
+.project-identity-theme-card__icon-scroll {
+  max-height: 210px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .project-identity-theme-card__icon-grid {
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .project-identity-theme-card__icon-option {
@@ -319,8 +325,8 @@ function resolveIconKind(value: string) {
   color: #475569;
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  height: 62px;
+  gap: 4px;
+  height: 52px;
   justify-content: center;
   transition:
     border-color 160ms ease,
@@ -329,25 +335,25 @@ function resolveIconKind(value: string) {
 }
 
 .project-identity-theme-card__icon-option span:first-child {
-  font-size: 21px;
+  font-size: 19px;
 }
 
 .project-identity-theme-card__option-text-icon {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0;
 }
 
 .project-identity-theme-card__option-solid-icon {
   background: currentColor;
-  border-radius: 9px;
+  border-radius: 7px;
   display: block;
-  height: 22px;
-  width: 22px;
+  height: 18px;
+  width: 18px;
 }
 
 .project-identity-theme-card__icon-option span:last-child {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1;
 }
@@ -480,11 +486,11 @@ function resolveIconKind(value: string) {
   }
 
   .project-identity-theme-card__popover {
-    width: min(420px, calc(100vw - 32px));
+    width: min(360px, calc(100vw - 32px));
   }
 
   .project-identity-theme-card__icon-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 </style>
