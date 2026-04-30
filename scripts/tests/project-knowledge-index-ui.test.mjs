@@ -75,6 +75,8 @@ describe('project knowledge index ui', () => {
     assert.match(loopyDataUtilsSource, /export interface LoopySourceCardContract/, '数据中心缺少 source 卡片契约定义')
     assert.match(loopyDataUtilsSource, /export interface LoopyRelationNodeContract/, '数据中心缺少关系节点契约定义')
     assert.match(loopyDataUtilsSource, /export function buildLoopyOverviewContract/, '数据中心缺少主视图字段映射函数')
+    assert.match(loopyDataUtilsSource, /需重建/, 'Loopy 数据中心通用健康标签未把 fallback_only 标记为需重建')
+    assert.doesNotMatch(loopyDataUtilsSource, /降级可用/, 'Loopy 数据中心通用健康标签不应把 fallback_only 标记为降级可用')
     assert.match(loopyHealthSource, /完整状态表/, 'WorkspaceLoopyDataHealthView 缺少完整状态表')
     assert.match(loopyHealthSource, /失败项/, 'WorkspaceLoopyDataHealthView 缺少失败项列表')
     assert.match(loopyHealthSource, /需重建/, 'WorkspaceLoopyDataHealthView 未把 fallback_only 标记为需重建')

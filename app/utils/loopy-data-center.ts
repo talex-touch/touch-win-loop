@@ -136,7 +136,7 @@ export function resolveHealthLabel(state: string | null | undefined): string {
   if (normalized === 'healthy')
     return '真实向量健康'
   if (normalized === 'fallback_only')
-    return '降级可用'
+    return '需重建'
   if (normalized === 'missing_runtime')
     return '缺少运行时'
   if (normalized === 'worker_inactive')
@@ -166,7 +166,7 @@ export function resolveEmbeddingStatusLabel(status: ProjectKnowledgeEmbeddingSta
   if (normalized === 'derived')
     return '派生向量'
   if (normalized === 'fallback')
-    return 'Fallback 向量'
+    return '历史 fallback 向量'
   if (normalized === 'failed')
     return '产出失败'
   return '尚未产出'
@@ -441,8 +441,8 @@ function buildStateLegends(): LoopyStateLegendContract[] {
     },
     {
       id: 'warning',
-      title: '降级态',
-      description: 'fallback_only、partial、stale 会继续展示数据，但会标明可靠性已下降。',
+      title: '风险态',
+      description: 'fallback_only 表示历史 fallback 残留需重建；partial、stale 会继续展示数据，但会标明可靠性已下降。',
       tone: 'warning',
     },
     {
