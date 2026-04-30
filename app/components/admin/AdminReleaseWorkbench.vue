@@ -530,10 +530,6 @@ function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
 }
 
 function formatTimelineSnapshotItem(item: ContestReleaseTimelineSnapshot | ContestReleaseTrackTimelineSnapshot): string {
-  const note = metadataText(item.note)
-  if (note)
-    return note
-
   const startAt = formatDate(item.startAt)
   const endAt = formatDate(item.endAt)
   const dateText = startAt && endAt
@@ -543,11 +539,20 @@ function formatTimelineSnapshotItem(item: ContestReleaseTimelineSnapshot | Conte
       : endAt
         ? `截至 ${endAt}`
         : ''
+  const note = metadataText(item.note)
+  if (!dateText)
+    return note || '-'
+
+  const label = item.nodeType === 'other' ? '' : timelineNodeTypeLabel(item.nodeType)
   return [
-    item.year ? `${item.year}年` : '',
-    timelineNodeTypeLabel(item.nodeType),
+    label,
     dateText,
+    note,
   ].filter(Boolean).join(' · ') || '-'
+}
+
+function isTimelineSnapshotAutoRecognized(item: ContestReleaseTimelineSnapshot | ContestReleaseTrackTimelineSnapshot): boolean {
+  return Boolean(formatDate(item.startAt) || formatDate(item.endAt))
 }
 
 function trackTimelineText(items: ContestReleaseTrackTimelineSnapshot[]) {
@@ -556,10 +561,27 @@ function trackTimelineText(items: ContestReleaseTrackTimelineSnapshot[]) {
     .join('\n') || '-'
 }
 
+function trackTimelineReviewSections(items: ContestReleaseTrackTimelineSnapshot[], fallbackText?: string) {
+  const autoRecognized = items
+    .filter(isTimelineSnapshotAutoRecognized)
+    .map(formatTimelineSnapshotItem)
+    .filter(item => item && item !== '-')
+  const pendingConfirmation = items
+    .filter(item => !isTimelineSnapshotAutoRecognized(item))
+    .map(item => metadataText(item.note) || formatTimelineSnapshotItem(item))
+    .filter(item => item && item !== '-')
+  const fallback = metadataText(fallbackText)
+  if (!items.length && fallback)
+    pendingConfirmation.push(fallback)
+
+  return [
+    autoRecognized.length ? `自动识别：\n${autoRecognized.join('\n')}` : '',
+    pendingConfirmation.length ? `待人工确认：\n${pendingConfirmation.join('\n')}` : '',
+  ].filter(Boolean)
+}
+
 function trackTimelineReviewText(items: ContestReleaseTrackTimelineSnapshot[], fallbackText?: string) {
-  if (items.length)
-    return trackTimelineText(items)
-  return metadataText(fallbackText) || '-'
+  return trackTimelineReviewSections(items, fallbackText).join('\n\n') || '-'
 }
 
 function identityTokens(value: unknown): string[] {
