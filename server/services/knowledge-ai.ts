@@ -592,28 +592,6 @@ async function createBailianMultimodalEmbedding(input: {
   })
 }
 
-function buildAnalysisFallback(text: string): Omit<KnowledgeEntityAnalysisResult, 'provider' | 'model' | 'fallbackUsed' | 'attempts'> {
-  const normalized = toKnowledgeText(text)
-  const summary = normalized.slice(0, 220) || '暂无可分析内容。'
-  const keywords = extractKnowledgeKeywords(normalized, 10)
-  const risks: string[] = []
-  if (!normalized)
-    risks.push('内容为空，无法完成有效分析。')
-  if (normalized.length < 80)
-    risks.push('内容偏短，分析结论可信度有限。')
-  const suggestedActions = normalized
-    ? ['补充结构化摘要、正文和标签。', '补充来源信息与版权说明。']
-    : ['先补充资源正文，再触发重算。']
-
-  return {
-    summary,
-    keywords,
-    risks,
-    suggestedActions,
-    qualityScore: normalized.length >= 400 ? 78 : normalized.length >= 160 ? 64 : 45,
-  }
-}
-
 export async function createKnowledgeEmbedding(input: {
   text: string
   contents?: KnowledgeEmbeddingContentItem[]
@@ -801,17 +779,11 @@ export async function analyzeKnowledgeEntity(input: {
   const provider = normalizeAiRuntimeProvider(resolved.ai.provider)
   const model = toKnowledgeText(resolved.ai.model)
   const normalizedText = toKnowledgeText(input.text).slice(0, 12_000)
-  const fallback = buildAnalysisFallback(normalizedText)
 
-  if (!normalizedText || !isAiRuntimeConfigured(resolved.ai)) {
-    return {
-      ...fallback,
-      provider,
-      model,
-      fallbackUsed: true,
-      attempts: 1,
-    }
-  }
+  if (!normalizedText)
+    throw new Error('KNOWLEDGE_ENTITY_ANALYSIS_EMPTY_INPUT')
+  if (!isAiRuntimeConfigured(resolved.ai))
+    throw new Error('KNOWLEDGE_ENTITY_ANALYSIS_RUNTIME_NOT_CONFIGURED')
 
   const chatModel = createChatModel({
     provider,
@@ -847,13 +819,6 @@ export async function analyzeKnowledgeEntity(input: {
       })
       return analysisSchema.parse(await structuredModel.invoke(promptValue))
     },
-    fallback: () => ({
-      summary: fallback.summary,
-      keywords: fallback.keywords,
-      risks: fallback.risks,
-      suggestedActions: fallback.suggestedActions,
-      qualityScore: fallback.qualityScore,
-    }),
   })
 
   return {
@@ -864,7 +829,7 @@ export async function analyzeKnowledgeEntity(input: {
     qualityScore: Math.max(0, Math.min(100, Number(result.data.qualityScore || 0))),
     provider,
     model,
-    fallbackUsed: result.fallbackUsed,
+    fallbackUsed: false,
     attempts: result.attempts,
   }
 }

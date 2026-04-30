@@ -28,6 +28,15 @@ describe('project knowledge embedding governance', () => {
     assert.match(source, /getKnowledgeEmbeddingCache\(\)\.set\(cacheKey, \{/, 'knowledge-ai 未在查询路径写入 embedding cache')
   })
 
+  it('knowledge-ai 不再把实体分析失败包装成规则 fallback 结果', async () => {
+    const source = await readFile(KNOWLEDGE_AI_FILE, 'utf8')
+
+    assert.match(source, /throw new Error\('KNOWLEDGE_ENTITY_ANALYSIS_EMPTY_INPUT'\)/, '实体分析未对空内容做严格失败')
+    assert.match(source, /throw new Error\('KNOWLEDGE_ENTITY_ANALYSIS_RUNTIME_NOT_CONFIGURED'\)/, '实体分析未对缺配置做严格失败')
+    assert.doesNotMatch(source, /buildAnalysisFallback/, '实体分析仍保留规则 fallback 生成器')
+    assert.doesNotMatch(source, /fallback:\s*\(\)\s*=>\s*\(\{[\s\S]*qualityScore/, '实体分析请求失败不应返回规则 fallback 结果')
+  })
+
   it('worker 会把 embedding signature、runtimeVersion 与 failureReason 持久化到 chunk metadata', async () => {
     const source = await readFile(KNOWLEDGE_WORKER_FILE, 'utf8')
 
