@@ -25,7 +25,7 @@ it('协作资源模型暴露 collabPurpose 顶层字段，并在服务端实现 
   const storeSource = await readFile(RESOURCE_STORE_FILE, 'utf8')
   const apiSource = await readFile(COLLAB_API_FILE, 'utf8')
 
-  assert.match(domainBarrelSource, /export \* from '\.\/resource'/)
+  assert.match(domainBarrelSource, /export \* from '\.\.\/\.\.\/internal\/shared-types\/domain-legacy'/)
   assert.match(domainLegacySource, /export type CollabPurpose = 'workflow' \| 'freeform' \| 'design' \| 'notes'/)
   assert.match(domainLegacySource, /collabPurpose\?: CollabPurpose/)
   assert.match(storeSource, /export async function ensureProjectWorkflowCanvas\(/)
@@ -100,6 +100,9 @@ it('项目页把 design 资源作为独立 resource tab 打开，并通过创建
   assert.doesNotMatch(pageSource, /fixedTab:\s*'design'/)
   assert.doesNotMatch(apiSource, /purpose === 'design'\s*\?\s*await ensureProjectDesignCanvas/)
   assert.match(apiSource, /purpose === 'design'[\s\S]*drawMode: normalizeString\(body\.drawMode \|\| requestMetadata\.drawMode\) \|\| 'composition'/)
+  assert.match(apiSource, /purpose === 'design'[\s\S]*editorEngine: 'canvaskit_wasm'/)
+  assert.match(storeSource, /function resolveDefaultSceneEditorEngine\([\s\S]*purpose === 'design' \|\| drawMode === 'composition'[\s\S]*return 'canvaskit_wasm'/)
+  assert.match(storeSource, /function normalizeSceneEditorEngine\([\s\S]*if \(purpose === 'design'\)[\s\S]*return 'canvaskit_wasm'/)
   assert.match(storeSource, /purpose === 'workflow'[\s\S]*'diagram'[\s\S]*purpose === 'design'[\s\S]*'composition'/)
   assert.match(pageSource, /async function resolveProjectResourceOpenTarget\(/)
   assert.doesNotMatch(pageSource, /isLegacyDesignDraftAliasResource\(targetResource\)/)

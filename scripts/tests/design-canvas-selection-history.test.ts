@@ -205,7 +205,7 @@ describe('workspaceDesignPanel', () => {
   it('默认空设计文档不会再创建 device mockup 封面 frame', async () => {
     const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
 
-    expect(source).toMatch(/function createDefaultDesignSceneDocument\(\s*editorEngine: SceneEditorEngine = "vueflow",\s*\): SceneDocument/)
+    expect(source).toMatch(/function createDefaultDesignSceneDocument\(\s*editorEngine: SceneEditorEngine = "canvaskit_wasm",\s*\): SceneDocument/)
     expect(source).toMatch(/return createEmptySceneDocument\(\{/)
     expect(source).toMatch(/drawMode: "composition"/)
     expect(source).toMatch(/sourceType: "manual"/)
@@ -213,15 +213,15 @@ describe('workspaceDesignPanel', () => {
     expect(source).not.toMatch(/return buildDeviceMockupSceneDocument\(\{/)
   })
 
-  it('设计画布默认会切到独立 bridge 组件，仅 legacy tldraw 保留旧 stage', async () => {
+  it('设计画布固定使用独立 CanvasKit bridge，不再保留 legacy tldraw stage 分支', async () => {
     const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
 
     expect(source).toMatch(/import WorkspaceDesignCanvasKitBridge from "\.\/design\/WorkspaceDesignCanvasKitBridge\.client\.vue";/)
-    expect(source).toMatch(/const resolvedDesignStageComponent = computed\(\(\) => \{/)
-    expect(source).toMatch(/persistedDesignEditorEngine\.value === "tldraw_legacy"/)
-    expect(source).toMatch(/\? WorkspaceDesignStage/)
-    expect(source).toMatch(/: WorkspaceDesignCanvasKitBridge;/)
-    expect(source).toMatch(/:is="resolvedDesignStageComponent"/)
+    expect(source).toMatch(/<WorkspaceDesignCanvasKitBridge/)
+    expect(source).not.toMatch(/import WorkspaceDesignStage/)
+    expect(source).not.toMatch(/resolvedDesignStageComponent/)
+    expect(source).not.toMatch(/persistedDesignEditorEngine\.value === "tldraw_legacy"/)
+    expect(source).not.toMatch(/:is="resolvedDesignStageComponent"/)
   })
 
   it('主壳层会将上下文 HUD、快捷操作、侧栏动作和 Diagram AI 面板拆成独立组件', async () => {

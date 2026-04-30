@@ -1,11 +1,13 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
   CollabPurpose,
+  DrawMode,
   Resource,
   ResourceAvailability,
   ResourceCategory,
   ResourceKind,
   ResourceStatus,
+  SceneEditorEngine,
 } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
@@ -191,9 +193,21 @@ function parseCollabKind(value: unknown): Extract<ResourceKind, 'markdown' | 'dr
   return null
 }
 
-function normalizeSceneEditorEngine(value: unknown, fallback: 'vueflow' | 'tldraw_legacy'): 'vueflow' | 'tldraw_legacy' {
+function resolveDefaultSceneEditorEngine(drawMode: DrawMode | undefined, purpose?: CollabPurpose | null): SceneEditorEngine {
+  if (purpose === 'design' || drawMode === 'composition')
+    return 'canvaskit_wasm'
+  return drawMode === 'freeform' ? 'tldraw_legacy' : 'vueflow'
+}
+
+function normalizeSceneEditorEngine(
+  value: unknown,
+  fallback: SceneEditorEngine,
+  purpose?: CollabPurpose | null,
+): SceneEditorEngine {
+  if (purpose === 'design')
+    return 'canvaskit_wasm'
   const normalized = normalizeString(value).toLowerCase()
-  if (normalized === 'vueflow' || normalized === 'tldraw_legacy')
+  if (normalized === 'vueflow' || normalized === 'tldraw_legacy' || normalized === 'canvaskit_wasm')
     return normalized
   return fallback
 }
@@ -906,7 +920,8 @@ function toResource(row: ProjectResourceRow): Resource {
   const editorEngine = resourceKind === 'draw'
     ? normalizeSceneEditorEngine(
         metadata.editorEngine,
-        drawMode === 'freeform' ? 'tldraw_legacy' : 'vueflow',
+        resolveDefaultSceneEditorEngine(drawMode, collabPurpose),
+        collabPurpose,
       )
     : undefined
 
@@ -1999,9 +2014,8 @@ export async function createProjectCollabResource(
           templateKey: normalizeString(inputMetadata.templateKey) || undefined,
           editorEngine: normalizeSceneEditorEngine(
             inputMetadata.editorEngine,
-            defaultDrawMode === 'freeform'
-              ? 'tldraw_legacy'
-              : 'vueflow',
+            resolveDefaultSceneEditorEngine(defaultDrawMode, purpose),
+            purpose,
           ),
         }
       : {}),

@@ -410,6 +410,7 @@ type MockupScreenDragSession = {
   frameId: string
   startClientX: number
   startClientY: number
+  scale: number
   startOffsetX: number
   startOffsetY: number
   previewOffsetX: number
@@ -2851,10 +2852,12 @@ function resolveSelectionDraftMatches(draft: SelectionDraft): string[] {
 }
 
 function resolveMockupScreenTransform(frame: DesignFrameModel | null | undefined): {
+  scale: number
   offsetX: number
   offsetY: number
 } {
   return {
+    scale: Number(frame?.metadata?.device?.screenTransform?.scale || 1),
     offsetX: Number(frame?.metadata?.device?.screenTransform?.offsetX || 0),
     offsetY: Number(frame?.metadata?.device?.screenTransform?.offsetY || 0),
   }
@@ -3784,6 +3787,7 @@ function handleStagePointerDown(event: PointerEvent): void {
         frameId: mockupLayout.displayFrame.id,
         startClientX: event.clientX,
         startClientY: event.clientY,
+        scale: transform.scale,
         startOffsetX: transform.offsetX,
         startOffsetY: transform.offsetY,
         previewOffsetX: transform.offsetX,
@@ -3992,6 +3996,7 @@ function handlePointerMove(event: PointerEvent): void {
         metadata: {
           device: {
             screenTransform: {
+              scale: mockupDragSession.scale,
               offsetX: mockupDragSession.previewOffsetX,
               offsetY: mockupDragSession.previewOffsetY,
             },

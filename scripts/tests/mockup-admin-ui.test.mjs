@@ -39,9 +39,9 @@ const DESIGN_INSPECTOR_FILE = resolve(
   process.cwd(),
   'app/components/workspace/design/WorkspaceDesignInspector.vue',
 )
-const DESIGN_STAGE_FILE = resolve(
+const DESIGN_CANVASKIT_HOST_FILE = resolve(
   process.cwd(),
-  'app/components/workspace/design/WorkspaceDesignStage.vue',
+  'app/components/workspace/design/WorkspaceDesignCanvasKitHost.client.vue',
 )
 const MOCKUP_MODELS_API_PATTERN = /['"]\/admin\/mockups\/models['"]/
 const DEVICE_SHELL_KIND_CHECK_PATTERN = /item\.assetKind !== ['"]device_shell['"]/
@@ -123,18 +123,18 @@ it('mockup 变体删除后端会清理默认变体并收紧顺序', async () => 
 })
 
 it('设计画布已接入 mockup 整体拖动与屏幕构图编辑态', async () => {
-  const [designPanelSource, inspectorSource, stageSource] = await Promise.all([
+  const [designPanelSource, inspectorSource, hostSource] = await Promise.all([
     readFile(DESIGN_PANEL_FILE, 'utf8'),
     readFile(DESIGN_INSPECTOR_FILE, 'utf8'),
-    readFile(DESIGN_STAGE_FILE, 'utf8'),
+    readFile(DESIGN_CANVASKIT_HOST_FILE, 'utf8'),
   ])
 
   assert.match(inspectorSource, /调整屏幕内容/, 'Inspector 缺少进入屏幕构图编辑态入口')
   assert.match(inspectorSource, /重置构图/, 'Inspector 缺少构图重置动作')
   assert.match(inspectorSource, /screenTransform/, 'Inspector 未接入 screenTransform 控件')
-  assert.match(stageSource, /'edit-mockup-screen'/, 'Stage 未暴露进入 mockup 内部编辑态事件')
-  assert.match(stageSource, /'update-mockup-screen-transform'/, 'Stage 未暴露 mockup 屏幕偏移更新事件')
-  assert.match(stageSource, /mockupScreenEditingFrameId/, 'Stage 未接入 mockup 内部编辑态 frameId')
+  assert.match(hostSource, /'edit-mockup-screen'/, 'CanvasKit host 未暴露进入 mockup 内部编辑态事件')
+  assert.match(hostSource, /'update-mockup-screen-transform'/, 'CanvasKit host 未暴露 mockup 屏幕偏移更新事件')
+  assert.match(hostSource, /mockupScreenEditingFrameId/, 'CanvasKit host 未接入 mockup 内部编辑态 frameId')
   assert.match(designPanelSource, /@edit-mockup-screen="mockupScreenEditingFrameId = \$event\.frameId"/, '设计面板未接住 mockup 内部编辑事件')
   assert.match(designPanelSource, /@update-mockup-screen-transform="/, '设计面板未接住 mockup 屏幕拖动更新')
   assert.match(designPanelSource, /scale: Number\(targetFrame\.metadata\?\.device\?\.screenTransform\?\.scale \|\| 1\)/, '设计面板更新 screenTransform 时未保留 scale')

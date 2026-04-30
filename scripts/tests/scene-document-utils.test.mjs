@@ -206,7 +206,7 @@ packages:
   })
   const svg = renderCompositionAssetToSvg(deviceScene)
   assert.equal(deviceScene.drawMode, 'composition')
-  assert.equal(deviceScene.editorEngine, 'vueflow')
+  assert.equal(deviceScene.editorEngine, 'canvaskit_wasm')
   assert.equal(deviceScene.sourceModel.kind, 'composition')
   assert.equal(deviceScene.sourceModel.pages?.length, 1)
   assert.equal(deviceScene.sourceModel.frames?.length, 1)
@@ -347,6 +347,7 @@ packages:
     fallbackDrawMode: 'composition',
     fallbackSourceType: 'image_mockup',
   })
+  assert.equal(migratedComposition.editorEngine, 'canvaskit_wasm')
   assert.equal(migratedComposition.sourceModel.kind, 'composition')
   assert.equal(migratedComposition.sourceModel.pages?.length, 1)
   assert.equal(migratedComposition.sourceModel.frames?.length, 1)
@@ -373,6 +374,7 @@ packages:
     fallbackDrawMode: 'composition',
     fallbackSourceType: 'manual',
   })
+  assert.equal(legacyPageScene.editorEngine, 'canvaskit_wasm')
   const migratedLegacyPage = legacyPageScene.sourceModel.pages?.[0]
   assert.equal(migratedLegacyPage?.background, '#123456')
   assert.equal(migratedLegacyPage?.metadata?.workspaceBackground, '#123456')
@@ -459,6 +461,7 @@ packages:
     templateKey: 'device-showcase',
     editorEngine: 'vueflow',
   })
+  assert.equal(emptyCompositionScene.editorEngine, 'canvaskit_wasm')
   assert.equal(emptyCompositionScene.sourceModel.kind, 'composition')
   assert.equal(emptyCompositionScene.sourceModel.pages?.length, 1)
   assert.equal(emptyCompositionScene.sourceModel.frames?.length || 0, 0)
@@ -509,6 +512,7 @@ it('design group / ungroup 与 auto layout relayout 保持稳定', async () => {
     templateKey: 'device-showcase',
     editorEngine: 'vueflow',
   })
+  assert.equal(document.editorEngine, 'canvaskit_wasm')
   const pageId = document.sourceModel.currentPageId
   document = appendDesignFrameToSceneDocument(document, {
     pageId,
@@ -928,6 +932,7 @@ it('设备排布文档支持源画板绑定、静态旋转和页面级固定导�
     templateKey: 'device-showcase',
     editorEngine: 'vueflow',
   })
+  assert.equal(rotatedScene.editorEngine, 'canvaskit_wasm')
   rotatedScene = appendDesignFrameToSceneDocument(rotatedScene, {
     id: 'rotated-frame',
     pageId: rotatedScene.sourceModel.currentPageId,

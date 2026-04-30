@@ -23,13 +23,9 @@ const DESIGN_SIDEBAR_TABS_FILE = resolve(
   process.cwd(),
   'app/components/workspace/design/WorkspaceDesignSidebarTabs.vue',
 )
-const DESIGN_STAGE_FILE = resolve(
+const DESIGN_CANVASKIT_HOST_FILE = resolve(
   process.cwd(),
-  'app/components/workspace/design/WorkspaceDesignStage.vue',
-)
-const DESIGN_CANVAS_FILE = resolve(
-  process.cwd(),
-  'app/components/workspace/design/WorkspaceDesignCanvas.client.vue',
+  'app/components/workspace/design/WorkspaceDesignCanvasKitHost.client.vue',
 )
 const DESIGN_TOOLBAR_FILE = resolve(
   process.cwd(),
@@ -63,8 +59,7 @@ it('wl design 骨架组件和设计主面板已切换到插槽式布局', async 
     layerSource,
     containerSource,
     sidebarTabsSource,
-    stageSource,
-    canvasSource,
+    hostSource,
     toolbarSource,
     toolControllerSource,
   ] = await Promise.all([
@@ -73,8 +68,7 @@ it('wl design 骨架组件和设计主面板已切换到插槽式布局', async 
     readFile(WL_DESIGN_LAYER_FILE, 'utf8'),
     readFile(WL_DESIGN_CONTAINER_FILE, 'utf8'),
     readFile(DESIGN_SIDEBAR_TABS_FILE, 'utf8'),
-    readFile(DESIGN_STAGE_FILE, 'utf8'),
-    readFile(DESIGN_CANVAS_FILE, 'utf8'),
+    readFile(DESIGN_CANVASKIT_HOST_FILE, 'utf8'),
     readFile(DESIGN_TOOLBAR_FILE, 'utf8'),
     readFile(DESIGN_TOOL_CONTROLLER_FILE, 'utf8'),
   ])
@@ -182,285 +176,75 @@ it('wl design 骨架组件和设计主面板已切换到插槽式布局', async 
   assert.match(sidebarTabsSource, /label: ["']Frames["']/)
   assert.match(sidebarTabsSource, /label: ["']Assets["']/)
 
-  assert.match(stageSource, /data-testid="workspace-design-stage"/)
-  assert.match(stageSource, /frameOwnerFrames\?: Record<string, DesignFrameModel>/)
-  assert.match(stageSource, /selectionState\?: DesignCanvasSelectionState/)
+  assert.match(hostSource, /data-testid="workspace-design-canvaskit-host"/)
+  assert.match(hostSource, /frameOwnerFrames\?: Record<string, DesignFrameModel>/)
+  assert.match(hostSource, /selectionState\?: DesignCanvasSelectionState/)
+  assert.match(hostSource, /interactionContext\?: DesignCanvasInteractionContext/)
+  assert.match(hostSource, /["']update-selection["']:\s*\[payload: DesignCanvasSelectionState\]/)
   assert.match(
-    stageSource,
-    /interactionContext\?: DesignCanvasInteractionContext/,
-  )
-  assert.match(
-    stageSource,
-    /["']update-selection["']:\s*\[payload: DesignCanvasSelectionState\]/,
-  )
-  assert.match(
-    stageSource,
+    hostSource,
     /["']update-elements["']:\s*\[payload: \{ patches: Array<\{ elementId: string, patch: Partial<DesignElementModel> \}>, historyMergeKey\?: string \}\]/,
   )
   assert.match(
-    stageSource,
+    hostSource,
     /["']request-deep-selection["']:\s*\[payload: \{ ownerFrameId: string, ownerPageId: string, displayFrameId: string, ownerElementId\?: string \}\]/,
   )
-  assert.match(
-    stageSource,
-    /const elementTransformDraft = ref<ElementTransformDraft \| null>\(null\)/,
-  )
-  assert.match(stageSource, /displayKey: string/)
-  assert.match(stageSource, /ownerFrameId: string/)
-  assert.match(stageSource, /displayFrameId: string/)
-  assert.match(
-    stageSource,
-    /function handleOverlayWheel\(event: WheelEvent\): void/,
-  )
-  assert.match(
-    stageSource,
-    /historyMergeKey:\s*draft\.mode === ["']resize["']\s*\?\s*["']element-resize["']\s*:\s*["']element-rotate["']/,
-  )
-  assert.match(stageSource, /handleElementRotateHandlePointerDown/)
-  assert.match(stageSource, /handleElementResizeHandlePointerDown/)
-  assert.match(stageSource, /ROTATE_HANDLE_OFFSET = 28/)
-  assert.match(stageSource, /RESIZE_HANDLE_SIZE = 12/)
-  assert.match(stageSource, /resolveDesignElementPresentation/)
-  assert.match(stageSource, /resolveDesignFrameLayoutMetadata/)
-  assert.match(stageSource, /resolveDesignFrameGridMetadata/)
-  assert.match(stageSource, /resolveDesignFrameProjectionLayoutForFrames/)
-  assert.match(stageSource, /canDesignFrameCreateElements/)
-  assert.match(stageSource, /visibleFrameGrids = computed/)
-  assert.match(stageSource, /resolvePathSvgPoints/)
-  assert.match(stageSource, /historyMergeKey:\s*["']element-drag["']/)
-  assert.match(stageSource, /deepSelectionEnabled/)
-  assert.match(stageSource, /overlayCapturesCanvasPointer/)
-  assert.match(stageSource, /const frameProjectionLayoutMap = computed/)
-  assert.match(stageSource, /const overlayElementsByElementId = computed/)
-  assert.match(stageSource, /function resolveOverlayElement\(/)
-  assert.match(stageSource, /function clearTransientOverlayDrafts\(\): void/)
-  assert.match(
-    stageSource,
-    /props\.activeTool === 'rectangle' \|\| props\.activeTool === 'ellipse' \|\| props\.activeTool === 'arrow' \|\| props\.activeTool === 'text'/,
-  )
-  assert.match(
-    stageSource,
-    /shapeKind: props\.activeTool === 'ellipse' \? 'ellipse' : props\.activeTool === 'arrow' \? 'arrow' : 'rectangle'/,
-  )
-  assert.match(
-    stageSource,
-    /<g v-else-if="resolveElementPresentationForOverlay\(item\)\.shapeKind === 'arrow'">/,
-  )
-  assert.match(stageSource, /const selectedTransformTarget = computed\(/)
-  assert.match(stageSource, /const selectedTransformBoxStyle = computed/)
-  assert.match(stageSource, /function resolveTopmostFrameElementAtClientPoint\(/)
-  assert.match(stageSource, /function handleCanvasNodeDoubleClick\(payload: \{/)
-  assert.match(stageSource, /emit\('request-deep-selection', \{/)
-  assert.match(stageSource, /displayFrameId: hitItem\.displayFrameId \|\| displayFrame\.id/)
-  assert.match(stageSource, /v-if="selectedTransformBoxStyle"/)
-  assert.match(stageSource, /v-for="handle in resizeHandleDefinitions"/)
-  assert.match(stageSource, /pointer-events-auto/)
-  assert.match(stageSource, /pointer-events-none/)
-  assert.doesNotMatch(stageSource, /Design Overlay ·/)
-
-  assert.match(canvasSource, /const CANVAS_CONTROL_WIDTH = 200/)
-  assert.match(canvasSource, /const CANVAS_RESTING_CONTROL_WIDTH = 128/)
-  assert.match(canvasSource, /const CANVAS_COLLAPSED_CONTROL_WIDTH = 92/)
-  assert.match(canvasSource, /const CANVAS_EXPANDED_CONTROL_HEIGHT = 36/)
-  assert.match(canvasSource, /const CANVAS_RESTING_CONTROL_HEIGHT = 12/)
-  assert.match(canvasSource, /const CANVAS_COLLAPSED_CONTROL_HEIGHT = 8/)
-  assert.match(canvasSource, /const CANVAS_RESTING_CONTROL_HIT_HEIGHT = 28/)
-  assert.match(canvasSource, /const CANVAS_COLLAPSED_CONTROL_HIT_HEIGHT = 24/)
-  assert.match(canvasSource, /const CANVAS_MINIMAP_HEIGHT = 136/)
-  assert.match(canvasSource, /function emitFrameEditing\(frameId: string\): void/)
-  assert.match(canvasSource, /displayFrameId: ""/)
-  assert.match(canvasSource, /displayFrameId: normalizeString\(frameId\)/)
-  assert.match(canvasSource, /const activeFrameDragIds = ref<string\[\]>\(\[\]\);/)
-  assert.match(canvasSource, /function beginFrameDragSession\(frameId: string\): void/)
-  assert.match(canvasSource, /function handleNodeDoubleClick\(payload: NodeMouseEvent\): void/)
-  assert.match(
-    canvasSource,
-    /emit\("node-double-click", \{/,
-  )
-  assert.match(
-    canvasSource,
-    /const pointer = resolvePointerClientPosition\(payload\.event\);/,
-  )
-  assert.match(canvasSource, /scheduleFrameDragSessionCleanup\(\);/)
-  assert.match(
-    canvasSource,
-    /const CANVAS_RESTING_MINIMAP_HEIGHT = Math\.round/,
-  )
-  assert.match(
-    canvasSource,
-    /const CANVAS_COLLAPSED_MINIMAP_HEIGHT = Math\.round/,
-  )
-  assert.match(canvasSource, /const ZOOM_CONTROL_COLLAPSE_DELAY = 1400/)
-  assert.match(
-    canvasSource,
-    /const ZOOM_CONTROL_DEEP_COLLAPSE_DELAY = 12 \* 60 \* 1000/,
-  )
-  assert.match(
-    canvasSource,
-    /const QUICK_ZOOM_PRESETS = \[50, 75, 100, 125, 150, 200\]/,
-  )
-  assert.match(canvasSource, /const ZOOM_RANGE_SNAP_STEP = 5/)
-  assert.match(canvasSource, /zoomDisplayText = computed/)
-  assert.match(canvasSource, /nextQuickZoomPreset = computed/)
-  assert.match(canvasSource, /zoomCollapsedIndicatorStyle = computed/)
-  assert.match(
-    canvasSource,
-    /const trackWidth = Math\.max\(0, zoomChromeMetrics\.value\.controlWidth - 2\)/,
-  )
-  assert.match(
-    canvasSource,
-    /const minimumWidth = zoomChromeMetrics\.value\.collapsedIndicatorWidth/,
-  )
-  assert.match(
-    canvasSource,
-    /const rawWidth = Math\.round\(zoomRatio\.value \* trackWidth\)/,
-  )
-  assert.match(
-    canvasSource,
-    /const width = Math\.min\(trackWidth, Math\.max\(minimumWidth, rawWidth\)\)/,
-  )
-  assert.match(canvasSource, /canvasChromeStyle = computed/)
-  assert.match(
-    canvasSource,
-    /zoomControlState = ref<ZoomControlState>\(["']expanded["']\)/,
-  )
-  assert.match(canvasSource, /selectionState\?: DesignCanvasSelectionState/)
-  assert.match(
-    canvasSource,
-    /interactionContext\?: DesignCanvasInteractionContext/,
-  )
-  assert.match(
-    canvasSource,
-    /["']update-selection["']:\s*\[payload: DesignCanvasSelectionState\]/,
-  )
-  assert.match(
-    canvasSource,
-    /revealZoomControl\(options\?:\s*\{\s*collapseAfterIdle\?: boolean;\s*delay\?: number;\s*deepDelay\?: number;\s*ignoreHover\?: boolean;\s*\}\): void/,
-  )
-  assert.match(canvasSource, /cycleQuickZoomPreset\(\): Promise<void>/)
-  assert.match(
-    canvasSource,
-    /zoomCanvasToImmediate\(nextZoom: number\): Promise<void>/,
-  )
-  assert.match(canvasSource, /handleZoomControlPointerMove\(\): void/)
-  assert.match(canvasSource, /handleZoomControlShellClick\(\): void/)
-  assert.match(
-    canvasSource,
-    /handleZoomRangePointerDown\(event: PointerEvent\): void/,
-  )
-  assert.match(
-    canvasSource,
-    /handleZoomRangePointerMove\(event: PointerEvent\): void/,
-  )
-  assert.match(
-    canvasSource,
-    /handleZoomRangePointerUp\(event: PointerEvent\): void/,
-  )
-  assert.match(canvasSource, /DESIGN_TOOL_PRESETS/)
-  assert.match(
-    canvasSource,
-    /description: ["']临时平移画布["'], keys: \[["']Hold["'], ["']Space["']\]/,
-  )
-  assert.match(canvasSource, /description: `\$\{tool\.label\}工具`,/)
-  assert.match(canvasSource, /:data-zoom-state="zoomControlState"/)
-  assert.match(
-    canvasSource,
-    /<MiniMap[\s\S]*:width="zoomChromeMetrics\.controlWidth"[\s\S]*:height="zoomChromeMetrics\.minimapHeight"/,
-  )
-  assert.match(canvasSource, /:selection-key-code="true"/)
-  assert.match(canvasSource, /:pan-on-drag="isHandToolActive"/)
-  assert.match(canvasSource, /:pan-on-scroll="true"/)
-  assert.match(canvasSource, /:zoom-on-scroll="false"/)
-  assert.match(canvasSource, /:zoom-on-pinch="true"/)
-  assert.match(
-    canvasSource,
-    /:node-drag-threshold="POINTER_GESTURE_THRESHOLD"/,
-  )
-  assert.match(
-    canvasSource,
-    /:pane-click-distance="POINTER_GESTURE_THRESHOLD"/,
-  )
-  assert.match(canvasSource, /onResizePreview/)
-  assert.match(canvasSource, /onResizeCommit/)
-  assert.match(canvasSource, /:data-state="zoomControlState"/)
-  assert.match(canvasSource, /class="workspace-design-canvas__zoom-label"/)
-  assert.match(canvasSource, /@pointerdown="handleZoomRangePointerDown"/)
-  assert.match(canvasSource, /@pointermove="handleZoomRangePointerMove"/)
-  assert.match(canvasSource, /@pointerup="handleZoomRangePointerUp"/)
-  assert.match(canvasSource, /@pointercancel="handleZoomRangePointerUp"/)
-  assert.match(canvasSource, /@pointermove="handleZoomControlPointerMove"/)
-  assert.match(canvasSource, /@click\.stop="void cycleQuickZoomPreset\(\)"/)
-  assert.match(canvasSource, /@click\.stop="handleZoomControlShellClick"/)
-  assert.match(canvasSource, /workspace-design-canvas__zoom-collapsed-track/)
-  assert.match(
-    canvasSource,
-    /workspace-design-canvas__zoom-collapsed-indicator/,
-  )
-  assert.match(canvasSource, /left: 16px !important;/)
-  assert.match(canvasSource, /margin: 0 !important;/)
-  assert.match(canvasSource, /z-index: 160 !important;/)
-  assert.match(canvasSource, /background: #ffffff;/)
-  assert.match(
-    canvasSource,
-    /["']--workspace-design-control-hit-height["']:\s*`\$\{zoomChromeMetrics\.value\.controlHitHeight\}px`/,
-  )
-  assert.match(
-    canvasSource,
-    /["']--workspace-design-collapsed-track-height["']:\s*`\$\{zoomChromeMetrics\.value\.collapsedTrackHeight\}px`/,
-  )
-  assert.match(
-    canvasSource,
-    /["']--workspace-design-collapsed-track-radius["']:\s*zoomControlState\.value === ["']dormant["']\s*\?\s*["']1px["']\s*:\s*zoomControlState\.value === ["']resting["']\s*\?\s*["']1px["']\s*:\s*["']2px["']/,
-  )
-  assert.match(
-    canvasSource,
-    /["']--workspace-design-collapsed-indicator-width["']:\s*`\$\{zoomChromeMetrics\.value\.collapsedIndicatorWidth\}px`/,
-  )
-  assert.match(
-    canvasSource,
-    /["']--workspace-design-collapsed-indicator-height["']:\s*`\$\{zoomChromeMetrics\.value\.collapsedIndicatorHeight\}px`/,
-  )
-  assert.match(
-    canvasSource,
-    /["']--workspace-design-collapsed-indicator-radius["']:\s*zoomControlState\.value === ["']dormant["']\s*\?\s*["']1px["']\s*:\s*zoomControlState\.value === ["']resting["']\s*\?\s*["']1px["']\s*:\s*["']2px["']/,
-  )
-  assert.match(
-    canvasSource,
-    /["']--workspace-design-minimap-radius["']:\s*zoomControlState\.value === ["']dormant["']\s*\?\s*["']7px["']\s*:\s*zoomControlState\.value === ["']resting["']\s*\?\s*["']8px["']\s*:\s*["']10px["']/,
-  )
-  assert.match(canvasSource, /overflow: hidden;/)
-  assert.match(
-    canvasSource,
-    /height: var\(--workspace-design-collapsed-track-height\);/,
-  )
-  assert.match(
-    canvasSource,
-    /border-radius: var\(--workspace-design-collapsed-track-radius\);/,
-  )
-  assert.match(
-    canvasSource,
-    /width: var\(--workspace-design-collapsed-indicator-width\);/,
-  )
-  assert.match(
-    canvasSource,
-    /height: var\(--workspace-design-collapsed-indicator-height\);/,
-  )
-  assert.match(
-    canvasSource,
-    /border-radius: var\(--workspace-design-collapsed-indicator-radius\);/,
-  )
-  assert.match(canvasSource, /left: 0;/)
-  assert.match(canvasSource, /transform: translateY\(-50%\);/)
-  assert.match(canvasSource, /cursor: ew-resize;/)
-  assert.match(canvasSource, /user-select: none;/)
-  assert.match(canvasSource, /pointer-events: none;/)
-  assert.match(canvasSource, /display: flex;/)
-  assert.match(
-    canvasSource,
-    /height: var\(--workspace-design-control-hit-height\);/,
-  )
-  assert.doesNotMatch(canvasSource, /mix-blend-mode: difference/)
-  assert.doesNotMatch(canvasSource, /zoomControlCollapsed/)
+  assert.match(hostSource, /interface ElementHitItem \{/)
+  assert.match(hostSource, /type FrameDragSession = \{/)
+  assert.match(hostSource, /type FrameResizeSession = \{/)
+  assert.match(hostSource, /type MockupScreenDragSession = \{/)
+  assert.match(hostSource, /type PendingImagePlacement = \{/)
+  assert.match(hostSource, /const CANVAS_CONTROL_WIDTH = 200/)
+  assert.match(hostSource, /const CANVAS_RESTING_CONTROL_WIDTH = 128/)
+  assert.match(hostSource, /const CANVAS_COLLAPSED_CONTROL_WIDTH = 92/)
+  assert.match(hostSource, /const CANVAS_MINIMAP_HEIGHT = 136/)
+  assert.match(hostSource, /const ZOOM_CONTROL_COLLAPSE_DELAY = 1400/)
+  assert.match(hostSource, /const ZOOM_CONTROL_DEEP_COLLAPSE_DELAY = 12 \* 60 \* 1000/)
+  assert.match(hostSource, /const QUICK_ZOOM_PRESETS = \[50, 75, 100, 125, 150, 200\]/)
+  assert.match(hostSource, /const ROTATE_HANDLE_OFFSET = 28/)
+  assert.match(hostSource, /const ELEMENT_SNAP_GRID_SIZE = 8/)
+  assert.match(hostSource, /resolveDesignElementPresentation/)
+  assert.match(hostSource, /resolveDesignFrameGridMetadata/)
+  assert.match(hostSource, /resolveDesignFrameProjectionLayoutForFrames/)
+  assert.match(hostSource, /canDesignFrameCreateElements/)
+  assert.match(hostSource, /visibleFrameGrids = computed/)
+  assert.match(hostSource, /const elementTransformBoxStyle = computed/)
+  assert.match(hostSource, /const zoomChromeMetrics = computed/)
+  assert.match(hostSource, /const zoomCollapsedIndicatorStyle = computed/)
+  assert.match(hostSource, /zoomControlState = ref<ZoomControlState>\(["']expanded["']\)/)
+  assert.match(hostSource, /function revealZoomControl\(options\?: \{/)
+  assert.match(hostSource, /function cycleQuickZoomPreset\(\): void/)
+  assert.match(hostSource, /function fitCanvasView\(\): void/)
+  assert.match(hostSource, /function handleZoomControlPointerMove\(\): void/)
+  assert.match(hostSource, /function handleZoomControlShellClick\(\): void/)
+  assert.match(hostSource, /function resolveElementGuideAdjustment\(/)
+  assert.match(hostSource, /function beginAutoLayoutReorderSession\(/)
+  assert.match(hostSource, /function handleElementResizePointerDown\(/)
+  assert.match(hostSource, /function handleElementRotatePointerDown\(/)
+  assert.match(hostSource, /function handleFrameResizePointerDown\(/)
+  assert.match(hostSource, /function handleFramePointerDown\(/)
+  assert.match(hostSource, /function handleElementDoubleClick\(/)
+  assert.match(hostSource, /function resolveMockupScreenTransform\(/)
+  assert.match(hostSource, /emit\('request-deep-selection', \{/)
+  assert.match(hostSource, /emit\('update-elements', \{/)
+  assert.match(hostSource, /emit\('update-frame-size', \{/)
+  assert.match(hostSource, /emit\('duplicate-frame'\)/)
+  assert.match(hostSource, /emit\('delete-frame'\)/)
+  assert.match(hostSource, /:data-zoom-state="zoomControlState"/)
+  assert.match(hostSource, /data-testid="workspace-design-canvaskit-minimap"/)
+  assert.match(hostSource, /data-testid="workspace-design-canvaskit-zoom-hud"/)
+  assert.match(hostSource, /data-testid="workspace-design-canvaskit-create-preview"/)
+  assert.match(hostSource, /data-testid="workspace-design-canvaskit-element-hit"/)
+  assert.match(hostSource, /data-testid="workspace-design-canvaskit-element-resize"/)
+  assert.match(hostSource, /data-testid="workspace-design-canvaskit-frame-resize"/)
+  assert.match(hostSource, /WorkspaceDesignCanvasCollabOverlay/)
+  assert.match(hostSource, /workspace-design-canvaskit-host__zoom-collapsed-track/)
+  assert.match(hostSource, /workspace-design-canvaskit-host__zoom-collapsed-indicator/)
+  assert.match(hostSource, /["']--workspace-design-control-hit-height["']:\s*`\$\{zoomChromeMetrics\.value\.controlHitHeight\}px`/)
+  assert.match(hostSource, /["']--workspace-design-collapsed-track-height["']:\s*`\$\{zoomChromeMetrics\.value\.collapsedTrackHeight\}px`/)
+  assert.match(hostSource, /["']--workspace-design-collapsed-indicator-width["']:\s*`\$\{zoomChromeMetrics\.value\.collapsedIndicatorWidth\}px`/)
+  assert.doesNotMatch(hostSource, /mix-blend-mode: difference/)
+  assert.doesNotMatch(hostSource, /zoomControlCollapsed/)
 
   assert.match(toolbarSource, /data-testid="workspace-design-toolbar"/)
   assert.match(toolbarSource, /DESIGN_TOOL_PRESETS/)

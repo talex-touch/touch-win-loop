@@ -123,13 +123,12 @@ import WorkspaceDesignInspector from './design/WorkspaceDesignInspector.vue'
 import WorkspaceDesignSelectionQuickActions from './design/WorkspaceDesignSelectionQuickActions.vue'
 import WorkspaceDesignSidebarActionMenus from './design/WorkspaceDesignSidebarActionMenus.vue'
 import WorkspaceDesignSidebarTabs from './design/WorkspaceDesignSidebarTabs.vue'
-import WorkspaceDesignStage from './design/WorkspaceDesignStage.vue'
 import WorkspaceDesignToolbar from './design/WorkspaceDesignToolbar.vue'
 
-// WorkspaceDesignCanvas 作为 Vue Flow stage 适配层继续保留在 WorkspaceDesignStage 内部。
-// buildDeviceMockupSceneDocument 仍由 scene-document 提供，兼容旧模板与新格式迁移。
+// 设计资源统一使用 CanvasKit bridge；旧 engine 值只作为历史输入读取后规范化。
+// buildDeviceMockupSceneDocument 仍由 scene-document 提供，用于模板与旧数据迁移。
 
-type DesignSidebarTab = 'arrangement' | 'pages' | 'frames' | 'assets'
+type DesignSidebarTab = 'pages' | 'frames' | 'assets'
 type DesignStorageFormat = 'scene_document' | 'design_document_v1'
 interface StageViewportState { x: number, y: number, zoom: number }
 interface SidebarLayerTreeRow {
@@ -216,29 +215,17 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 
 function resolvePersistedDesignEditorEngine(
-  value: unknown,
-  fallback: SceneEditorEngine = 'vueflow',
 ): SceneEditorEngine {
-  const normalized = normalizeString(value).toLowerCase()
-  if (
-    normalized === 'vueflow'
-    || normalized === 'tldraw_legacy'
-    || normalized === 'canvaskit_wasm'
-  ) {
-    return normalized
-  }
-  return fallback
+  return 'canvaskit_wasm'
 }
 
 const draftDocument = ref<SceneDocument>(
-  createDefaultDesignSceneDocument(
-    resolvePersistedDesignEditorEngine(props.designEditorEngine, 'vueflow'),
-  ),
+  createDefaultDesignSceneDocument(resolvePersistedDesignEditorEngine()),
 )
 const persistedDesignEditorEngine = ref<SceneEditorEngine>(
-  resolvePersistedDesignEditorEngine(props.designEditorEngine, 'vueflow'),
+  resolvePersistedDesignEditorEngine(),
 )
-const persistedDesignStorageFormat = ref<DesignStorageFormat>('scene_document')
+const persistedDesignStorageFormat = ref<DesignStorageFormat>('design_document_v1')
 const panelRootRef = ref<HTMLElement | null>(null)
 const layerTreeRootRef = ref<HTMLElement | null>(null)
 const activeTool = ref<DesignEditorTool>('select')
@@ -1262,7 +1249,7 @@ function parseFrameMetric(value: unknown, fallback: number, min = 0): number {
 }
 
 function createDefaultDesignSceneDocument(
-  editorEngine: SceneEditorEngine = "vueflow",
+  editorEngine: SceneEditorEngine = "canvaskit_wasm",
 ): SceneDocument {
   return createEmptySceneDocument({
     drawMode: "composition",
@@ -1278,20 +1265,14 @@ function resolveIncomingDesignDocument(rawValue: string): {
   persistedEditorEngine: SceneEditorEngine
   persistedStorageFormat: DesignStorageFormat
 } {
-  const fallbackEditorEngine = resolvePersistedDesignEditorEngine(
-    props.designEditorEngine,
-    'vueflow',
-  )
+  const fallbackEditorEngine = resolvePersistedDesignEditorEngine()
   const normalizedRawValue = normalizeString(rawValue)
   if (!normalizedRawValue) {
     return {
       document: createDefaultDesignSceneDocument(fallbackEditorEngine),
       shouldPersistNormalized: true,
       persistedEditorEngine: fallbackEditorEngine,
-      persistedStorageFormat:
-        fallbackEditorEngine === 'canvaskit_wasm'
-          ? 'design_document_v1'
-          : 'scene_document',
+      persistedStorageFormat: 'design_document_v1',
     }
   }
 
@@ -1302,10 +1283,7 @@ function resolveIncomingDesignDocument(rawValue: string): {
         designDocumentToSceneDocument(parsedDesignDocument),
       ),
       shouldPersistNormalized: false,
-      persistedEditorEngine: resolvePersistedDesignEditorEngine(
-        parsedDesignDocument.editorEngine,
-        fallbackEditorEngine,
-      ),
+      persistedEditorEngine: fallbackEditorEngine,
       persistedStorageFormat: 'design_document_v1',
     }
   }
@@ -1327,26 +1305,19 @@ function resolveIncomingDesignDocument(rawValue: string): {
       document: createDefaultDesignSceneDocument(fallbackEditorEngine),
       shouldPersistNormalized: true,
       persistedEditorEngine: fallbackEditorEngine,
-      persistedStorageFormat:
-        fallbackEditorEngine === 'canvaskit_wasm'
-          ? 'design_document_v1'
-          : 'scene_document',
+      persistedStorageFormat: 'design_document_v1',
     }
   }
 
-  const persistedEditorEngine = resolvePersistedDesignEditorEngine(
-    parsed.editorEngine,
-    fallbackEditorEngine,
-  )
   return {
     document: relayoutSceneDocument({
       ...parsed,
       drawMode: 'composition',
-      editorEngine: persistedEditorEngine,
+      editorEngine: fallbackEditorEngine,
     }),
-    shouldPersistNormalized: false,
-    persistedEditorEngine,
-    persistedStorageFormat: 'scene_document',
+    shouldPersistNormalized: true,
+    persistedEditorEngine: fallbackEditorEngine,
+    persistedStorageFormat: 'design_document_v1',
   }
 }
 
@@ -1569,11 +1540,6 @@ const selectedElementId = designSelection.selectedElementId
 const designHistory = useDesignHistory(
   serializeOutgoingDesignDocument(draftDocument.value),
 )
-const resolvedDesignStageComponent = computed(() => {
-  return persistedDesignEditorEngine.value === "tldraw_legacy"
-    ? WorkspaceDesignStage
-    : WorkspaceDesignCanvasKitBridge;
-})
 const interactionContext = computed<DesignCanvasInteractionContext>(() => {
   return {
     effectiveTool: temporaryHandToolActive.value ? 'hand' : activeTool.value,
@@ -7274,8 +7240,7 @@ async function downloadDefaultPng(): Promise<void> {
             :actions="selectionQuickActions"
             @run-action="runSelectionQuickAction"
           />
-          <component
-            :is="resolvedDesignStageComponent"
+          <WorkspaceDesignCanvasKitBridge
             :page="designEditorState.currentPage.value"
             :frames="designEditorState.currentPageFrames.value"
             :assets="compositionModel.assets || []"

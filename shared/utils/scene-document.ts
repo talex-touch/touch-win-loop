@@ -247,6 +247,12 @@ function normalizeSceneEditorEngine(value: unknown, fallback: SceneEditorEngine)
   return fallback
 }
 
+function defaultSceneEditorEngine(drawMode: DrawMode, runtimeSnapshot?: DrawRuntimeSnapshot | null): SceneEditorEngine {
+  if (drawMode === 'composition')
+    return 'canvaskit_wasm'
+  return runtimeSnapshot || drawMode === 'freeform' ? 'tldraw_legacy' : 'vueflow'
+}
+
 function normalizeThemeTokens(value: unknown, fallback: Record<string, string> = {}): Record<string, string> {
   if (!isRecord(value))
     return { ...fallback }
@@ -1569,13 +1575,16 @@ export function createEmptySceneDocument(input: {
   const drawMode = normalizeDrawMode(input.drawMode, 'freeform')
   const templateKey = normalizeString(input.templateKey)
   const runtimeSnapshot = normalizeRuntimeSnapshot(input.runtimeSnapshot)
-  const defaultEditorEngine: SceneEditorEngine = drawMode === 'freeform' || runtimeSnapshot ? 'tldraw_legacy' : 'vueflow'
+  const defaultEditorEngine = defaultSceneEditorEngine(drawMode, runtimeSnapshot)
+  const editorEngine = drawMode === 'composition'
+    ? defaultEditorEngine
+    : normalizeSceneEditorEngine(input.editorEngine, defaultEditorEngine)
   return {
     version: 1,
     drawMode,
     sourceType: normalizeSceneSourceType(input.sourceType, 'manual'),
     templateKey: templateKey || undefined,
-    editorEngine: normalizeSceneEditorEngine(input.editorEngine, defaultEditorEngine),
+    editorEngine,
     sourceModel: defaultSourceModelFor(drawMode, templateKey),
     sceneModel: {
       nodes: [],
@@ -1613,7 +1622,7 @@ export function sceneDocumentFromUnknown(
     const legacy = createEmptySceneDocument({
       drawMode: options.fallbackDrawMode || 'freeform',
       sourceType: options.fallbackSourceType || 'manual',
-      editorEngine: 'tldraw_legacy',
+      editorEngine: options.fallbackDrawMode === 'composition' ? 'canvaskit_wasm' : 'tldraw_legacy',
     })
     const runtimeSnapshot = normalizeRuntimeSnapshot(value)
     return runtimeSnapshot
@@ -1636,14 +1645,17 @@ export function sceneDocumentFromUnknown(
   const sourceModel = normalizeSourceModel(value.sourceModel, drawMode, templateKey)
   const sceneModel = normalizeSceneModel(value.sceneModel)
   const runtimeSnapshot = normalizeRuntimeSnapshot(value.runtimeSnapshot)
-  const defaultEditorEngine: SceneEditorEngine = runtimeSnapshot || drawMode === 'freeform' ? 'tldraw_legacy' : 'vueflow'
+  const defaultEditorEngine = defaultSceneEditorEngine(drawMode, runtimeSnapshot)
+  const editorEngine = drawMode === 'composition'
+    ? defaultEditorEngine
+    : normalizeSceneEditorEngine(value.editorEngine, defaultEditorEngine)
 
   return {
     version: Math.max(1, Math.trunc(toFiniteNumber(value.version, 1))),
     drawMode,
     sourceType: normalizeSceneSourceType(value.sourceType || value.sceneSourceType, options.fallbackSourceType || 'manual'),
     templateKey: templateKey || (sourceModel.kind === 'composition' ? sourceModel.templateKey : undefined),
-    editorEngine: normalizeSceneEditorEngine(value.editorEngine, defaultEditorEngine),
+    editorEngine,
     sourceModel,
     sceneModel: {
       ...sceneModel,
@@ -5417,7 +5429,7 @@ function resolveCompositionDocumentState(
         drawMode: 'composition',
         sourceType: 'image_mockup',
         templateKey,
-        editorEngine: 'vueflow',
+        editorEngine: 'canvaskit_wasm',
       }),
       composition: normalizeCompositionModel(document, templateKey),
     }
@@ -5434,7 +5446,7 @@ function resolveCompositionDocumentState(
         ...base,
         drawMode: 'composition',
         sourceType: normalizeSceneSourceType(base.sourceType, 'image_mockup'),
-        editorEngine: 'vueflow',
+        editorEngine: 'canvaskit_wasm',
       },
       composition: normalizeCompositionModel(base.sourceModel, base.templateKey || 'device-showcase'),
     }
@@ -5447,7 +5459,7 @@ function resolveCompositionDocumentState(
         drawMode: 'composition',
         sourceType: 'image_mockup',
         templateKey,
-        editorEngine: 'vueflow',
+        editorEngine: 'canvaskit_wasm',
       }),
       metadata: normalizeRecord(base.metadata),
     },
@@ -5568,7 +5580,7 @@ function finalizeCompositionSceneDocument(base: SceneDocument, composition: Comp
     drawMode: 'composition',
     sourceType: normalizeSceneSourceType(base.sourceType, 'image_mockup'),
     templateKey: nextComposition.templateKey,
-    editorEngine: 'vueflow',
+    editorEngine: 'canvaskit_wasm',
     sourceModel: nextComposition,
   })
 }
@@ -6274,7 +6286,7 @@ export function buildDeviceMockupSceneDocument(input: {
     drawMode: 'composition',
     sourceType: 'image_mockup',
     templateKey,
-    editorEngine: 'vueflow',
+    editorEngine: 'canvaskit_wasm',
   })
   const composition = defaultCompositionModel(templateKey)
   const page = createDefaultDesignPage({

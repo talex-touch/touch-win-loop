@@ -151,7 +151,7 @@ export default defineEventHandler(async (event) => {
                     drawMode: normalizeString(body.drawMode || requestMetadata.drawMode) || 'composition',
                     sceneSourceType: normalizeString(body.sceneSourceType || requestMetadata.sceneSourceType) || 'image_mockup',
                     templateKey: normalizeString(body.templateKey || requestMetadata.templateKey) || 'device-showcase',
-                    editorEngine: normalizeString(body.editorEngine || requestMetadata.editorEngine) || 'canvaskit_wasm',
+                    editorEngine: 'canvaskit_wasm',
                   }
                 : {}),
             },
