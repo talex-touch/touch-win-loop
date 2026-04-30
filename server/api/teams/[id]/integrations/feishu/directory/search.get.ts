@@ -10,6 +10,7 @@ import { teamHasWorkspaceRoles } from '~~/server/utils/team-membership-store'
 import {
   getFeishuWorkspaceIntegrationSnapshot,
   markFeishuWorkspaceConnectionTokenHealth,
+  recordWorkspaceIntegrationAuditLog,
 } from '~~/server/utils/workspace-integration-store'
 
 function toTokenHealth(error: unknown): 'missing_app_ticket' | 'missing_tenant_key' | 'tenant_token_failed' {
@@ -81,6 +82,19 @@ export default defineEventHandler(async (event) => {
           lastError: error instanceof Error ? error.message : String(error || tokenHealth),
           actorUserId: user.id,
         })
+        await recordWorkspaceIntegrationAuditLog(db, {
+          workspaceId,
+          provider: 'feishu',
+          connectionId: data.snapshot.connection?.id || null,
+          actorUserId: user.id,
+          action: 'feishu.directory.failed',
+          status: 'error',
+          summary: '飞书通讯录搜索失败：租户 token 不可用。',
+          payload: {
+            diagnosticCode: tokenHealth,
+            message: error instanceof Error ? error.message : String(error || tokenHealth),
+          },
+        })
       })
       return ok({
         candidates: [],
@@ -96,6 +110,23 @@ export default defineEventHandler(async (event) => {
     const directory = await listFeishuTenantDirectory({
       tenantAccessToken,
       maxUsers: 200,
+    }).catch(async (error) => {
+      await withClient(event, async (db) => {
+        await recordWorkspaceIntegrationAuditLog(db, {
+          workspaceId,
+          provider: 'feishu',
+          connectionId: data.snapshot.connection?.id || null,
+          actorUserId: user.id,
+          action: 'feishu.directory.failed',
+          status: 'error',
+          summary: '飞书通讯录搜索失败。',
+          payload: {
+            diagnosticCode: 'directory_failed',
+            message: error instanceof Error ? error.message : String(error || 'directory_failed'),
+          },
+        })
+      })
+      throw error
     })
     const candidates = directory.users
       .map(profile => ({

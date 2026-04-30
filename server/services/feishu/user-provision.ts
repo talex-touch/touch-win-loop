@@ -37,6 +37,38 @@ function buildErrorWithDetail(code: string, detail: string): Error {
   return new Error(normalizedDetail ? `${normalizedCode}:${normalizedDetail}` : normalizedCode)
 }
 
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return {}
+  return value as Record<string, unknown>
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value))
+    return []
+  return [...new Set(value.map(item => String(item || '').trim()).filter(Boolean))]
+}
+
+function buildFeishuIdentityProfile(
+  profile: FeishuOAuthLoginProfile,
+  existingProfile?: unknown,
+): Record<string, unknown> {
+  const existing = normalizeRecord(existingProfile)
+  return {
+    ...existing,
+    unionId: profile.unionId,
+    openId: profile.openId,
+    name: profile.name,
+    enName: profile.enName,
+    avatarUrl: profile.avatarUrl,
+    email: profile.email,
+    mobile: profile.mobile,
+    departmentIds: normalizeStringArray(existing.departmentIds),
+    groupIds: normalizeStringArray(existing.groupIds),
+    tenantKey: String(existing.tenantKey || '').trim(),
+  }
+}
+
 async function allocateUniqueUsername(db: Queryable, seed: string): Promise<string> {
   const base = String(seed || 'fs_user').trim().slice(0, 30) || 'fs_user'
   const safeBase = base.replace(/\s+/g, '_')
@@ -77,15 +109,7 @@ export async function ensureLocalUserByFeishuProfile(
         provider: 'feishu',
         providerUserId: profile.unionId,
         userId: existing.id,
-        profile: {
-          unionId: profile.unionId,
-          openId: profile.openId,
-          name: profile.name,
-          enName: profile.enName,
-          avatarUrl: profile.avatarUrl,
-          email: profile.email,
-          mobile: profile.mobile,
-        },
+        profile: buildFeishuIdentityProfile(profile, identity.profile_json),
       })
       return {
         user: await syncProvisionedUserAvatar(db, existing, profile.avatarUrl),
@@ -110,15 +134,7 @@ export async function ensureLocalUserByFeishuProfile(
       provider: 'feishu',
       providerUserId: profile.unionId,
       userId: preferredUser.id,
-      profile: {
-        unionId: profile.unionId,
-        openId: profile.openId,
-        name: profile.name,
-        enName: profile.enName,
-        avatarUrl: profile.avatarUrl,
-        email: profile.email,
-        mobile: profile.mobile,
-      },
+      profile: buildFeishuIdentityProfile(profile, existingFeishuIdentity?.profile_json),
     })
 
     return {
@@ -143,15 +159,7 @@ export async function ensureLocalUserByFeishuProfile(
     provider: 'feishu',
     providerUserId: profile.unionId,
     userId: createdUser.id,
-    profile: {
-      unionId: profile.unionId,
-      openId: profile.openId,
-      name: profile.name,
-      enName: profile.enName,
-      avatarUrl: profile.avatarUrl,
-      email: profile.email,
-      mobile: profile.mobile,
-    },
+    profile: buildFeishuIdentityProfile(profile),
   })
 
   return {

@@ -45,6 +45,11 @@ export interface NormalizedWorkspaceFeishuImportSource {
   metadata: Record<string, unknown>
 }
 
+export interface WorkspaceFeishuParsedSourceInput extends WorkspaceFeishuImportSourceInput {
+  parseStatus: 'matched' | 'unsupported' | 'invalid'
+  parseMessage: string
+}
+
 const SOURCE_TYPE_LABELS: Record<WorkspaceFeishuExternalSourceType, string> = {
   feishu_doc: '飞书文档',
   feishu_wiki: '飞书 Wiki',
@@ -98,6 +103,144 @@ function normalizeSourceType(value: unknown): WorkspaceFeishuExternalSourceType 
     return normalized
   }
   return ''
+}
+
+function normalizeFeishuImportUrl(rawUrl: unknown): URL | null {
+  const value = normalizeString(rawUrl)
+  if (!value)
+    return null
+  try {
+    return new URL(value)
+  }
+  catch {
+    try {
+      return new URL(`https://${value}`)
+    }
+    catch {
+      return null
+    }
+  }
+}
+
+function readFirstSearchParam(url: URL, keys: string[]): string {
+  for (const key of keys) {
+    const value = normalizeString(url.searchParams.get(key))
+    if (value)
+      return value
+  }
+  return ''
+}
+
+function sanitizeFeishuPathToken(value: string): string {
+  return normalizeString(value)
+    .replace(/[?#].*$/g, '')
+    .replace(/^\/+|\/+$/g, '')
+}
+
+function readPathTokenAfter(pathSegments: string[], markers: string[]): string {
+  for (const marker of markers) {
+    const index = pathSegments.findIndex(segment => segment.toLowerCase() === marker)
+    if (index >= 0) {
+      const token = sanitizeFeishuPathToken(pathSegments[index + 1] || '')
+      if (token)
+        return token
+    }
+  }
+  return ''
+}
+
+function buildParsedSource(input: {
+  type: WorkspaceFeishuExternalSourceType
+  token: string
+  originalUrl: string
+  title?: string
+  fileName?: string
+  mimeType?: string
+  metadata?: Record<string, unknown>
+}): WorkspaceFeishuParsedSourceInput {
+  return {
+    type: input.type,
+    token: input.token,
+    title: normalizeString(input.title) || input.token,
+    originalUrl: input.originalUrl,
+    fileName: normalizeString(input.fileName),
+    mimeType: normalizeString(input.mimeType),
+    metadata: normalizeRecord(input.metadata),
+    parseStatus: 'matched',
+    parseMessage: '',
+  }
+}
+
+export function parseWorkspaceFeishuSourceUrl(rawUrl: unknown): WorkspaceFeishuParsedSourceInput {
+  const originalUrl = normalizeString(rawUrl)
+  const url = normalizeFeishuImportUrl(originalUrl)
+  if (!url) {
+    return {
+      token: '',
+      title: '',
+      originalUrl,
+      metadata: {},
+      parseStatus: 'invalid',
+      parseMessage: '请输入有效的飞书链接。',
+    }
+  }
+
+  const pathSegments = url.pathname
+    .split('/')
+    .map(segment => sanitizeFeishuPathToken(decodeURIComponent(segment)))
+    .filter(Boolean)
+  const tableId = readFirstSearchParam(url, ['table', 'table_id', 'tableId'])
+  const viewId = readFirstSearchParam(url, ['view', 'view_id', 'viewId'])
+
+  const bitableToken = readPathTokenAfter(pathSegments, ['base', 'bitable'])
+  if (bitableToken) {
+    return buildParsedSource({
+      type: 'feishu_bitable',
+      token: bitableToken,
+      originalUrl: url.toString(),
+      metadata: {
+        appToken: bitableToken,
+        tableId,
+        viewId,
+      },
+    })
+  }
+
+  const wikiToken = readPathTokenAfter(pathSegments, ['wiki'])
+  if (wikiToken) {
+    return buildParsedSource({
+      type: 'feishu_wiki',
+      token: wikiToken,
+      originalUrl: url.toString(),
+    })
+  }
+
+  const driveFileToken = readPathTokenAfter(pathSegments, ['file'])
+  if (driveFileToken) {
+    return buildParsedSource({
+      type: 'feishu_drive_file',
+      token: driveFileToken,
+      originalUrl: url.toString(),
+    })
+  }
+
+  const docToken = readPathTokenAfter(pathSegments, ['docx', 'docs', 'doc'])
+  if (docToken) {
+    return buildParsedSource({
+      type: 'feishu_doc',
+      token: docToken,
+      originalUrl: url.toString(),
+    })
+  }
+
+  return {
+    token: '',
+    title: '',
+    originalUrl: url.toString(),
+    metadata: {},
+    parseStatus: 'unsupported',
+    parseMessage: '暂不支持该飞书链接类型。',
+  }
 }
 
 function stableHash(input: string): string {

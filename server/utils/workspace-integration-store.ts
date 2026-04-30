@@ -1,3 +1,4 @@
+import type { FeishuOAuthLoginProfile } from '~~/server/services/feishu/client'
 import type { Queryable } from '~~/server/utils/db'
 import type {
   Resource,
@@ -5,9 +6,13 @@ import type {
   WorkspaceFeishuDirectoryUserCandidate,
   WorkspaceFeishuImportJob,
   WorkspaceFeishuImportSource,
+  WorkspaceFeishuIntegrationDiagnosticSummary,
   WorkspaceFeishuIntegrationSnapshot,
+  WorkspaceFeishuMemberSyncDiagnostic,
   WorkspaceFeishuMemberSyncPreview,
   WorkspaceFeishuMemberSyncResult,
+  WorkspaceIntegrationAuditLog,
+  WorkspaceIntegrationAuditStatus,
   WorkspaceIntegrationConnection,
   WorkspaceIntegrationConnectionStatus,
   WorkspaceIntegrationListResult,
@@ -74,6 +79,19 @@ interface WorkspaceIntegrationImportJobRow {
   updated_at: string
 }
 
+interface WorkspaceIntegrationAuditLogRow {
+  id: string
+  workspace_id: string
+  provider: WorkspaceIntegrationProvider
+  connection_id: string | null
+  actor_user_id: string | null
+  action: string
+  status: WorkspaceIntegrationAuditStatus
+  summary: string
+  payload: unknown
+  created_at: string
+}
+
 interface WorkspaceExternalResourceRefRow {
   id: string
   workspace_id: string
@@ -104,6 +122,22 @@ interface ExistingUserRow {
   username: string
 }
 
+interface FeishuAutoJoinPolicyRow {
+  workspace_id: string
+  connection_id: string
+  tenant_key: string
+  user_ids: string[] | null
+  department_ids: string[] | null
+  group_ids: string[] | null
+  role_mappings: unknown
+  default_workspace_role: Extract<WorkspaceMemberRole, 'admin' | 'manager' | 'member'>
+}
+
+interface FeishuWorkspaceAutoJoinResult {
+  joinedWorkspaceIds: string[]
+  diagnostics: WorkspaceFeishuMemberSyncDiagnostic[]
+}
+
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
@@ -125,6 +159,26 @@ function normalizeCount(value: unknown): number {
   if (!Number.isFinite(parsed))
     return 0
   return Math.max(0, Math.trunc(parsed))
+}
+
+function normalizeAuditStatus(value: unknown): WorkspaceIntegrationAuditStatus {
+  const status = normalizeString(value)
+  if (status === 'success' || status === 'warning' || status === 'error' || status === 'info')
+    return status
+  return 'info'
+}
+
+function uniqueStringArray(value: unknown): string[] {
+  const seen = new Set<string>()
+  const items = normalizeStringArray(value)
+  const result: string[] = []
+  for (const item of items) {
+    if (seen.has(item))
+      continue
+    seen.add(item)
+    result.push(item)
+  }
+  return result
 }
 
 function buildFeishuMarketplaceCapabilities(input?: {
@@ -220,6 +274,21 @@ function normalizeImportJob(row: WorkspaceIntegrationImportJobRow): WorkspaceFei
   }
 }
 
+function normalizeAuditLog(row: WorkspaceIntegrationAuditLogRow): WorkspaceIntegrationAuditLog {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    provider: row.provider,
+    connectionId: row.connection_id,
+    actorUserId: row.actor_user_id,
+    action: row.action || '',
+    status: normalizeAuditStatus(row.status),
+    summary: row.summary || '',
+    payload: normalizeRecord(row.payload),
+    createdAt: row.created_at,
+  }
+}
+
 function normalizeExternalResourceRef(row: WorkspaceExternalResourceRefRow): WorkspaceExternalResourceRef {
   return {
     id: row.id,
@@ -294,6 +363,207 @@ async function getPolicyByConnectionId(db: Queryable, connectionId: string): Pro
   return result.rows[0] ? normalizePolicy(result.rows[0]!) : null
 }
 
+function toDiagnosticSamples(rawDiagnostics: unknown): WorkspaceFeishuMemberSyncDiagnostic[] {
+  if (!Array.isArray(rawDiagnostics))
+    return []
+  return rawDiagnostics
+    .map((item) => {
+      const record = normalizeRecord(item)
+      return {
+        code: normalizeString(record.code) as WorkspaceFeishuMemberSyncDiagnostic['code'],
+        message: normalizeString(record.message),
+        count: normalizeCount(record.count),
+        unionId: normalizeString(record.unionId) || undefined,
+      }
+    })
+    .filter(item => item.code && item.message)
+    .slice(0, 5)
+}
+
+function resolveTokenHealthText(tokenHealth: string, connected: boolean): string {
+  if (tokenHealth === 'ok')
+    return 'token 正常'
+  if (tokenHealth === 'missing_app_ticket')
+    return '平台尚未收到 app_ticket'
+  if (tokenHealth === 'missing_tenant_key')
+    return '等待认领飞书租户'
+  if (tokenHealth === 'tenant_token_failed')
+    return '租户 token 检查失败'
+  return connected ? '等待 token 健康检查' : '未建立连接'
+}
+
+function buildMemberSyncSummary(policy: WorkspaceIntegrationSyncPolicy | null): Record<string, unknown> {
+  const result = normalizeRecord(policy?.lastSyncResult)
+  return {
+    lastPreviewAt: policy?.lastPreviewAt || null,
+    lastSyncAt: policy?.lastSyncAt || null,
+    totalCandidates: normalizeCount(result.totalCandidates),
+    createCount: normalizeCount(result.createCount),
+    updateCount: normalizeCount(result.updateCount),
+    skipCount: normalizeCount(result.skipCount),
+    conflictCount: normalizeCount(result.conflictCount),
+    seatRequired: normalizeCount(result.seatRequired),
+    seatFailedCount: normalizeCount(result.seatFailedCount),
+    roleMappingAppliedCount: normalizeCount(result.roleMappingAppliedCount),
+    diagnosticSamples: toDiagnosticSamples(result.diagnostics),
+  }
+}
+
+function buildAutoLoginSummary(policy: WorkspaceIntegrationSyncPolicy | null): Record<string, unknown> {
+  const autoLogin = normalizeRecord(normalizeRecord(policy?.lastSyncResult).autoLogin)
+  const diagnostics = toDiagnosticSamples(autoLogin.diagnostics)
+  return {
+    checkedAt: normalizeString(autoLogin.checkedAt) || null,
+    joined: Boolean(autoLogin.joined),
+    joinedCount: autoLogin.joined ? 1 : 0,
+    failedCount: diagnostics.length,
+    diagnosticSamples: diagnostics,
+  }
+}
+
+function buildImportSummary(importJobs: WorkspaceFeishuImportJob[]): Record<string, unknown> {
+  const latestJob = importJobs[0] || null
+  const failures = Array.isArray(latestJob?.diagnostics?.failures)
+    ? latestJob.diagnostics.failures.slice(0, 5)
+    : []
+  return {
+    latestJobId: latestJob?.id || '',
+    latestStatus: latestJob?.status || '',
+    importedCount: latestJob?.importedCount || 0,
+    skippedCount: latestJob?.skippedCount || 0,
+    failedCount: latestJob?.failedCount || 0,
+    diagnosticSamples: failures,
+  }
+}
+
+export function buildWorkspaceFeishuDiagnosticSummary(
+  snapshot: Pick<WorkspaceFeishuIntegrationSnapshot, 'connected' | 'connection' | 'policy' | 'importJobs'>,
+): WorkspaceFeishuIntegrationDiagnosticSummary {
+  const tokenHealth = normalizeString(snapshot.connection?.capabilities?.tokenHealth)
+  const connectionStatus = snapshot.connection?.status || ''
+  const memberSyncSummary = buildMemberSyncSummary(snapshot.policy || null)
+  const autoLoginSummary = buildAutoLoginSummary(snapshot.policy || null)
+  return {
+    connectionStatus,
+    tokenHealth,
+    tokenHealthText: resolveTokenHealthText(tokenHealth, snapshot.connected),
+    lastError: snapshot.connection?.lastError || '',
+    memberSyncSummary,
+    autoLoginSummary,
+    importSummary: buildImportSummary(snapshot.importJobs || []),
+  }
+}
+
+export function sanitizeWorkspaceIntegrationAuditPayload(input: unknown): Record<string, unknown> {
+  const seen = new WeakSet<object>()
+  const sanitizeValue = (value: unknown): unknown => {
+    if (Array.isArray(value))
+      return value.slice(0, 20).map(item => sanitizeValue(item))
+    if (!value || typeof value !== 'object')
+      return value
+    if (seen.has(value))
+      return '[Circular]'
+    seen.add(value)
+    const result: Record<string, unknown> = {}
+    for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+      const normalizedKey = key.toLowerCase()
+      const isDiagnosticTokenField = normalizedKey === 'tokenhealth' || normalizedKey === 'tokenhealthtext'
+      if (!isDiagnosticTokenField && /token|ticket|secret|authorization|password/i.test(key)) {
+        result[key] = '[redacted]'
+        continue
+      }
+      result[key] = sanitizeValue(rawValue)
+    }
+    return result
+  }
+  return normalizeRecord(sanitizeValue(input))
+}
+
+export async function recordWorkspaceIntegrationAuditLog(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    provider: WorkspaceIntegrationProvider
+    connectionId?: string | null
+    actorUserId?: string | null
+    action: string
+    status: WorkspaceIntegrationAuditStatus
+    summary: string
+    payload?: Record<string, unknown>
+  },
+): Promise<WorkspaceIntegrationAuditLog> {
+  const result = await db.query<WorkspaceIntegrationAuditLogRow>(
+    `INSERT INTO workspace_integration_audit_logs (
+      id,
+      workspace_id,
+      provider,
+      connection_id,
+      actor_user_id,
+      action,
+      status,
+      summary,
+      payload,
+      created_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9::JSONB, NOW()
+    )
+    RETURNING
+      id,
+      workspace_id,
+      provider,
+      connection_id,
+      actor_user_id,
+      action,
+      status,
+      summary,
+      payload,
+      created_at::TEXT`,
+    [
+      randomUUID(),
+      input.workspaceId,
+      input.provider,
+      normalizeString(input.connectionId) || null,
+      normalizeString(input.actorUserId) || null,
+      normalizeString(input.action),
+      normalizeAuditStatus(input.status),
+      normalizeString(input.summary),
+      JSON.stringify(sanitizeWorkspaceIntegrationAuditPayload(input.payload || {})),
+    ],
+  )
+  return normalizeAuditLog(result.rows[0]!)
+}
+
+export async function listWorkspaceIntegrationAuditLogs(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    provider: WorkspaceIntegrationProvider
+    limit?: number
+  },
+): Promise<WorkspaceIntegrationAuditLog[]> {
+  const limit = Math.max(1, Math.min(50, normalizeCount(input.limit) || 20))
+  const result = await db.query<WorkspaceIntegrationAuditLogRow>(
+    `SELECT
+      id,
+      workspace_id,
+      provider,
+      connection_id,
+      actor_user_id,
+      action,
+      status,
+      summary,
+      payload,
+      created_at::TEXT
+     FROM workspace_integration_audit_logs
+     WHERE workspace_id = $1
+       AND provider = $2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [input.workspaceId, input.provider, limit],
+  )
+  return result.rows.map(normalizeAuditLog)
+}
+
 export async function getWorkspaceIntegrationList(
   db: Queryable,
   workspaceId: string,
@@ -320,7 +590,7 @@ export async function getFeishuWorkspaceIntegrationSnapshot(
   const list = await getWorkspaceIntegrationList(db, workspaceId)
   const summary = list.integrations[0]!
   const connectionId = summary.connection?.id || ''
-  const [jobResult, refResult] = connectionId
+  const [jobResult, refResult, auditResult] = connectionId
     ? await Promise.all([
         db.query<WorkspaceIntegrationImportJobRow>(
           `SELECT
@@ -372,16 +642,43 @@ export async function getFeishuWorkspaceIntegrationSnapshot(
            LIMIT 50`,
           [workspaceId, connectionId],
         ),
+        db.query<WorkspaceIntegrationAuditLogRow>(
+          `SELECT
+            id,
+            workspace_id,
+            provider,
+            connection_id,
+            actor_user_id,
+            action,
+            status,
+            summary,
+            payload,
+            created_at::TEXT
+           FROM workspace_integration_audit_logs
+           WHERE workspace_id = $1
+             AND provider = 'feishu'
+           ORDER BY created_at DESC
+           LIMIT 20`,
+          [workspaceId],
+        ),
       ])
-    : [{ rows: [] as WorkspaceIntegrationImportJobRow[] }, { rows: [] as WorkspaceExternalResourceRefRow[] }]
+    : [{ rows: [] as WorkspaceIntegrationImportJobRow[] }, { rows: [] as WorkspaceExternalResourceRefRow[] }, { rows: [] as WorkspaceIntegrationAuditLogRow[] }]
 
-  return {
+  const snapshotBase = {
     provider: 'feishu',
     connected: summary.connected,
     connection: summary.connection || null,
     policy: summary.policy || null,
     importJobs: jobResult.rows.map(normalizeImportJob),
     externalResources: refResult.rows.map(normalizeExternalResourceRef),
+  }
+  const diagnosticSummary = buildWorkspaceFeishuDiagnosticSummary(snapshotBase)
+  return {
+    ...snapshotBase,
+    auditLogs: auditResult.rows.map(normalizeAuditLog),
+    diagnosticSummary,
+    memberSyncSummary: diagnosticSummary.memberSyncSummary,
+    autoLoginSummary: diagnosticSummary.autoLoginSummary,
   }
 }
 
@@ -501,6 +798,20 @@ export async function createFeishuWorkspaceInstallSession(
       installStateExpiresAt: expiresAt,
     },
   })
+  await recordWorkspaceIntegrationAuditLog(db, {
+    workspaceId: input.workspaceId,
+    provider: 'feishu',
+    connectionId: snapshot.connection?.id || null,
+    actorUserId: input.actorUserId,
+    action: 'feishu.install_session.created',
+    status: input.appTicketConfigured ? 'success' : 'warning',
+    summary: input.appTicketConfigured ? '已创建飞书安装会话。' : '已创建飞书安装会话，但平台 app_ticket 尚未就绪。',
+    payload: {
+      expiresAt,
+      hasMarketplaceAppUrl: Boolean(input.marketplaceAppUrl),
+      appTicketConfigured: Boolean(input.appTicketConfigured),
+    },
+  })
 
   return {
     installUrl: appendStateToMarketplaceAppUrl(input.marketplaceAppUrl, state),
@@ -520,7 +831,7 @@ export async function claimFeishuWorkspaceTenant(
     externalAppId?: string
   },
 ): Promise<WorkspaceFeishuIntegrationSnapshot> {
-  return upsertFeishuWorkspaceConnection(db, {
+  const snapshot = await upsertFeishuWorkspaceConnection(db, {
     workspaceId: input.workspaceId,
     actorUserId: input.actorUserId,
     tenantKey: input.tenantKey,
@@ -532,6 +843,20 @@ export async function claimFeishuWorkspaceTenant(
       tokenHealth: 'ok',
     }),
   })
+  await recordWorkspaceIntegrationAuditLog(db, {
+    workspaceId: input.workspaceId,
+    provider: 'feishu',
+    connectionId: snapshot.connection?.id || null,
+    actorUserId: input.actorUserId,
+    action: 'feishu.claim.connected',
+    status: 'success',
+    summary: '飞书租户已认领并通过 token 健康检查。',
+    payload: {
+      tenantKeyConfigured: Boolean(normalizeString(input.tenantKey)),
+      tenantName: normalizeString(input.tenantName),
+    },
+  })
+  return getFeishuWorkspaceIntegrationSnapshot(db, input.workspaceId)
 }
 
 export async function markFeishuWorkspaceConnectionTokenHealth(
@@ -563,6 +888,23 @@ export async function markFeishuWorkspaceConnectionTokenHealth(
       normalizeString(input.actorUserId) || null,
     ],
   )
+  const snapshot = await getFeishuWorkspaceIntegrationSnapshot(db, input.workspaceId)
+  if (input.tokenHealth !== 'ok') {
+    await recordWorkspaceIntegrationAuditLog(db, {
+      workspaceId: input.workspaceId,
+      provider: 'feishu',
+      connectionId: snapshot.connection?.id || null,
+      actorUserId: input.actorUserId || null,
+      action: 'feishu.token.failed',
+      status: input.tokenHealth === 'tenant_token_failed' ? 'error' : 'warning',
+      summary: `飞书租户 token 检查失败：${input.tokenHealth}`,
+      payload: {
+        tokenHealth: input.tokenHealth,
+        connectionStatus: input.status,
+        message: normalizeString(input.lastError),
+      },
+    })
+  }
   return getFeishuWorkspaceIntegrationSnapshot(db, input.workspaceId)
 }
 
@@ -642,6 +984,19 @@ export async function disableFeishuWorkspaceConnection(
        AND provider = 'feishu'`,
     [input.workspaceId, input.actorUserId],
   )
+  const snapshot = await getFeishuWorkspaceIntegrationSnapshot(db, input.workspaceId)
+  await recordWorkspaceIntegrationAuditLog(db, {
+    workspaceId: input.workspaceId,
+    provider: 'feishu',
+    connectionId: snapshot.connection?.id || null,
+    actorUserId: input.actorUserId,
+    action: 'feishu.connection.disabled',
+    status: 'warning',
+    summary: '已断开飞书第三方平台连接。',
+    payload: {
+      connectionStatus: snapshot.connection?.status || '',
+    },
+  })
   return getFeishuWorkspaceIntegrationSnapshot(db, input.workspaceId)
 }
 
@@ -696,7 +1051,7 @@ export async function updateFeishuWorkspaceConnectionStatusByTenantKey(
     lastError?: string
   },
 ): Promise<number> {
-  const result = await db.query<{ id: string }>(
+  const result = await db.query<{ id: string, workspace_id: string }>(
     `UPDATE workspace_integration_connections
      SET status = $2,
          tenant_name = COALESCE(NULLIF($3, ''), tenant_name),
@@ -705,7 +1060,7 @@ export async function updateFeishuWorkspaceConnectionStatusByTenantKey(
          updated_at = NOW()
      WHERE provider = 'feishu'
        AND tenant_key = $1
-     RETURNING id`,
+     RETURNING id, workspace_id`,
     [
       normalizeString(input.tenantKey),
       input.status,
@@ -713,6 +1068,22 @@ export async function updateFeishuWorkspaceConnectionStatusByTenantKey(
       normalizeString(input.lastError),
     ],
   )
+  for (const row of result.rows) {
+    await recordWorkspaceIntegrationAuditLog(db, {
+      workspaceId: row.workspace_id,
+      provider: 'feishu',
+      connectionId: row.id,
+      actorUserId: null,
+      action: input.status === 'uninstalled' ? 'feishu.connection.uninstalled' : 'feishu.connection.status_updated',
+      status: input.status === 'connected' ? 'success' : 'warning',
+      summary: input.status === 'uninstalled' ? '飞书租户已卸载 WinLoop。' : `飞书租户连接状态已更新为 ${input.status}。`,
+      payload: {
+        connectionStatus: input.status,
+        tenantName: normalizeString(input.tenantName),
+        message: normalizeString(input.lastError),
+      },
+    })
+  }
   return result.rows.length
 }
 
@@ -728,6 +1099,150 @@ function isCandidateWhitelisted(candidate: WorkspaceFeishuDirectoryUserCandidate
     return true
   const groupIds = new Set(policy.groupIds)
   return (candidate.groupIds || []).some(id => groupIds.has(normalizeString(id)))
+}
+
+function resolveCandidateWorkspaceRole(
+  candidate: WorkspaceFeishuDirectoryUserCandidate,
+  policy: WorkspaceIntegrationSyncPolicy,
+): Extract<WorkspaceMemberRole, 'admin' | 'manager' | 'member'> {
+  const unionId = normalizeString(candidate.unionId)
+  const role = policy.userIds.includes(unionId)
+    ? policy.roleMappings[unionId]
+    : ''
+  return role === 'admin' || role === 'manager' || role === 'member'
+    ? role
+    : policy.defaultWorkspaceRole || 'member'
+}
+
+function hasAppliedRoleMapping(candidate: WorkspaceFeishuDirectoryUserCandidate, policy: WorkspaceIntegrationSyncPolicy): boolean {
+  const unionId = normalizeString(candidate.unionId)
+  return Boolean(unionId && policy.userIds.includes(unionId) && policy.roleMappings[unionId])
+}
+
+function buildRoleMappingIgnoredCount(policy: WorkspaceIntegrationSyncPolicy | null, candidates: WorkspaceFeishuDirectoryUserCandidate[]): number {
+  if (!policy)
+    return 0
+  const candidateUnionIds = new Set(candidates.map(candidate => normalizeString(candidate.unionId)).filter(Boolean))
+  return Object.keys(policy.roleMappings || {})
+    .filter((unionId) => {
+      const normalizedUnionId = normalizeString(unionId)
+      return normalizedUnionId && (!policy.userIds.includes(normalizedUnionId) || !candidateUnionIds.has(normalizedUnionId))
+    })
+    .length
+}
+
+function pushDiagnostic(
+  diagnostics: WorkspaceFeishuMemberSyncDiagnostic[],
+  input: WorkspaceFeishuMemberSyncDiagnostic,
+): void {
+  const existing = diagnostics.find(item => item.code === input.code && (input.unionId ? item.unionId === input.unionId : !item.unionId))
+  if (existing) {
+    existing.count = (existing.count || 1) + (input.count || 1)
+    return
+  }
+  diagnostics.push({
+    ...input,
+    count: input.count || 1,
+  })
+}
+
+function normalizeFeishuAssignableWorkspaceRole(value: unknown): Extract<WorkspaceMemberRole, 'admin' | 'manager' | 'member'> {
+  const role = normalizeString(value)
+  if (role === 'admin' || role === 'manager' || role === 'member')
+    return role
+  return 'member'
+}
+
+function buildAutoJoinCandidate(
+  profile: FeishuOAuthLoginProfile,
+  identityProfile: Record<string, unknown>,
+): WorkspaceFeishuDirectoryUserCandidate {
+  return {
+    openId: normalizeString(profile.openId) || normalizeString(identityProfile.openId),
+    unionId: normalizeString(profile.unionId) || normalizeString(identityProfile.unionId),
+    name: normalizeString(profile.name) || normalizeString(profile.enName) || normalizeString(identityProfile.name),
+    email: normalizeString(profile.email) || normalizeString(identityProfile.email),
+    mobile: normalizeString(profile.mobile) || normalizeString(identityProfile.mobile),
+    avatarUrl: normalizeString(profile.avatarUrl) || normalizeString(identityProfile.avatarUrl),
+    departmentIds: uniqueStringArray(identityProfile.departmentIds),
+    groupIds: uniqueStringArray(identityProfile.groupIds),
+  }
+}
+
+function isAutoJoinPolicyMatched(
+  candidate: WorkspaceFeishuDirectoryUserCandidate,
+  policy: Pick<WorkspaceIntegrationSyncPolicy, 'userIds' | 'departmentIds' | 'groupIds'>,
+): boolean {
+  return isCandidateWhitelisted(candidate, {
+    id: '',
+    connectionId: '',
+    memberSyncMode: 'whitelist',
+    autoLoginEnabled: true,
+    defaultWorkspaceRole: 'member',
+    roleMappings: {},
+    lastPreviewAt: null,
+    lastSyncAt: null,
+    lastSyncResult: {},
+    createdAt: '',
+    updatedAt: '',
+    ...policy,
+  })
+}
+
+function resolveAutoJoinWorkspaceRole(
+  candidate: WorkspaceFeishuDirectoryUserCandidate,
+  policy: Pick<WorkspaceIntegrationSyncPolicy, 'userIds' | 'roleMappings' | 'defaultWorkspaceRole'>,
+): Extract<WorkspaceMemberRole, 'admin' | 'manager' | 'member'> {
+  const unionId = normalizeString(candidate.unionId)
+  const explicitRole = policy.userIds.includes(unionId)
+    ? policy.roleMappings[unionId]
+    : ''
+  return normalizeFeishuAssignableWorkspaceRole(explicitRole || policy.defaultWorkspaceRole)
+}
+
+async function readFeishuIdentityProfile(
+  db: Queryable,
+  unionId: string,
+): Promise<Record<string, unknown>> {
+  if (!unionId)
+    return {}
+  const result = await db.query<{ profile_json: unknown }>(
+    `SELECT profile_json
+     FROM auth_identities
+     WHERE provider = 'feishu'
+       AND provider_user_id = $1
+     LIMIT 1`,
+    [unionId],
+  )
+  return normalizeRecord(result.rows[0]?.profile_json)
+}
+
+async function writeFeishuAutoJoinResult(
+  db: Queryable,
+  connectionId: string,
+  result: {
+    joined: boolean
+    diagnostics: WorkspaceFeishuMemberSyncDiagnostic[]
+  },
+): Promise<void> {
+  if (!connectionId)
+    return
+  await db.query(
+    `UPDATE workspace_integration_sync_policies
+     SET last_sync_result = COALESCE(last_sync_result, '{}'::JSONB) || $2::JSONB,
+         updated_at = NOW()
+     WHERE connection_id = $1`,
+    [
+      connectionId,
+      JSON.stringify({
+        autoLogin: {
+          joined: result.joined,
+          diagnostics: result.diagnostics,
+          checkedAt: new Date().toISOString(),
+        },
+      }),
+    ],
+  )
 }
 
 async function loadExistingFeishuIdentities(
@@ -771,6 +1286,7 @@ export async function previewFeishuWorkspaceMemberSync(
   input: {
     workspaceId: string
     candidates: WorkspaceFeishuDirectoryUserCandidate[]
+    actorUserId?: string
   },
 ): Promise<WorkspaceFeishuMemberSyncPreview> {
   const connectionRow = await getFeishuConnectionRow(db, input.workspaceId)
@@ -785,15 +1301,24 @@ export async function previewFeishuWorkspaceMemberSync(
   let updateCount = 0
   let conflictCount = 0
   let skipCount = 0
+  let roleMappingAppliedCount = 0
+  const diagnostics: WorkspaceFeishuMemberSyncDiagnostic[] = []
 
   for (const candidate of candidates) {
     const unionId = normalizeString(candidate.unionId)
     if (!isCandidateWhitelisted(candidate, policy)) {
       skipCount += 1
+      pushDiagnostic(diagnostics, {
+        code: 'not_whitelisted',
+        message: '飞书成员未命中当前工作空间白名单。',
+        unionId,
+      })
       continue
     }
 
     whitelistedCount += 1
+    if (policy && hasAppliedRoleMapping(candidate, policy))
+      roleMappingAppliedCount += 1
     if (existing.has(unionId)) {
       updateCount += 1
       continue
@@ -801,9 +1326,23 @@ export async function previewFeishuWorkspaceMemberSync(
 
     if (await hasEmailConflict(db, normalizeString(candidate.email), unionId)) {
       conflictCount += 1
+      pushDiagnostic(diagnostics, {
+        code: 'email_conflict',
+        message: '邮箱已被其他飞书身份使用，需用户主动绑定确认。',
+        unionId,
+      })
       continue
     }
     createCount += 1
+  }
+
+  const ignoredRoleMappings = buildRoleMappingIgnoredCount(policy, candidates)
+  if (ignoredRoleMappings > 0) {
+    pushDiagnostic(diagnostics, {
+      code: 'role_mapping_ignored',
+      message: '部分角色映射未命中显式用户白名单，已忽略。',
+      count: ignoredRoleMappings,
+    })
   }
 
   await db.query(
@@ -814,7 +1353,7 @@ export async function previewFeishuWorkspaceMemberSync(
     [connectionRow?.id || ''],
   )
 
-  return {
+  const preview: WorkspaceFeishuMemberSyncPreview = {
     totalCandidates: candidates.length,
     whitelistedCount,
     createCount,
@@ -822,10 +1361,35 @@ export async function previewFeishuWorkspaceMemberSync(
     skipCount,
     conflictCount,
     seatRequired: createCount,
+    seatFailedCount: 0,
+    roleMappingAppliedCount,
     diagnostics: policy
-      ? []
-      : [{ code: 'feishu_policy_missing', message: '飞书成员同步策略尚未配置。' }],
+      ? diagnostics
+      : [{ code: 'feishu_policy_missing', message: '飞书成员同步策略尚未配置。', count: 1 }],
   }
+  if (input.actorUserId) {
+    await recordWorkspaceIntegrationAuditLog(db, {
+      workspaceId: input.workspaceId,
+      provider: 'feishu',
+      connectionId: connectionRow?.id || null,
+      actorUserId: input.actorUserId,
+      action: 'feishu.member_sync.previewed',
+      status: preview.conflictCount > 0 || preview.skipCount > 0 ? 'warning' : 'success',
+      summary: `飞书成员同步预览：新增 ${preview.createCount}，更新 ${preview.updateCount}，冲突 ${preview.conflictCount}。`,
+      payload: {
+        totalCandidates: preview.totalCandidates,
+        whitelistedCount: preview.whitelistedCount,
+        createCount: preview.createCount,
+        updateCount: preview.updateCount,
+        skipCount: preview.skipCount,
+        conflictCount: preview.conflictCount,
+        seatRequired: preview.seatRequired,
+        roleMappingAppliedCount: preview.roleMappingAppliedCount,
+        diagnosticSamples: preview.diagnostics.slice(0, 5),
+      },
+    })
+  }
+  return preview
 }
 
 async function resolveUniqueUsername(db: Queryable, candidate: WorkspaceFeishuDirectoryUserCandidate): Promise<string> {
@@ -851,6 +1415,7 @@ export async function runFeishuWorkspaceMemberSync(
   input: {
     workspaceId: string
     candidates: WorkspaceFeishuDirectoryUserCandidate[]
+    actorUserId?: string
   },
 ): Promise<WorkspaceFeishuMemberSyncResult> {
   const preview = await previewFeishuWorkspaceMemberSync(db, input)
@@ -868,7 +1433,10 @@ export async function runFeishuWorkspaceMemberSync(
   const existing = await loadExistingFeishuIdentities(db, candidates.map(candidate => normalizeString(candidate.unionId)))
   const createdUserIds: string[] = []
   const updatedUserIds: string[] = []
+  const diagnostics: WorkspaceFeishuMemberSyncDiagnostic[] = [...(preview.diagnostics || [])]
   const now = new Date().toISOString()
+  let seatFailedCount = 0
+  let roleMappingAppliedCount = 0
 
   for (const candidate of candidates) {
     const unionId = normalizeString(candidate.unionId)
@@ -878,6 +1446,7 @@ export async function runFeishuWorkspaceMemberSync(
       continue
 
     let userId = existing.get(unionId)?.user_id || ''
+    let created = false
     if (!userId) {
       userId = randomUUID()
       const username = await resolveUniqueUsername(db, candidate)
@@ -886,10 +1455,7 @@ export async function runFeishuWorkspaceMemberSync(
          VALUES ($1, $2, '', $3, FALSE, FALSE, $4, $4)`,
         [userId, username, normalizeString(candidate.avatarUrl) || null, now],
       )
-      createdUserIds.push(userId)
-    }
-    else {
-      updatedUserIds.push(userId)
+      created = true
     }
 
     await db.query(
@@ -917,11 +1483,34 @@ export async function runFeishuWorkspaceMemberSync(
         now,
       ],
     )
-    await teamEnsureWorkspaceMember(db, input.workspaceId, userId, policy.roleMappings[unionId] || policy.defaultWorkspaceRole || 'member')
+    try {
+      await teamEnsureWorkspaceMember(db, input.workspaceId, userId, resolveCandidateWorkspaceRole(candidate, policy))
+    }
+    catch (error) {
+      if (error instanceof Error && error.message === 'TEAM_SEAT_LIMIT_REACHED') {
+        seatFailedCount += 1
+        pushDiagnostic(diagnostics, {
+          code: 'seat_limit_exceeded',
+          message: '工作空间席位不足，该成员未加入工作空间。',
+          unionId,
+        })
+        continue
+      }
+      throw error
+    }
+    if (hasAppliedRoleMapping(candidate, policy))
+      roleMappingAppliedCount += 1
+    if (created)
+      createdUserIds.push(userId)
+    else
+      updatedUserIds.push(userId)
   }
 
   const result: WorkspaceFeishuMemberSyncResult = {
     ...preview,
+    seatFailedCount,
+    roleMappingAppliedCount,
+    diagnostics,
     createdUserIds,
     updatedUserIds,
   }
@@ -933,7 +1522,204 @@ export async function runFeishuWorkspaceMemberSync(
      WHERE connection_id = $1`,
     [connectionRow.id, JSON.stringify(result)],
   )
+  if (input.actorUserId) {
+    await recordWorkspaceIntegrationAuditLog(db, {
+      workspaceId: input.workspaceId,
+      provider: 'feishu',
+      connectionId: connectionRow.id,
+      actorUserId: input.actorUserId,
+      action: 'feishu.member_sync.completed',
+      status: result.seatFailedCount || result.conflictCount ? 'warning' : 'success',
+      summary: `飞书成员同步完成：创建 ${result.createdUserIds.length}，更新 ${result.updatedUserIds.length}，席位失败 ${result.seatFailedCount || 0}。`,
+      payload: {
+        totalCandidates: result.totalCandidates,
+        createCount: result.createCount,
+        updateCount: result.updateCount,
+        skipCount: result.skipCount,
+        conflictCount: result.conflictCount,
+        seatFailedCount: result.seatFailedCount || 0,
+        roleMappingAppliedCount: result.roleMappingAppliedCount || 0,
+        createdCount: result.createdUserIds.length,
+        updatedCount: result.updatedUserIds.length,
+        diagnosticSamples: result.diagnostics.slice(0, 5),
+      },
+    })
+  }
   return result
+}
+
+export async function applyFeishuWorkspaceAutoJoin(
+  db: Queryable,
+  profile: FeishuOAuthLoginProfile,
+  userId: string,
+): Promise<FeishuWorkspaceAutoJoinResult> {
+  const unionId = normalizeString(profile.unionId)
+  const normalizedUserId = normalizeString(userId)
+  if (!unionId || !normalizedUserId) {
+    return {
+      joinedWorkspaceIds: [],
+      diagnostics: [],
+    }
+  }
+
+  const identityProfile = await readFeishuIdentityProfile(db, unionId)
+  const candidate = buildAutoJoinCandidate(profile, identityProfile)
+  const identityTenantKey = normalizeString(identityProfile.tenantKey)
+  const policyRows = await db.query<FeishuAutoJoinPolicyRow>(
+    `SELECT
+       c.workspace_id,
+       c.id AS connection_id,
+       c.tenant_key,
+       p.user_ids,
+       p.department_ids,
+       p.group_ids,
+       p.role_mappings,
+       p.default_workspace_role
+     FROM workspace_integration_connections c
+     JOIN workspace_integration_sync_policies p ON p.connection_id = c.id
+     WHERE c.provider = 'feishu'
+       AND c.status = 'connected'
+       AND p.auto_login_enabled = TRUE`,
+  )
+
+  const joinedWorkspaceIds: string[] = []
+  const diagnostics: WorkspaceFeishuMemberSyncDiagnostic[] = []
+
+  for (const row of policyRows.rows) {
+    if (identityTenantKey && normalizeString(row.tenant_key) && normalizeString(row.tenant_key) !== identityTenantKey)
+      continue
+
+    const policy = {
+      userIds: uniqueStringArray(row.user_ids),
+      departmentIds: uniqueStringArray(row.department_ids),
+      groupIds: uniqueStringArray(row.group_ids),
+      roleMappings: normalizeRecord(row.role_mappings) as WorkspaceIntegrationSyncPolicy['roleMappings'],
+      defaultWorkspaceRole: normalizeFeishuAssignableWorkspaceRole(row.default_workspace_role),
+    }
+
+    if (!isAutoJoinPolicyMatched(candidate, policy)) {
+      const diagnostic: WorkspaceFeishuMemberSyncDiagnostic = {
+        code: 'not_whitelisted',
+        message: '飞书登录身份未命中工作空间自动加入策略。',
+        count: 1,
+        unionId,
+      }
+      pushDiagnostic(diagnostics, {
+        ...diagnostic,
+      })
+      await writeFeishuAutoJoinResult(db, row.connection_id, {
+        joined: false,
+        diagnostics: [diagnostic],
+      })
+      await recordWorkspaceIntegrationAuditLog(db, {
+        workspaceId: row.workspace_id,
+        provider: 'feishu',
+        connectionId: row.connection_id,
+        actorUserId: normalizedUserId,
+        action: 'feishu.auto_login.checked',
+        status: 'info',
+        summary: '飞书登录未命中该工作空间自动加入策略。',
+        payload: {
+          joined: false,
+          reason: 'not_whitelisted',
+          diagnosticSamples: [diagnostic],
+        },
+      })
+      continue
+    }
+
+    const workspaceDiagnostics: WorkspaceFeishuMemberSyncDiagnostic[] = []
+    try {
+      await teamEnsureWorkspaceMember(
+        db,
+        row.workspace_id,
+        normalizedUserId,
+        resolveAutoJoinWorkspaceRole(candidate, policy),
+      )
+      joinedWorkspaceIds.push(row.workspace_id)
+      await writeFeishuAutoJoinResult(db, row.connection_id, {
+        joined: true,
+        diagnostics: [],
+      })
+      await recordWorkspaceIntegrationAuditLog(db, {
+        workspaceId: row.workspace_id,
+        provider: 'feishu',
+        connectionId: row.connection_id,
+        actorUserId: normalizedUserId,
+        action: 'feishu.auto_login.checked',
+        status: 'success',
+        summary: '飞书登录已自动加入工作空间。',
+        payload: {
+          joined: true,
+          role: resolveAutoJoinWorkspaceRole(candidate, policy),
+          diagnosticSamples: [],
+        },
+      })
+    }
+    catch (error) {
+      if (error instanceof Error && error.message === 'TEAM_SEAT_LIMIT_REACHED') {
+        const diagnostic: WorkspaceFeishuMemberSyncDiagnostic = {
+          code: 'seat_limit_exceeded',
+          message: '工作空间席位不足，飞书登录未自动加入该工作空间。',
+          count: 1,
+          unionId,
+        }
+        workspaceDiagnostics.push(diagnostic)
+        pushDiagnostic(diagnostics, diagnostic)
+        await writeFeishuAutoJoinResult(db, row.connection_id, {
+          joined: false,
+          diagnostics: workspaceDiagnostics,
+        })
+        await recordWorkspaceIntegrationAuditLog(db, {
+          workspaceId: row.workspace_id,
+          provider: 'feishu',
+          connectionId: row.connection_id,
+          actorUserId: normalizedUserId,
+          action: 'feishu.auto_login.checked',
+          status: 'warning',
+          summary: '工作空间席位不足，飞书登录未自动加入。',
+          payload: {
+            joined: false,
+            reason: 'seat_limit_exceeded',
+            diagnosticSamples: workspaceDiagnostics.slice(0, 5),
+          },
+        })
+        continue
+      }
+
+      const diagnostic: WorkspaceFeishuMemberSyncDiagnostic = {
+        code: 'token_failed',
+        message: error instanceof Error ? error.message : '飞书登录自动加入失败。',
+        count: 1,
+        unionId,
+      }
+      workspaceDiagnostics.push(diagnostic)
+      pushDiagnostic(diagnostics, diagnostic)
+      await writeFeishuAutoJoinResult(db, row.connection_id, {
+        joined: false,
+        diagnostics: workspaceDiagnostics,
+      })
+      await recordWorkspaceIntegrationAuditLog(db, {
+        workspaceId: row.workspace_id,
+        provider: 'feishu',
+        connectionId: row.connection_id,
+        actorUserId: normalizedUserId,
+        action: 'feishu.auto_login.checked',
+        status: 'error',
+        summary: '飞书登录自动加入失败。',
+        payload: {
+          joined: false,
+          reason: 'error',
+          diagnosticSamples: workspaceDiagnostics.slice(0, 5),
+        },
+      })
+    }
+  }
+
+  return {
+    joinedWorkspaceIds,
+    diagnostics,
+  }
 }
 
 export async function createWorkspaceFeishuImportJob(

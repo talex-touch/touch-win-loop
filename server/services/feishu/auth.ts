@@ -4,6 +4,7 @@ import type { AuthLoginResult } from '~~/shared/types/domain'
 import { buildAuthLoginResult } from '~~/server/services/auth/login-session'
 import { ensureLocalUserByFeishuProfile } from '~~/server/services/feishu/user-provision'
 import { withTransaction } from '~~/server/utils/db'
+import { applyFeishuWorkspaceAutoJoin } from '~~/server/utils/workspace-integration-store'
 
 export async function loginWithFeishuProfile(
   event: H3Event,
@@ -18,6 +19,7 @@ export async function loginWithFeishuProfile(
       preferredUserId: input.preferredUserId,
       allowRegistration: input.allowRegistration,
     })
+    await applyFeishuWorkspaceAutoJoin(db, profile, provisioned.user.id).catch(() => undefined)
     return buildAuthLoginResult(db, provisioned.user)
   })
 }

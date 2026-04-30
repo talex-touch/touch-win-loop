@@ -11,6 +11,9 @@ import type {
   ProjectResourceShareVisibility,
   Resource,
   ResourceCategory,
+  WorkspaceFeishuImportResult,
+  WorkspaceFeishuSourceSearchResponse,
+  WorkspaceFeishuSourceSearchResult,
 } from '~~/shared/types/domain'
 import type { ProjectUploadTask } from '~/types/project-upload'
 import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
@@ -132,6 +135,7 @@ const props = withDefaults(defineProps<{
   listLoading: boolean
   aiFiltering: boolean
   isAdminView?: boolean
+  workspaceId?: string
   activeMainTabId?: string
   defenseActive?: boolean
   currentUserId?: string
@@ -162,6 +166,7 @@ const props = withDefaults(defineProps<{
   activeProjectId: '',
   normalizedInfo: '',
   isAdminView: false,
+  workspaceId: '',
   activeMainTabId: '',
   defenseActive: false,
   currentUserId: '',
@@ -189,6 +194,7 @@ const emit = defineEmits<{
   'createDeviceArrangement': []
   'openDefenseMode': []
   'openFeishuImport': []
+  'reloadProjectResources': []
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
   'patchProjectResourceTree': [payload: { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> }]
@@ -247,6 +253,7 @@ const resourceCategoryLabels: Record<ResourceCategory, string> = {
 }
 
 const recyclePanelOpen = computed(() => props.recyclePanelOpen)
+const authApiFetch = useAuthApiFetch()
 const activeResourceId = ref('')
 const renamingResourceId = ref('')
 const renamingResourceDraft = ref('')
@@ -258,6 +265,20 @@ const projectResourceBatchEditMode = ref(false)
 const projectResourceBatchSelectedIds = ref<string[]>([])
 const projectResourceBatchMenuOpen = ref(false)
 const projectResourceAddMenuOpen = ref(false)
+const feishuImportVisible = ref(false)
+const feishuImportLinkDraft = ref('')
+const feishuImportKeywordDraft = ref('')
+const feishuImportSources = ref<WorkspaceFeishuSourceSearchResult[]>([])
+const feishuImportSelectedKeys = ref<string[]>([])
+const feishuImportLoading = ref(false)
+const feishuImportImporting = ref(false)
+const feishuImportConnected = ref(false)
+const feishuImportConnectionStatus = ref('')
+const feishuImportTokenHealth = ref('')
+const feishuImportDiagnostic = ref('')
+const feishuImportError = ref('')
+const feishuImportSuccess = ref('')
+const feishuImportFailures = ref<Array<{ token: string, message: string }>>([])
 const projectResourceTypeFilter = ref<ProjectResourceTypeFilterId>('all')
 const removeTargetResourceIds = ref<string[]>([])
 const removeResourceModalVisible = ref(false)
@@ -303,6 +324,31 @@ const visibleLibraryResources = computed(() => {
       const context = [item.title, item.summary, item.type, item.year].join(' ').toLowerCase()
       return context.includes(keyword)
     })
+})
+const feishuImportCanUse = computed(() => Boolean(props.workspaceId && props.activeProjectId && props.hasActiveProject))
+const feishuImportStatusText = computed(() => {
+  if (!feishuImportConnected.value)
+    return '当前工作空间尚未连接飞书'
+  if (feishuImportTokenHealth.value === 'ok')
+    return '飞书连接正常'
+  if (feishuImportTokenHealth.value === 'missing_app_ticket')
+    return '平台尚未收到 app_ticket'
+  if (feishuImportTokenHealth.value === 'missing_tenant_key')
+    return '等待认领飞书租户'
+  if (feishuImportTokenHealth.value === 'tenant_token_failed')
+    return '租户 token 检查失败'
+  return feishuImportConnectionStatus.value || '等待飞书连接检查'
+})
+const selectedFeishuImportSources = computed(() => {
+  const selectedKeys = new Set(feishuImportSelectedKeys.value)
+  return feishuImportSources.value.filter(source => selectedKeys.has(buildFeishuImportSourceKey(source)))
+})
+const feishuImportCanImport = computed(() => {
+  return feishuImportCanUse.value
+    && feishuImportConnected.value
+    && feishuImportTokenHealth.value === 'ok'
+    && selectedFeishuImportSources.value.length > 0
+    && !feishuImportImporting.value
 })
 const outlineSections = computed(() => props.outlineSections)
 const outlineRows = computed<WorkspaceOutlineRow[]>(() => flattenWorkspaceOutlineRows(outlineSections.value))
@@ -1664,11 +1710,174 @@ function openLibraryFromMenu() {
   openLibraryModal(null)
 }
 
+function toFeishuImportText(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function buildFeishuImportSourceKey(source: WorkspaceFeishuSourceSearchResult): string {
+  const metadata = source.metadata || {}
+  return [
+    source.type,
+    source.token,
+    toFeishuImportText(metadata.tableId),
+    toFeishuImportText(metadata.viewId),
+  ].join(':')
+}
+
+function syncFeishuImportSearchResponse(data: WorkspaceFeishuSourceSearchResponse): void {
+  feishuImportConnected.value = data.connected === true
+  feishuImportConnectionStatus.value = toFeishuImportText(data.connectionStatus)
+  feishuImportTokenHealth.value = toFeishuImportText(data.tokenHealth)
+  feishuImportDiagnostic.value = toFeishuImportText(data.diagnosticMessage)
+  feishuImportSources.value = data.sources || []
+  feishuImportSelectedKeys.value = feishuImportSources.value
+    .filter(source => !source.linkedResourceId || source.lastImportStatus === 'failed')
+    .map(buildFeishuImportSourceKey)
+}
+
+async function loadFeishuLinkedSources(): Promise<void> {
+  const workspaceId = toFeishuImportText(props.workspaceId)
+  if (!workspaceId)
+    return
+  feishuImportLoading.value = true
+  feishuImportError.value = ''
+  feishuImportDiagnostic.value = ''
+  try {
+    const response = await authApiFetch<ApiResponse<WorkspaceFeishuSourceSearchResponse>>(`/teams/${workspaceId}/integrations/feishu/sources/search`, {
+      query: {
+        mode: 'linked',
+      },
+    })
+    syncFeishuImportSearchResponse(response.data)
+  }
+  catch (error: any) {
+    feishuImportError.value = String(error?.data?.message || '飞书资源状态加载失败。')
+  }
+  finally {
+    feishuImportLoading.value = false
+  }
+}
+
+async function resolveFeishuImportLink(): Promise<void> {
+  const workspaceId = toFeishuImportText(props.workspaceId)
+  const url = toFeishuImportText(feishuImportLinkDraft.value)
+  if (!workspaceId || !url || feishuImportLoading.value)
+    return
+  feishuImportLoading.value = true
+  feishuImportError.value = ''
+  feishuImportSuccess.value = ''
+  try {
+    const response = await authApiFetch<ApiResponse<WorkspaceFeishuSourceSearchResponse>>(`/teams/${workspaceId}/integrations/feishu/sources/search`, {
+      query: {
+        mode: 'resolve',
+        url,
+      },
+    })
+    syncFeishuImportSearchResponse(response.data)
+    if (response.data.diagnosticCode && response.data.diagnosticCode !== 'ok')
+      feishuImportDiagnostic.value = response.data.diagnosticMessage || '飞书链接解析失败。'
+  }
+  catch (error: any) {
+    feishuImportError.value = String(error?.data?.message || '飞书链接解析失败。')
+  }
+  finally {
+    feishuImportLoading.value = false
+  }
+}
+
+async function searchRemoteFeishuSources(): Promise<void> {
+  const workspaceId = toFeishuImportText(props.workspaceId)
+  const query = toFeishuImportText(feishuImportKeywordDraft.value)
+  if (!workspaceId || !query || feishuImportLoading.value)
+    return
+  feishuImportLoading.value = true
+  feishuImportError.value = ''
+  feishuImportSuccess.value = ''
+  try {
+    const response = await authApiFetch<ApiResponse<WorkspaceFeishuSourceSearchResponse>>(`/teams/${workspaceId}/integrations/feishu/sources/search`, {
+      query: {
+        mode: 'remote',
+        q: query,
+      },
+    })
+    syncFeishuImportSearchResponse(response.data)
+    if (response.data.diagnosticCode && response.data.diagnosticCode !== 'ok')
+      feishuImportDiagnostic.value = response.data.diagnosticMessage || '飞书资源搜索失败。'
+  }
+  catch (error: any) {
+    feishuImportError.value = String(error?.data?.message || '飞书资源搜索失败。')
+  }
+  finally {
+    feishuImportLoading.value = false
+  }
+}
+
+async function importSelectedFeishuSources(): Promise<void> {
+  const workspaceId = toFeishuImportText(props.workspaceId)
+  const projectId = toFeishuImportText(props.activeProjectId)
+  const sources = selectedFeishuImportSources.value
+  if (!workspaceId || !projectId || sources.length === 0 || feishuImportImporting.value)
+    return
+  feishuImportImporting.value = true
+  feishuImportError.value = ''
+  feishuImportSuccess.value = ''
+  feishuImportFailures.value = []
+  try {
+    const response = await authApiFetch<ApiResponse<WorkspaceFeishuImportResult>>(`/teams/${workspaceId}/integrations/feishu/imports`, {
+      method: 'POST',
+      body: {
+        projectId,
+        sources: sources.map(source => ({
+          type: source.type,
+          token: source.token,
+          title: source.title,
+          originalUrl: source.originalUrl,
+          fileName: source.fileName,
+          mimeType: source.mimeType,
+          updatedAt: source.updatedAt,
+          metadata: source.metadata,
+        })),
+      },
+    })
+    const failures = response.data.job.diagnostics?.failures
+    feishuImportFailures.value = Array.isArray(failures)
+      ? failures.map(item => ({
+          token: toFeishuImportText((item as { token?: unknown }).token),
+          message: toFeishuImportText((item as { message?: unknown }).message),
+        })).filter(item => item.token || item.message)
+      : []
+    const importedCount = response.data.job.importedCount
+    const skippedCount = response.data.job.skippedCount
+    feishuImportSuccess.value = `导入完成：新增/更新 ${importedCount}，跳过 ${skippedCount}。`
+    emit('reloadProjectResources')
+    const firstResourceId = response.data.resources[0]?.id
+    if (firstResourceId)
+      emit('openResource', firstResourceId)
+    await loadFeishuLinkedSources()
+  }
+  catch (error: any) {
+    feishuImportError.value = String(error?.data?.message || '飞书资源导入失败。')
+  }
+  finally {
+    feishuImportImporting.value = false
+  }
+}
+
+function closeFeishuImportModal(): void {
+  if (feishuImportImporting.value)
+    return
+  feishuImportVisible.value = false
+}
+
 function openFeishuImportFromMenu() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
   projectResourceAddMenuOpen.value = false
-  emit('openFeishuImport')
+  feishuImportVisible.value = true
+  feishuImportError.value = ''
+  feishuImportSuccess.value = ''
+  feishuImportFailures.value = []
+  void loadFeishuLinkedSources()
 }
 
 function openLocalUploadFromMenu(parentResourceId?: string | null) {
@@ -3680,6 +3889,145 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </section>
+
+        <a-modal
+          v-model:visible="feishuImportVisible"
+          title="从飞书导入"
+          width="720px"
+          :footer="false"
+          :esc-to-close="!feishuImportImporting"
+          :mask-closable="!feishuImportImporting"
+          @cancel="closeFeishuImportModal"
+        >
+          <div class="space-y-4" data-testid="workspace-feishu-import-dialog">
+            <div class="px-3 py-3 border border-slate-200 rounded-lg bg-slate-50 flex flex-wrap gap-3 items-start justify-between">
+              <div>
+                <div class="text-sm text-slate-900 font-semibold">
+                  {{ feishuImportStatusText }}
+                </div>
+                <div class="text-xs text-slate-500 mt-1">
+                  项目：{{ props.activeProjectId || '未选择项目' }}
+                </div>
+                <div v-if="feishuImportDiagnostic" class="text-xs text-amber-700 mt-1">
+                  {{ feishuImportDiagnostic }}
+                </div>
+              </div>
+              <button
+                class="text-xs text-slate-700 font-semibold px-3 py-2 border border-slate-200 rounded-lg bg-white disabled:opacity-40"
+                type="button"
+                :disabled="feishuImportLoading"
+                @click="loadFeishuLinkedSources"
+              >
+                刷新状态
+              </button>
+            </div>
+
+            <div class="gap-3 grid md:grid-cols-[1fr_auto]">
+              <input
+                v-model="feishuImportLinkDraft"
+                class="text-xs px-3 outline-none border border-slate-200 rounded-lg h-9 focus:border-blue-500"
+                placeholder="粘贴飞书文档 / Wiki / 云盘文件 / 多维表链接"
+                type="text"
+                @keydown.enter.prevent="resolveFeishuImportLink"
+              >
+              <button
+                class="text-xs text-white font-semibold px-3 py-2 rounded-lg bg-slate-900 disabled:opacity-40"
+                type="button"
+                :disabled="!feishuImportLinkDraft.trim() || feishuImportLoading"
+                @click="resolveFeishuImportLink"
+              >
+                解析链接
+              </button>
+            </div>
+
+            <div class="gap-3 grid md:grid-cols-[1fr_auto]">
+              <input
+                v-model="feishuImportKeywordDraft"
+                class="text-xs px-3 outline-none border border-slate-200 rounded-lg h-9 focus:border-blue-500"
+                placeholder="搜索多维表名称"
+                type="text"
+                @keydown.enter.prevent="searchRemoteFeishuSources"
+              >
+              <button
+                class="text-xs text-slate-700 font-semibold px-3 py-2 border border-slate-200 rounded-lg bg-white disabled:opacity-40"
+                type="button"
+                :disabled="!feishuImportKeywordDraft.trim() || feishuImportLoading"
+                @click="searchRemoteFeishuSources"
+              >
+                搜索资源
+              </button>
+            </div>
+
+            <div class="border border-slate-200 rounded-lg overflow-hidden">
+              <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                <span class="text-xs text-slate-700 font-semibold">可导入资源</span>
+                <span class="text-xs text-slate-400">{{ selectedFeishuImportSources.length }}/{{ feishuImportSources.length }}</span>
+              </div>
+              <div class="max-h-[280px] overflow-auto">
+                <label
+                  v-for="source in feishuImportSources"
+                  :key="buildFeishuImportSourceKey(source)"
+                  class="px-3 py-3 border-b border-slate-100 flex gap-3 items-start last:border-b-0"
+                >
+                  <input
+                    v-model="feishuImportSelectedKeys"
+                    class="mt-1"
+                    type="checkbox"
+                    :value="buildFeishuImportSourceKey(source)"
+                    :disabled="Boolean(source.linkedResourceId && source.lastImportStatus !== 'failed')"
+                  >
+                  <span class="flex-1 min-w-0">
+                    <span class="text-sm text-slate-900 font-medium block truncate">{{ source.title || source.token }}</span>
+                    <span class="text-xs text-slate-500 mt-1 block truncate">
+                      {{ source.type }} · {{ source.metadata.tableName || source.metadata.tableId || source.fileName || source.token }}
+                    </span>
+                    <span v-if="source.linkedResourceId" class="text-xs text-emerald-700 mt-1 block">
+                      已映射资源：{{ source.linkedResourceId }}
+                    </span>
+                  </span>
+                </label>
+                <p v-if="!feishuImportLoading && feishuImportSources.length === 0" class="text-xs text-slate-400 px-3 py-6 text-center">
+                  暂无可导入资源
+                </p>
+                <p v-if="feishuImportLoading" class="text-xs text-slate-500 px-3 py-6 text-center">
+                  正在读取飞书资源...
+                </p>
+              </div>
+            </div>
+
+            <div v-if="feishuImportFailures.length" class="px-3 py-2 border border-rose-200 rounded-lg bg-rose-50">
+              <div v-for="failure in feishuImportFailures" :key="`${failure.token}-${failure.message}`" class="text-xs text-rose-700">
+                {{ failure.token || '资源' }}：{{ failure.message || '导入失败' }}
+              </div>
+            </div>
+
+            <p v-if="feishuImportError" class="text-xs text-rose-600">
+              {{ feishuImportError }}
+            </p>
+            <p v-else-if="feishuImportSuccess" class="text-xs text-emerald-700">
+              {{ feishuImportSuccess }}
+            </p>
+
+            <div class="flex gap-2 justify-end">
+              <button
+                class="text-xs text-slate-700 font-semibold px-3 py-2 border border-slate-200 rounded-lg bg-white"
+                type="button"
+                :disabled="feishuImportImporting"
+                @click="closeFeishuImportModal"
+              >
+                关闭
+              </button>
+              <button
+                class="text-xs text-white font-semibold px-3 py-2 rounded-lg bg-slate-900 disabled:opacity-40"
+                type="button"
+                :disabled="!feishuImportCanImport"
+                @click="importSelectedFeishuSources"
+              >
+                {{ feishuImportImporting ? '导入中...' : '导入到当前项目' }}
+              </button>
+            </div>
+          </div>
+        </a-modal>
 
         <a-modal
           v-model:visible="libraryModalVisible"

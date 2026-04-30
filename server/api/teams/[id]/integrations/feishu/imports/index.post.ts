@@ -23,6 +23,7 @@ import {
   getFeishuWorkspaceIntegrationSnapshot,
   markFeishuWorkspaceConnectionTokenHealth,
   recordWorkspaceFeishuImportResource,
+  recordWorkspaceIntegrationAuditLog,
 } from '~~/server/utils/workspace-integration-store'
 import { normalizeWorkspaceFeishuImportSources } from '~~/shared/utils/workspace-feishu-integration'
 
@@ -318,6 +319,28 @@ export default defineEventHandler(async (event) => {
         failedCount,
         diagnostics: {
           failures: diagnostics,
+        },
+      })
+      await recordWorkspaceIntegrationAuditLog(db, {
+        workspaceId,
+        provider: 'feishu',
+        connectionId: preflight.snapshot.connection?.id || null,
+        actorUserId: user.id,
+        action: 'feishu.import.completed',
+        status: failedCount > 0
+          ? importedCount > 0
+            ? 'warning'
+            : 'error'
+          : 'success',
+        summary: `飞书资源导入完成：成功 ${importedCount}，跳过 ${skippedCount}，失败 ${failedCount}。`,
+        payload: {
+          projectId,
+          jobId: preflight.job.id,
+          sourceCount: sources.length,
+          importedCount,
+          skippedCount,
+          failedCount,
+          diagnosticSamples: diagnostics.slice(0, 5),
         },
       })
       return finishedJob

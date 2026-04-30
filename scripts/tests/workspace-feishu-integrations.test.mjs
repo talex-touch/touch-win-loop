@@ -140,9 +140,10 @@ describe('workspace Feishu integration contracts', () => {
     assert.match(dialogSource, /<UserSettingsThirdPartyPlatformsPanel\b/, '用户设置未渲染第三方平台面板')
     assert.match(panelSource, /飞书/, '第三方平台面板缺少飞书配置入口')
     assert.match(panelSource, /member-sync\/preview/, '第三方平台面板缺少成员同步预览调用')
-    assert.match(panelSource, /integrations\/feishu\/imports/, '第三方平台面板缺少导入任务入口')
+    assert.match(panelSource, /去项目资源管理器导入/, '第三方平台面板缺少项目导入入口')
     assert.match(resourceManagerSource, /从飞书导入/, '项目资源管理器缺少从飞书导入入口')
     assert.match(resourceManagerSource, /openFeishuImportFromMenu/, '项目资源管理器缺少飞书导入菜单动作')
+    assert.match(resourceManagerSource, /integrations\/feishu\/imports/, '项目资源管理器缺少导入任务调用')
   })
 })
 

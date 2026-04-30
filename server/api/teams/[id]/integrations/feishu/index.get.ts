@@ -3,7 +3,7 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
+import { teamHasWorkspaceRoles } from '~~/server/utils/team-membership-store'
 import { getFeishuWorkspaceIntegrationSnapshot } from '~~/server/utils/workspace-integration-store'
 
 export default defineEventHandler(async (event) => {
@@ -23,7 +23,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const data = await withClient(event, async (db) => {
-      const canAccess = await teamHasWorkspaceMembership(db, user, workspaceId)
+      const canAccess = await teamHasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
       if (!canAccess)
         throw new Error('FORBIDDEN')
       return getFeishuWorkspaceIntegrationSnapshot(db, workspaceId)
@@ -38,7 +38,7 @@ export default defineEventHandler(async (event) => {
   catch (error) {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
       setResponseStatus(event, 403)
-      return fail('当前用户无权查看该工作空间飞书连接。', {
+      return fail('仅工作空间 owner/admin 可查看该工作空间飞书连接。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,

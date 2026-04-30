@@ -451,6 +451,19 @@ CREATE TABLE IF NOT EXISTS workspace_integration_import_jobs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS workspace_integration_audit_logs (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK (provider IN ('feishu')),
+  connection_id TEXT REFERENCES workspace_integration_connections(id) ON DELETE SET NULL,
+  actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('success', 'warning', 'error', 'info')),
+  summary TEXT NOT NULL DEFAULT '',
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS workspace_external_resource_refs (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -3439,6 +3452,8 @@ CREATE INDEX IF NOT EXISTS idx_workspace_external_resource_refs_resource
   ON workspace_external_resource_refs(resource_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_integration_import_jobs_project
   ON workspace_integration_import_jobs(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_integration_audit_logs_workspace_provider_created
+  ON workspace_integration_audit_logs(workspace_id, provider, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_integration_event_dedup_provider_created
   ON integration_event_dedup(provider, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_resource_shares_project_created ON project_resource_shares(project_id, created_at DESC);

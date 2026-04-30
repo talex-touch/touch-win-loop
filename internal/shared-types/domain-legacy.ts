@@ -431,10 +431,39 @@ export interface WorkspaceIntegrationListResult {
   integrations: WorkspaceIntegrationSummary[]
 }
 
+export type WorkspaceIntegrationAuditStatus = 'success' | 'warning' | 'error' | 'info'
+
+export interface WorkspaceIntegrationAuditLog {
+  id: string
+  workspaceId: string
+  provider: WorkspaceIntegrationProvider
+  connectionId?: string | null
+  actorUserId?: string | null
+  action: string
+  status: WorkspaceIntegrationAuditStatus
+  summary: string
+  payload: Record<string, unknown>
+  createdAt: string
+}
+
+export interface WorkspaceFeishuIntegrationDiagnosticSummary {
+  connectionStatus: WorkspaceIntegrationConnectionStatus | ''
+  tokenHealth: string
+  tokenHealthText: string
+  lastError: string
+  memberSyncSummary: Record<string, unknown>
+  autoLoginSummary: Record<string, unknown>
+  importSummary: Record<string, unknown>
+}
+
 export interface WorkspaceFeishuIntegrationSnapshot extends WorkspaceIntegrationSummary {
   provider: 'feishu'
   importJobs: WorkspaceFeishuImportJob[]
   externalResources: WorkspaceExternalResourceRef[]
+  auditLogs: WorkspaceIntegrationAuditLog[]
+  diagnosticSummary: WorkspaceFeishuIntegrationDiagnosticSummary
+  memberSyncSummary: Record<string, unknown>
+  autoLoginSummary: Record<string, unknown>
 }
 
 export interface WorkspaceFeishuIntegrationPatchRequest {
@@ -456,6 +485,21 @@ export interface WorkspaceFeishuDirectoryUserCandidate {
   avatarUrl?: string
 }
 
+export type WorkspaceFeishuMemberSyncDiagnosticCode
+  = 'feishu_policy_missing'
+    | 'seat_limit_exceeded'
+    | 'email_conflict'
+    | 'not_whitelisted'
+    | 'role_mapping_ignored'
+    | 'token_failed'
+
+export interface WorkspaceFeishuMemberSyncDiagnostic {
+  code: WorkspaceFeishuMemberSyncDiagnosticCode
+  message: string
+  count?: number
+  unionId?: string
+}
+
 export interface WorkspaceFeishuMemberSyncPreview {
   totalCandidates: number
   whitelistedCount: number
@@ -464,7 +508,9 @@ export interface WorkspaceFeishuMemberSyncPreview {
   skipCount: number
   conflictCount: number
   seatRequired: number
-  diagnostics: Array<{ code: string, message: string, count?: number }>
+  seatFailedCount?: number
+  roleMappingAppliedCount?: number
+  diagnostics: WorkspaceFeishuMemberSyncDiagnostic[]
 }
 
 export interface WorkspaceFeishuMemberSyncResult extends WorkspaceFeishuMemberSyncPreview {
@@ -483,6 +529,28 @@ export interface WorkspaceFeishuImportSource {
   mimeType?: string
   fileName?: string
   metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceFeishuSourceSearchResult {
+  type: WorkspaceIntegrationExternalSourceType
+  token: string
+  title: string
+  originalUrl: string
+  fileName?: string
+  mimeType?: string
+  updatedAt?: string
+  metadata: Record<string, unknown>
+  linkedResourceId?: string | null
+  lastImportStatus?: WorkspaceExternalResourceRef['lastImportStatus'] | ''
+}
+
+export interface WorkspaceFeishuSourceSearchResponse {
+  sources: WorkspaceFeishuSourceSearchResult[]
+  connected: boolean
+  connectionStatus?: WorkspaceIntegrationConnectionStatus | ''
+  tokenHealth?: string
+  diagnosticCode?: string
+  diagnosticMessage?: string
 }
 
 export interface WorkspaceFeishuImportJob {
@@ -2717,7 +2785,7 @@ export interface ProjectPayload {
   summary?: string
 }
 
-export type ProjectDisplayIcon
+export type ProjectDisplaySymbolIcon
   = | 'rocket_launch'
     | 'shield'
     | 'lightbulb'
@@ -2726,6 +2794,32 @@ export type ProjectDisplayIcon
     | 'science'
     | 'public'
     | 'school'
+    | 'auto_awesome'
+    | 'bolt'
+    | 'code'
+    | 'terminal'
+    | 'data_object'
+    | 'database'
+    | 'memory'
+    | 'psychology'
+    | 'smart_toy'
+    | 'draw'
+    | 'brush'
+    | 'design_services'
+    | 'dashboard_customize'
+    | 'analytics'
+    | 'monitoring'
+    | 'account_tree'
+    | 'schema'
+    | 'deployed_code'
+    | 'extension'
+    | 'stacks'
+    | 'token'
+    | 'biotech'
+    | 'travel_explore'
+    | 'workspace_premium'
+
+export type ProjectDisplayIcon = ProjectDisplaySymbolIcon | 'text' | 'solid'
 
 export type ProjectDisplayPresetAccentColor
   = | 'blue'

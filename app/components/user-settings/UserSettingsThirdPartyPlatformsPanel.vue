@@ -4,8 +4,10 @@ import type {
   WorkspaceFeishuDirectoryUserCandidate,
   WorkspaceFeishuIntegrationSnapshot,
   WorkspaceFeishuMemberSyncPreview,
-  WorkspaceIntegrationExternalSourceType,
+  WorkspaceFeishuMemberSyncResult,
 } from '~~/shared/types/domain'
+
+type FeishuMemberRoleDraft = 'admin' | 'manager' | 'member'
 
 const props = withDefaults(defineProps<{
   workspaceId?: string
@@ -24,21 +26,21 @@ const loading = ref(false)
 const installing = ref(false)
 const saving = ref(false)
 const previewing = ref(false)
-const importing = ref(false)
 const errorText = ref('')
 const successText = ref('')
 const tenantKeyDraft = ref('')
 const tenantNameDraft = ref('')
-const whitelistDraft = ref('')
-const importProjectIdDraft = ref('')
-const importSourceTypeDraft = ref<WorkspaceIntegrationExternalSourceType>('feishu_doc')
-const importTitleDraft = ref('')
-const importTokenDraft = ref('')
-const importOriginalUrlDraft = ref('')
-const importContentDraft = ref('')
-const importBitableTableIdDraft = ref('')
-const importBitableViewIdDraft = ref('')
+const directoryQuery = ref('')
+const directoryLoading = ref(false)
+const directoryDiagnostic = ref('')
+const directoryCandidates = ref<WorkspaceFeishuDirectoryUserCandidate[]>([])
+const selectedFeishuUnionIds = ref<string[]>([])
+const selectedFeishuDepartmentIds = ref<string[]>([])
+const selectedFeishuGroupIds = ref<string[]>([])
+const roleMappingDrafts = ref<Record<string, FeishuMemberRoleDraft>>({})
 const memberPreview = ref<WorkspaceFeishuMemberSyncPreview | null>(null)
+const memberSyncResult = ref<WorkspaceFeishuMemberSyncResult | null>(null)
+const syncing = ref(false)
 
 const connected = computed(() => snapshot.value?.connected === true)
 const tokenHealth = computed(() => String(snapshot.value?.connection?.capabilities?.tokenHealth || '').trim())
@@ -68,22 +70,115 @@ const connectionStatusText = computed(() => {
 
 const canEdit = computed(() => props.canManage && !props.isPersonalWorkspace)
 const canImportFeishuResource = computed(() => connected.value && tokenHealth.value === 'ok')
+const canSyncFeishuMembers = computed(() => canEdit.value && connected.value && tokenHealth.value === 'ok')
 const importJobs = computed(() => snapshot.value?.importJobs || [])
 const externalResources = computed(() => snapshot.value?.externalResources || [])
-const importTokenPlaceholder = computed(() => {
-  if (importSourceTypeDraft.value === 'feishu_bitable')
-    return 'app_token'
-  if (importSourceTypeDraft.value === 'feishu_drive_file')
-    return 'file_token'
-  if (importSourceTypeDraft.value === 'feishu_wiki')
-    return 'wiki token'
-  return 'document_id'
+const diagnosticSummary = computed(() => snapshot.value?.diagnosticSummary || null)
+const memberSyncSummary = computed(() => snapshot.value?.memberSyncSummary || diagnosticSummary.value?.memberSyncSummary || {})
+const autoLoginSummary = computed(() => snapshot.value?.autoLoginSummary || diagnosticSummary.value?.autoLoginSummary || {})
+const auditLogs = computed(() => snapshot.value?.auditLogs || [])
+const memberDiagnosticSamples = computed(() => {
+  const samples = memberSyncSummary.value.diagnosticSamples
+  return Array.isArray(samples) ? samples.slice(0, 5) : []
 })
+const autoLoginDiagnosticSamples = computed(() => {
+  const samples = autoLoginSummary.value.diagnosticSamples
+  return Array.isArray(samples) ? samples.slice(0, 5) : []
+})
+const selectedUnionIdSet = computed(() => new Set(selectedFeishuUnionIds.value))
+const selectedCandidates = computed(() => directoryCandidates.value.filter(candidate => selectedUnionIdSet.value.has(candidate.unionId)))
+const departmentOptions = computed(() => buildDirectoryScopeOptions('departmentIds'))
+const groupOptions = computed(() => buildDirectoryScopeOptions('groupIds'))
+const memberSyncDisabledText = computed(() => {
+  if (canSyncFeishuMembers.value)
+    return ''
+  if (!canEdit.value)
+    return '仅工作空间 owner/admin 可配置飞书成员同步。'
+  return tokenHealthText.value
+})
+
+function normalizeString(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function formatSummaryNumber(summary: Record<string, unknown>, key: string): string {
+  const value = Number(summary?.[key] || 0)
+  if (!Number.isFinite(value))
+    return '0'
+  return String(Math.max(0, Math.trunc(value)))
+}
+
+function formatAuditStatus(status: string): string {
+  if (status === 'success')
+    return '成功'
+  if (status === 'warning')
+    return '警告'
+  if (status === 'error')
+    return '失败'
+  return '信息'
+}
+
+function uniqueStrings(items: unknown[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const rawItem of items) {
+    const item = normalizeString(rawItem)
+    if (!item || seen.has(item))
+      continue
+    seen.add(item)
+    result.push(item)
+  }
+  return result
+}
+
+function buildDirectoryScopeOptions(key: 'departmentIds' | 'groupIds') {
+  const counter = new Map<string, number>()
+  for (const candidate of directoryCandidates.value) {
+    for (const id of candidate[key] || []) {
+      const normalizedId = normalizeString(id)
+      if (!normalizedId)
+        continue
+      counter.set(normalizedId, (counter.get(normalizedId) || 0) + 1)
+    }
+  }
+  return [...counter.entries()]
+    .map(([id, count]) => ({
+      id,
+      count,
+      label: key === 'departmentIds' ? `部门 ${id}` : `群 ${id}`,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id))
+}
+
+function buildSyncPolicyPatch() {
+  const roleMappings: Record<string, Exclude<FeishuMemberRoleDraft, 'member'>> = {}
+  for (const unionId of uniqueStrings(selectedFeishuUnionIds.value)) {
+    const role = roleMappingDrafts.value[unionId]
+    if (role === 'admin' || role === 'manager')
+      roleMappings[unionId] = role
+  }
+
+  return {
+    userIds: uniqueStrings(selectedFeishuUnionIds.value),
+    departmentIds: uniqueStrings(selectedFeishuDepartmentIds.value),
+    groupIds: uniqueStrings(selectedFeishuGroupIds.value),
+    roleMappings,
+    defaultWorkspaceRole: 'member',
+    autoLoginEnabled: true,
+  }
+}
 
 function syncDrafts(next: WorkspaceFeishuIntegrationSnapshot | null) {
   tenantKeyDraft.value = next?.connection?.tenantKey || ''
   tenantNameDraft.value = next?.connection?.tenantName || ''
-  whitelistDraft.value = (next?.policy?.userIds || []).join('\n')
+  const policy = next?.policy
+  selectedFeishuUnionIds.value = [...(policy?.userIds || [])]
+  selectedFeishuDepartmentIds.value = [...(policy?.departmentIds || [])]
+  selectedFeishuGroupIds.value = [...(policy?.groupIds || [])]
+  const nextRoleMappings: Record<string, FeishuMemberRoleDraft> = {}
+  for (const unionId of selectedFeishuUnionIds.value)
+    nextRoleMappings[unionId] = policy?.roleMappings?.[unionId] || 'member'
+  roleMappingDrafts.value = nextRoleMappings
 }
 
 async function loadSnapshot() {
@@ -105,6 +200,18 @@ async function loadSnapshot() {
   }
 }
 
+async function saveSyncPolicy(workspaceId: string) {
+  const response = await authApiFetch<ApiResponse<WorkspaceFeishuIntegrationSnapshot>>(`/teams/${workspaceId}/integrations/feishu`, {
+    method: 'PATCH',
+    body: {
+      syncPolicy: buildSyncPolicyPatch(),
+    },
+  })
+  snapshot.value = response.data
+  syncDrafts(response.data)
+  return response.data
+}
+
 async function saveConnection() {
   const workspaceId = String(props.workspaceId || '').trim()
   if (!workspaceId || saving.value || !canEdit.value)
@@ -121,18 +228,7 @@ async function saveConnection() {
       },
     })
     snapshot.value = claimResponse.data
-    const response = await authApiFetch<ApiResponse<WorkspaceFeishuIntegrationSnapshot>>(`/teams/${workspaceId}/integrations/feishu`, {
-      method: 'PATCH',
-      body: {
-        syncPolicy: {
-          userIds: whitelistDraft.value.split(/\s+/g).filter(Boolean),
-          defaultWorkspaceRole: 'member',
-          autoLoginEnabled: true,
-        },
-      },
-    })
-    snapshot.value = response.data
-    syncDrafts(response.data)
+    await saveSyncPolicy(workspaceId)
     successText.value = '飞书租户已认领，成员策略已保存。'
   }
   catch (error: any) {
@@ -173,27 +269,61 @@ async function startFeishuInstall() {
   }
 }
 
-async function previewMemberSync() {
+async function loadDirectoryCandidates() {
   const workspaceId = String(props.workspaceId || '').trim()
-  if (!workspaceId || previewing.value || !canEdit.value)
+  if (!workspaceId || directoryLoading.value || !canSyncFeishuMembers.value)
     return
-  previewing.value = true
+  directoryLoading.value = true
+  directoryDiagnostic.value = ''
   errorText.value = ''
   try {
-    const directoryResponse = await authApiFetch<ApiResponse<{
+    const query = directoryQuery.value.trim()
+    const suffix = query ? `?q=${encodeURIComponent(query)}` : ''
+    const response = await authApiFetch<ApiResponse<{
       candidates: WorkspaceFeishuDirectoryUserCandidate[]
       diagnosticCode?: string
       diagnosticMessage?: string
-    }>>(`/teams/${workspaceId}/integrations/feishu/directory/search`)
-    if (directoryResponse.data.diagnosticCode && directoryResponse.data.diagnosticCode !== 'ok')
-      throw new Error(directoryResponse.data.diagnosticMessage || '飞书通讯录搜索失败。')
+    }>>(`/teams/${workspaceId}/integrations/feishu/directory/search${suffix}`)
+    directoryCandidates.value = response.data.candidates || []
+    if (response.data.diagnosticCode && response.data.diagnosticCode !== 'ok')
+      directoryDiagnostic.value = response.data.diagnosticMessage || '飞书通讯录暂不可用。'
+  }
+  catch (error: any) {
+    errorText.value = String(error?.data?.message || error?.message || '飞书通讯录搜索失败。')
+  }
+  finally {
+    directoryLoading.value = false
+  }
+}
+
+function onUserSelectionChanged(candidate: WorkspaceFeishuDirectoryUserCandidate) {
+  const unionId = normalizeString(candidate.unionId)
+  if (!unionId)
+    return
+  if (selectedUnionIdSet.value.has(unionId) && !roleMappingDrafts.value[unionId])
+    roleMappingDrafts.value[unionId] = 'member'
+  if (!selectedUnionIdSet.value.has(unionId)) {
+    const next = { ...roleMappingDrafts.value }
+    delete next[unionId]
+    roleMappingDrafts.value = next
+  }
+}
+
+async function previewMemberSync() {
+  const workspaceId = String(props.workspaceId || '').trim()
+  if (!workspaceId || previewing.value || !canSyncFeishuMembers.value)
+    return
+  previewing.value = true
+  errorText.value = ''
+  successText.value = ''
+  try {
+    await saveSyncPolicy(workspaceId)
     const response = await authApiFetch<ApiResponse<WorkspaceFeishuMemberSyncPreview>>(`/teams/${workspaceId}/integrations/feishu/member-sync/preview`, {
       method: 'POST',
-      body: {
-        candidates: directoryResponse.data.candidates || [],
-      },
+      body: {},
     })
     memberPreview.value = response.data
+    memberSyncResult.value = null
   }
   catch (error: any) {
     errorText.value = String(error?.data?.message || '飞书成员同步预览失败。')
@@ -203,53 +333,44 @@ async function previewMemberSync() {
   }
 }
 
-async function importFeishuSource() {
+async function runMemberSync() {
   const workspaceId = String(props.workspaceId || '').trim()
-  const projectId = String(importProjectIdDraft.value || '').trim()
-  const token = String(importTokenDraft.value || '').trim()
-  if (!workspaceId || !projectId || !token || importing.value)
+  if (!workspaceId || syncing.value || !canSyncFeishuMembers.value)
     return
-  importing.value = true
+  syncing.value = true
   errorText.value = ''
   successText.value = ''
-  const sourceMetadata: Record<string, unknown> = {}
-  if (importSourceTypeDraft.value === 'feishu_bitable') {
-    sourceMetadata.appToken = token
-    sourceMetadata.tableId = importBitableTableIdDraft.value
-    sourceMetadata.viewId = importBitableViewIdDraft.value
-  }
   try {
-    await authApiFetch(`/teams/${workspaceId}/integrations/feishu/imports`, {
+    await saveSyncPolicy(workspaceId)
+    const response = await authApiFetch<ApiResponse<WorkspaceFeishuMemberSyncResult>>(`/teams/${workspaceId}/integrations/feishu/member-sync/run`, {
       method: 'POST',
-      body: {
-        projectId,
-        sources: [
-          {
-            type: importSourceTypeDraft.value,
-            token,
-            title: importTitleDraft.value || token,
-            originalUrl: importOriginalUrlDraft.value,
-            content: importSourceTypeDraft.value === 'feishu_drive_file' ? '' : importContentDraft.value,
-            metadata: sourceMetadata,
-          },
-        ],
-      },
+      body: {},
     })
-    successText.value = '飞书资源导入任务已完成。'
-    await loadSnapshot()
+    memberSyncResult.value = response.data
+    memberPreview.value = response.data
+    successText.value = '飞书成员同步已执行。'
   }
   catch (error: any) {
-    errorText.value = String(error?.data?.message || '飞书资源导入失败。')
+    errorText.value = String(error?.data?.message || '飞书成员同步执行失败。')
   }
   finally {
-    importing.value = false
+    syncing.value = false
   }
+}
+
+async function openProjectFeishuImportEntry() {
+  const workspaceId = String(props.workspaceId || '').trim()
+  if (!workspaceId)
+    return
+  await navigateTo(`/team/${workspaceId}`)
 }
 
 watch(
   () => props.workspaceId,
   () => {
     memberPreview.value = null
+    memberSyncResult.value = null
+    directoryDiagnostic.value = ''
     void loadSnapshot()
   },
   { immediate: true },
@@ -302,27 +423,207 @@ watch(
         </label>
       </div>
 
-      <div class="mt-3">
-        <label class="text-xs text-slate-600 block space-y-1">
-          <span class="text-slate-700 font-semibold">成员白名单 unionId</span>
-          <textarea v-model="whitelistDraft" class="px-3 py-2 outline-none border border-slate-200 rounded-lg min-h-[84px] w-full focus:border-blue-500" :disabled="!canEdit || saving" placeholder="每行一个 unionId" />
-        </label>
+      <div class="mt-4 p-3 border border-slate-200 rounded-lg bg-slate-50">
+        <div class="flex flex-wrap gap-3 items-start justify-between">
+          <div>
+            <p class="text-sm text-slate-900 font-semibold">
+              健康诊断
+            </p>
+            <p class="text-xs text-slate-500 mt-1">
+              {{ diagnosticSummary?.tokenHealthText || tokenHealthText }}
+            </p>
+          </div>
+          <span class="text-xs text-slate-500">{{ diagnosticSummary?.connectionStatus || snapshot?.connection?.status || 'pending' }}</span>
+        </div>
+        <p v-if="diagnosticSummary?.lastError" class="text-xs text-rose-600 mt-2">
+          {{ diagnosticSummary.lastError }}
+        </p>
+
+        <div class="mt-3 gap-2 grid md:grid-cols-2">
+          <div class="p-3 border border-slate-200 rounded-lg bg-white">
+            <p class="text-xs text-slate-700 font-semibold">
+              最近同步
+            </p>
+            <div class="text-xs text-slate-500 mt-2 gap-2 grid grid-cols-2">
+              <span>新增 {{ formatSummaryNumber(memberSyncSummary, 'createCount') }}</span>
+              <span>更新 {{ formatSummaryNumber(memberSyncSummary, 'updateCount') }}</span>
+              <span>冲突 {{ formatSummaryNumber(memberSyncSummary, 'conflictCount') }}</span>
+              <span>席位失败 {{ formatSummaryNumber(memberSyncSummary, 'seatFailedCount') }}</span>
+            </div>
+            <div v-if="memberDiagnosticSamples.length" class="text-xs text-slate-500 mt-2 space-y-1">
+              <div v-for="sample in memberDiagnosticSamples" :key="`${sample.code}:${sample.unionId || sample.message}`">
+                {{ sample.code }} · {{ sample.message }}
+              </div>
+            </div>
+          </div>
+
+          <div class="p-3 border border-slate-200 rounded-lg bg-white">
+            <p class="text-xs text-slate-700 font-semibold">
+              自动登录
+            </p>
+            <div class="text-xs text-slate-500 mt-2 gap-2 grid grid-cols-2">
+              <span>加入 {{ formatSummaryNumber(autoLoginSummary, 'joinedCount') }}</span>
+              <span>失败 {{ formatSummaryNumber(autoLoginSummary, 'failedCount') }}</span>
+            </div>
+            <div v-if="autoLoginDiagnosticSamples.length" class="text-xs text-slate-500 mt-2 space-y-1">
+              <div v-for="sample in autoLoginDiagnosticSamples" :key="`${sample.code}:${sample.unionId || sample.message}`">
+                {{ sample.code }} · {{ sample.message }}
+              </div>
+            </div>
+            <p v-else class="text-xs text-slate-400 mt-2">
+              暂无自动登录失败记录
+            </p>
+          </div>
+        </div>
       </div>
 
-      <div class="mt-4 flex flex-wrap gap-2 justify-end">
-        <button class="text-xs text-slate-700 font-semibold px-3 py-2 border border-slate-200 rounded-lg disabled:opacity-40" type="button" :disabled="!canEdit || previewing" @click="previewMemberSync">
-          预览成员同步
-        </button>
-        <button class="text-xs text-white font-semibold px-3 py-2 rounded-lg bg-slate-900 disabled:opacity-40" type="button" :disabled="!canEdit || saving" @click="saveConnection">
-          认领租户/修复连接
-        </button>
-      </div>
+      <div class="mt-4 pt-4 border-t border-slate-100">
+        <div class="flex flex-wrap gap-3 items-start justify-between">
+          <div>
+            <p class="text-sm text-slate-900 font-semibold">
+              成员同步
+            </p>
+            <p class="text-xs text-slate-500 mt-1">
+              默认角色为 member，仅显式用户可映射为 manager/admin。
+            </p>
+          </div>
+          <button class="text-xs text-white font-semibold px-3 py-2 rounded-lg bg-slate-900 disabled:opacity-40" type="button" :disabled="!canEdit || saving" @click="saveConnection">
+            认领租户/保存策略
+          </button>
+        </div>
 
-      <div v-if="memberPreview" class="text-xs text-slate-600 mt-4 gap-2 grid md:grid-cols-4">
-        <div>新增 {{ memberPreview.createCount }}</div>
-        <div>更新 {{ memberPreview.updateCount }}</div>
-        <div>跳过 {{ memberPreview.skipCount }}</div>
-        <div>冲突 {{ memberPreview.conflictCount }}</div>
+        <p v-if="memberSyncDisabledText" class="text-xs text-amber-700 mt-3">
+          {{ memberSyncDisabledText }}
+        </p>
+
+        <div class="mt-3 flex gap-2">
+          <input
+            v-model="directoryQuery"
+            class="px-3 outline-none border border-slate-200 rounded-lg flex-1 h-9 min-w-0 focus:border-blue-500"
+            :disabled="!canSyncFeishuMembers || directoryLoading"
+            placeholder="搜索飞书成员"
+            @keyup.enter="loadDirectoryCandidates"
+          >
+          <button
+            class="text-xs text-slate-700 font-semibold px-3 py-2 border border-slate-200 rounded-lg disabled:opacity-40"
+            type="button"
+            :disabled="!canSyncFeishuMembers || directoryLoading"
+            @click="loadDirectoryCandidates"
+          >
+            {{ directoryLoading ? '刷新中' : '刷新通讯录' }}
+          </button>
+        </div>
+
+        <p v-if="directoryDiagnostic" class="text-xs text-amber-700 mt-2">
+          {{ directoryDiagnostic }}
+        </p>
+
+        <div class="mt-3 gap-3 grid lg:grid-cols-3">
+          <div class="p-3 border border-slate-200 rounded-lg min-h-[132px]">
+            <div class="text-xs text-slate-700 font-semibold">
+              用户白名单
+            </div>
+            <div v-if="directoryCandidates.length" class="mt-2 max-h-52 overflow-auto space-y-2">
+              <label v-for="candidate in directoryCandidates" :key="candidate.unionId" class="text-xs text-slate-600 flex gap-2 items-start">
+                <input
+                  v-model="selectedFeishuUnionIds"
+                  class="mt-0.5"
+                  type="checkbox"
+                  :value="candidate.unionId"
+                  :disabled="!canSyncFeishuMembers"
+                  @change="onUserSelectionChanged(candidate)"
+                >
+                <span class="min-w-0">
+                  <span class="text-slate-800 font-medium block truncate">{{ candidate.name || candidate.unionId }}</span>
+                  <span class="text-slate-400 block truncate">{{ candidate.email || candidate.unionId }}</span>
+                </span>
+              </label>
+            </div>
+            <p v-else class="text-xs text-slate-400 mt-3">
+              刷新通讯录后选择成员
+            </p>
+          </div>
+
+          <div class="p-3 border border-slate-200 rounded-lg min-h-[132px]">
+            <div class="text-xs text-slate-700 font-semibold">
+              部门白名单
+            </div>
+            <div v-if="departmentOptions.length" class="mt-2 max-h-52 overflow-auto space-y-2">
+              <label v-for="department in departmentOptions" :key="department.id" class="text-xs text-slate-600 flex gap-2 items-center">
+                <input v-model="selectedFeishuDepartmentIds" type="checkbox" :value="department.id" :disabled="!canSyncFeishuMembers">
+                <span class="truncate">{{ department.label }} · {{ department.count }} 人</span>
+              </label>
+            </div>
+            <p v-else class="text-xs text-slate-400 mt-3">
+              当前通讯录结果暂无部门信息
+            </p>
+          </div>
+
+          <div class="p-3 border border-slate-200 rounded-lg min-h-[132px]">
+            <div class="text-xs text-slate-700 font-semibold">
+              群白名单
+            </div>
+            <div v-if="groupOptions.length" class="mt-2 max-h-52 overflow-auto space-y-2">
+              <label v-for="group in groupOptions" :key="group.id" class="text-xs text-slate-600 flex gap-2 items-center">
+                <input v-model="selectedFeishuGroupIds" type="checkbox" :value="group.id" :disabled="!canSyncFeishuMembers">
+                <span class="truncate">{{ group.label }} · {{ group.count }} 人</span>
+              </label>
+            </div>
+            <p v-else class="text-xs text-slate-400 mt-3">
+              当前通讯录结果暂无群信息
+            </p>
+          </div>
+        </div>
+
+        <div v-if="selectedCandidates.length" class="mt-3 p-3 border border-slate-200 rounded-lg">
+          <div class="text-xs text-slate-700 font-semibold">
+            用户级角色映射
+          </div>
+          <div class="mt-2 space-y-2">
+            <div v-for="candidate in selectedCandidates" :key="candidate.unionId" class="text-xs text-slate-600 flex gap-3 items-center justify-between">
+              <span class="truncate">{{ candidate.name || candidate.unionId }}</span>
+              <select v-model="roleMappingDrafts[candidate.unionId]" class="px-2 border border-slate-200 rounded-lg bg-white h-8" :disabled="!canSyncFeishuMembers">
+                <option value="member">
+                  member
+                </option>
+                <option value="manager">
+                  manager
+                </option>
+                <option value="admin">
+                  admin
+                </option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 flex flex-wrap gap-2 justify-end">
+          <button class="text-xs text-slate-700 font-semibold px-3 py-2 border border-slate-200 rounded-lg disabled:opacity-40" type="button" :disabled="!canSyncFeishuMembers || previewing" @click="previewMemberSync">
+            预览成员同步
+          </button>
+          <button class="text-xs text-white font-semibold px-3 py-2 rounded-lg bg-blue-600 disabled:opacity-40" type="button" :disabled="!canSyncFeishuMembers || syncing" @click="runMemberSync">
+            执行成员同步
+          </button>
+        </div>
+
+        <div v-if="memberPreview" class="text-xs text-slate-600 mt-4 gap-2 grid md:grid-cols-6">
+          <div>新增 {{ memberPreview.createCount }}</div>
+          <div>更新 {{ memberPreview.updateCount }}</div>
+          <div>跳过 {{ memberPreview.skipCount }}</div>
+          <div>冲突 {{ memberPreview.conflictCount }}</div>
+          <div>席位失败 {{ memberPreview.seatFailedCount || 0 }}</div>
+          <div>角色映射 {{ memberPreview.roleMappingAppliedCount || 0 }}</div>
+        </div>
+
+        <div v-if="memberPreview?.diagnostics?.length" class="text-xs text-slate-500 mt-3 space-y-1">
+          <div v-for="diagnostic in memberPreview.diagnostics.slice(0, 5)" :key="`${diagnostic.code}:${diagnostic.unionId || diagnostic.message}`">
+            {{ diagnostic.code }} · {{ diagnostic.message }}<span v-if="diagnostic.count"> · {{ diagnostic.count }}</span>
+          </div>
+        </div>
+
+        <p v-if="memberSyncResult" class="text-xs text-slate-500 mt-3">
+          已创建 {{ memberSyncResult.createdUserIds.length }} 人，已更新 {{ memberSyncResult.updatedUserIds.length }} 人。
+        </p>
       </div>
     </div>
 
@@ -330,35 +631,21 @@ watch(
       <p class="text-sm text-slate-900 font-semibold">
         数据导入
       </p>
-      <div class="mt-3 gap-3 grid md:grid-cols-4">
-        <input v-model="importProjectIdDraft" class="text-xs px-3 outline-none border border-slate-200 rounded-lg h-9 focus:border-blue-500" placeholder="projectId">
-        <select v-model="importSourceTypeDraft" class="text-xs px-3 outline-none border border-slate-200 rounded-lg bg-white h-9 focus:border-blue-500">
-          <option value="feishu_doc">
-            文档
-          </option>
-          <option value="feishu_wiki">
-            Wiki
-          </option>
-          <option value="feishu_drive_file">
-            云盘文件
-          </option>
-          <option value="feishu_bitable">
-            多维表
-          </option>
-        </select>
-        <input v-model="importTokenDraft" class="text-xs px-3 outline-none border border-slate-200 rounded-lg h-9 focus:border-blue-500" :placeholder="importTokenPlaceholder">
-        <input v-model="importTitleDraft" class="text-xs px-3 outline-none border border-slate-200 rounded-lg h-9 focus:border-blue-500" placeholder="资源标题">
-      </div>
-      <div class="mt-3 gap-3 grid md:grid-cols-3">
-        <input v-model="importOriginalUrlDraft" class="text-xs px-3 outline-none border border-slate-200 rounded-lg h-9 focus:border-blue-500" placeholder="原始链接">
-        <input v-if="importSourceTypeDraft === 'feishu_bitable'" v-model="importBitableTableIdDraft" class="text-xs px-3 outline-none border border-slate-200 rounded-lg h-9 focus:border-blue-500" placeholder="table_id">
-        <input v-if="importSourceTypeDraft === 'feishu_bitable'" v-model="importBitableViewIdDraft" class="text-xs px-3 outline-none border border-slate-200 rounded-lg h-9 focus:border-blue-500" placeholder="view_id 可选">
-      </div>
-      <textarea v-if="importSourceTypeDraft !== 'feishu_drive_file'" v-model="importContentDraft" class="text-xs mt-3 px-3 py-2 outline-none border border-slate-200 rounded-lg min-h-[84px] w-full focus:border-blue-500" placeholder="可选：导入文本预览" />
-      <div class="mt-3 flex justify-end">
-        <button class="text-xs text-white font-semibold px-3 py-2 rounded-lg bg-slate-900 disabled:opacity-40" type="button" :disabled="!canImportFeishuResource || importing" @click="importFeishuSource">
-          导入飞书资源
+      <div class="mt-3 flex flex-wrap gap-3 items-center justify-between">
+        <p class="text-xs text-slate-500">
+          请在项目资源管理器使用“从飞书导入”，系统会自动绑定当前项目并标记为第三方导入资源。
+        </p>
+        <button
+          class="text-xs text-slate-700 font-semibold px-3 py-2 border border-slate-200 rounded-lg bg-white disabled:opacity-40"
+          type="button"
+          :disabled="!canImportFeishuResource"
+          @click="openProjectFeishuImportEntry"
+        >
+          去项目资源管理器导入
         </button>
+      </div>
+      <div v-if="!canImportFeishuResource" class="text-xs text-amber-700 mt-2">
+        {{ tokenHealthText }}
       </div>
     </div>
 
@@ -391,6 +678,27 @@ watch(
           暂无外部资源映射
         </p>
       </div>
+    </div>
+
+    <div class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex gap-3 items-center justify-between">
+        <p class="text-sm text-slate-900 font-semibold">
+          审计日志
+        </p>
+        <span class="text-xs text-slate-400">{{ auditLogs.length }} 条</span>
+      </div>
+      <div v-if="auditLogs.length" class="mt-3 space-y-2">
+        <div v-for="item in auditLogs.slice(0, 6)" :key="item.id" class="text-xs text-slate-600 flex gap-3 justify-between">
+          <span class="min-w-0">
+            <span class="text-slate-800 block truncate">{{ item.summary || item.action }}</span>
+            <span class="text-slate-400 block truncate">{{ item.action }}</span>
+          </span>
+          <span class="text-slate-500 shrink-0">{{ formatAuditStatus(item.status) }}</span>
+        </div>
+      </div>
+      <p v-else class="text-xs text-slate-400 mt-3">
+        暂无审计日志
+      </p>
     </div>
 
     <p v-if="errorText" class="user-settings-feedback user-settings-feedback--danger">
