@@ -11,12 +11,20 @@ import { Buffer } from 'node:buffer'
 const DEFAULT_FEISHU_API_BASE_URL = 'https://open.feishu.cn'
 const DEFAULT_GROUP_MEMBER_PAGE_SIZE = 200
 const DEFAULT_CONTACT_PAGE_SIZE = 50
+const FEISHU_TOKEN_CACHE_SKEW_MS = 60_000
+const marketplaceAppTokenCache = new Map<string, FeishuCachedToken>()
+const marketplaceTenantTokenCache = new Map<string, FeishuCachedToken>()
 
 interface FeishuApiEnvelope<T> {
   code?: number
   msg?: string
   message?: string
   data?: T
+}
+
+interface FeishuCachedToken {
+  token: string
+  expiresAt: number
 }
 
 interface OAuthAccessTokenData {
@@ -162,6 +170,10 @@ interface BitableGetRecordData {
     record_id?: string
     fields?: Record<string, unknown>
   }
+}
+
+interface FeishuDocxRawContentData {
+  content?: string
 }
 
 export interface FeishuDriveMediaDownload {
@@ -418,6 +430,93 @@ export async function getFeishuTenantAccessToken(config: FeishuIntegrationConfig
   return token
 }
 
+function readCachedFeishuToken(cache: Map<string, FeishuCachedToken>, key: string): string {
+  const cached = cache.get(key)
+  if (!cached)
+    return ''
+  if (cached.expiresAt <= Date.now() + FEISHU_TOKEN_CACHE_SKEW_MS) {
+    cache.delete(key)
+    return ''
+  }
+  return cached.token
+}
+
+function writeCachedFeishuToken(
+  cache: Map<string, FeishuCachedToken>,
+  key: string,
+  token: string,
+  expiresInSeconds?: number,
+): void {
+  const ttlMs = Math.max(60, Number(expiresInSeconds || 7200)) * 1000
+  cache.set(key, {
+    token,
+    expiresAt: Date.now() + ttlMs,
+  })
+}
+
+export async function getFeishuMarketplaceAppAccessToken(input: {
+  appId: string
+  appSecret: string
+  appTicket: string
+}): Promise<string> {
+  const appId = String(input.appId || '').trim()
+  const appSecret = String(input.appSecret || '').trim()
+  const appTicket = String(input.appTicket || '').trim()
+  if (!appId || !appSecret || !appTicket)
+    throw new Error('FEISHU_MARKETPLACE_APP_CONFIG_INCOMPLETE')
+
+  const cacheKey = `${appId}:${appTicket}`
+  const cachedToken = readCachedFeishuToken(marketplaceAppTokenCache, cacheKey)
+  if (cachedToken)
+    return cachedToken
+
+  const data = await requestFeishu<{ app_access_token?: string, expire?: number, expires_in?: number }>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/auth/v3/app_access_token',
+    method: 'POST',
+    body: {
+      app_id: appId,
+      app_secret: appSecret,
+      app_ticket: appTicket,
+    },
+  })
+  const token = String(data.app_access_token || '').trim()
+  if (!token)
+    throw new Error('FEISHU_APP_TOKEN_EMPTY')
+  writeCachedFeishuToken(marketplaceAppTokenCache, cacheKey, token, Number(data.expire || data.expires_in || 0))
+  return token
+}
+
+export async function getFeishuMarketplaceTenantAccessToken(input: {
+  appAccessToken: string
+  tenantKey: string
+}): Promise<string> {
+  const appAccessToken = String(input.appAccessToken || '').trim()
+  const tenantKey = String(input.tenantKey || '').trim()
+  if (!appAccessToken || !tenantKey)
+    throw new Error('FEISHU_MARKETPLACE_TENANT_CONFIG_INCOMPLETE')
+
+  const cacheKey = `${tenantKey}:${appAccessToken.slice(0, 16)}`
+  const cachedToken = readCachedFeishuToken(marketplaceTenantTokenCache, cacheKey)
+  if (cachedToken)
+    return cachedToken
+
+  const data = await requestFeishu<{ tenant_access_token?: string, expire?: number, expires_in?: number }>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/auth/v3/tenant_access_token',
+    method: 'POST',
+    body: {
+      app_access_token: appAccessToken,
+      tenant_key: tenantKey,
+    },
+  })
+  const token = String(data.tenant_access_token || '').trim()
+  if (!token)
+    throw new Error('FEISHU_TENANT_TOKEN_EMPTY')
+  writeCachedFeishuToken(marketplaceTenantTokenCache, cacheKey, token, Number(data.expire || data.expires_in || 0))
+  return token
+}
+
 export async function getFeishuWikiNodeInfo(input: {
   tenantAccessToken: string
   token: string
@@ -445,6 +544,24 @@ export async function getFeishuWikiNodeInfo(input: {
     objType,
     objToken,
   }
+}
+
+export async function getFeishuDocxRawContent(input: {
+  tenantAccessToken: string
+  documentId: string
+}): Promise<string> {
+  const documentId = String(input.documentId || '').trim()
+  if (!documentId)
+    return ''
+
+  const data = await requestFeishu<FeishuDocxRawContentData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: `/open-apis/docx/v1/documents/${encodeURIComponent(documentId)}/raw_content`,
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+  })
+
+  return String(data.content || '').trim()
 }
 
 export async function sendFeishuChatTextMessage(input: {

@@ -65,7 +65,7 @@ interface ProjectResourceTreeRow {
 }
 
 type ResourceTreeDropPosition = 'before' | 'inside' | 'after' | 'root_end'
-type ProjectResourceTypeFilterId = 'all' | 'meeting_notes' | 'meeting_recording' | 'notes' | 'design' | 'workflow' | 'upload' | 'library'
+type ProjectResourceTypeFilterId = 'all' | 'meeting_notes' | 'meeting_recording' | 'notes' | 'design' | 'workflow' | 'upload' | 'library' | 'external'
 
 interface ProjectResourceTypeFilterOption {
   id: ProjectResourceTypeFilterId
@@ -188,6 +188,7 @@ const emit = defineEmits<{
   'createCollabResource': [payload: CreateCollabResourcePayload]
   'createDeviceArrangement': []
   'openDefenseMode': []
+  'openFeishuImport': []
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
   'patchProjectResourceTree': [payload: { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> }]
@@ -567,6 +568,10 @@ function resolveProjectResourceTypeFilterId(resource: Resource): Exclude<Project
   if (artifactKind === 'meeting_notes')
     return 'meeting_notes'
 
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (source === 'external')
+    return 'external'
+
   const collabPurpose = String(resource.collabPurpose || '').trim().toLowerCase()
   if (collabPurpose === 'design')
     return 'design'
@@ -575,7 +580,6 @@ function resolveProjectResourceTypeFilterId(resource: Resource): Exclude<Project
   if (collabPurpose === 'notes' || resource.resourceKind === 'markdown')
     return 'notes'
 
-  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
   if (source === 'library')
     return 'library'
   return 'upload'
@@ -588,6 +592,7 @@ const projectResourceTypeFilterDefinitions: ProjectResourceTypeFilterOption[] = 
   { id: 'workflow', label: '流程图', icon: 'flowsheet' },
   { id: 'upload', label: '上传文件', icon: 'upload_file' },
   { id: 'library', label: '导入资料', icon: 'library_add' },
+  { id: 'external', label: '第三方导入', icon: 'extension' },
 ]
 
 const projectResourceTypeFilterOptions = computed<ProjectResourceTypeFilterOption[]>(() => {
@@ -1061,7 +1066,7 @@ const resourceKnowledgeTrustNotice = computed(() => {
   if (status.status === 'ready' && !visualNode) {
     return '当前资源已完成索引，但项目级 Loopy dashboard 暂未返回对应的 embedding 可信度信号；建议先确认 Loopy 数据工作台。'
   }
-  if (status.status === 'ready' && !visualNode.realEmbeddingReady) {
+  if (status.status === 'ready' && !visualNode?.realEmbeddingReady) {
     return '当前资源已完成索引，但没有真实 embedding 就绪信号；建议在 Loopy 数据工作台确认向量运行时。'
   }
   if (status.status === 'stale') {
@@ -1659,6 +1664,13 @@ function openLibraryFromMenu() {
   openLibraryModal(null)
 }
 
+function openFeishuImportFromMenu() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  projectResourceAddMenuOpen.value = false
+  emit('openFeishuImport')
+}
+
 function openLocalUploadFromMenu(parentResourceId?: string | null) {
   if (props.resourceMutating || !props.hasActiveProject)
     return
@@ -1839,6 +1851,12 @@ function buildProjectResourceAddMenuItems(): ContextMenuItem[] {
       disabled,
     },
     {
+      key: 'importFeishu',
+      label: '从飞书导入',
+      icon: 'extension',
+      disabled,
+    },
+    {
       key: 'uploadLocal',
       label: '从本地设备中上传',
       icon: 'upload_file',
@@ -1997,6 +2015,9 @@ function requestProjectResourceAddMenu(anchorEl: HTMLElement | null): void {
             return
           case 'importLibrary':
             openLibraryFromMenu()
+            return
+          case 'importFeishu':
+            openFeishuImportFromMenu()
             return
           case 'uploadLocal':
             openLocalUploadFromMenu()

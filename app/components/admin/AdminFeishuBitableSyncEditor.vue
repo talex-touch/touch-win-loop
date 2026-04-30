@@ -485,6 +485,7 @@ const loadingTables = ref(false)
 const loadingViews = ref(false)
 const loadingFieldInspection = ref(false)
 const creatingItem = ref(false)
+const editorRootRef = ref<HTMLElement | null>(null)
 const itemToggleMutating = reactive<Record<string, boolean>>({})
 const issueActionMutating = reactive<Record<string, boolean>>({})
 const batchIssueActionMutating = reactive<Record<string, boolean>>({})
@@ -942,7 +943,7 @@ const syncDetailLatestRunText = computed(() => {
 })
 const syncEnvironmentLabel = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.label || '未标记')
 const syncEnvironmentTagColor = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.tagColor || 'gray')
-const selectPopupContainer = computed(() => 'body')
+const selectPopupContainer = computed(() => editorRootRef.value)
 const mappingSelectPopupContainer = computed(() => 'body')
 const writebackSelectPopupContainer = computed(() => 'body')
 const autoSyncSelectPopupContainer = computed(() => 'body')
@@ -3571,7 +3572,7 @@ watch(() => props.selectedItemId, (value) => {
 </script>
 
 <template>
-  <div class="space-y-4" :class="embedded ? 'pb-4' : ''">
+  <div ref="editorRootRef" class="space-y-4" :class="embedded ? 'pb-4' : ''">
     <div class="flex flex-wrap gap-3 items-start justify-between">
       <div class="space-y-1">
         <div class="flex gap-2 items-center">

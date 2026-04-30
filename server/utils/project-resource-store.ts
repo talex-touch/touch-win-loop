@@ -29,7 +29,7 @@ interface ProjectResourceRow {
   project_id: string
   parent_resource_id?: string | null
   sort_order?: number | string | null
-  source: 'upload' | 'library' | 'collab'
+  source: 'upload' | 'library' | 'collab' | 'external'
   resource_kind?: ResourceKind | string | null
   linked_contest_resource_id: string | null
   title: string
@@ -143,7 +143,7 @@ export interface ProjectResourceTreePatchItem {
 
 export interface PurgedProjectResourceRef {
   resourceId: string
-  source: 'upload' | 'library' | 'collab'
+  source: 'upload' | 'library' | 'collab' | 'external'
   objectKey: string
 }
 
@@ -1608,6 +1608,301 @@ export async function createProjectUploadedResource(
       new Date().getFullYear(),
       sourceLink,
       input.accessLevel || 'public',
+      normalizeString(input.summary),
+      JSON.stringify(metadata),
+      input.actorUserId,
+      now,
+    ],
+  )
+
+  const resource = await getProjectResourceById(db, {
+    projectId: input.projectId,
+    resourceId,
+  })
+  if (!resource)
+    throw new Error('RESOURCE_CREATE_FAILED')
+  await scheduleProjectKnowledgeSourceUpsert(db, {
+    projectId: input.projectId,
+    resourceId: resource.id,
+  })
+  return resource
+}
+
+export async function createProjectExternalMarkdownResource(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUserId: string
+    title: string
+    content: string
+    sourceLink?: string
+    summary?: string
+    accessLevel?: ResourceAvailability
+    category?: ResourceCategory
+    parentResourceId?: string | null
+    metadata?: Record<string, unknown>
+    existingResourceId?: string | null
+  },
+): Promise<Resource> {
+  await ensureProjectExists(db, input.projectId)
+  const parentResourceId = await assertProjectResourceParentAvailable(db, {
+    projectId: input.projectId,
+    parentResourceId: input.parentResourceId,
+  })
+
+  const now = new Date().toISOString()
+  const metadata = {
+    resourceKind: 'markdown',
+    external: true,
+    importedAt: now,
+    ...parseResourceMetadata(input.metadata),
+  }
+  const title = normalizeString(input.title) || '飞书导入资源'
+  const content = normalizeString(input.content)
+  const sourceLink = normalizeString(input.sourceLink)
+  const existingResourceId = normalizeString(input.existingResourceId)
+
+  if (existingResourceId) {
+    await db.query(
+      `UPDATE project_resources
+       SET title = $3,
+           mime_type = 'text/markdown',
+           category = $4,
+           source_link = $5,
+           availability = $6,
+           summary = $7,
+           content = $8,
+           metadata = $9::JSONB,
+           status = 'active',
+           updated_by_user_id = $10,
+           updated_at = $11
+       WHERE project_id = $1
+         AND id = $2
+         AND source = 'external'`,
+      [
+        input.projectId,
+        existingResourceId,
+        title,
+        input.category || 'templates',
+        sourceLink,
+        input.accessLevel || 'login_required',
+        normalizeString(input.summary),
+        content,
+        JSON.stringify(metadata),
+        input.actorUserId,
+        now,
+      ],
+    )
+
+    const existing = await getProjectResourceById(db, {
+      projectId: input.projectId,
+      resourceId: existingResourceId,
+    })
+    if (existing) {
+      await scheduleProjectKnowledgeSourceUpsert(db, {
+        projectId: input.projectId,
+        resourceId: existing.id,
+      })
+      return existing
+    }
+  }
+
+  const resourceId = randomUUID()
+  const sortOrder = await resolveNextProjectResourceSortOrder(db, {
+    projectId: input.projectId,
+    parentResourceId,
+  })
+
+  await db.query(
+    `INSERT INTO project_resources (
+      id,
+      project_id,
+      parent_resource_id,
+      sort_order,
+      source,
+      resource_kind,
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, $4, 'external', 'markdown', NULL, $5, 'text/markdown', $6, $7, $8, $9, $10, $11, $12::JSONB, 'active', $13, $13, $14, $14
+    )`,
+    [
+      resourceId,
+      input.projectId,
+      parentResourceId,
+      sortOrder,
+      title,
+      input.category || 'templates',
+      new Date().getFullYear(),
+      sourceLink,
+      input.accessLevel || 'login_required',
+      normalizeString(input.summary),
+      content,
+      JSON.stringify(metadata),
+      input.actorUserId,
+      now,
+    ],
+  )
+
+  const resource = await getProjectResourceById(db, {
+    projectId: input.projectId,
+    resourceId,
+  })
+  if (!resource)
+    throw new Error('RESOURCE_CREATE_FAILED')
+  await scheduleProjectKnowledgeSourceUpsert(db, {
+    projectId: input.projectId,
+    resourceId: resource.id,
+  })
+  return resource
+}
+
+export async function createProjectExternalBinaryResource(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUserId: string
+    fileName: string
+    mimeType: string
+    fileSize: number
+    objectKey: string
+    storageProvider?: string
+    title?: string
+    summary?: string
+    accessLevel?: ResourceAvailability
+    category?: ResourceCategory
+    parentResourceId?: string | null
+    metadata?: Record<string, unknown>
+    existingResourceId?: string | null
+  },
+): Promise<Resource> {
+  await ensureProjectExists(db, input.projectId)
+  const parentResourceId = await assertProjectResourceParentAvailable(db, {
+    projectId: input.projectId,
+    parentResourceId: input.parentResourceId,
+  })
+
+  const now = new Date().toISOString()
+  const title = normalizeString(input.title) || normalizeUploadTitle(input.fileName)
+  const mimeType = normalizeString(input.mimeType) || 'application/octet-stream'
+  const sourceLink = normalizeString(input.objectKey)
+    ? buildServerApiEndpoint(`/projects/${input.projectId}/resources/${normalizeString(input.existingResourceId) || '__pending__'}/source`)
+    : ''
+  const metadata = {
+    resourceKind: 'binary',
+    external: true,
+    objectKey: normalizeString(input.objectKey),
+    fileName: normalizeString(input.fileName),
+    mimeType,
+    fileSize: Number.isFinite(Number(input.fileSize)) ? Number(input.fileSize) : 0,
+    storageProvider: normalizeString(input.storageProvider) || 'runtime',
+    importedAt: now,
+    ...parseResourceMetadata(input.metadata),
+  }
+  const existingResourceId = normalizeString(input.existingResourceId)
+
+  if (existingResourceId) {
+    await db.query(
+      `UPDATE project_resources
+       SET title = $3,
+           resource_kind = 'binary',
+           mime_type = $4,
+           category = $5,
+           source_link = $6,
+           availability = $7,
+           summary = $8,
+           content = '',
+           metadata = $9::JSONB,
+           status = 'active',
+           updated_by_user_id = $10,
+           updated_at = $11
+       WHERE project_id = $1
+         AND id = $2
+         AND source = 'external'`,
+      [
+        input.projectId,
+        existingResourceId,
+        title,
+        mimeType,
+        input.category || 'templates',
+        buildServerApiEndpoint(`/projects/${input.projectId}/resources/${existingResourceId}/source`),
+        input.accessLevel || 'login_required',
+        normalizeString(input.summary),
+        JSON.stringify(metadata),
+        input.actorUserId,
+        now,
+      ],
+    )
+
+    const existing = await getProjectResourceById(db, {
+      projectId: input.projectId,
+      resourceId: existingResourceId,
+    })
+    if (existing) {
+      await scheduleProjectKnowledgeSourceUpsert(db, {
+        projectId: input.projectId,
+        resourceId: existing.id,
+      })
+      return existing
+    }
+  }
+
+  const resourceId = randomUUID()
+  const sortOrder = await resolveNextProjectResourceSortOrder(db, {
+    projectId: input.projectId,
+    parentResourceId,
+  })
+
+  await db.query(
+    `INSERT INTO project_resources (
+      id,
+      project_id,
+      parent_resource_id,
+      sort_order,
+      source,
+      resource_kind,
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, $4, 'external', 'binary', NULL, $5, $6, $7, $8, $9, $10, $11, '', $12::JSONB, 'active', $13, $13, $14, $14
+    )`,
+    [
+      resourceId,
+      input.projectId,
+      parentResourceId,
+      sortOrder,
+      title,
+      mimeType,
+      input.category || 'templates',
+      new Date().getFullYear(),
+      sourceLink.replace('__pending__', resourceId),
+      input.accessLevel || 'login_required',
       normalizeString(input.summary),
       JSON.stringify(metadata),
       input.actorUserId,

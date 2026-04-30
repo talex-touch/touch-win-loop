@@ -334,6 +334,8 @@ export function canDuplicateResource(resource: Resource): boolean {
 
 export function resourceSourceLabel(resource: Resource): string {
   const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (source === 'external')
+    return '第三方导入'
   if (source === 'collab' || resource.resourceKind === 'markdown' || resource.resourceKind === 'draw')
     return resolveCollabResourceLabel(resource)
   if (source === 'upload' || source === 'project_upload')

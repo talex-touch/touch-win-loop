@@ -6,6 +6,11 @@ import type {
   FeishuAdminOverview,
   FeishuBitableSourceConfig,
   FeishuBitableSync,
+  FeishuBitableSyncConfigImportPreview,
+  FeishuBitableSyncConfigImportResult,
+  FeishuBitableSyncConfigPackage,
+  FeishuBitableSyncConfigPackageSummary,
+  FeishuBitableSyncConfigShare,
   FeishuBitableSyncDetail,
   FeishuBitableSyncEnvironment,
   FeishuBitableSyncItem,
@@ -104,11 +109,13 @@ const manualAddingKey = ref('')
 const syncToggleMutating = reactive<Record<string, boolean>>({})
 const archivingSyncMutating = reactive<Record<string, boolean>>({})
 const restoringSyncMutating = reactive<Record<string, boolean>>({})
+const syncConfigShareMutating = reactive<Record<string, boolean>>({})
 const syncItemToggleMutating = reactive<Record<string, boolean>>({})
 const issueActionMutating = reactive<Record<string, boolean>>({})
 
 const createSyncDrawerVisible = ref(false)
 const editSyncDrawerVisible = ref(false)
+const syncConfigImportDrawerVisible = ref(false)
 const createSourceMode = ref<CreateSyncSourceMode>('url')
 const configDialogVisible = ref(false)
 const editingSyncId = ref('')
@@ -129,6 +136,12 @@ const adminOverview = ref<FeishuAdminOverview | null>(null)
 const syncs = ref<FeishuBitableSync[]>([])
 const startupNotifyChatOptions = ref<FeishuChatCandidate[]>([])
 const startupNotifyChatSearchKeyword = ref('')
+const syncConfigShares = reactive<Record<string, FeishuBitableSyncConfigShare | null>>({})
+const syncConfigImportUrl = ref('')
+const syncConfigImportPreview = ref<FeishuBitableSyncConfigImportPreview | null>(null)
+const syncConfigImportLoading = ref(false)
+const syncConfigImporting = ref(false)
+const syncConfigImportErrorText = ref('')
 const expandedSyncDetails = reactive<Record<string, FeishuBitableSyncDetail | null>>({})
 const expandedSyncLoading = reactive<Record<string, boolean>>({})
 const expandedSyncErrors = reactive<Record<string, string>>({})
@@ -149,7 +162,7 @@ const syncColumns = [
   { title: '主调度', dataIndex: 'schedule', slotName: 'schedule', width: 220 },
   { title: '问题', dataIndex: 'issueStats', slotName: 'issueStats', width: 120 },
   { title: '更新时间', dataIndex: 'updatedAt', slotName: 'updatedAt', width: 170 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 430 },
+  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 560 },
 ]
 
 const syncItemPreviewColumns = [
@@ -199,6 +212,7 @@ const {
 const configForm = reactive({
   enabled: false,
   appId: '',
+  marketplaceAppUrl: '',
   oauthRedirectUri: '',
   adminGroupIdsText: '',
   webSdkScriptUrl: '',
@@ -639,6 +653,7 @@ const selectedStartupNotifyChat = computed(() => {
 function fillConfigForm(payload: FeishuIntegrationConfig) {
   configForm.enabled = Boolean(payload.enabled)
   configForm.appId = payload.appId || ''
+  configForm.marketplaceAppUrl = payload.marketplaceAppUrl || ''
   configForm.oauthRedirectUri = payload.oauthRedirectUri || ''
   configForm.adminGroupIdsText = Array.isArray(payload.adminGroupIds) ? payload.adminGroupIds.join('\n') : ''
   configForm.webSdkScriptUrl = payload.webSdkScriptUrl || ''
@@ -1174,6 +1189,7 @@ async function saveConfig() {
         body: {
           enabled: configForm.enabled,
           appId: configForm.appId.trim(),
+          marketplaceAppUrl: configForm.marketplaceAppUrl.trim(),
           oauthRedirectUri: configForm.oauthRedirectUri.trim(),
           adminGroupIds: parseMultilineList(configForm.adminGroupIdsText),
           webSdkScriptUrl: configForm.webSdkScriptUrl.trim(),
@@ -1318,6 +1334,73 @@ function openCreateSyncDrawer() {
   createSyncDrawerVisible.value = true
 }
 
+function resetSyncConfigImportState() {
+  syncConfigImportUrl.value = ''
+  syncConfigImportPreview.value = null
+  syncConfigImportErrorText.value = ''
+}
+
+function openSyncConfigImportDrawer() {
+  clearFeedback()
+  resetSyncConfigImportState()
+  syncConfigImportDrawerVisible.value = true
+}
+
+function syncConfigShareFor(sync: FeishuBitableSync): FeishuBitableSyncConfigShare | null {
+  const syncId = String(sync.id || '').trim()
+  return syncId ? syncConfigShares[syncId] || null : null
+}
+
+function syncConfigEntityTypeText(summary?: FeishuBitableSyncConfigPackageSummary | null): string {
+  const entityTypes = summary?.entityTypes || []
+  if (!entityTypes.length)
+    return '无子表实体'
+  return entityTypes.map(item => syncItemEntityTypeLabel(item)).join('、')
+}
+
+function extractShareKeyFromConfigUrl(rawUrl: string): string {
+  const url = String(rawUrl || '').trim()
+  if (!url)
+    return ''
+  const match = url.match(/\/bitable-sync-config\/([^/?#]+)/)
+  return match ? decodeURIComponent(match[1] || '') : ''
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  const value = String(text || '').trim()
+  if (!value || !import.meta.client)
+    return
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value)
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+}
+
+function downloadJsonFile(filename: string, payload: unknown) {
+  if (!import.meta.client)
+    return
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: 'application/json;charset=utf-8',
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 function resetEditSyncDrawerState() {
   editingSyncId.value = ''
   editingSelectedItemId.value = ''
@@ -1396,6 +1479,177 @@ async function createSync() {
 
 async function refreshSyncList() {
   await loadSyncs()
+}
+
+async function downloadSyncConfigPackage(sync: FeishuBitableSync) {
+  if (!canManageBitable.value)
+    return
+
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  clearFeedback()
+  try {
+    const pkg = await requestApi<FeishuBitableSyncConfigPackage>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/config-package`),
+      {},
+      '同步配置包导出失败。',
+    )
+    const safeName = String(sync.name || syncId).replace(/[^\w\u4E00-\u9FA5.-]+/g, '-')
+    downloadJsonFile(`feishu-bitable-sync-config-${safeName}.json`, pkg)
+    setSuccess(`同步信息“${sync.name || syncId}”配置包已导出。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '同步配置包导出失败。'))
+  }
+}
+
+async function createSyncConfigShare(sync: FeishuBitableSync) {
+  if (!canManageBitable.value)
+    return
+
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  syncConfigShareMutating[syncId] = true
+  clearFeedback()
+  try {
+    const share = await requestApi<FeishuBitableSyncConfigShare>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/config-share`),
+      {
+        method: 'POST',
+      },
+      '公网配置创建失败。',
+    )
+    syncConfigShares[syncId] = share
+    setSuccess(`公网配置已创建，默认有效至 ${formatDateTime(share.expiresAt)}。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '公网配置创建失败。'))
+  }
+  finally {
+    syncConfigShareMutating[syncId] = false
+  }
+}
+
+async function copySyncConfigShareUrl(sync: FeishuBitableSync) {
+  const share = syncConfigShareFor(sync)
+  if (!share?.shareUrl) {
+    setError('请先创建公网配置，再复制链接。')
+    return
+  }
+  try {
+    await copyTextToClipboard(share.shareUrl)
+    setSuccess('公网配置链接已复制。')
+  }
+  catch {
+    setError('公网配置链接复制失败，请手动复制。')
+  }
+}
+
+async function revokeSyncConfigShare(sync: FeishuBitableSync) {
+  if (!canManageBitable.value)
+    return
+
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  syncConfigShareMutating[syncId] = true
+  clearFeedback()
+  try {
+    await requestApi<{ revokedCount: number }>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/config-share`),
+      {
+        method: 'DELETE',
+        body: {
+          shareKey: syncConfigShareFor(sync)?.shareKey || '',
+        },
+      },
+      '公网配置撤销失败。',
+    )
+    syncConfigShares[syncId] = null
+    setSuccess(`同步信息“${sync.name || syncId}”的公网配置已撤销。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '公网配置撤销失败。'))
+  }
+  finally {
+    syncConfigShareMutating[syncId] = false
+  }
+}
+
+async function previewSyncConfigImport() {
+  if (!canManageBitable.value)
+    return
+
+  const url = syncConfigImportUrl.value.trim()
+  if (!url) {
+    syncConfigImportErrorText.value = '请先填写公网配置 URL。'
+    return
+  }
+
+  syncConfigImportLoading.value = true
+  syncConfigImportErrorText.value = ''
+  syncConfigImportPreview.value = null
+  try {
+    syncConfigImportPreview.value = await requestApi<FeishuBitableSyncConfigImportPreview>(
+      endpoint('/admin/integrations/feishu/bitable-syncs/config-import/preview'),
+      {
+        method: 'POST',
+        body: { url },
+      },
+      '配置包预览失败。',
+    )
+  }
+  catch (error: any) {
+    syncConfigImportErrorText.value = String(error?.data?.message || '配置包预览失败。')
+  }
+  finally {
+    syncConfigImportLoading.value = false
+  }
+}
+
+async function confirmSyncConfigImport() {
+  if (!canManageBitable.value)
+    return
+
+  if (!syncConfigImportPreview.value)
+    await previewSyncConfigImport()
+  if (!syncConfigImportPreview.value)
+    return
+
+  syncConfigImporting.value = true
+  syncConfigImportErrorText.value = ''
+  try {
+    const result = await requestApi<FeishuBitableSyncConfigImportResult>(
+      endpoint('/admin/integrations/feishu/bitable-syncs/config-import/import'),
+      {
+        method: 'POST',
+        body: {
+          url: syncConfigImportUrl.value.trim(),
+          shareKey: extractShareKeyFromConfigUrl(syncConfigImportUrl.value),
+          package: syncConfigImportPreview.value.package,
+        },
+      },
+      '配置包导入失败。',
+    )
+    syncConfigImportDrawerVisible.value = false
+    await loadSyncs()
+    await nextTick()
+    openEditSyncDrawer(result.sync.id, {
+      includeArchived: false,
+    })
+    setSuccess(`配置包已导入为“${result.sync.name}”，主同步、子表和调度均保持禁用，请先预检并手动执行。`)
+  }
+  catch (error: any) {
+    syncConfigImportErrorText.value = String(error?.data?.message || '配置包导入失败。')
+  }
+  finally {
+    syncConfigImporting.value = false
+  }
 }
 
 async function toggleSyncEnabled(sync: FeishuBitableSync, enabled: boolean) {
@@ -1704,6 +1958,9 @@ onMounted(initializePage)
                   <a-switch v-model="showArchivedSyncs" size="small" @change="refreshSyncList" />
                   <span>显示已归档</span>
                 </label>
+                <a-button size="small" @click="openSyncConfigImportDrawer">
+                  从配置 URL 导入
+                </a-button>
                 <a-button size="small" type="primary" @click="openCreateSyncDrawer">
                   新建同步信息
                 </a-button>
@@ -1867,6 +2124,35 @@ onMounted(initializePage)
                   >
                     {{ record.archivedAt ? '查看同步信息' : '编辑同步信息' }}
                   </a-button>
+                  <a-button size="mini" @click="downloadSyncConfigPackage(record)">
+                    导出配置
+                  </a-button>
+                  <a-button
+                    size="mini"
+                    :loading="syncConfigShareMutating[record.id]"
+                    @click="createSyncConfigShare(record)"
+                  >
+                    创建公网配置
+                  </a-button>
+                  <a-button
+                    size="mini"
+                    :disabled="!syncConfigShareFor(record)"
+                    @click="copySyncConfigShareUrl(record)"
+                  >
+                    复制公网配置
+                  </a-button>
+                  <a-popconfirm
+                    content="确认撤销该同步信息的公网配置链接吗？撤销后已有链接将无法继续导入。"
+                    type="warning"
+                    @ok="revokeSyncConfigShare(record)"
+                  >
+                    <a-button
+                      size="mini"
+                      :disabled="syncConfigShareMutating[record.id]"
+                    >
+                      撤销公网配置
+                    </a-button>
+                  </a-popconfirm>
                   <a-button
                     v-if="!record.archivedAt"
                     size="mini"
@@ -2098,6 +2384,11 @@ onMounted(initializePage)
               <a-input v-model="configForm.appId" class="mt-1" allow-clear size="small" placeholder="cli_xxx" />
             </label>
 
+            <label class="text-[10px] text-slate-600 font-medium block">
+              商店应用安装地址
+              <a-input v-model="configForm.marketplaceAppUrl" class="mt-1" allow-clear size="small" placeholder="https://open.feishu.cn/app/..." />
+            </label>
+
             <label class="text-[10px] text-slate-600 font-medium block md:col-span-2">
               OAuth Redirect URI
               <a-input v-model="configForm.oauthRedirectUri" class="mt-1" allow-clear size="small" placeholder="https://domain/api/auth/feishu/callback" />
@@ -2198,7 +2489,11 @@ onMounted(initializePage)
             <p class="m-0">
               App Secret：{{ config?.appSecretConfigured ? '已配置' : '未配置' }}；
               Event Token：{{ config?.eventTokenConfigured ? '已配置' : '未配置' }}；
-              Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}
+              Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}；
+              App Ticket：{{ config?.appTicketConfigured ? '已接收' : '未接收' }}
+            </p>
+            <p v-if="config?.appTicketUpdatedAt" class="m-0">
+              App Ticket 最近更新：{{ config.appTicketUpdatedAt }}
             </p>
             <p v-if="config?.updatedAt" class="m-0">
               最近更新：{{ config.updatedAt }}（{{ config.updatedByUserId || 'unknown' }}）
@@ -2627,6 +2922,96 @@ onMounted(initializePage)
           </a-button>
           <a-button size="small" type="primary" :loading="creatingSync" @click="createSync">
             创建并继续配置
+          </a-button>
+        </div>
+      </div>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="syncConfigImportDrawerVisible"
+      title="从配置 URL 导入"
+      :mask-closable="!syncConfigImporting"
+      :closable="!syncConfigImporting"
+      :esc-to-close="!syncConfigImporting"
+      :footer="false"
+      width="680px"
+    >
+      <div class="space-y-3">
+        <section class="p-3 border border-slate-200 bg-slate-50 space-y-2">
+          <p class="text-[11px] text-slate-700 font-medium m-0">
+            导入策略
+          </p>
+          <p class="text-[10px] text-slate-500 leading-5 m-0">
+            配置包只迁移主库、子表、字段映射、回填、自动同步和调度草案；不会迁移运行记录、问题记录或已同步业务数据。导入后不会自动启用主同步、子表或调度。
+          </p>
+        </section>
+
+        <label class="text-[10px] text-slate-600 font-medium block">
+          公网配置 URL
+          <a-textarea
+            v-model="syncConfigImportUrl"
+            class="mt-1"
+            allow-clear
+            :auto-size="{ minRows: 2, maxRows: 4 }"
+            placeholder="https://your-domain/api/feishu/bitable-sync-config/..."
+          />
+        </label>
+
+        <div class="flex gap-2 justify-end">
+          <a-button size="small" :loading="syncConfigImportLoading" @click="previewSyncConfigImport">
+            预览配置
+          </a-button>
+        </div>
+
+        <section v-if="syncConfigImportErrorText" class="p-3 border border-rose-200 bg-rose-50">
+          <p class="text-[10px] text-rose-600 m-0 break-all">
+            {{ syncConfigImportErrorText }}
+          </p>
+        </section>
+
+        <section v-if="syncConfigImportPreview" class="p-3 border border-slate-200 bg-white space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+              配置摘要
+            </h3>
+            <a-tag size="small" color="arcoblue">
+              {{ syncConfigImportPreview.summary.itemCount }} 个子表项
+            </a-tag>
+          </div>
+          <div class="gap-2 grid md:grid-cols-2">
+            <p class="text-[10px] text-slate-500 m-0">
+              名称：{{ syncConfigImportPreview.summary.name || '-' }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0">
+              主库：{{ syncConfigImportPreview.summary.appName || syncConfigImportPreview.summary.appToken || '-' }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0">
+              环境：{{ syncEnvironmentLabel(syncConfigImportPreview.summary.environment || undefined) }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0">
+              实体：{{ syncConfigEntityTypeText(syncConfigImportPreview.summary) }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0">
+              映射字段：{{ syncConfigImportPreview.summary.mappingFieldCount }}
+            </p>
+          </div>
+          <p class="text-[10px] text-amber-600 m-0">
+            导入后会创建一条新的同步信息，且默认保持禁用。请先完成预检和手动执行，再决定是否启用调度。
+          </p>
+        </section>
+
+        <div class="flex gap-2 justify-end">
+          <a-button size="small" :disabled="syncConfigImporting" @click="syncConfigImportDrawerVisible = false">
+            取消
+          </a-button>
+          <a-button
+            size="small"
+            type="primary"
+            :loading="syncConfigImporting"
+            :disabled="!syncConfigImportPreview"
+            @click="confirmSyncConfigImport"
+          >
+            确认导入
           </a-button>
         </div>
       </div>

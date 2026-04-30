@@ -357,7 +357,7 @@ export async function createProjectPreviewDocumentWithTask(
       : 'application/pdf'
   const previewFileSize = isPdf || isImage ? sourceFileSize : 0
 
-  await db.query(
+  const upserted = await db.query<{ id: string }>(
     `INSERT INTO project_resource_documents (
       id,
       project_id,
@@ -401,7 +401,42 @@ export async function createProjectPreviewDocumentWithTask(
       $10, $11, $12, $13, $14, $15,
       $16, $17, $18, 0, $19, $20, $21, $22, $23, 0, $24,
       $25, NULL, $26, '', '', '{}'::JSONB, '{}'::JSONB, $27, $27, $28, $28
-    )`,
+    )
+    ON CONFLICT (project_resource_id)
+    DO UPDATE SET
+      object_key = EXCLUDED.object_key,
+      source_object_key = EXCLUDED.source_object_key,
+      preview_object_key = EXCLUDED.preview_object_key,
+      storage_provider = EXCLUDED.storage_provider,
+      source_storage_provider = EXCLUDED.source_storage_provider,
+      preview_storage_provider = EXCLUDED.preview_storage_provider,
+      file_name = EXCLUDED.file_name,
+      source_file_name = EXCLUDED.source_file_name,
+      preview_file_name = EXCLUDED.preview_file_name,
+      mime_type = EXCLUDED.mime_type,
+      source_mime_type = EXCLUDED.source_mime_type,
+      preview_mime_type = EXCLUDED.preview_mime_type,
+      file_size = EXCLUDED.file_size,
+      source_file_size = EXCLUDED.source_file_size,
+      preview_file_size = EXCLUDED.preview_file_size,
+      page_count = 0,
+      parse_status = EXCLUDED.parse_status,
+      parse_error = EXCLUDED.parse_error,
+      preview_status = EXCLUDED.preview_status,
+      preview_stage = EXCLUDED.preview_stage,
+      preview_progress_percent = EXCLUDED.preview_progress_percent,
+      preview_eta_seconds = EXCLUDED.preview_eta_seconds,
+      preview_error = EXCLUDED.preview_error,
+      queued_at = EXCLUDED.queued_at,
+      started_at = NULL,
+      finished_at = EXCLUDED.finished_at,
+      parser_provider = '',
+      parser_model = '',
+      analysis_json = '{}'::JSONB,
+      annotation_json = '{}'::JSONB,
+      updated_by_user_id = EXCLUDED.updated_by_user_id,
+      updated_at = EXCLUDED.updated_at
+    RETURNING id`,
     [
       documentId,
       input.projectId,
@@ -433,6 +468,7 @@ export async function createProjectPreviewDocumentWithTask(
       now,
     ],
   )
+  const persistedDocumentId = normalizeString(upserted.rows[0]?.id) || documentId
 
   let task: ProjectResourceDocumentTask | null = null
   if (previewStatus === 'queued') {
@@ -458,12 +494,12 @@ export async function createProjectPreviewDocumentWithTask(
       ) VALUES (
         $1, $2, 'convert_preview_pdf', 'onlyoffice', 'queued', 0, 'queued', 0, '', '{}'::JSONB, NULL, NULL, $3, $3, $4, $4
       )`,
-      [taskId, documentId, input.actorUserId, now],
+      [taskId, persistedDocumentId, input.actorUserId, now],
     )
     task = await getProjectDocumentTaskById(db, { taskId })
   }
 
-  const document = await getProjectResourceDocumentById(db, { documentId })
+  const document = await getProjectResourceDocumentById(db, { documentId: persistedDocumentId })
   if (!document)
     throw new Error('PROJECT_RESOURCE_DOCUMENT_CREATE_FAILED')
 

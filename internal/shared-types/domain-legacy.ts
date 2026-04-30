@@ -363,7 +363,7 @@ export interface Resource {
   metadata?: Record<string, unknown>
   category?: ResourceCategory
   sourceType?: string
-  source?: 'upload' | 'library' | 'collab'
+  source?: 'upload' | 'library' | 'collab' | 'external'
   linkedContestResourceId?: string | null
   isFavorite?: boolean
   status?: ResourceStatus
@@ -376,6 +376,161 @@ export interface Resource {
   updatedAt?: string
   deletedAt?: string | null
   aiProfile?: ResourceKnowledgeProfileSummary
+}
+
+export type WorkspaceIntegrationProvider = 'feishu'
+export type WorkspaceIntegrationConnectionStatus = 'pending' | 'connected' | 'needs_reauth' | 'disabled' | 'uninstalled'
+export type WorkspaceIntegrationMemberSyncMode = 'whitelist'
+export type WorkspaceIntegrationImportJobStatus = 'queued' | 'processing' | 'succeeded' | 'partial_success' | 'failed'
+export type WorkspaceIntegrationExternalSourceType = 'feishu_doc' | 'feishu_wiki' | 'feishu_drive_file' | 'feishu_bitable'
+
+export interface WorkspaceIntegrationConnection {
+  id: string
+  workspaceId: string
+  provider: WorkspaceIntegrationProvider
+  status: WorkspaceIntegrationConnectionStatus
+  tenantKey: string
+  tenantName: string
+  externalAppId: string
+  scopes: string[]
+  capabilities: Record<string, unknown>
+  installedByUserId?: string | null
+  authorizedByUserId?: string | null
+  lastHealthCheckAt?: string | null
+  lastError?: string
+  disconnectedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkspaceIntegrationSyncPolicy {
+  id: string
+  connectionId: string
+  memberSyncMode: WorkspaceIntegrationMemberSyncMode
+  autoLoginEnabled: boolean
+  defaultWorkspaceRole: Extract<WorkspaceMemberRole, 'admin' | 'manager' | 'member'>
+  departmentIds: string[]
+  userIds: string[]
+  groupIds: string[]
+  roleMappings: Record<string, Extract<WorkspaceMemberRole, 'admin' | 'manager' | 'member'>>
+  lastPreviewAt?: string | null
+  lastSyncAt?: string | null
+  lastSyncResult?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkspaceIntegrationSummary {
+  provider: WorkspaceIntegrationProvider
+  connected: boolean
+  connection?: WorkspaceIntegrationConnection | null
+  policy?: WorkspaceIntegrationSyncPolicy | null
+}
+
+export interface WorkspaceIntegrationListResult {
+  integrations: WorkspaceIntegrationSummary[]
+}
+
+export interface WorkspaceFeishuIntegrationSnapshot extends WorkspaceIntegrationSummary {
+  provider: 'feishu'
+  importJobs: WorkspaceFeishuImportJob[]
+  externalResources: WorkspaceExternalResourceRef[]
+}
+
+export interface WorkspaceFeishuIntegrationPatchRequest {
+  tenantKey?: string
+  tenantName?: string
+  scopes?: string[]
+  capabilities?: Record<string, unknown>
+  syncPolicy?: Partial<Pick<WorkspaceIntegrationSyncPolicy, 'autoLoginEnabled' | 'defaultWorkspaceRole' | 'departmentIds' | 'userIds' | 'groupIds' | 'roleMappings'>>
+}
+
+export interface WorkspaceFeishuDirectoryUserCandidate {
+  openId?: string
+  unionId: string
+  name: string
+  email?: string
+  mobile?: string
+  departmentIds?: string[]
+  groupIds?: string[]
+  avatarUrl?: string
+}
+
+export interface WorkspaceFeishuMemberSyncPreview {
+  totalCandidates: number
+  whitelistedCount: number
+  createCount: number
+  updateCount: number
+  skipCount: number
+  conflictCount: number
+  seatRequired: number
+  diagnostics: Array<{ code: string, message: string, count?: number }>
+}
+
+export interface WorkspaceFeishuMemberSyncResult extends WorkspaceFeishuMemberSyncPreview {
+  createdUserIds: string[]
+  updatedUserIds: string[]
+}
+
+export interface WorkspaceFeishuImportSource {
+  type: WorkspaceIntegrationExternalSourceType
+  token: string
+  title: string
+  content?: string
+  originalUrl?: string
+  versionHash?: string
+  updatedAt?: string
+  mimeType?: string
+  fileName?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceFeishuImportJob {
+  id: string
+  workspaceId: string
+  connectionId: string
+  projectId: string
+  provider: 'feishu'
+  status: WorkspaceIntegrationImportJobStatus
+  requestedByUserId?: string | null
+  sourceCount: number
+  importedCount: number
+  skippedCount: number
+  failedCount: number
+  diagnostics: Record<string, unknown>
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkspaceFeishuImportRequest {
+  projectId: string
+  sources: WorkspaceFeishuImportSource[]
+}
+
+export interface WorkspaceFeishuImportResult {
+  job: WorkspaceFeishuImportJob
+  resources: Resource[]
+}
+
+export interface WorkspaceExternalResourceRef {
+  id: string
+  workspaceId: string
+  projectId: string
+  connectionId: string
+  importJobId?: string | null
+  provider: WorkspaceIntegrationProvider
+  externalType: WorkspaceIntegrationExternalSourceType
+  externalToken: string
+  externalUrl: string
+  resourceId?: string | null
+  sourceHash: string
+  metadata: Record<string, unknown>
+  lastImportStatus: 'succeeded' | 'skipped' | 'failed'
+  lastError: string
+  createdAt: string
+  updatedAt: string
 }
 
 export type ProjectKnowledgeScopeType = 'project_resource' | 'contest_resource'
@@ -5001,6 +5156,9 @@ export interface FeishuIntegrationConfig {
   enabled: boolean
   appId: string
   appSecretConfigured: boolean
+  marketplaceAppUrl: string
+  appTicketConfigured: boolean
+  appTicketUpdatedAt: string
   oauthRedirectUri: string
   eventTokenConfigured: boolean
   eventEncryptKeyConfigured: boolean
@@ -5229,6 +5387,64 @@ export interface FeishuBitableSyncItem {
 
 export interface FeishuBitableSyncDetail extends FeishuBitableSync {
   items: FeishuBitableSyncItem[]
+}
+
+export interface FeishuBitableSyncConfigPackageItem {
+  name: string
+  entityType: FeishuBitableSyncItemEntityType
+  tableId: string
+  viewId: string
+  source: FeishuBitableSourceConfig
+  writeback: FeishuBitableWritebackConfig | Record<string, unknown>
+  autoSync: FeishuBitableAutoSyncConfig | Record<string, unknown>
+  mapping: FeishuMappingV1 | FeishuMappingConfigV2 | Record<string, unknown>
+  options: Record<string, unknown>
+  scheduleDraft: FeishuTaskScheduleConfig
+}
+
+export interface FeishuBitableSyncConfigPackage {
+  version: 1
+  kind: 'feishu_bitable_sync_config'
+  exportedAt: string
+  name: string
+  source: FeishuBitableSourceConfig
+  scheduleDraft: FeishuTaskScheduleConfig
+  items: FeishuBitableSyncConfigPackageItem[]
+}
+
+export interface FeishuBitableSyncConfigPackageSummary {
+  name: string
+  appName: string
+  appToken: string
+  environment: FeishuBitableSyncEnvironment | ''
+  itemCount: number
+  entityTypes: FeishuBitableSyncItemEntityType[]
+  mappingFieldCount: number
+}
+
+export interface FeishuBitableSyncConfigShare {
+  id: string
+  sourceSyncId: string
+  shareKey: string
+  shareUrl: string
+  package: FeishuBitableSyncConfigPackage
+  expiresAt: string
+  revokedAt: string | null
+  createdByUserId: string | null
+  revokedByUserId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface FeishuBitableSyncConfigImportPreview {
+  summary: FeishuBitableSyncConfigPackageSummary
+  package: FeishuBitableSyncConfigPackage
+}
+
+export interface FeishuBitableSyncConfigImportResult {
+  sync: FeishuBitableSyncDetail
+  importedItemCount: number
+  sourceShareKey: string | null
 }
 
 export interface FeishuBitableSyncItemDetail extends FeishuBitableSyncItem {

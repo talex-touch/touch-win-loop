@@ -26,7 +26,7 @@ import {
   WORKSPACE_TAB_SPACING_PRESET_OPTIONS,
 } from '~/composables/useWorkspaceDisplayPreferences'
 
-type UserSettingsTabId = 'profile' | 'displayPreferences' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
+type UserSettingsTabId = 'profile' | 'displayPreferences' | 'overview' | 'ai' | 'members' | 'thirdPartyPlatforms' | 'bindings' | 'loginHistory' | 'audits'
 type UserSettingsNavGroupId = 'profile' | 'workspace'
 
 interface UserSettingsTabMeta {
@@ -48,6 +48,7 @@ const props = withDefaults(defineProps<{
   isPlatformAdminUser?: boolean
   workspaceOptions?: WorkspaceWithQuota[]
   activeWorkspaceId?: string
+  initialTab?: string
 }>(), {
   visible: false,
   userName: '未登录用户',
@@ -59,6 +60,7 @@ const props = withDefaults(defineProps<{
   isPlatformAdminUser: false,
   workspaceOptions: () => [],
   activeWorkspaceId: '',
+  initialTab: '',
 })
 
 const emit = defineEmits<{
@@ -111,6 +113,7 @@ const tabItems: UserSettingsTabMeta[] = [
   { id: 'overview', groupId: 'workspace', label: '工作空间概览', icon: 'dashboard', description: '查看当前工作空间的核心信息。' },
   { id: 'ai', groupId: 'workspace', label: 'AI 配额', icon: 'neurology', description: '查看当前工作空间的 AI credits 配额。' },
   { id: 'members', groupId: 'workspace', label: '工作空间成员', icon: 'group', description: '查看成员、待处理邀请并生成邀请链接。' },
+  { id: 'thirdPartyPlatforms', groupId: 'workspace', label: '第三方平台', icon: 'extension', description: '配置工作空间级飞书连接、成员同步和数据导入。' },
 ]
 
 const tabGroupItems: Array<{ id: UserSettingsNavGroupId, label: string }> = [
@@ -175,6 +178,7 @@ function resolveInitial(value: string | null | undefined): string {
 }
 
 const workspacePrimaryRole = computed<WorkspaceMemberRole | ''>(() => resolvePrimaryRole(currentWorkspace.value?.workspace.roles))
+const canManageThirdPartyPlatforms = computed(() => props.isPlatformAdminUser || workspacePrimaryRole.value === 'owner' || workspacePrimaryRole.value === 'admin')
 
 const userIdentityItems = computed(() => {
   const items: Array<{ key: string, value: string, mono?: boolean }> = []
@@ -398,6 +402,13 @@ function selectTab(tabId: UserSettingsTabId) {
   activeTab.value = tabId
 }
 
+function normalizeUserSettingsTabId(value: string | null | undefined): UserSettingsTabId | null {
+  const normalized = String(value || '').trim()
+  return tabItems.some(item => item.id === normalized)
+    ? normalized as UserSettingsTabId
+    : null
+}
+
 function clearAvatarActionFeedback() {
   avatarActionError.value = ''
   avatarActionSuccess.value = ''
@@ -507,7 +518,7 @@ function openAuthBindPage() {
 }
 
 function resetDialogState() {
-  activeTab.value = 'profile'
+  activeTab.value = normalizeUserSettingsTabId(props.initialTab) || 'profile'
   actionError.value = ''
   userWorkspaceDisplayPreferences.value = null
   userWorkspaceDisplayLoading.value = false
@@ -569,6 +580,9 @@ async function refreshActiveTabData(tabId: UserSettingsTabId, options: { resetAi
     ])
     return
   }
+
+  if (tabId === 'thirdPartyPlatforms')
+    return
 
   if (tabId === 'bindings') {
     await Promise.allSettled([
@@ -641,6 +655,17 @@ watch(
     if (!props.visible)
       return
     resetAuthBindingState()
+  },
+)
+
+watch(
+  () => props.initialTab,
+  (tabId) => {
+    if (!props.visible)
+      return
+    const normalized = normalizeUserSettingsTabId(tabId)
+    if (normalized)
+      activeTab.value = normalized
   },
 )
 
@@ -853,6 +878,13 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
       @update-workspace-member-role-draft="updateWorkspaceMemberRoleDraft($event.userId, $event.role)"
       @update-workspace-member-role="updateWorkspaceMemberRole"
       @revoke-workspace-invitation="revokeWorkspaceInvitation"
+    />
+
+    <UserSettingsThirdPartyPlatformsPanel
+      v-else-if="activeTab === 'thirdPartyPlatforms'"
+      :workspace-id="currentWorkspaceId"
+      :is-personal-workspace="isPersonalWorkspace"
+      :can-manage="canManageThirdPartyPlatforms"
     />
 
     <UserSettingsBindingsPanel

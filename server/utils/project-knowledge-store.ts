@@ -45,7 +45,7 @@ export const PROJECT_KNOWLEDGE_INDEX_VERSION = 'project-knowledge-v2-multimodal'
 const PROJECT_KNOWLEDGE_VECTOR_MODE_KEY = Symbol.for('winloop.project-knowledge.vector.mode.v1')
 const PROCESSING_SOURCE_STATUS_SET = new Set<ProjectKnowledgeSourceStatus>(['extracting', 'chunking', 'embedding'])
 
-type ProjectResourceSource = 'upload' | 'library' | 'collab'
+type ProjectResourceSource = 'upload' | 'library' | 'collab' | 'external'
 type ProjectKnowledgeVectorMode = 'vector' | 'json'
 
 interface ProjectKnowledgeCandidateRow {

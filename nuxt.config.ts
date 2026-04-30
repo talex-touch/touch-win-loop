@@ -28,6 +28,22 @@ const resolvedSentrySourceMaps = resolveSentrySourceMapsUploadState()
 const shouldWarnSentrySourceMaps = process.env.NODE_ENV === 'production'
   && process.argv.some(arg => /\b(?:build|generate)\b/.test(arg))
 
+const duplicateAutoImportFileSuffixes = [
+  'shared/types/api.ts',
+  'shared/types/domain-legacy.ts',
+  'shared/utils/device-arrangement-document.ts',
+] as const
+const autoImportExcludedFiles = duplicateAutoImportFileSuffixes.map(file => `!${file}`)
+
+function isDuplicateAutoImportFile(file: string): boolean {
+  const normalizedFile = file.replace(/\\/g, '/')
+  return duplicateAutoImportFileSuffixes.some(suffix => normalizedFile.endsWith(suffix))
+}
+
+function shouldScanAutoImportFile(file: string): boolean {
+  return !isDuplicateAutoImportFile(file)
+}
+
 if (shouldWarnSentrySourceMaps && !resolvedSentrySourceMaps.enabled) {
   console.warn(
     `[sentry] Source map upload disabled because required build-time env is missing: ${resolvedSentrySourceMaps.missing.join(', ')}.`,
@@ -282,6 +298,22 @@ export default defineNuxtConfig({
   vite: {
     server: {
       allowedHosts: true,
+    },
+  },
+
+  hooks: {
+    'imports:dirs': function (dirs) {
+      dirs.push(...autoImportExcludedFiles)
+    },
+    'nitro:config': function (nitroConfig) {
+      if (nitroConfig.imports === false)
+        return
+
+      nitroConfig.imports ||= {}
+      nitroConfig.imports.dirsScanOptions = {
+        ...nitroConfig.imports.dirsScanOptions,
+        fileFilter: shouldScanAutoImportFile,
+      }
     },
   },
 

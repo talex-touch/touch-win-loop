@@ -305,6 +305,8 @@ const {
   askDeviceRestoreConfirm,
 } = useWorkspaceProjectShell()
 
+const accountCenterInitialTab = ref('')
+
 interface HydratedProjectWorkspaceViewStateResult {
   state: ProjectWorkspaceViewState
   bundle: {
@@ -11045,7 +11047,14 @@ function openDisplayPreferencesFromHeader() {
 }
 
 function openAccountCenterFromHeader() {
+  accountCenterInitialTab.value = ''
   accountCenterVisible.value = true
+}
+
+function openFeishuImportFromLeftSidebar() {
+  accountCenterInitialTab.value = 'thirdPartyPlatforms'
+  accountCenterVisible.value = true
+  statusLine.value = '已打开工作空间第三方平台，可从飞书导入项目资源。'
 }
 
 function onUserUpdatedFromAccountCenter(user: AuthUser) {
@@ -12322,6 +12331,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 @select-meeting="selectProjectMeeting"
                 @create-collab-resource="createCollabResource"
                 @create-device-arrangement="createDeviceArrangement"
+                @open-feishu-import="openFeishuImportFromLeftSidebar"
                 @reload-issues="loadProjectIssues"
                 @open-resource="openProjectResourcePreview"
                 @rename-project-resource="renameProjectResource"
@@ -13012,6 +13022,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
       :is-platform-admin-user="Boolean(me?.user.isPlatformAdmin)"
       :workspace-options="workspaceOptions"
       :active-workspace-id="activeWorkspaceId"
+      :initial-tab="accountCenterInitialTab"
       @user-updated="onUserUpdatedFromAccountCenter"
       @workspace-updated="onWorkspaceUpdatedFromAccountCenter"
     />

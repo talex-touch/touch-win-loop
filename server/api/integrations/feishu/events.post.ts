@@ -14,7 +14,12 @@ import {
   listActiveFeishuBitableSyncItemsBySource,
   readFeishuIntegrationConfig,
   registerFeishuBitableEventDedup,
+  updateFeishuMarketplaceAppTicket,
 } from '~~/server/utils/feishu-integration-store'
+import {
+  registerIntegrationEventDedup,
+  updateFeishuWorkspaceConnectionStatusByTenantKey,
+} from '~~/server/utils/workspace-integration-store'
 
 function parseJsonText(raw: string): Record<string, unknown> {
   try {
@@ -220,6 +225,54 @@ function isBitableRecordEvent(eventType: string): boolean {
     && normalized.includes('record')
 }
 
+function extractTenantKey(payload: Record<string, unknown>): string {
+  const header = asObject(payload.header)
+  const event = asObject(payload.event)
+  return toText(
+    header.tenant_key
+    || header.tenantKey
+    || event.tenant_key
+    || event.tenantKey
+    || payload.tenant_key
+    || payload.tenantKey,
+  )
+}
+
+function extractAppTicket(payload: Record<string, unknown>): string {
+  const header = asObject(payload.header)
+  const event = asObject(payload.event)
+  return toText(
+    event.app_ticket
+    || event.appTicket
+    || header.app_ticket
+    || header.appTicket
+    || payload.app_ticket
+    || payload.appTicket,
+  )
+}
+
+function extractGenericEventId(payload: Record<string, unknown>, rawBody: string): string {
+  const header = asObject(payload.header)
+  const event = asObject(payload.event)
+  return toText(
+    header.event_id
+    || header.eventId
+    || event.event_id
+    || event.eventId
+    || payload.event_id
+    || payload.eventId,
+  ) || createHash('sha256').update(rawBody).digest('hex')
+}
+
+function resolveWorkspaceConnectionStatusByFeishuEvent(eventType: string): 'connected' | 'uninstalled' | '' {
+  const normalized = eventType.toLowerCase()
+  if (normalized.includes('app') && (normalized.includes('open') || normalized.includes('installed') || normalized.includes('enabled')))
+    return 'connected'
+  if (normalized.includes('app') && (normalized.includes('close') || normalized.includes('uninstall') || normalized.includes('disabled')))
+    return 'uninstalled'
+  return ''
+}
+
 function buildInvalidSignatureResponse(event: H3Event) {
   setResponseStatus(event, 401)
   return {
@@ -282,6 +335,36 @@ export default defineEventHandler(async (event) => {
   }
 
   const eventType = toText(asObject(payload.header).event_type || payload.event_type)
+  const appTicket = extractAppTicket(payload)
+  if (appTicket) {
+    const eventId = extractGenericEventId(payload, rawBody)
+    const dedup = await withClient(event, async (db) => {
+      return registerIntegrationEventDedup(db, {
+        provider: 'feishu',
+        eventId,
+        eventType,
+        payload,
+      })
+    })
+    if (!dedup.inserted) {
+      return {
+        code: 0,
+        msg: 'ignored_duplicate_app_ticket_event',
+      }
+    }
+
+    await withClient(event, async (db) => {
+      await updateFeishuMarketplaceAppTicket(db, {
+        appTicket,
+        updatedByUserId: 'feishu_event',
+      })
+    })
+    return {
+      code: 0,
+      msg: 'app_ticket_updated',
+    }
+  }
+
   if (isBitableRecordEvent(eventType)) {
     const parsed = extractBitableEventPayload(payload)
     if (!parsed.appToken || !parsed.tableId || parsed.recordIds.length === 0) {
@@ -366,6 +449,43 @@ export default defineEventHandler(async (event) => {
       msg: 'ok',
       mode: 'delta',
       matchedTasks: items.length,
+    }
+  }
+
+  const tenantKey = extractTenantKey(payload)
+  if (tenantKey) {
+    const eventId = extractGenericEventId(payload, rawBody)
+    const dedup = await withClient(event, async (db) => {
+      return registerIntegrationEventDedup(db, {
+        provider: 'feishu',
+        eventId,
+        tenantKey,
+        eventType,
+        payload,
+      })
+    })
+    if (!dedup.inserted) {
+      return {
+        code: 0,
+        msg: 'ignored_duplicate_workspace_event',
+      }
+    }
+
+    const status = resolveWorkspaceConnectionStatusByFeishuEvent(eventType)
+    if (status) {
+      const updatedCount = await withClient(event, async (db) => {
+        return updateFeishuWorkspaceConnectionStatusByTenantKey(db, {
+          tenantKey,
+          status,
+          tenantName: toText(asObject(payload.event).tenant_name || asObject(payload.event).tenantName),
+        })
+      })
+      return {
+        code: 0,
+        msg: updatedCount > 0 ? 'ok' : 'ignored_workspace_connection_not_found',
+        mode: 'workspace_integration',
+        updatedConnections: updatedCount,
+      }
     }
   }
 

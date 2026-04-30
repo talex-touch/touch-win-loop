@@ -20,6 +20,7 @@ interface PatchFeishuConfigBody {
   appId?: string
   appSecret?: string
   appSecretMode?: SecretMode
+  marketplaceAppUrl?: string
   oauthRedirectUri?: string
   eventToken?: string
   eventTokenMode?: SecretMode
@@ -109,6 +110,8 @@ export default defineEventHandler(async (event) => {
         next.enabled = Boolean(body.enabled)
       if (body.appId !== undefined)
         next.appId = toText(body.appId)
+      if (body.marketplaceAppUrl !== undefined)
+        next.marketplaceAppUrl = toText(body.marketplaceAppUrl)
       if (body.oauthRedirectUri !== undefined)
         next.oauthRedirectUri = toText(body.oauthRedirectUri)
       if (body.adminGroupIds !== undefined)

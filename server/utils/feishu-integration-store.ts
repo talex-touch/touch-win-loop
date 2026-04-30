@@ -285,6 +285,9 @@ export interface FeishuIntegrationConfigInternal {
   enabled: boolean
   appId: string
   appSecret: string
+  marketplaceAppUrl: string
+  appTicket: string
+  appTicketUpdatedAt: string
   oauthRedirectUri: string
   eventToken: string
   eventEncryptKey: string
@@ -520,6 +523,9 @@ function normalizeFeishuConfigInternal(raw: unknown): FeishuIntegrationConfigInt
     enabled: hasOwn(source, 'enabled') ? toBoolean(source.enabled, false) : false,
     appId: hasOwn(source, 'appId') ? toText(source.appId) : '',
     appSecret: hasOwn(source, 'appSecret') ? decryptConfigSecretSafe(source.appSecret) : '',
+    marketplaceAppUrl: hasOwn(source, 'marketplaceAppUrl') ? toText(source.marketplaceAppUrl) : '',
+    appTicket: hasOwn(source, 'appTicket') ? decryptConfigSecretSafe(source.appTicket) : '',
+    appTicketUpdatedAt: hasOwn(source, 'appTicketUpdatedAt') ? toText(source.appTicketUpdatedAt) : '',
     oauthRedirectUri: hasOwn(source, 'oauthRedirectUri') ? toText(source.oauthRedirectUri) : '',
     eventToken: hasOwn(source, 'eventToken') ? decryptConfigSecretSafe(source.eventToken) : '',
     eventEncryptKey: hasOwn(source, 'eventEncryptKey') ? decryptConfigSecretSafe(source.eventEncryptKey) : '',
@@ -890,6 +896,9 @@ export function toPublicFeishuIntegrationConfig(config: FeishuIntegrationConfigI
     enabled: config.enabled,
     appId: config.appId,
     appSecretConfigured: Boolean(config.appSecret),
+    marketplaceAppUrl: config.marketplaceAppUrl,
+    appTicketConfigured: Boolean(config.appTicket),
+    appTicketUpdatedAt: config.appTicketUpdatedAt,
     oauthRedirectUri: config.oauthRedirectUri,
     eventTokenConfigured: Boolean(config.eventToken),
     eventEncryptKeyConfigured: Boolean(config.eventEncryptKey),
@@ -970,6 +979,9 @@ export async function writeFeishuIntegrationConfig(
     appSecret: hasMasterKey && normalized.appSecret && !isEncryptedConfigValue(normalized.appSecret)
       ? encryptConfigSecret(normalized.appSecret)
       : normalized.appSecret,
+    appTicket: hasMasterKey && normalized.appTicket && !isEncryptedConfigValue(normalized.appTicket)
+      ? encryptConfigSecret(normalized.appTicket)
+      : normalized.appTicket,
     eventToken: hasMasterKey && normalized.eventToken && !isEncryptedConfigValue(normalized.eventToken)
       ? encryptConfigSecret(normalized.eventToken)
       : normalized.eventToken,
@@ -985,6 +997,24 @@ export async function writeFeishuIntegrationConfig(
     [FEISHU_CONFIG_META_KEY, JSON.stringify(persistable)],
   )
   return normalized
+}
+
+export async function updateFeishuMarketplaceAppTicket(
+  db: Queryable,
+  input: {
+    appTicket: string
+    updatedByUserId?: string
+  },
+): Promise<FeishuIntegrationConfigInternal> {
+  const current = await readFeishuIntegrationConfig(db)
+  const now = new Date().toISOString()
+  return writeFeishuIntegrationConfig(db, {
+    ...current,
+    appTicket: toText(input.appTicket),
+    appTicketUpdatedAt: now,
+    updatedAt: now,
+    updatedByUserId: toText(input.updatedByUserId) || 'feishu_event',
+  })
 }
 
 export async function writeCasdoorIntegrationConfig(
