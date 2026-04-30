@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { access, readFile } from 'node:fs/promises'
-import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { it, vi } from 'vitest'
 
 vi.mock('#imports', () => ({
@@ -177,6 +177,8 @@ it('飞书同步配置包共享类型、schema 与 API 路由已接入', async (
   assert.match(schemaSource, /idx_feishu_bitable_sync_config_shares_active/, '分享表缺少活跃分享索引')
 
   assert.match(shareStoreSource, /randomBytes\(20\)\.toString\('hex'\)/, '分享 key 未使用高熵随机值')
+  assert.match(shareStoreSource, /publicBaseUrl\?: string/, '分享创建未接收已解析公网基址')
+  assert.match(shareStoreSource, /buildApiEndpoint\(publicBaseUrl, sharePath\)/, '分享 URL 未优先使用已解析公网基址')
   assert.match(shareStoreSource, /buildServerAppUrl\(`\/api\/feishu\/bitable-sync-config\/\$\{row\.share_key\}`/, '分享 URL 未走 public app base URL')
   assert.match(shareStoreSource, /expires_at > NOW\(\)/, '公网读取未过滤过期配置包')
   assert.match(shareStoreSource, /revoked_at IS NULL/, '公网读取未过滤已撤销配置包')
@@ -295,6 +297,8 @@ it('飞书同步配置包管理 API 会按权限创建、撤销、预览和导�
   assert.match(exportApiSource, /contest\.write/, '配置包导出接口未校验写权限')
   assert.match(exportApiSource, /buildFeishuBitableSyncConfigPackage/, '配置包导出接口未使用脱敏构建器')
   assert.match(createShareApiSource, /contest\.write/, '创建配置分享接口未校验写权限')
+  assert.match(createShareApiSource, /runtime\.onlyOffice\.sourceBaseURL/, '创建配置分享接口未复用运行态公网基址')
+  assert.match(createShareApiSource, /publicBaseUrl,/, '创建配置分享接口未把运行态公网基址传给分享存储')
   assert.match(createShareApiSource, /createFeishuBitableSyncConfigShare/, '创建配置分享接口未接入分享存储')
   assert.match(revokeShareApiSource, /contest\.write/, '撤销配置分享接口未校验写权限')
   assert.match(revokeShareApiSource, /revokeFeishuBitableSyncConfigShare/, '撤销配置分享接口未接入分享存储')

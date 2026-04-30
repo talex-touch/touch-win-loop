@@ -1,14 +1,14 @@
 import type { FeishuBitableSyncConfigShare } from '~~/shared/types/domain'
-import { useRuntimeConfig } from '#imports'
 import { setResponseStatus } from 'h3'
-import { buildFeishuBitableSyncConfigPackage } from '~~/server/utils/feishu-bitable-sync-config-package'
-import { createFeishuBitableSyncConfigShare } from '~~/server/utils/feishu-bitable-sync-config-share-store'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { buildFeishuBitableSyncConfigPackage } from '~~/server/utils/feishu-bitable-sync-config-package'
+import { createFeishuBitableSyncConfigShare } from '~~/server/utils/feishu-bitable-sync-config-share-store'
 import { getFeishuBitableSyncDetail } from '~~/server/utils/feishu-integration-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { isHttpUrl } from '~~/shared/utils/api-url'
 
 interface CreateConfigShareBody {
   expiresInDays?: number
@@ -17,8 +17,7 @@ interface CreateConfigShareBody {
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
-  const runtimeConfig = useRuntimeConfig(event)
-  const publicBaseUrl = String(runtimeConfig.public?.appBaseUrl || '').trim()
+  const publicBaseUrl = String(runtime.onlyOffice.sourceBaseURL || '').trim()
   const { user } = await requireAuth(event)
   const syncId = String(getRouterParam(event, 'id') || '').trim()
   const body = await readBody<CreateConfigShareBody>(event).catch(() => ({} as CreateConfigShareBody))
@@ -35,7 +34,7 @@ export default defineEventHandler(async (event) => {
     }, 40493)
   }
 
-  if (!/^https?:\/\//i.test(publicBaseUrl)) {
+  if (!isHttpUrl(publicBaseUrl)) {
     setResponseStatus(event, 503)
     return fail('公网配置基地址未配置，请设置 WINLOOP_PUBLIC_BASE_URL 后再试。', {
       startedAt,
@@ -59,6 +58,7 @@ export default defineEventHandler(async (event) => {
         sourceSyncId: syncId,
         actorUserId: user.id,
         package: buildFeishuBitableSyncConfigPackage(detail),
+        publicBaseUrl,
         expiresInDays: body.expiresInDays,
       })
     })

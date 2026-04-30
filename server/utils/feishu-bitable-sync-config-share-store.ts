@@ -1,11 +1,12 @@
+import type { Queryable } from '~~/server/utils/db'
 import type {
   FeishuBitableSyncConfigPackage,
   FeishuBitableSyncConfigShare,
 } from '~~/shared/types/domain'
-import type { Queryable } from '~~/server/utils/db'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { buildServerAppUrl } from '~~/server/utils/api-url'
 import { normalizeFeishuBitableSyncConfigPackage } from '~~/server/utils/feishu-bitable-sync-config-package'
+import { buildApiEndpoint, isHttpUrl } from '~~/shared/utils/api-url'
 
 interface FeishuBitableSyncConfigShareRow {
   id: string
@@ -33,12 +34,15 @@ function resolveExpiresAt(expiresInDays = 30): string {
   return new Date(Date.now() + safeDays * 24 * 60 * 60 * 1000).toISOString()
 }
 
-function mapShare(row: FeishuBitableSyncConfigShareRow): FeishuBitableSyncConfigShare {
+function mapShare(row: FeishuBitableSyncConfigShareRow, publicBaseUrl = ''): FeishuBitableSyncConfigShare {
+  const sharePath = `/api/feishu/bitable-sync-config/${row.share_key}`
   return {
     id: row.id,
     sourceSyncId: row.source_sync_id,
     shareKey: row.share_key,
-    shareUrl: buildServerAppUrl(`/api/feishu/bitable-sync-config/${row.share_key}`),
+    shareUrl: isHttpUrl(publicBaseUrl)
+      ? buildApiEndpoint(publicBaseUrl, sharePath)
+      : buildServerAppUrl(`/api/feishu/bitable-sync-config/${row.share_key}`),
     package: normalizeFeishuBitableSyncConfigPackage(row.package_json),
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
@@ -55,6 +59,7 @@ export async function createFeishuBitableSyncConfigShare(
     sourceSyncId: string
     actorUserId: string
     package: FeishuBitableSyncConfigPackage
+    publicBaseUrl?: string
     expiresInDays?: number
   },
 ): Promise<FeishuBitableSyncConfigShare> {
@@ -107,7 +112,7 @@ export async function createFeishuBitableSyncConfigShare(
     ],
   )
 
-  return mapShare(result.rows[0]!)
+  return mapShare(result.rows[0]!, input.publicBaseUrl)
 }
 
 export async function getActiveFeishuBitableSyncConfigShareByKey(
