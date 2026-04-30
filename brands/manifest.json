@@ -1,0 +1,323 @@
+{
+  "source": "app/assets/brand/winloop-brand-source.svg",
+  "generatedAt": "2026-04-30T06:32:00.137Z",
+  "renderer": "macOS sips",
+  "sizeRule": "PNG exports use the requested value as the maximum edge while preserving each layout aspect ratio.",
+  "colors": {
+    "ink": "#2E3943",
+    "accent": "#38B1F5"
+  },
+  "sizes": [
+    16,
+    32,
+    48,
+    64,
+    128,
+    512,
+    1024,
+    2048,
+    4096
+  ],
+  "variants": {
+    "logo": {
+      "label": "Logo mark only",
+      "svg": "svg/logo.svg",
+      "png": [
+        {
+          "size": 16,
+          "width": 16,
+          "height": 16,
+          "file": "png/logo/logo-16.png"
+        },
+        {
+          "size": 32,
+          "width": 32,
+          "height": 32,
+          "file": "png/logo/logo-32.png"
+        },
+        {
+          "size": 48,
+          "width": 48,
+          "height": 48,
+          "file": "png/logo/logo-48.png"
+        },
+        {
+          "size": 64,
+          "width": 64,
+          "height": 64,
+          "file": "png/logo/logo-64.png"
+        },
+        {
+          "size": 128,
+          "width": 128,
+          "height": 128,
+          "file": "png/logo/logo-128.png"
+        },
+        {
+          "size": 512,
+          "width": 512,
+          "height": 512,
+          "file": "png/logo/logo-512.png"
+        },
+        {
+          "size": 1024,
+          "width": 1024,
+          "height": 1024,
+          "file": "png/logo/logo-1024.png"
+        },
+        {
+          "size": 2048,
+          "width": 2048,
+          "height": 2048,
+          "file": "png/logo/logo-2048.png"
+        },
+        {
+          "size": 4096,
+          "width": 4096,
+          "height": 4096,
+          "file": "png/logo/logo-4096.png"
+        }
+      ]
+    },
+    "wordmark": {
+      "label": "Wordmark only",
+      "svg": "svg/wordmark.svg",
+      "png": [
+        {
+          "size": 16,
+          "width": 16,
+          "height": 4,
+          "file": "png/wordmark/wordmark-16.png"
+        },
+        {
+          "size": 32,
+          "width": 32,
+          "height": 8,
+          "file": "png/wordmark/wordmark-32.png"
+        },
+        {
+          "size": 48,
+          "width": 48,
+          "height": 12,
+          "file": "png/wordmark/wordmark-48.png"
+        },
+        {
+          "size": 64,
+          "width": 64,
+          "height": 16,
+          "file": "png/wordmark/wordmark-64.png"
+        },
+        {
+          "size": 128,
+          "width": 128,
+          "height": 32,
+          "file": "png/wordmark/wordmark-128.png"
+        },
+        {
+          "size": 512,
+          "width": 512,
+          "height": 128,
+          "file": "png/wordmark/wordmark-512.png"
+        },
+        {
+          "size": 1024,
+          "width": 1024,
+          "height": 256,
+          "file": "png/wordmark/wordmark-1024.png"
+        },
+        {
+          "size": 2048,
+          "width": 2048,
+          "height": 512,
+          "file": "png/wordmark/wordmark-2048.png"
+        },
+        {
+          "size": 4096,
+          "width": 4096,
+          "height": 1024,
+          "file": "png/wordmark/wordmark-4096.png"
+        }
+      ]
+    },
+    "lockup": {
+      "label": "Logo and wordmark compact lockup",
+      "svg": "svg/lockup.svg",
+      "png": [
+        {
+          "size": 16,
+          "width": 16,
+          "height": 16,
+          "file": "png/lockup/lockup-16.png"
+        },
+        {
+          "size": 32,
+          "width": 32,
+          "height": 32,
+          "file": "png/lockup/lockup-32.png"
+        },
+        {
+          "size": 48,
+          "width": 48,
+          "height": 48,
+          "file": "png/lockup/lockup-48.png"
+        },
+        {
+          "size": 64,
+          "width": 64,
+          "height": 64,
+          "file": "png/lockup/lockup-64.png"
+        },
+        {
+          "size": 128,
+          "width": 128,
+          "height": 128,
+          "file": "png/lockup/lockup-128.png"
+        },
+        {
+          "size": 512,
+          "width": 512,
+          "height": 512,
+          "file": "png/lockup/lockup-512.png"
+        },
+        {
+          "size": 1024,
+          "width": 1024,
+          "height": 1024,
+          "file": "png/lockup/lockup-1024.png"
+        },
+        {
+          "size": 2048,
+          "width": 2048,
+          "height": 2048,
+          "file": "png/lockup/lockup-2048.png"
+        },
+        {
+          "size": 4096,
+          "width": 4096,
+          "height": 4096,
+          "file": "png/lockup/lockup-4096.png"
+        }
+      ]
+    },
+    "vertical": {
+      "label": "Vertical logo and wordmark",
+      "svg": "svg/vertical.svg",
+      "png": [
+        {
+          "size": 16,
+          "width": 13,
+          "height": 16,
+          "file": "png/vertical/vertical-16.png"
+        },
+        {
+          "size": 32,
+          "width": 26,
+          "height": 32,
+          "file": "png/vertical/vertical-32.png"
+        },
+        {
+          "size": 48,
+          "width": 38,
+          "height": 48,
+          "file": "png/vertical/vertical-48.png"
+        },
+        {
+          "size": 64,
+          "width": 51,
+          "height": 64,
+          "file": "png/vertical/vertical-64.png"
+        },
+        {
+          "size": 128,
+          "width": 102,
+          "height": 128,
+          "file": "png/vertical/vertical-128.png"
+        },
+        {
+          "size": 512,
+          "width": 410,
+          "height": 512,
+          "file": "png/vertical/vertical-512.png"
+        },
+        {
+          "size": 1024,
+          "width": 819,
+          "height": 1024,
+          "file": "png/vertical/vertical-1024.png"
+        },
+        {
+          "size": 2048,
+          "width": 1638,
+          "height": 2048,
+          "file": "png/vertical/vertical-2048.png"
+        },
+        {
+          "size": 4096,
+          "width": 3277,
+          "height": 4096,
+          "file": "png/vertical/vertical-4096.png"
+        }
+      ]
+    },
+    "horizontal": {
+      "label": "Horizontal logo and wordmark",
+      "svg": "svg/horizontal.svg",
+      "png": [
+        {
+          "size": 16,
+          "width": 16,
+          "height": 6,
+          "file": "png/horizontal/horizontal-16.png"
+        },
+        {
+          "size": 32,
+          "width": 32,
+          "height": 11,
+          "file": "png/horizontal/horizontal-32.png"
+        },
+        {
+          "size": 48,
+          "width": 48,
+          "height": 17,
+          "file": "png/horizontal/horizontal-48.png"
+        },
+        {
+          "size": 64,
+          "width": 64,
+          "height": 23,
+          "file": "png/horizontal/horizontal-64.png"
+        },
+        {
+          "size": 128,
+          "width": 128,
+          "height": 46,
+          "file": "png/horizontal/horizontal-128.png"
+        },
+        {
+          "size": 512,
+          "width": 512,
+          "height": 182,
+          "file": "png/horizontal/horizontal-512.png"
+        },
+        {
+          "size": 1024,
+          "width": 1024,
+          "height": 364,
+          "file": "png/horizontal/horizontal-1024.png"
+        },
+        {
+          "size": 2048,
+          "width": 2048,
+          "height": 728,
+          "file": "png/horizontal/horizontal-2048.png"
+        },
+        {
+          "size": 4096,
+          "width": 4096,
+          "height": 1456,
+          "file": "png/horizontal/horizontal-4096.png"
+        }
+      ]
+    }
+  }
+}
