@@ -12332,6 +12332,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 @create-collab-resource="createCollabResource"
                 @create-device-arrangement="createDeviceArrangement"
                 @open-feishu-import="openFeishuImportFromLeftSidebar"
+                @reload-project-resources="loadProjectResources"
                 @reload-issues="loadProjectIssues"
                 @open-resource="openProjectResourcePreview"
                 @rename-project-resource="renameProjectResource"

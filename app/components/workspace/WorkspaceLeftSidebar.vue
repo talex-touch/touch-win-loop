@@ -175,6 +175,7 @@ const emit = defineEmits<{
   'openMemberManagementPanel': []
   'openFlowPanel': []
   'openFeishuImport': []
+  'reloadProjectResources': []
   'switchWorkspace': [workspaceId: string]
   'openWorkspaceHome': []
   'openDisplayPreferences': []
@@ -455,6 +456,7 @@ watch(activeModule, (value) => {
             @create-collab-resource="emit('createCollabResource', $event)"
             @create-device-arrangement="emit('createDeviceArrangement')"
             @open-feishu-import="emit('openFeishuImport')"
+            @reload-project-resources="emit('reloadProjectResources')"
             @reload-issues="emit('reloadIssues')"
             @add-resource-from-library="emit('addResourceFromLibrary', $event)"
             @patch-project-resource-tree="emit('patchProjectResourceTree', $event)"
