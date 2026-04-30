@@ -149,14 +149,12 @@ describe('platform-ai-channels', () => {
     vi.restoreAllMocks()
   })
 
-  it('旧单 Provider 运行时只迁移 Provider，不再自动补全场景路由', () => {
+  it('空 Provider registry 不再从旧 runtime 默认值合成 Provider', () => {
     const runtime = createRuntime()
     const registry = resolvePlatformAiRegistry(runtime)
     const projectChat = registry.channels.find(item => item.key === 'project_chat')
 
-    expect(registry.providers).toHaveLength(1)
-    expect(registry.providers[0]?.provider).toBe('newapi')
-    expect(registry.providers[0]?.models.map(item => item.model)).toEqual(['gpt-4.1-mini'])
+    expect(registry.providers).toEqual([])
     expect(projectChat?.providerIds).toEqual([])
     expect(projectChat?.models).toEqual([])
     expect(projectChat?.modelFallback).toEqual([])
@@ -166,6 +164,19 @@ describe('platform-ai-channels', () => {
     expect(resolved.ai.provider).toBe('')
     expect(resolved.ai.model).toBe('')
     expect(resolved.usedFallback).toBe(true)
+  })
+
+  it('保存空 Provider registry 不会把旧 runtime 默认值写回模型池', () => {
+    const runtime = createRuntime()
+    const registryJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [],
+    })
+
+    expect(registryJson).not.toMatch(/gpt-4\.1-mini/)
+
+    runtime.ai.providersJson = registryJson
+    const registry = resolvePlatformAiRegistry(runtime)
+    expect(registry.providers).toEqual([])
   })
 
   it('答辩 qwen key 只会从 defense 场景绑定的百炼 Provider 派生', () => {
@@ -354,7 +365,7 @@ describe('platform-ai-channels', () => {
     expect(registry.providers[0]?.models.some(item => item.model === 'qwen-vl-max')).toBe(false)
   })
 
-  it('旧场景模型链在存在路由配置时会迁移到首个 Provider', () => {
+  it('旧场景模型链没有显式 Provider 时保持未接通', () => {
     const runtime = createRuntime()
     runtime.ai.channelsJson = JSON.stringify({
       items: [
@@ -368,9 +379,46 @@ describe('platform-ai-channels', () => {
 
     const registry = resolvePlatformAiRegistry(runtime)
     const projectChat = registry.channels.find(item => item.key === 'project_chat')
-    expect(projectChat?.providerIds).toEqual(['provider_1'])
-    expect(projectChat?.models).toEqual(['gpt-4.1-mini'])
-    expect(projectChat?.modelFallback).toEqual(['gpt-4.1-mini'])
+    expect(projectChat?.providerIds).toEqual([])
+    expect(projectChat?.models).toEqual([])
+    expect(projectChat?.modelFallback).toEqual([])
+  })
+
+  it('构建场景配置时显式空 Provider 列表不会回退到 runtime registry', () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'provider_a',
+          name: 'Provider A',
+          type: 'newapi',
+          provider: 'newapi',
+          baseURL: 'https://newapi.example',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+      ],
+    })
+
+    const channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'project_chat',
+          providerIds: ['provider_a'],
+          models: ['gpt-4.1-mini'],
+          modelFallback: ['gpt-4.1-mini'],
+          enabled: true,
+        },
+      ],
+    }, [])
+
+    runtime.ai.channelsJson = channelsJson
+    const registry = resolvePlatformAiRegistry(runtime)
+    const projectChat = registry.channels.find(item => item.key === 'project_chat')
+    expect(projectChat?.providerIds).toEqual([])
+    expect(projectChat?.models).toEqual([])
+    expect(projectChat?.modelFallback).toEqual([])
   })
 
   it('场景显式留空时保持未配置状态，不再共享兜底', () => {
