@@ -8,7 +8,6 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import {
   applyPlatformMeetingRuntimeOverrides,
@@ -47,7 +46,6 @@ function buildConfigIssueProbe(input: {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const fallbackRuntime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const body = await readBody<MeetingProvidersMutationBody>(event).catch(() => ({} as MeetingProvidersMutationBody))
 
@@ -56,8 +54,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权测试会议服务配置。', {
       startedAt,
-      provider: fallbackRuntime.ai.provider,
-      model: fallbackRuntime.ai.model,
+      provider: '',
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40423)
@@ -116,8 +114,8 @@ export default defineEventHandler(async (event) => {
 
     return ok(payload, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: '',
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     })
@@ -126,8 +124,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail(error instanceof Error ? error.message : '会议服务配置测试失败。', {
       startedAt,
-      provider: fallbackRuntime.ai.provider,
-      model: fallbackRuntime.ai.model,
+      provider: '',
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40101)

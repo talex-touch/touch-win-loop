@@ -4,7 +4,6 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import {
   readEffectiveMeetingRuntimeSettings,
@@ -13,7 +12,6 @@ import { hasConfigMasterKey } from '~~/server/utils/secure-config'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const fallbackRuntime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
 
   const canRead = await checkPlatformPermission(event, user, 'contest.read_internal')
@@ -21,8 +19,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权查看会议服务配置。', {
       startedAt,
-      provider: fallbackRuntime.ai.provider,
-      model: fallbackRuntime.ai.model,
+      provider: '',
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40421)
@@ -48,8 +46,8 @@ export default defineEventHandler(async (event) => {
     masterKeyReady: hasConfigMasterKey(event),
   }), {
     startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
+    provider: '',
+    model: '',
     fallbackUsed: false,
     attempts: 1,
   })
