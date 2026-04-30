@@ -675,9 +675,6 @@ function normalizeProvider(
   raw: unknown,
   index: number,
   runtime: RuntimeSettings,
-  options?: {
-    fallbackApiKey?: string
-  },
 ): PlatformAiProviderConfig | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     return null
@@ -712,7 +709,7 @@ function normalizeProvider(
     provider,
     clientType: normalizePlatformAiClientType(source.clientType, runtime.ai.clientType),
     baseURL: normalizePlatformAiBaseURL(source.baseURL, provider),
-    apiKey: String(source.apiKey ?? options?.fallbackApiKey ?? ''),
+    apiKey: String(source.apiKey ?? ''),
     enabled: toBoolean(source.enabled, true),
     timeoutMs: clampInt(source.timeoutMs, runtime.ai.timeoutMs, 1000, 120000),
     maxRetries: clampInt(source.maxRetries, runtime.ai.maxRetries, 0, 10),
@@ -732,9 +729,7 @@ function parseLegacyProvidersState(raw: unknown, runtime: RuntimeSettings): Plat
         : []
 
   const providers = source
-    .map((item, index) => normalizeProvider(item, index, runtime, {
-      fallbackApiKey: index === 0 ? runtime.ai.apiKey : '',
-    }))
+    .map((item, index) => normalizeProvider(item, index, runtime))
     .filter((item): item is PlatformAiProviderConfig => Boolean(item))
 
   return {
@@ -762,9 +757,7 @@ function parseStructuredLegacyProviderState(raw: Record<string, unknown>, runtim
         ? modelPoolSource?.items
         : [],
     fetchedAt: providerSource.fetchedAt || modelPoolSource?.fetchedAt,
-  }, 0, runtime, {
-    fallbackApiKey: runtime.ai.apiKey,
-  })
+  }, 0, runtime)
 
   return {
     providers: provider ? [provider] : [],
@@ -777,9 +770,7 @@ function parseStructuredProviderState(raw: Record<string, unknown>, runtime: Run
     ? raw.providers
     : []
   const providers = sourceProviders
-    .map((item, index) => normalizeProvider(item, index, runtime, {
-      fallbackApiKey: index === 0 ? runtime.ai.apiKey : '',
-    }))
+    .map((item, index) => normalizeProvider(item, index, runtime))
     .filter((item): item is PlatformAiProviderConfig => Boolean(item))
 
   return {
@@ -1095,7 +1086,7 @@ function buildAiRuntimeFromModel(
     provider: provider.provider || provider.type,
     clientType: model.clientType,
     baseURL: provider.baseURL,
-    apiKey: provider.apiKey || runtime.ai.apiKey,
+    apiKey: provider.apiKey,
     model: model.model,
     format: model.format,
     timeoutMs: provider.timeoutMs,

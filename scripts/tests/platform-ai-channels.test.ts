@@ -179,6 +179,28 @@ describe('platform-ai-channels', () => {
     expect(registry.providers).toEqual([])
   })
 
+  it('provider registry 不再从旧 runtime 默认值借用全局 API Key', () => {
+    const runtime = createRuntime()
+    runtime.ai.apiKey = 'legacy-global-key'
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'provider_a',
+          name: 'Provider A',
+          type: 'newapi',
+          provider: 'newapi',
+          baseURL: 'https://newapi.example',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+      ],
+    })
+
+    const registry = resolvePlatformAiRegistry(runtime)
+    expect(registry.providers[0]?.apiKey).toBe('')
+  })
+
   it('答辩 qwen key 只会从 defense 场景绑定的百炼 Provider 派生', () => {
     const runtime = createRuntime()
 
@@ -419,6 +441,39 @@ describe('platform-ai-channels', () => {
     expect(projectChat?.providerIds).toEqual([])
     expect(projectChat?.models).toEqual([])
     expect(projectChat?.modelFallback).toEqual([])
+  })
+
+  it('场景运行时不再从旧 runtime 默认值借用全局 API Key', () => {
+    const runtime = createRuntime()
+    runtime.ai.apiKey = 'legacy-global-key'
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'provider_a',
+          name: 'Provider A',
+          type: 'newapi',
+          provider: 'newapi',
+          baseURL: 'https://newapi.example',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+      ],
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'project_chat',
+          providerIds: ['provider_a'],
+          models: ['gpt-4.1-mini'],
+          modelFallback: ['gpt-4.1-mini'],
+          enabled: true,
+        },
+      ],
+    })
+
+    const resolved = resolveAiRuntimeForChannel(runtime, 'project_chat')
+    expect(resolved.ai.apiKey).toBe('')
   })
 
   it('场景显式留空时保持未配置状态，不再共享兜底', () => {
