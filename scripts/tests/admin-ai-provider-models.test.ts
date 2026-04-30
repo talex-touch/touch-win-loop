@@ -122,6 +122,7 @@ describe('admin-ai provider models', () => {
 
     expect(source).toMatch(/resolveAiRuntimeForChannel\(runtime, channelKey\)/)
     expect(source).toMatch(/model:\s*channelRuntime\.ai\.model/)
+    expect(source).not.toMatch(/runtime\.ai\.model/)
     expect(source).not.toMatch(/runtime\.ai\.embeddingModel/)
   })
 

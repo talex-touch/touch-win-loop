@@ -54,7 +54,7 @@ export default defineEventHandler(async (event) => {
     return fail('当前用户无权测试 AI 场景。', {
       startedAt,
       provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40393)
