@@ -97,6 +97,18 @@ describe('admin-ai provider models', () => {
     expect(source).not.toMatch(/共享上游/)
   })
 
+  it('模型池拉取接口不会用旧全局模型填充响应 meta', async () => {
+    const [getSource, postSource] = await Promise.all([
+      readFile(PROVIDER_MODELS_GET_FILE, 'utf8'),
+      readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
+    ])
+
+    expect(getSource).toMatch(/model:\s*provider\.models\[0\]\?\.model \|\| ''/)
+    expect(postSource).toMatch(/model:\s*resolvedProvider\.models\[0\]\?\.model \|\| ''/)
+    expect(getSource).not.toMatch(/runtime\.ai\.model/)
+    expect(postSource).not.toMatch(/runtime\.ai\.model/)
+  })
+
   it('非聊天场景测试不会再泄露旧全局 embedding 模型', async () => {
     const source = await readFile(CHANNELS_TEST_POST_FILE, 'utf8')
 

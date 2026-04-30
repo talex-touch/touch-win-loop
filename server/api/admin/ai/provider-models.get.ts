@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
     return fail('当前用户无权查看模型目录配置。', {
       startedAt,
       provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40396)
@@ -36,7 +36,7 @@ export default defineEventHandler(async (event) => {
     return fail('尚未配置可拉取模型池的 Provider。', {
       startedAt,
       provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40096)
@@ -47,7 +47,7 @@ export default defineEventHandler(async (event) => {
     return fail('当前 Provider 不支持模型池拉取。', {
       startedAt,
       provider: provider.provider,
-      model: runtime.ai.model,
+      model: provider.models[0]?.model || '',
       fallbackUsed: false,
       attempts: 1,
     }, 40098)
@@ -58,7 +58,7 @@ export default defineEventHandler(async (event) => {
     return fail('Provider API Key 未配置，无法自动拉取模型。', {
       startedAt,
       provider: provider.provider,
-      model: runtime.ai.model,
+      model: provider.models[0]?.model || '',
       fallbackUsed: false,
       attempts: 1,
     }, 40097)
@@ -96,7 +96,7 @@ export default defineEventHandler(async (event) => {
     }, {
       startedAt,
       provider: provider.provider,
-      model: provider.models[0]?.model || runtime.ai.model,
+      model: provider.models[0]?.model || '',
       fallbackUsed: false,
       attempts: 1,
     })
@@ -106,7 +106,7 @@ export default defineEventHandler(async (event) => {
     return fail(String(error?.message || '模型列表拉取失败，请检查 provider/baseURL/apiKey。'), {
       startedAt,
       provider: provider.provider,
-      model: provider.models[0]?.model || runtime.ai.model,
+      model: provider.models[0]?.model || '',
       fallbackUsed: false,
       attempts: 1,
     }, 50296)
