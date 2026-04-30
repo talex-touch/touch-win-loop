@@ -21,6 +21,7 @@
     "test:unit": "vitest run --coverage --exclude scripts/tests/team-project-e2e.smoke.spec.mjs",
     "test:smoke": "pnpm run build && pnpm run ci:smoke",
     "test:e2e": "pnpm run ci:e2e-smoke",
+    "smoke:feishu-diagnostics": "node ./scripts/workspace-feishu-diagnostics-smoke.mjs",
     "smoke:defense-meeting-ai": "node ./scripts/defense-meeting-ai-record.mjs",
     "meeting:asr:dev": "node ./scripts/meeting-asr-dev-bridge.mjs",
     "sentry:doctor": "node ./scripts/sentry-doctor.mjs",
