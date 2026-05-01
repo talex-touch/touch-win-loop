@@ -1,7 +1,8 @@
 import type { H3Event } from 'h3'
 import type { AuthLoginResult, FeishuIntegrationConfig } from '~~/shared/types/domain'
 import { loginWithFeishuProfile } from '~~/server/services/feishu/auth'
-import { getFeishuOAuthProfile } from '~~/server/services/feishu/client'
+import { getFeishuOAuthProfile, resolveFeishuOAuthRedirectUri } from '~~/server/services/feishu/client'
+import { consumeFeishuOAuthCallback } from '~~/server/services/feishu/security'
 import { getAuthFromEvent, setSessionCookie } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
@@ -101,6 +102,10 @@ export async function loginByFeishuOAuthCode(
   const profile = await getFeishuOAuthProfile({
     config,
     code,
+    redirectUri: consumeFeishuOAuthCallback(event) || config.oauthRedirectUri || resolveFeishuOAuthRedirectUri({
+      publicBaseUrl: runtime.onlyOffice.sourceBaseURL,
+      apiBaseUrl: runtime.apiBaseUrl,
+    }),
   })
 
   const loginResult = await loginWithFeishuProfile(event, profile, {

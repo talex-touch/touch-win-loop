@@ -1,7 +1,8 @@
 import { createError, sendRedirect, setResponseStatus } from 'h3'
-import { buildFeishuAuthorizeUrl } from '~~/server/services/feishu/client'
+import { buildFeishuAuthorizeUrl, resolveFeishuOAuthRedirectUri } from '~~/server/services/feishu/client'
 import {
   issueFeishuOAuthState,
+  persistFeishuOAuthCallback,
   persistFeishuOAuthRedirect,
 } from '~~/server/services/feishu/security'
 import { fail } from '~~/server/utils/api'
@@ -9,7 +10,6 @@ import { resolveServerRequestOrigin, warnIfPublicBaseHostMismatch } from '~~/ser
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readFeishuIntegrationConfig } from '~~/server/utils/feishu-integration-store'
-import { buildApiEndpoint, extractApiBasePathPrefix, isHttpUrl } from '~~/shared/utils/api-url'
 
 function sanitizeRedirectTarget(value: unknown): string {
   const redirect = String(value || '').trim()
@@ -22,15 +22,11 @@ function sanitizeRedirectTarget(value: unknown): string {
   return redirect
 }
 
-function resolveRuntimeOAuthRedirectUri(runtime: ReturnType<typeof readRuntimeSettings>): string {
-  const publicBaseUrl = String(runtime.onlyOffice.sourceBaseURL || '').trim()
-  if (!isHttpUrl(publicBaseUrl))
-    return ''
-
-  const apiBasePathPrefix = extractApiBasePathPrefix(runtime.apiBaseUrl) || '/'
-  const apiCallbackPath = buildApiEndpoint(apiBasePathPrefix, '/auth/feishu/callback')
-  const redirectUri = buildApiEndpoint(publicBaseUrl, apiCallbackPath)
-  return isHttpUrl(redirectUri) ? redirectUri : ''
+export function resolveRuntimeOAuthRedirectUri(runtime: ReturnType<typeof readRuntimeSettings>): string {
+  return resolveFeishuOAuthRedirectUri({
+    publicBaseUrl: runtime.onlyOffice.sourceBaseURL,
+    apiBaseUrl: runtime.apiBaseUrl,
+  })
 }
 
 export default defineEventHandler(async (event) => {
@@ -54,7 +50,9 @@ export default defineEventHandler(async (event) => {
 
   const state = issueFeishuOAuthState(event)
   const redirectTarget = sanitizeRedirectTarget(getQuery(event).redirect)
+  const redirectUri = config.oauthRedirectUri || resolveRuntimeOAuthRedirectUri(runtime)
   persistFeishuOAuthRedirect(event, redirectTarget)
+  persistFeishuOAuthCallback(event, redirectUri)
   warnIfPublicBaseHostMismatch({
     event,
     publicBaseUrl: runtime.onlyOffice.sourceBaseURL,
@@ -66,7 +64,7 @@ export default defineEventHandler(async (event) => {
     authorizeUrl = buildFeishuAuthorizeUrl({
       config,
       state,
-      redirectUri: resolveRuntimeOAuthRedirectUri(runtime) || undefined,
+      redirectUri: redirectUri || undefined,
       requestOrigin: resolveServerRequestOrigin(event),
     })
   }

@@ -7,6 +7,7 @@ import type {
   FeishuDirectoryStatus,
 } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
+import { buildApiEndpoint, extractApiBasePathPrefix, isHttpUrl } from '~~/shared/utils/api-url'
 
 const DEFAULT_FEISHU_API_BASE_URL = 'https://open.feishu.cn'
 const DEFAULT_GROUP_MEMBER_PAGE_SIZE = 200
@@ -19,6 +20,8 @@ interface FeishuApiEnvelope<T> {
   code?: number
   msg?: string
   message?: string
+  error?: string
+  error_description?: string
   data?: T
 }
 
@@ -316,7 +319,7 @@ async function requestFeishu<T>(input: {
 
   if (!response.ok) {
     const envelope = await parseEnvelope<T>(response)
-    const remoteMessage = String(envelope.msg || envelope.message || '')
+    const remoteMessage = String(envelope.msg || envelope.message || envelope.error_description || envelope.error || '')
     const fallbackMessage = `FEISHU_HTTP_${response.status}`
     const baseMessage = remoteMessage || fallbackMessage
     if (baseMessage.toLowerCase().includes('field validation failed'))
@@ -327,7 +330,7 @@ async function requestFeishu<T>(input: {
   const envelope = await parseEnvelope<T>(response)
   const code = Number(envelope.code || 0)
   if (code !== 0) {
-    const message = String(envelope.msg || envelope.message || '')
+    const message = String(envelope.msg || envelope.message || envelope.error_description || envelope.error || '')
     const fallbackMessage = `FEISHU_API_${code}`
     const baseMessage = message || fallbackMessage
     if (baseMessage.toLowerCase().includes('field validation failed'))
@@ -390,6 +393,20 @@ export interface FeishuBitableRecord {
   fields: Record<string, unknown>
 }
 
+export function resolveFeishuOAuthRedirectUri(input: {
+  publicBaseUrl?: string
+  apiBaseUrl?: string
+}): string {
+  const publicBaseUrl = String(input.publicBaseUrl || '').trim()
+  if (!isHttpUrl(publicBaseUrl))
+    return ''
+
+  const apiBasePathPrefix = extractApiBasePathPrefix(input.apiBaseUrl || '/api') || '/'
+  const apiCallbackPath = buildApiEndpoint(apiBasePathPrefix, '/auth/feishu/callback')
+  const redirectUri = buildApiEndpoint(publicBaseUrl, apiCallbackPath)
+  return isHttpUrl(redirectUri) ? redirectUri : ''
+}
+
 export function buildFeishuAuthorizeUrl(input: {
   config: FeishuIntegrationConfigInternal
   state: string
@@ -427,6 +444,25 @@ export async function getFeishuTenantAccessToken(config: FeishuIntegrationConfig
   const token = String(data.tenant_access_token || '').trim()
   if (!token)
     throw new Error('FEISHU_TENANT_TOKEN_EMPTY')
+  return token
+}
+
+async function getFeishuInternalAppAccessToken(config: FeishuIntegrationConfigInternal): Promise<string> {
+  if (!config.appId || !config.appSecret)
+    throw new Error('FEISHU_APP_CONFIG_INCOMPLETE')
+
+  const data = await requestFeishu<{ app_access_token?: string, expire?: number, expires_in?: number }>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/auth/v3/app_access_token/internal',
+    method: 'POST',
+    body: {
+      app_id: config.appId,
+      app_secret: config.appSecret,
+    },
+  })
+  const token = String(data.app_access_token || '').trim()
+  if (!token)
+    throw new Error('FEISHU_APP_TOKEN_EMPTY')
   return token
 }
 
@@ -664,36 +700,45 @@ export async function getFeishuChatById(input: {
   return toFeishuChatCandidate(data.chat || data, chatId)
 }
 
-async function exchangeOAuthCode(config: FeishuIntegrationConfigInternal, code: string): Promise<OAuthAccessTokenData> {
+async function exchangeOAuthCode(input: {
+  config: FeishuIntegrationConfigInternal
+  code: string
+  redirectUri?: string
+}): Promise<OAuthAccessTokenData> {
+  const config = input.config
+  const code = String(input.code || '').trim()
   if (!code)
     throw new Error('FEISHU_OAUTH_CODE_REQUIRED')
   if (!config.appId || !config.appSecret)
     throw new Error('FEISHU_APP_CONFIG_INCOMPLETE')
 
   try {
+    const appAccessToken = await getFeishuInternalAppAccessToken(config)
     return await requestFeishu<OAuthAccessTokenData>({
+      baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+      path: '/open-apis/authen/v1/access_token',
+      method: 'POST',
+      bearerToken: appAccessToken,
+      body: {
+        grant_type: 'authorization_code',
+        code,
+      },
+    })
+  }
+  catch (error) {
+    const message = toErrorMessage(error)
+    if (!message.includes('404') && !message.includes('400') && !message.includes('NOT_FOUND') && !message.toLowerCase().includes('field validation failed'))
+      throw error
+    return requestFeishu<OAuthAccessTokenData>({
       baseUrl: DEFAULT_FEISHU_API_BASE_URL,
       path: '/open-apis/authen/v2/oauth/token',
       method: 'POST',
       body: {
         grant_type: 'authorization_code',
         code,
-        app_id: config.appId,
-        app_secret: config.appSecret,
-      },
-    })
-  }
-  catch (error) {
-    const message = toErrorMessage(error)
-    if (!message.includes('404') && !message.includes('NOT_FOUND'))
-      throw error
-    return requestFeishu<OAuthAccessTokenData>({
-      baseUrl: DEFAULT_FEISHU_API_BASE_URL,
-      path: '/open-apis/authen/v1/access_token',
-      method: 'POST',
-      body: {
-        grant_type: 'authorization_code',
-        code,
+        client_id: config.appId,
+        client_secret: config.appSecret,
+        redirect_uri: String(input.redirectUri || '').trim() || undefined,
       },
     })
   }
@@ -702,8 +747,9 @@ async function exchangeOAuthCode(config: FeishuIntegrationConfigInternal, code: 
 export async function getFeishuOAuthProfile(input: {
   config: FeishuIntegrationConfigInternal
   code: string
+  redirectUri?: string
 }): Promise<FeishuOAuthLoginProfile> {
-  const tokenData = await exchangeOAuthCode(input.config, input.code)
+  const tokenData = await exchangeOAuthCode(input)
   const userAccessToken = String(tokenData.access_token || tokenData.user_access_token || '').trim()
   if (!userAccessToken)
     throw new Error('FEISHU_USER_ACCESS_TOKEN_EMPTY')
