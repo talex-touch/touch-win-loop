@@ -1,6 +1,8 @@
+import type { RuntimeSettings } from '~~/server/utils/env'
 import type { DefenseRealtimeBootstrapPayload } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { setResponseStatus } from 'h3'
+import { assertCozeRealtimeConfig, resolveCozeVoiceRuntimeConfig } from '~~/server/services/admin-ai/coze-voice'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { getAiChatSessionById } from '~~/server/utils/chat-store'
@@ -12,6 +14,7 @@ import {
   normalizeDefenseRealtimeSessionMeta,
   resolveDefenseRealtimeQwenApiKey,
 } from '~~/server/utils/defense-realtime'
+import { resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
   getProjectDefenseSessionState,
@@ -23,6 +26,15 @@ import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function resolveDefenseCozeVoiceProvider(runtime: RuntimeSettings) {
+  const registry = resolvePlatformAiRegistry(runtime)
+  const providerMap = new Map(registry.providers.map(provider => [provider.id, provider]))
+  const defenseChannel = registry.channels.find(item => item.key === 'defense')
+  return (defenseChannel?.providerIds || [])
+    .map(providerId => providerMap.get(providerId) || null)
+    .find(provider => provider?.enabled && provider.type === 'coze-voice') || null
 }
 
 async function createQwenTemporaryToken(apiKey: string): Promise<{ token: string, expiresAt: string | null }> {
@@ -146,21 +158,25 @@ export default defineEventHandler(async (event) => {
         }
       }
       else {
-        const accessToken = runtime.defenseRealtime.coze.authMode === 'oauth'
-          ? normalizeString(runtime.defenseRealtime.coze.patOrOauthSecret)
-          : ''
-        if (!normalizeString(runtime.defenseRealtime.coze.botId) || !normalizeString(runtime.defenseRealtime.coze.connectorId) || !accessToken)
+        const defenseCozeProvider = resolveDefenseCozeVoiceProvider(runtime)
+        const config = resolveCozeVoiceRuntimeConfig({
+          provider: defenseCozeProvider,
+          ai: null,
+          runtime,
+        })
+        if (!config)
           throw new Error('COZE_CONFIG_MISSING')
+        assertCozeRealtimeConfig(config)
 
         const conversationId = normalizeString(nextRealtime.conversationId) || randomUUID()
         payload = {
           ...payload,
           coze: {
-            baseUrl: runtime.defenseRealtime.coze.baseUrl,
-            accessToken,
-            botId: runtime.defenseRealtime.coze.botId,
-            connectorId: runtime.defenseRealtime.coze.connectorId,
-            voiceId: runtime.defenseRealtime.coze.voiceId,
+            baseUrl: config.baseURL,
+            accessToken: config.apiKey,
+            botId: config.botId,
+            connectorId: config.connectorId,
+            voiceId: config.voiceId,
             conversationId,
             roomInfo: null,
           },
@@ -234,9 +250,9 @@ export default defineEventHandler(async (event) => {
         attempts: 1,
       }, 50398)
     }
-    if (error instanceof Error && error.message === 'COZE_CONFIG_MISSING') {
+    if (error instanceof Error && (error.message === 'COZE_CONFIG_MISSING' || error.message === 'COZE_VOICE_API_KEY_NOT_CONFIGURED' || error.message === 'COZE_REALTIME_CONFIG_MISSING')) {
       setResponseStatus(event, 503)
-      return fail('Coze 实时音视频未完成配置，当前仅支持 OAuth relay Token。', {
+      return fail('Coze 实时音视频未完成配置。请在后台 AI 配置中将 defense 渠道绑定到 Coze 语音 Provider，并填写 token、botId、connectorId。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,

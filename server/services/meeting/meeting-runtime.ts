@@ -38,8 +38,10 @@ export function listMeetingAsrConfigIssues(runtime: RuntimeSettings): string[] {
   if (provider === 'http' && !normalizeString(runtime.meeting.asr.serviceUrl))
     issues.push('ASR serviceUrl 未配置')
   if (provider === 'openai-compatible') {
-    const asrRuntime = resolveAiRuntimeForChannel(runtime, 'meeting_asr').ai
-    if (!normalizeString(asrRuntime.provider) || !normalizeString(asrRuntime.baseURL) || !normalizeString(asrRuntime.model))
+    const channelRuntime = resolveAiRuntimeForChannel(runtime, 'meeting_asr')
+    const asrRuntime = channelRuntime.ai
+    const modelRequired = channelRuntime.provider?.capability !== 'voice'
+    if (!normalizeString(asrRuntime.provider) || !normalizeString(asrRuntime.baseURL) || (modelRequired && !normalizeString(asrRuntime.model)))
       issues.push('meeting_asr 场景未绑定可用 ASR Provider/模型')
   }
   return issues

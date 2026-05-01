@@ -1,6 +1,8 @@
 import type { RuntimeSettings } from '~~/server/utils/env'
+import type { PlatformAiResolvedChannelRuntime } from '~~/server/utils/platform-ai-channels'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
+import { isCozeVoiceProvider, resolveCozeVoiceRuntimeConfig, transcribeCozeVoiceAudio } from '~~/server/services/admin-ai/coze-voice'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { normalizePlatformAiApiKey, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
 import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
@@ -188,15 +190,21 @@ function buildAsrProviderEndpoint(serviceUrl: string, suffix: '/healthz' | '/mod
   return `${normalized}${suffix}`
 }
 
-function resolveOpenAiCompatibleAsrRuntime(runtime: RuntimeSettings): ReturnType<typeof resolveAiRuntimeForChannel>['ai'] {
-  const ai = resolveAiRuntimeForChannel(runtime, 'meeting_asr').ai
-  if (!normalizeString(ai.provider) || !normalizeString(ai.baseURL) || !normalizeString(ai.model))
+function resolveOpenAiCompatibleAsrRuntime(runtime: RuntimeSettings): ReturnType<typeof resolveAiRuntimeForChannel> {
+  const resolved = resolveAiRuntimeForChannel(runtime, 'meeting_asr')
+  const ai = resolved.ai
+  const modelRequired = !isCozeVoiceProvider(resolved.provider)
+  if (!normalizeString(ai.provider) || !normalizeString(ai.baseURL) || (modelRequired && !normalizeString(ai.model)))
     throw new Error('MEETING_ASR_CHANNEL_NOT_CONFIGURED')
-  return ai
+  return resolved
 }
 
-function buildOpenAiCompatibleAsrEndpoint(ai: ReturnType<typeof resolveOpenAiCompatibleAsrRuntime>): string {
-  return buildAsrProviderEndpoint(resolvePlatformAiRequestBaseURL(ai.baseURL, ai.provider), '/audio/transcriptions')
+function buildOpenAiCompatibleAsrEndpoint(ai: Pick<PlatformAiResolvedChannelRuntime, 'ai' | 'provider'>): string {
+  const runtime = ai.ai
+  const baseURL = isCozeVoiceProvider(ai.provider)
+    ? runtime.baseURL
+    : resolvePlatformAiRequestBaseURL(runtime.baseURL, runtime.provider)
+  return buildAsrProviderEndpoint(baseURL, '/audio/transcriptions')
 }
 
 function resolveOpenAiCompatibleAsrProbeEndpoint(runtime: RuntimeSettings): string {
@@ -298,8 +306,25 @@ async function transcribeOpenAiCompatibleChunk(input: {
   eventSeq: number
   wavBuffer: Buffer
 }): Promise<EmbeddedTranscriptionResult> {
-  const result = await runWithPlatformAiChannelFallback(input.runtime, 'meeting_asr', async ({ ai }) => {
-    const endpoint = buildOpenAiCompatibleAsrEndpoint(ai)
+  const result = await runWithPlatformAiChannelFallback(input.runtime, 'meeting_asr', async ({ ai, provider }) => {
+    if (isCozeVoiceProvider(provider)) {
+      const config = resolveCozeVoiceRuntimeConfig({ provider, ai, runtime: input.runtime })
+      if (!config)
+        throw new Error('COZE_VOICE_ASR_NOT_CONFIGURED')
+      const transcription = await transcribeCozeVoiceAudio({
+        config,
+        audioBuffer: input.wavBuffer,
+        filename: `${input.sessionId}-${input.participantIdentity}-${input.eventSeq}.wav`,
+        mimeType: 'audio/wav',
+      })
+      return {
+        text: transcription.text,
+        language: '',
+        model: 'coze-voice',
+      }
+    }
+
+    const endpoint = buildOpenAiCompatibleAsrEndpoint({ ai, provider })
     const sceneModel = normalizeString(ai.model)
     const apiKey = normalizePlatformAiApiKey(ai.apiKey)
     if (!endpoint || !sceneModel)
