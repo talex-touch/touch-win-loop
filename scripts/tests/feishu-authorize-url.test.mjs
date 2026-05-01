@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { it } from 'vitest'
-import { buildFeishuAuthorizeUrl } from '../../server/services/feishu/client.ts'
+import { buildFeishuAuthorizeUrl, resolveFeishuOAuthRedirectUri } from '../../server/services/feishu/client.ts'
 
 function createConfig(overrides = {}) {
   return {
@@ -56,4 +56,14 @@ it('显式配置与调用方兜底都缺失时，按请求源推导回调地址'
 
   const parsed = new URL(url)
   assert.equal(parsed.searchParams.get('redirect_uri'), 'https://request.example.com/api/auth/feishu/callback')
+})
+
+it('按运行时公网地址和 API 前缀推导飞书 OAuth 回调地址', () => {
+  assert.equal(
+    resolveFeishuOAuthRedirectUri({
+      publicBaseUrl: 'http://winloop-staging.wc1.tagzxia.com',
+      apiBaseUrl: '/api',
+    }),
+    'http://winloop-staging.wc1.tagzxia.com/api/auth/feishu/callback',
+  )
 })
