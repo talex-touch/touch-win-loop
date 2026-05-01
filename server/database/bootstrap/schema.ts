@@ -474,7 +474,7 @@ CREATE TABLE IF NOT EXISTS workspace_external_resource_refs (
   external_type TEXT NOT NULL CHECK (external_type IN ('feishu_doc', 'feishu_wiki', 'feishu_drive_file', 'feishu_bitable')),
   external_token TEXT NOT NULL,
   external_url TEXT NOT NULL DEFAULT '',
-  resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL,
+  resource_id TEXT,
   source_hash TEXT NOT NULL DEFAULT '',
   metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   last_import_status TEXT NOT NULL DEFAULT 'succeeded' CHECK (last_import_status IN ('succeeded', 'skipped', 'failed')),
@@ -1264,6 +1264,28 @@ CREATE TABLE IF NOT EXISTS project_resources (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE workspace_external_resource_refs
+  ADD COLUMN IF NOT EXISTS resource_id TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_attribute a
+      ON a.attrelid = c.conrelid
+     AND a.attnum = ANY(c.conkey)
+    WHERE c.conrelid = 'workspace_external_resource_refs'::regclass
+      AND c.contype = 'f'
+      AND c.confrelid = 'project_resources'::regclass
+      AND a.attname = 'resource_id'
+  ) THEN
+    ALTER TABLE workspace_external_resource_refs
+      ADD CONSTRAINT workspace_external_resource_refs_resource_id_fkey
+      FOREIGN KEY (resource_id) REFERENCES project_resources(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS project_resource_bindings (
   id TEXT PRIMARY KEY,

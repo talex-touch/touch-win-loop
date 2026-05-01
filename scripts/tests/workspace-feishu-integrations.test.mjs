@@ -52,6 +52,24 @@ describe('workspace Feishu integration contracts', () => {
     assert.match(source, /UNIQUE\(connection_id, external_type, external_token, project_id\)/, '外部资源引用缺少幂等约束')
     assert.match(source, /UNIQUE\(provider, event_id\)/, '事件去重缺少 provider + event_id 唯一约束')
     assert.match(source, /source IN \('upload', 'library', 'collab', 'external'\)/, 'project_resources.source 未允许 external')
+
+    const externalRefsIndex = source.indexOf('CREATE TABLE IF NOT EXISTS workspace_external_resource_refs')
+    const eventDedupIndex = source.indexOf('CREATE TABLE IF NOT EXISTS integration_event_dedup')
+    const projectResourcesIndex = source.indexOf('CREATE TABLE IF NOT EXISTS project_resources')
+    assert.ok(externalRefsIndex >= 0 && eventDedupIndex > externalRefsIndex, '无法定位外部资源引用表定义')
+    assert.ok(projectResourcesIndex > externalRefsIndex, '测试前提失效：project_resources 不再晚于外部资源引用表')
+
+    const externalRefsCreateBlock = source.slice(externalRefsIndex, eventDedupIndex)
+    assert.doesNotMatch(
+      externalRefsCreateBlock,
+      /resource_id TEXT REFERENCES project_resources\(id\)/,
+      'fresh DB bootstrap 不应在 project_resources 创建前声明外键',
+    )
+    assert.match(
+      source,
+      /FOREIGN KEY \(resource_id\) REFERENCES project_resources\(id\) ON DELETE SET NULL/,
+      '外部资源引用仍需在 project_resources 创建后补回外键',
+    )
   })
 
   it('types and store provide workspace Feishu integration surface', async () => {
