@@ -26,7 +26,7 @@ jobs:
     outputs:
       should_publish: ${{ steps.publish_decision.outputs.should_publish }}
       build_version: ${{ steps.build_meta.outputs.build_version }}
-      image_ref: ${{ steps.image_ref_meta.outputs.image_ref }}
+      image_digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Wait for matching CI run
         id: ci_gate
@@ -220,18 +220,6 @@ jobs:
           echo "Build Version: ${BUILD_VERSION}"
           echo "Image Ref: ${image_ref}"
 
-      - name: Resolve image ref
-        if: steps.publish_decision.outputs.should_publish == 'true'
-        id: image_ref_meta
-        env:
-          IMAGE_REPO: ${{ steps.image.outputs.name }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          set -euo pipefail
-
-          image_ref="${IMAGE_REPO}@${IMAGE_DIGEST}"
-          echo "image_ref=${image_ref}" >> "${GITHUB_OUTPUT}"
-
   deploy-jenkins:
     name: Trigger Jenkins Deployment
     runs-on: ubuntu-latest
@@ -257,10 +245,14 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_ACTOR: ${{ github.actor }}
           BUILD_VERSION: ${{ needs.publish-ghcr.outputs.build_version }}
-          IMAGE_REF: ${{ needs.publish-ghcr.outputs.image_ref }}
+          IMAGE_DIGEST: ${{ needs.publish-ghcr.outputs.image_digest }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
           TRIGGERED_BY: ${{ github.event_name }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+
+          owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          export IMAGE_REF="ghcr.io/${owner}/touch-win-loop@${IMAGE_DIGEST}"
 
           python3 "scripts/ci/trigger_jenkins_deploy.py"
