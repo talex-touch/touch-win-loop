@@ -2,6 +2,7 @@ export type WorkspaceFeishuExternalSourceType = 'feishu_doc' | 'feishu_wiki' | '
 export type WorkspaceFeishuAssignableRole = 'admin' | 'manager' | 'member'
 
 export interface WorkspaceFeishuSyncPolicyPatchInput {
+  /** @deprecated Workspace connectors no longer control platform login. */
   autoLoginEnabled?: unknown
   defaultWorkspaceRole?: unknown
   departmentIds?: unknown
@@ -11,6 +12,7 @@ export interface WorkspaceFeishuSyncPolicyPatchInput {
 }
 
 export interface NormalizedWorkspaceFeishuSyncPolicyPatch {
+  /** @deprecated Kept for response compatibility; PATCH handlers ignore incoming values. */
   autoLoginEnabled: boolean
   defaultWorkspaceRole: WorkspaceFeishuAssignableRole
   departmentIds: string[]
@@ -266,7 +268,7 @@ export function normalizeWorkspaceFeishuSyncPolicyPatch(
   }
 
   return {
-    autoLoginEnabled: input.autoLoginEnabled !== false,
+    autoLoginEnabled: false,
     defaultWorkspaceRole: 'member',
     departmentIds: normalizeStringList(input.departmentIds),
     userIds: normalizeStringList(input.userIds),

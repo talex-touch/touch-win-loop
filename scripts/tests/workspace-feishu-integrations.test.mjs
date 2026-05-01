@@ -154,11 +154,13 @@ describe('workspace Feishu integration contracts', () => {
       readFile(RESOURCE_MANAGER_FILE, 'utf8'),
     ])
 
-    assert.match(dialogSource, /thirdPartyPlatforms/, '用户设置缺少第三方平台 tab id')
-    assert.match(dialogSource, /<UserSettingsThirdPartyPlatformsPanel\b/, '用户设置未渲染第三方平台面板')
-    assert.match(panelSource, /飞书/, '第三方平台面板缺少飞书配置入口')
-    assert.match(panelSource, /member-sync\/preview/, '第三方平台面板缺少成员同步预览调用')
-    assert.match(panelSource, /去项目资源管理器导入/, '第三方平台面板缺少项目导入入口')
+    assert.match(dialogSource, /thirdPartyPlatforms/, '用户设置缺少连接器 tab id')
+    assert.match(dialogSource, /label:\s*'连接器'/, '用户设置未把 workspace 飞书入口命名为连接器')
+    assert.match(dialogSource, /<UserSettingsThirdPartyPlatformsPanel\b/, '用户设置未渲染连接器面板')
+    assert.match(panelSource, /飞书连接器/, '连接器面板缺少飞书配置入口')
+    assert.match(panelSource, /member-sync\/preview/, '连接器面板缺少成员同步预览调用')
+    assert.match(panelSource, /去项目资源管理器导入/, '连接器面板缺少项目导入入口')
+    assert.doesNotMatch(panelSource, /autoLoginEnabled/, '连接器面板不应提交自动登录策略')
     assert.match(resourceManagerSource, /从飞书导入/, '项目资源管理器缺少从飞书导入入口')
     assert.match(resourceManagerSource, /openFeishuImportFromMenu/, '项目资源管理器缺少飞书导入菜单动作')
     assert.match(resourceManagerSource, /integrations\/feishu\/imports/, '项目资源管理器缺少导入任务调用')
@@ -177,6 +179,7 @@ describe('workspace Feishu integration pure helpers', () => {
     })
 
     assert.equal(patch.defaultWorkspaceRole, 'member')
+    assert.equal(patch.autoLoginEnabled, false)
     assert.deepEqual(patch.departmentIds, ['dep-1'])
     assert.deepEqual(patch.userIds, ['ou_1'])
     assert.deepEqual(patch.groupIds, ['group-a'])

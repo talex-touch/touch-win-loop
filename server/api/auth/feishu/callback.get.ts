@@ -1,3 +1,4 @@
+import type { AuthLoginResult } from '~~/shared/types/domain'
 import { sendRedirect } from 'h3'
 import { loginByFeishuOAuthCode, resolveFeishuLoginErrorInfo } from '~~/server/services/feishu/login-flow'
 import {
@@ -10,12 +11,31 @@ import { clearSessionCookie, getAuthFromEvent } from '~~/server/utils/auth'
 function sanitizeRedirectTarget(value: unknown): string {
   const redirect = String(value || '').trim()
   if (!redirect)
-    return '/dashboard'
+    return ''
   if (!redirect.startsWith('/') || redirect.startsWith('//'))
-    return '/dashboard'
+    return ''
   if (redirect.startsWith('/login'))
-    return '/dashboard'
+    return ''
   return redirect
+}
+
+function shouldLandInAdmin(loginResult: AuthLoginResult): boolean {
+  const user = loginResult.user
+  return Boolean(
+    user.isPlatformAdmin
+    || user.platformRoles?.length
+    || user.platformPermissions?.length,
+  )
+}
+
+function resolveSuccessfulRedirectTarget(input: {
+  loginResult: AuthLoginResult
+  requestedTarget?: string
+}): string {
+  const requestedTarget = sanitizeRedirectTarget(input.requestedTarget)
+  if (requestedTarget)
+    return requestedTarget
+  return shouldLandInAdmin(input.loginResult) ? '/admin' : '/dashboard'
 }
 
 function buildFailedRedirect(input: {
@@ -73,11 +93,14 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    await loginByFeishuOAuthCode(event, code)
+    const loginResult = await loginByFeishuOAuthCode(event, code)
     const redirectFromCookie = consumeFeishuOAuthRedirect(event)
     clearFeishuOAuthState(event)
     const redirectFromQuery = sanitizeRedirectTarget(query.redirect)
-    const target = redirectFromCookie || redirectFromQuery || '/dashboard'
+    const target = resolveSuccessfulRedirectTarget({
+      loginResult,
+      requestedTarget: redirectFromCookie || redirectFromQuery,
+    })
     return sendRedirect(event, target, 302)
   }
   catch (error) {

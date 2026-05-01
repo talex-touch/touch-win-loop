@@ -103,10 +103,10 @@ it('前端守卫与登录页已改为使用轻量 session probe', async () => {
   assert.match(bindPageSource, /middleware:\s*'auth-bind'/, '账号绑定页未挂载专用 middleware')
 
   assert.match(loginSource, /authApiFetch<ApiResponse<AuthSessionProbeResult>>\('\/auth\/session'\)/, '登录页未改用 /auth/session')
-  assert.match(loginSource, /if \(sessionState === 'unauthenticated'\)\s+await tryFeishuAutoLogin\(\)/, '登录页未限制为仅 401 才自动发起飞书登录')
+  assert.match(loginSource, /sessionState === 'unauthenticated' && !oauthError && !feishuError/, '登录页未限制为仅 401 且无回调错误时才静默尝试飞书 SDK 登录')
   assert.doesNotMatch(loginSource, /authApiFetch<ApiResponse<AuthMeResult>>\('\/auth\/me'\)/, '登录页不应继续使用 /auth/me 探测登录态')
-  assert.doesNotMatch(loginSource, /startFeishuOAuthRedirect/, '登录页不应在飞书自动登录失败后继续跳飞书 OAuth')
-  assert.match(loginSource, /飞书自动登录未完成，请改用账号密码登录。/, '登录页缺少飞书自动登录失败回退文案')
+  assert.match(loginSource, /manualFeishuLogin/, '登录页应提供显式飞书登录入口')
+  assert.doesNotMatch(loginSource, /飞书自动登录失败，请改用账号密码登录。/, '飞书 SDK 静默失败不应显示错误文案')
 
   assert.match(inviteSource, /authApiFetch<ApiResponse<AuthSessionProbeResult>>\('\/auth\/session'\)/, '邀请页未改用 /auth/session 检测登录态')
 })

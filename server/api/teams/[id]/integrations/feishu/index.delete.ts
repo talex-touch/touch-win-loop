@@ -41,7 +41,7 @@ export default defineEventHandler(async (event) => {
   catch (error) {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
       setResponseStatus(event, 403)
-      return fail('仅工作空间 owner/admin 可断开飞书第三方平台。', {
+      return fail('仅工作空间 owner/admin 可断开飞书连接器。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,

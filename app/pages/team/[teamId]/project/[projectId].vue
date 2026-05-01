@@ -11054,7 +11054,7 @@ function openAccountCenterFromHeader() {
 function openFeishuImportFromLeftSidebar() {
   accountCenterInitialTab.value = 'thirdPartyPlatforms'
   accountCenterVisible.value = true
-  statusLine.value = '已打开工作空间第三方平台，可从飞书导入项目资源。'
+  statusLine.value = '已打开工作空间连接器，可从飞书导入项目资源。'
 }
 
 function onUserUpdatedFromAccountCenter(user: AuthUser) {

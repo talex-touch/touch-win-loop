@@ -113,7 +113,7 @@ const tabItems: UserSettingsTabMeta[] = [
   { id: 'overview', groupId: 'workspace', label: '工作空间概览', icon: 'dashboard', description: '查看当前工作空间的核心信息。' },
   { id: 'ai', groupId: 'workspace', label: 'AI 配额', icon: 'neurology', description: '查看当前工作空间的 AI credits 配额。' },
   { id: 'members', groupId: 'workspace', label: '工作空间成员', icon: 'group', description: '查看成员、待处理邀请并生成邀请链接。' },
-  { id: 'thirdPartyPlatforms', groupId: 'workspace', label: '第三方平台', icon: 'extension', description: '配置工作空间级飞书连接、成员同步和数据导入。' },
+  { id: 'thirdPartyPlatforms', groupId: 'workspace', label: '连接器', icon: 'extension', description: '配置工作空间级飞书连接、成员同步和数据导入。' },
 ]
 
 const tabGroupItems: Array<{ id: UserSettingsNavGroupId, label: string }> = [
@@ -178,7 +178,7 @@ function resolveInitial(value: string | null | undefined): string {
 }
 
 const workspacePrimaryRole = computed<WorkspaceMemberRole | ''>(() => resolvePrimaryRole(currentWorkspace.value?.workspace.roles))
-const canManageThirdPartyPlatforms = computed(() => props.isPlatformAdminUser || workspacePrimaryRole.value === 'owner' || workspacePrimaryRole.value === 'admin')
+const canManageConnectors = computed(() => props.isPlatformAdminUser || workspacePrimaryRole.value === 'owner' || workspacePrimaryRole.value === 'admin')
 
 const userIdentityItems = computed(() => {
   const items: Array<{ key: string, value: string, mono?: boolean }> = []
@@ -884,7 +884,7 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
       v-else-if="activeTab === 'thirdPartyPlatforms'"
       :workspace-id="currentWorkspaceId"
       :is-personal-workspace="isPersonalWorkspace"
-      :can-manage="canManageThirdPartyPlatforms"
+      :can-manage="canManageConnectors"
     />
 
     <UserSettingsBindingsPanel

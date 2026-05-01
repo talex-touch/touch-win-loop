@@ -1,7 +1,7 @@
 import type { ApiResponse, AuthLoginMeta, AuthLoginResult, AuthSessionProbeResult } from '~~/shared/types/domain'
 import { logAuthProbeDegraded, resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 
-type OauthRedirectingProvider = 'oauth' | ''
+type OauthRedirectingProvider = 'oauth' | 'feishu' | ''
 const DEFAULT_OAUTH_DISPLAY_NAME = '第三方 OAuth'
 type SessionProbeState = 'authenticated' | 'unauthenticated' | 'degraded'
 
@@ -20,20 +20,39 @@ export function useLoginPage() {
   const oauthRedirectingProvider = ref<OauthRedirectingProvider>('')
 
   const feishuMeta = computed(() => authMeta.value?.feishu || null)
+  const feishuEnabled = computed(() => Boolean(feishuMeta.value?.enabled))
   const oauthMeta = computed(() => authMeta.value?.oauth || authMeta.value?.casdoor || null)
   const oauthEnabled = computed(() => Boolean(oauthMeta.value?.enabled))
   const oauthDisplayName = computed(() => String(oauthMeta.value?.displayName || '').trim() || DEFAULT_OAUTH_DISPLAY_NAME)
 
-  function resolveRedirectTarget(): string {
+  function resolveExplicitRedirectTarget(): string {
     const raw = route.query.redirect
     const redirect = Array.isArray(raw) ? String(raw[0] || '').trim() : String(raw || '').trim()
     if (!redirect)
-      return '/dashboard'
+      return ''
     if (!redirect.startsWith('/') || redirect.startsWith('//'))
-      return '/dashboard'
+      return ''
     if (redirect.startsWith('/login'))
-      return '/dashboard'
+      return ''
     return redirect
+  }
+
+  function resolveRedirectTarget(): string {
+    return resolveExplicitRedirectTarget() || '/dashboard'
+  }
+
+  function resolveFeishuLoginTarget(result: AuthLoginResult): string {
+    const explicitTarget = resolveExplicitRedirectTarget()
+    if (explicitTarget)
+      return explicitTarget
+
+    const user = result.user
+    const shouldLandInAdmin = Boolean(
+      user.isPlatformAdmin
+      || user.platformRoles?.length
+      || user.platformPermissions?.length,
+    )
+    return shouldLandInAdmin ? '/admin' : '/dashboard'
   }
 
   function readQueryText(name: string | string[]): string {
@@ -135,6 +154,13 @@ export function useLoginPage() {
     window.location.href = url
   }
 
+  async function startFeishuRedirect() {
+    const redirectTarget = resolveExplicitRedirectTarget()
+    const query = redirectTarget ? `?redirect=${encodeURIComponent(redirectTarget)}` : ''
+    oauthRedirectingProvider.value = 'feishu'
+    window.location.href = endpoint(`/auth/feishu/authorize${query}`)
+  }
+
   async function requestAuthCodeBySdk(appId: string): Promise<string> {
     const w = window as any
 
@@ -181,13 +207,13 @@ export function useLoginPage() {
     if (!normalizedCode)
       return false
 
-    await authApiFetch<ApiResponse<AuthLoginResult>>('/auth/feishu/websdk-login', {
+    const response = await authApiFetch<ApiResponse<AuthLoginResult>>('/auth/feishu/websdk-login', {
       method: 'POST',
       body: {
         code: normalizedCode,
       },
     })
-    await navigateTo(resolveRedirectTarget(), { replace: true })
+    await navigateTo(resolveFeishuLoginTarget(response.data), { replace: true })
     return true
   }
 
@@ -207,6 +233,16 @@ export function useLoginPage() {
       return
     }
     await startOauthRedirect()
+  }
+
+  async function manualFeishuLogin() {
+    errorText.value = ''
+    const meta = await loadAuthMeta()
+    if (!meta?.feishu?.enabled) {
+      errorText.value = '飞书登录尚未启用，请联系管理员。'
+      return
+    }
+    await startFeishuRedirect()
   }
 
   async function tryFeishuAutoLogin() {
@@ -230,12 +266,10 @@ export function useLoginPage() {
       const success = await loginByFeishuCode(authCode)
       if (!success) {
         logFeishuAutoLoginFailure('empty_auth_code')
-        errorText.value = '飞书自动登录未完成，请改用账号密码登录。'
       }
     }
     catch (error) {
       logFeishuAutoLoginFailure('sdk_failed', error)
-      errorText.value = String((error as any)?.data?.message || (error as Error)?.message || '飞书自动登录失败，请改用账号密码登录。')
     }
     finally {
       feishuLoading.value = false
@@ -258,7 +292,7 @@ export function useLoginPage() {
       errorText.value = feishuError
     }
 
-    if (sessionState === 'unauthenticated')
+    if (sessionState === 'unauthenticated' && !oauthError && !feishuError)
       await tryFeishuAutoLogin()
   })
 
@@ -269,10 +303,12 @@ export function useLoginPage() {
     errorText,
     feishuLoading,
     feishuMeta,
+    feishuEnabled,
     oauthEnabled,
     oauthDisplayName,
     oauthRedirectingProvider,
     submitLogin,
     manualOauthLogin,
+    manualFeishuLogin,
   }
 }

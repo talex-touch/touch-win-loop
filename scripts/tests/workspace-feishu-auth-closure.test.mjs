@@ -85,13 +85,13 @@ describe('workspace Feishu marketplace auth closure contracts', () => {
     assert.match(eventsSource, /ignored_workspace_connection_not_found/, '找不到 workspace connection 时必须只记录诊断不自动建连接')
   })
 
-  it('updates third-party settings panel for install, claim, and token health diagnostics', async () => {
+  it('updates connector settings panel for install, claim, and token health diagnostics', async () => {
     const panelSource = await readFile(THIRD_PARTY_PANEL_FILE, 'utf8')
 
-    assert.match(panelSource, /添加 WinLoop 到飞书/, '第三方平台面板缺少安装 CTA')
-    assert.match(panelSource, /install-session/, '第三方平台面板缺少 install-session 调用')
-    assert.match(panelSource, /integrations\/feishu\/claim/, '第三方平台面板缺少 tenant claim 调用')
-    assert.match(panelSource, /tokenHealth/, '第三方平台面板缺少 token health 诊断展示')
+    assert.match(panelSource, /连接飞书租户/, '连接器面板缺少安装 CTA')
+    assert.match(panelSource, /install-session/, '连接器面板缺少 install-session 调用')
+    assert.match(panelSource, /integrations\/feishu\/claim/, '连接器面板缺少 tenant claim 调用')
+    assert.match(panelSource, /tokenHealth/, '连接器面板缺少 token health 诊断展示')
     assert.match(panelSource, /canImportFeishuResource/, '未连接或 token 异常时必须禁用导入')
   })
 })

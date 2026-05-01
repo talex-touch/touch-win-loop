@@ -665,7 +665,7 @@ export async function getFeishuWorkspaceIntegrationSnapshot(
     : [{ rows: [] as WorkspaceIntegrationImportJobRow[] }, { rows: [] as WorkspaceExternalResourceRefRow[] }, { rows: [] as WorkspaceIntegrationAuditLogRow[] }]
 
   const snapshotBase = {
-    provider: 'feishu',
+    provider: 'feishu' as const,
     connected: summary.connected,
     connection: summary.connection || null,
     policy: summary.policy || null,
@@ -921,6 +921,7 @@ export async function patchFeishuWorkspaceSyncPolicy(
     throw new Error('WORKSPACE_FEISHU_CONNECTION_NOT_FOUND')
 
   const patch = normalizeWorkspaceFeishuSyncPolicyPatch(input.patch)
+  const currentPolicy = await getPolicyByConnectionId(db, connection.id)
   const now = new Date().toISOString()
   await db.query(
     `INSERT INTO workspace_integration_sync_policies (
@@ -942,7 +943,6 @@ export async function patchFeishuWorkspaceSyncPolicy(
     )
     ON CONFLICT (connection_id)
     DO UPDATE SET
-      auto_login_enabled = EXCLUDED.auto_login_enabled,
       default_workspace_role = EXCLUDED.default_workspace_role,
       department_ids = EXCLUDED.department_ids,
       user_ids = EXCLUDED.user_ids,
@@ -953,7 +953,7 @@ export async function patchFeishuWorkspaceSyncPolicy(
     [
       randomUUID(),
       connection.id,
-      patch.autoLoginEnabled,
+      currentPolicy?.autoLoginEnabled ?? false,
       patch.defaultWorkspaceRole,
       patch.departmentIds,
       patch.userIds,

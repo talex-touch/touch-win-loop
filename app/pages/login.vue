@@ -13,23 +13,36 @@ const {
   loading,
   errorText,
   feishuLoading,
+  feishuEnabled,
   oauthEnabled,
   oauthDisplayName,
   oauthRedirectingProvider,
   submitLogin,
+  manualFeishuLogin,
   manualOauthLogin,
 } = useLoginPage()
 </script>
 
 <template>
   <div class="flex w-full justify-center" data-testid="login-page">
-    <MagicCard class="relative mx-auto w-full max-w-[680px] min-w-[520px] max-sm:min-w-0">
+    <MagicCard class="mx-auto max-w-[680px] min-w-[520px] w-full relative max-sm:min-w-0">
       <div class="space-y-7">
         <div class="flex items-center justify-center">
           <WinLoopTextLogo class="login-page__logo scale-[0.64] sm:scale-[0.72]" />
         </div>
 
-        <div class="space-y-2">
+        <div v-if="feishuEnabled || oauthEnabled" class="space-y-2">
+          <UiButton
+            v-if="feishuEnabled"
+            data-testid="login-feishu-button"
+            variant="secondary"
+            long
+            :disabled="oauthRedirectingProvider !== '' || feishuLoading"
+            @click="manualFeishuLogin"
+          >
+            {{ feishuLoading ? '飞书登录中...' : (oauthRedirectingProvider === 'feishu' ? '飞书跳转中...' : '使用飞书登录') }}
+          </UiButton>
+
           <UiButton
             v-if="oauthEnabled"
             variant="secondary"

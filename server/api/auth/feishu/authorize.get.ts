@@ -14,11 +14,11 @@ import { buildApiEndpoint, extractApiBasePathPrefix, isHttpUrl } from '~~/shared
 function sanitizeRedirectTarget(value: unknown): string {
   const redirect = String(value || '').trim()
   if (!redirect)
-    return '/dashboard'
+    return ''
   if (!redirect.startsWith('/') || redirect.startsWith('//'))
-    return '/dashboard'
+    return ''
   if (redirect.startsWith('/login'))
-    return '/dashboard'
+    return ''
   return redirect
 }
 

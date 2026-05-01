@@ -7,7 +7,7 @@ import { resolveSmokeServerOptions, startSmokeServer, stopServer } from './utils
 
 const DEFAULT_ARTIFACT_DIR = 'output/playwright/workspace-feishu-diagnostics'
 const DEFAULT_PASSWORD = 'codex123456'
-const REQUIRED_PANEL_TEXTS = ['健康诊断', '最近同步', '自动登录', '审计日志']
+const REQUIRED_PANEL_TEXTS = ['健康诊断', '最近同步', '最近导入', '审计日志']
 const REQUIRED_SNAPSHOT_KEYS = ['diagnosticSummary', 'memberSyncSummary', 'autoLoginSummary', 'auditLogs']
 
 function assert(condition, message) {
@@ -97,7 +97,7 @@ async function maybeStartServer() {
   }
 }
 
-async function openThirdPartyPanel(page) {
+async function openConnectorPanel(page) {
   await page.goto('/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 })
   await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined)
   await page.waitForTimeout(1500)
@@ -115,7 +115,7 @@ async function openThirdPartyPanel(page) {
   }
 
   await page.locator('.user-settings-nav').waitFor({ state: 'visible', timeout: 20000 })
-  await page.locator('button.user-settings-tab').filter({ hasText: '第三方平台' }).click()
+  await page.locator('button.user-settings-tab').filter({ hasText: '连接器' }).click()
   await page.locator('[data-testid="user-settings-third-party-platforms-panel"]').waitFor({ state: 'visible', timeout: 20000 })
 }
 
@@ -156,16 +156,16 @@ async function run() {
     const workspaceId = resolveWorkspaceId(authData)
     assert(workspaceId, '登录结果未返回可用 workspaceId')
 
-    await openThirdPartyPanel(page)
+    await openConnectorPanel(page)
 
     const panel = page.locator('[data-testid="user-settings-third-party-platforms-panel"]')
     const panelText = await panel.textContent() || ''
     for (const text of REQUIRED_PANEL_TEXTS)
-      assert(panelText.includes(text), `第三方平台面板缺少文案：${text}`)
+      assert(panelText.includes(text), `连接器面板缺少文案：${text}`)
 
     const snapshot = await readApiPayload(
       await page.request.get(`/api/teams/${workspaceId}/integrations/feishu`),
-      '读取飞书第三方平台 snapshot',
+      '读取飞书连接器 snapshot',
     )
     for (const key of REQUIRED_SNAPSHOT_KEYS)
       assert(Object.hasOwn(snapshot || {}, key), `飞书 snapshot 缺少字段：${key}`)
@@ -185,7 +185,7 @@ async function run() {
       panel: {
         health: panelText.includes('健康诊断'),
         sync: panelText.includes('最近同步'),
-        autoLogin: panelText.includes('自动登录'),
+        import: panelText.includes('最近导入'),
         audit: panelText.includes('审计日志'),
       },
       snapshotKeys: REQUIRED_SNAPSHOT_KEYS,

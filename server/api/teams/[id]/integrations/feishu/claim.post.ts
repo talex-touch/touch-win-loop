@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const workspaceId = String(getRouterParam(event, 'id') || '').trim()
-  const body = await readBody<ClaimFeishuWorkspaceTenantBody>(event).catch(() => ({}))
+  const body = await readBody<ClaimFeishuWorkspaceTenantBody>(event).catch((): ClaimFeishuWorkspaceTenantBody => ({}))
   const tenantKey = normalizeString(body?.tenantKey)
 
   if (!workspaceId || !tenantKey) {
@@ -82,7 +82,6 @@ export default defineEventHandler(async (event) => {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
-      tokenHealth,
     }, 409104)
   }
 

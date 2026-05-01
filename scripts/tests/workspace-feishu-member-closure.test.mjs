@@ -49,20 +49,20 @@ describe('workspace Feishu member and login closure contracts', () => {
     assert.doesNotMatch(combined, /body\?\.candidates \|\| \[\]/, 'API 不应再把前端 candidates 当作唯一来源')
   })
 
-  it('applies auto-join before login result and upgrades third-party member UI', async () => {
+  it('keeps platform login separate from connector member sync UI', async () => {
     const [authSource, panelSource] = await Promise.all([
       readFile(FEISHU_AUTH_FILE, 'utf8'),
       readFile(PANEL_FILE, 'utf8'),
     ])
 
-    assert.match(authSource, /applyFeishuWorkspaceAutoJoin/, '飞书登录链路未调用自动加入 helper')
-    assert.match(authSource, /ensureLocalUserByFeishuProfile[\s\S]*applyFeishuWorkspaceAutoJoin[\s\S]*buildAuthLoginResult/, '自动加入必须发生在构建登录结果前')
+    assert.doesNotMatch(authSource, /applyFeishuWorkspaceAutoJoin/, '飞书登录链路不应再触发 workspace 自动加入')
+    assert.match(authSource, /ensureLocalUserByFeishuProfile[\s\S]*buildAuthLoginResult/, '飞书登录应只完成本地账号与平台 session 建立')
 
-    assert.match(panelSource, /directoryCandidates/, '第三方平台面板缺少通讯录候选状态')
-    assert.match(panelSource, /selectedFeishuUnionIds/, '第三方平台面板缺少用户白名单选择')
-    assert.match(panelSource, /selectedFeishuDepartmentIds/, '第三方平台面板缺少部门白名单选择')
-    assert.match(panelSource, /roleMappingDrafts/, '第三方平台面板缺少用户角色映射')
-    assert.match(panelSource, /member-sync\/run/, '第三方平台面板缺少执行成员同步动作')
+    assert.match(panelSource, /directoryCandidates/, '连接器面板缺少通讯录候选状态')
+    assert.match(panelSource, /selectedFeishuUnionIds/, '连接器面板缺少用户白名单选择')
+    assert.match(panelSource, /selectedFeishuDepartmentIds/, '连接器面板缺少部门白名单选择')
+    assert.match(panelSource, /roleMappingDrafts/, '连接器面板缺少用户角色映射')
+    assert.match(panelSource, /member-sync\/run/, '连接器面板缺少执行成员同步动作')
     assert.match(panelSource, /canSyncFeishuMembers/, '连接异常时必须禁用成员同步')
     assert.doesNotMatch(panelSource, /成员白名单 unionId/, '面板不应继续要求手写 unionId')
   })

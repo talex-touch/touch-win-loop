@@ -75,14 +75,10 @@ const importJobs = computed(() => snapshot.value?.importJobs || [])
 const externalResources = computed(() => snapshot.value?.externalResources || [])
 const diagnosticSummary = computed(() => snapshot.value?.diagnosticSummary || null)
 const memberSyncSummary = computed(() => snapshot.value?.memberSyncSummary || diagnosticSummary.value?.memberSyncSummary || {})
-const autoLoginSummary = computed(() => snapshot.value?.autoLoginSummary || diagnosticSummary.value?.autoLoginSummary || {})
+const importSummary = computed(() => diagnosticSummary.value?.importSummary || {})
 const auditLogs = computed(() => snapshot.value?.auditLogs || [])
 const memberDiagnosticSamples = computed(() => {
   const samples = memberSyncSummary.value.diagnosticSamples
-  return Array.isArray(samples) ? samples.slice(0, 5) : []
-})
-const autoLoginDiagnosticSamples = computed(() => {
-  const samples = autoLoginSummary.value.diagnosticSamples
   return Array.isArray(samples) ? samples.slice(0, 5) : []
 })
 const selectedUnionIdSet = computed(() => new Set(selectedFeishuUnionIds.value))
@@ -164,7 +160,6 @@ function buildSyncPolicyPatch() {
     groupIds: uniqueStrings(selectedFeishuGroupIds.value),
     roleMappings,
     defaultWorkspaceRole: 'member',
-    autoLoginEnabled: true,
   }
 }
 
@@ -193,7 +188,7 @@ async function loadSnapshot() {
     syncDrafts(response.data)
   }
   catch (error: any) {
-    errorText.value = String(error?.data?.message || '飞书第三方平台状态加载失败。')
+    errorText.value = String(error?.data?.message || '飞书连接器状态加载失败。')
   }
   finally {
     loading.value = false
@@ -229,7 +224,7 @@ async function saveConnection() {
     })
     snapshot.value = claimResponse.data
     await saveSyncPolicy(workspaceId)
-    successText.value = '飞书租户已认领，成员策略已保存。'
+    successText.value = '飞书租户已认领，成员同步策略已保存。'
   }
   catch (error: any) {
     errorText.value = String(error?.data?.message || '飞书租户认领失败。')
@@ -381,7 +376,7 @@ watch(
   <section data-testid="user-settings-third-party-platforms-panel" class="space-y-4">
     <div v-if="props.isPersonalWorkspace" class="px-4 py-3 border border-amber-200 rounded-lg bg-amber-50">
       <p class="text-sm text-amber-900 font-semibold">
-        第三方平台属于 Business 工作空间能力
+        连接器属于 Business 工作空间能力
       </p>
       <p class="text-xs text-amber-700 mt-1">
         个人空间可查看入口，连接、成员同步和导入需要升级到团队工作空间。
@@ -392,7 +387,7 @@ watch(
       <div class="flex gap-3 items-start justify-between">
         <div>
           <p class="text-sm text-slate-900 font-semibold">
-            飞书
+            飞书连接器
           </p>
           <p class="text-xs text-slate-500 mt-1">
             {{ connectionStatusText }}
@@ -408,7 +403,7 @@ watch(
 
       <div class="mt-4">
         <button class="text-xs text-white font-semibold px-3 py-2 rounded-lg bg-blue-600 disabled:opacity-40" type="button" :disabled="!canEdit || installing" @click="startFeishuInstall">
-          添加 WinLoop 到飞书
+          连接飞书租户
         </button>
       </div>
 
@@ -459,19 +454,16 @@ watch(
 
           <div class="p-3 border border-slate-200 rounded-lg bg-white">
             <p class="text-xs text-slate-700 font-semibold">
-              自动登录
+              最近导入
             </p>
             <div class="text-xs text-slate-500 mt-2 gap-2 grid grid-cols-2">
-              <span>加入 {{ formatSummaryNumber(autoLoginSummary, 'joinedCount') }}</span>
-              <span>失败 {{ formatSummaryNumber(autoLoginSummary, 'failedCount') }}</span>
+              <span>导入 {{ formatSummaryNumber(importSummary, 'importedCount') }}</span>
+              <span>跳过 {{ formatSummaryNumber(importSummary, 'skippedCount') }}</span>
+              <span>失败 {{ formatSummaryNumber(importSummary, 'failedCount') }}</span>
+              <span>任务 {{ importSummary.latestJobId ? '已记录' : '暂无' }}</span>
             </div>
-            <div v-if="autoLoginDiagnosticSamples.length" class="text-xs text-slate-500 mt-2 space-y-1">
-              <div v-for="sample in autoLoginDiagnosticSamples" :key="`${sample.code}:${sample.unionId || sample.message}`">
-                {{ sample.code }} · {{ sample.message }}
-              </div>
-            </div>
-            <p v-else class="text-xs text-slate-400 mt-2">
-              暂无自动登录失败记录
+            <p class="text-xs text-slate-400 mt-2">
+              连接器仅导入数据和同步成员，不参与平台登录。
             </p>
           </div>
         </div>
@@ -484,7 +476,7 @@ watch(
               成员同步
             </p>
             <p class="text-xs text-slate-500 mt-1">
-              默认角色为 member，仅显式用户可映射为 manager/admin。
+              默认角色为 member，仅显式用户可映射为 manager/admin；平台登录由全局身份提供方处理。
             </p>
           </div>
           <button class="text-xs text-white font-semibold px-3 py-2 rounded-lg bg-slate-900 disabled:opacity-40" type="button" :disabled="!canEdit || saving" @click="saveConnection">
@@ -633,7 +625,7 @@ watch(
       </p>
       <div class="mt-3 flex flex-wrap gap-3 items-center justify-between">
         <p class="text-xs text-slate-500">
-          请在项目资源管理器使用“从飞书导入”，系统会自动绑定当前项目并标记为第三方导入资源。
+          请在项目资源管理器使用“从飞书导入”，系统会自动绑定当前项目并标记为连接器导入资源。
         </p>
         <button
           class="text-xs text-slate-700 font-semibold px-3 py-2 border border-slate-200 rounded-lg bg-white disabled:opacity-40"

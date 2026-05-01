@@ -407,6 +407,7 @@ export interface WorkspaceIntegrationSyncPolicy {
   id: string
   connectionId: string
   memberSyncMode: WorkspaceIntegrationMemberSyncMode
+  /** @deprecated Workspace connectors no longer control platform login or session creation. */
   autoLoginEnabled: boolean
   defaultWorkspaceRole: Extract<WorkspaceMemberRole, 'admin' | 'manager' | 'member'>
   departmentIds: string[]
@@ -452,6 +453,7 @@ export interface WorkspaceFeishuIntegrationDiagnosticSummary {
   tokenHealthText: string
   lastError: string
   memberSyncSummary: Record<string, unknown>
+  /** @deprecated Kept for old snapshots; connector UI should not render login diagnostics. */
   autoLoginSummary: Record<string, unknown>
   importSummary: Record<string, unknown>
 }
@@ -463,6 +465,7 @@ export interface WorkspaceFeishuIntegrationSnapshot extends WorkspaceIntegration
   auditLogs: WorkspaceIntegrationAuditLog[]
   diagnosticSummary: WorkspaceFeishuIntegrationDiagnosticSummary
   memberSyncSummary: Record<string, unknown>
+  /** @deprecated Kept for response compatibility; connector UI should not render login diagnostics. */
   autoLoginSummary: Record<string, unknown>
 }
 

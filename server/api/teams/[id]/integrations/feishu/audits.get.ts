@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
   catch (error) {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
       setResponseStatus(event, 403)
-      return fail('仅工作空间 owner/admin 可查看飞书第三方平台审计日志。', {
+      return fail('仅工作空间 owner/admin 可查看飞书连接器审计日志。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,

@@ -1211,7 +1211,7 @@ async function saveConfig() {
     config.value = data
     fillConfigForm(data)
     configDialogVisible.value = false
-    setSuccess('飞书集成配置已保存。')
+    setSuccess('平台飞书配置已保存。')
   }
   catch (error: any) {
     setError(String(error?.data?.message || '飞书配置保存失败。'))
@@ -2020,10 +2020,10 @@ onMounted(initializePage)
           <section v-if="canReadSyncedData" class="p-3 border border-slate-200 bg-white flex flex-wrap gap-2 items-center justify-between">
             <div>
               <h2 class="text-[12px] text-slate-900 font-semibold m-0">
-                飞书同步数据
+                飞书多维同步数据
               </h2>
               <p class="text-[10px] text-slate-500 m-0 mt-1">
-                浏览飞书导入后的索引、映射和待审草稿。
+                浏览平台多维同步导入后的索引、映射和待审草稿。
               </p>
             </div>
             <a-button size="small" type="primary" @click="openSyncedData()">
@@ -2035,10 +2035,10 @@ onMounted(initializePage)
             <div class="flex flex-wrap gap-2 items-center justify-between">
               <div>
                 <h2 class="text-[12px] text-slate-900 font-semibold m-0">
-                  飞书集成配置
+                  平台飞书登录配置
                 </h2>
                 <p class="text-[10px] text-slate-500 m-0 mt-1">
-                  `role.assign` 权限可维护 OAuth、事件回调与管理员手动授权配置。
+                  `role.assign` 权限可维护全局飞书应用、登录回调、事件回调与管理员授权配置。
                 </p>
               </div>
               <div class="flex flex-wrap gap-2 items-center">
@@ -2075,10 +2075,10 @@ onMounted(initializePage)
             <div class="flex flex-wrap gap-2 items-center justify-between">
               <div>
                 <h2 class="text-[12px] text-slate-900 font-semibold m-0">
-                  多维表格同步信息
+                  飞书多维同步
                 </h2>
                 <p class="text-[10px] text-slate-500 m-0 mt-1">
-                  一条记录代表一个飞书多维主库。创建后直接在编辑抽屉里继续配置多个子表同步项与字段映射。
+                  一条记录代表一个平台托管的飞书多维主库；Workspace 连接器不在这里配置 OAuth 登录。
                 </p>
               </div>
               <div class="flex gap-3 items-center">
@@ -2536,7 +2536,7 @@ onMounted(initializePage)
 
     <a-drawer
       v-model:visible="configDialogVisible"
-      title="飞书集成配置"
+      title="平台飞书配置"
       :mask-closable="!savingConfig"
       :closable="!savingConfig"
       :esc-to-close="!savingConfig"
@@ -2547,10 +2547,10 @@ onMounted(initializePage)
         <section class="p-3 border border-slate-200 bg-white space-y-3">
           <div class="space-y-1">
             <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-              1. 基础信息配置
+              1. 平台飞书应用
             </h3>
             <p class="text-[10px] text-slate-500 m-0">
-              维护飞书集成的启用状态、OAuth 回调地址和管理页前端依赖地址。
+              维护全局飞书应用、平台登录回调地址和管理页前端依赖地址。
             </p>
           </div>
 
@@ -2573,7 +2573,7 @@ onMounted(initializePage)
             </label>
 
             <label class="text-[10px] text-slate-600 font-medium block md:col-span-2">
-              OAuth Redirect URI
+              平台登录 Redirect URI
               <a-input v-model="configForm.oauthRedirectUri" class="mt-1" allow-clear size="small" placeholder="https://domain/api/auth/feishu/callback" />
             </label>
 
@@ -2687,7 +2687,7 @@ onMounted(initializePage)
         <section class="p-3 border border-slate-200 bg-white space-y-3">
           <div class="space-y-1">
             <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-              3. 通知配置
+              3. 启动通知配置
             </h3>
             <p class="text-[10px] text-slate-500 m-0">
               配置进程首次启动时的飞书通知渠道，以及版本信息的兜底来源。
@@ -2774,10 +2774,10 @@ onMounted(initializePage)
         <section class="p-3 border border-slate-200 bg-white space-y-3">
           <div class="space-y-1">
             <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-              4. 管理页配置
+              4. 平台管理员授权
             </h3>
             <p class="text-[10px] text-slate-500 m-0">
-              维护管理员组降级目录、平台管理员概览，以及飞书成员浏览与手动授权入口。
+              维护管理员组降级目录、平台管理员概览，以及飞书成员浏览与手动授权入口；不影响 Workspace 连接器登录行为。
             </p>
           </div>
 
