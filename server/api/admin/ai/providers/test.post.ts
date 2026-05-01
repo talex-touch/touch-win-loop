@@ -1,6 +1,7 @@
-import type { PlatformAiProviderCapability } from '~~/server/utils/platform-ai-channels'
+import type { PlatformAiProviderCapability, PlatformAiProviderVoiceConfig } from '~~/server/utils/platform-ai-channels'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { setResponseStatus } from 'h3'
+import { probeCozeVoiceProvider, resolveCozeVoiceRuntimeConfig } from '~~/server/services/admin-ai/coze-voice'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail, ok } from '~~/server/utils/api'
@@ -26,6 +27,7 @@ interface ProviderDraftBody {
   apiKey?: string
   embeddingApiStyle?: string
   embeddingDimensions?: number
+  voice?: Partial<PlatformAiProviderVoiceConfig>
   models?: unknown[]
 }
 
@@ -116,7 +118,7 @@ export default defineEventHandler(async (event) => {
       })()
     : currentProvider
 
-  if (!resolvedProvider || resolvedProvider.capability !== 'llm') {
+  if (!resolvedProvider || (resolvedProvider.capability !== 'llm' && resolvedProvider.capability !== 'voice')) {
     setResponseStatus(event, 400)
     return fail('当前 Provider 不支持连通性测试。', {
       startedAt,
@@ -135,6 +137,84 @@ export default defineEventHandler(async (event) => {
   })
   const baseURL = normalizePlatformAiBaseURL(resolvedProvider.baseURL, providerName)
   const usedProvidedApiKey = Boolean(toText(body.apiKey ?? draftProvider?.apiKey))
+
+  if (resolvedProvider.capability === 'voice') {
+    const voiceProvider = {
+      ...resolvedProvider,
+      apiKey,
+      baseURL: resolvedProvider.baseURL || baseURL,
+    }
+    const config = resolveCozeVoiceRuntimeConfig({
+      provider: voiceProvider,
+      ai: {
+        ...runtime.ai,
+        provider: providerName,
+        baseURL: voiceProvider.baseURL,
+        apiKey,
+        model: '',
+        timeoutMs: resolvedProvider.timeoutMs,
+      },
+      runtime,
+    })
+    if (!config) {
+      setResponseStatus(event, 400)
+      return fail('Coze 语音 Provider 未完整配置。', {
+        startedAt,
+        provider: providerName,
+        model: '',
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40097)
+    }
+
+    try {
+      const probe = await probeCozeVoiceProvider({
+        config,
+        text: String(body.message || '').trim() || 'Coze voice test',
+      })
+
+      await withTransaction(event, async (db) => {
+        await recordContestAuditLog(db, {
+          actorUserId: user.id,
+          action: 'test.admin.ai.provider',
+          payload: {
+            providerId: resolvedProvider.id,
+            provider: providerName,
+            model: 'coze-voice',
+            responsePreview: probe.transcriptionPreview,
+            speechBytes: probe.speechBytes,
+            latencyMs: Date.now() - startedAt,
+          },
+        })
+      })
+
+      return ok({
+        providerId: resolvedProvider.id,
+        provider: providerName,
+        model: 'coze-voice',
+        responsePreview: `TTS ${probe.speechBytes} bytes · ASR ${probe.transcriptionPreview || '已返回空转写'}`,
+        latencyMs: Date.now() - startedAt,
+      }, {
+        startedAt,
+        provider: providerName,
+        model: 'coze-voice',
+        fallbackUsed: false,
+        attempts: 1,
+      })
+    }
+    catch (error: any) {
+      setResponseStatus(event, 502)
+      const sourceLabel = usedProvidedApiKey ? '当前输入的 API Key' : '已保存的 API Key'
+      return fail(`[${sourceLabel}] ${String(error?.message || 'Coze 语音 Provider 测试失败。')}`, {
+        startedAt,
+        provider: providerName,
+        model: 'coze-voice',
+        fallbackUsed: false,
+        attempts: 1,
+      }, 50297)
+    }
+  }
+
   const preferredModel = toText(body.model)
   const modelConfig = preferredModel
     ? resolvedProvider.models.find(item => item.model === preferredModel && item.enabled) || null

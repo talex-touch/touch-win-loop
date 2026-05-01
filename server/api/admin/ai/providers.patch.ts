@@ -1,4 +1,4 @@
-import type { PlatformAiProviderCapability, PlatformAiProviderType } from '~~/server/utils/platform-ai-channels'
+import type { PlatformAiProviderCapability, PlatformAiProviderType, PlatformAiProviderVoiceConfig } from '~~/server/utils/platform-ai-channels'
 import type {
   PlatformAiClientType,
   ProjectKnowledgeEmbeddingApiStyle,
@@ -51,6 +51,7 @@ interface ProviderDraftBody {
   apiKeyMode?: SecretMode
   embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
   embeddingDimensions?: number
+  voice?: Partial<PlatformAiProviderVoiceConfig>
   models?: unknown[]
 }
 
@@ -175,6 +176,9 @@ export default defineEventHandler(async (event) => {
         embeddingDimensions: hasOwn(source as Record<string, unknown>, 'embeddingDimensions')
           ? Number(source.embeddingDimensions || currentRuntime.ai.embeddingDimensions)
           : (currentProvider?.embeddingDimensions || currentRuntime.ai.embeddingDimensions),
+        voice: hasOwn(source as Record<string, unknown>, 'voice')
+          ? source.voice
+          : currentProvider?.voice,
         models: Array.isArray(source.models)
           ? source.models
           : (currentProvider?.models || []),
@@ -292,6 +296,7 @@ export default defineEventHandler(async (event) => {
       apiKeyConfigured: Boolean(String(provider.apiKey || '').trim()),
       embeddingApiStyle: provider.embeddingApiStyle || effectiveRuntime.ai.embeddingApiStyle,
       embeddingDimensions: provider.embeddingDimensions || effectiveRuntime.ai.embeddingDimensions,
+      voice: provider.voice,
       models: provider.models,
     })),
     scenes: {

@@ -8,8 +8,8 @@ import { normalizePlatformAiBaseURL } from '~~/server/utils/platform-ai-base-url
 import { normalizePlatformAiClientType, normalizeProjectKnowledgeEmbeddingApiStyle } from '~~/server/utils/platform-ai-client'
 
 export type PlatformAiProviderAdapter = 'openai-compatible' | 'response'
-export type PlatformAiProviderCapability = 'llm' | 'search' | 'asr' | 'tts'
-export type PlatformAiProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'searchxng' | 'tavily'
+export type PlatformAiProviderCapability = 'llm' | 'search' | 'embedding' | 'asr' | 'tts' | 'voice'
+export type PlatformAiProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'coze-voice' | 'searchxng' | 'tavily'
 export type PlatformAiModelFormat = 'openai-compatible' | 'response'
 export type PlatformAiModelCapability = 'chat' | 'vision' | 'embedding' | 'asr' | 'tts' | 'image-gen' | 'video-gen'
 export type PlatformAiPricingSource = 'provider' | 'manual' | 'none'
@@ -63,6 +63,13 @@ export interface PlatformAiProviderModelConfig {
   manualPriceOverride: boolean
 }
 
+export interface PlatformAiProviderVoiceConfig {
+  botId: string
+  connectorId: string
+  voiceId: string
+  authMode: 'pat' | 'oauth'
+}
+
 export interface PlatformAiProviderConfig {
   id: string
   name: string
@@ -79,6 +86,7 @@ export interface PlatformAiProviderConfig {
   fetchedAt: string
   embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
   embeddingDimensions?: number
+  voice?: PlatformAiProviderVoiceConfig
   models: PlatformAiProviderModelConfig[]
 }
 
@@ -189,7 +197,12 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
   defineChannel({ key: 'contest_filter', label: '选赛过滤', description: '竞赛筛选与推荐排序' }),
   defineChannel({ key: 'project_chat', label: '项目聊天', description: '项目草案对话与改写' }),
   defineChannel({ key: 'topic_proposal', label: '选题助手', description: '命题建议与路线生成' }),
-  defineChannel({ key: 'defense', label: '答辩模拟', description: '评委问答与评分反馈' }),
+  defineChannel({
+    key: 'defense',
+    label: '答辩模拟',
+    description: '评委问答与评分反馈',
+    allowedProviderCapabilities: ['llm', 'voice'],
+  }),
   defineChannel({ key: 'workspace_dialog_ask', label: '工作台-对话询问', description: '工作台只读问答' }),
   defineChannel({ key: 'workspace_auto_optimize', label: '工作台-自动优化', description: '工作台提案优化' }),
   defineChannel({ key: 'workspace_issue_discovery', label: '工作台-寻疑发现', description: '工作台问题扫描' }),
@@ -209,6 +222,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
     label: '知识库文本 Embedding',
     description: '知识库文本向量与检索索引',
     requiredModelCapability: 'embedding',
+    allowedProviderCapabilities: ['llm', 'embedding'],
     embeddingApiStyle: 'openai-compatible-text',
   }),
   defineChannel({
@@ -216,6 +230,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
     label: '知识库视觉 Embedding',
     description: '图片、视频、多图与图文融合向量',
     requiredModelCapability: 'embedding',
+    allowedProviderCapabilities: ['llm', 'embedding'],
     embeddingApiStyle: 'bailian-multimodal',
   }),
   defineChannel({ key: 'knowledge_query_planner', label: '知识检索规划', description: '项目知识查询意图、召回策略与证据链规划' }),
@@ -231,14 +246,14 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
     label: '会议 ASR',
     description: '会议字幕、录音转写与语音识别',
     requiredModelCapability: 'asr',
-    allowedProviderCapabilities: ['llm', 'asr'],
+    allowedProviderCapabilities: ['llm', 'asr', 'voice'],
   }),
   defineChannel({
     key: 'speech_tts',
     label: '语音 TTS',
     description: '文本转语音、朗读与语音播报',
     requiredModelCapability: 'tts',
-    allowedProviderCapabilities: ['llm', 'tts'],
+    allowedProviderCapabilities: ['llm', 'tts', 'voice'],
   }),
 ]
 
@@ -395,6 +410,8 @@ function resolvePlatformAiProviderType(value: unknown, providerValue?: unknown):
       return 'openai-compatible'
     if (normalized === 'dashscope-bailian' || normalized === 'dashscope' || normalized === 'bailian' || normalized === 'qwen')
       return 'dashscope-bailian'
+    if (normalized === 'coze-voice' || normalized === 'coze_voice' || normalized === 'coze-realtime' || normalized === 'coze_realtime')
+      return 'coze-voice'
     if (normalized === 'searchxng' || normalized === 'searchxng-search' || normalized === 'searchxng_search')
       return 'searchxng'
     if (normalized === 'tavily')
@@ -403,6 +420,8 @@ function resolvePlatformAiProviderType(value: unknown, providerValue?: unknown):
       return 'newapi'
     if (normalized.includes('dashscope') || normalized.includes('bailian') || normalized.includes('qwen'))
       return 'dashscope-bailian'
+    if (normalized.includes('coze') && (normalized.includes('voice') || normalized.includes('realtime') || normalized.includes('rtc')))
+      return 'coze-voice'
     if (normalized.includes('searchxng') || normalized.includes('searxng'))
       return 'searchxng'
     if (normalized.includes('tavily'))
@@ -414,18 +433,24 @@ function resolvePlatformAiProviderType(value: unknown, providerValue?: unknown):
 
 function normalizeProviderCapability(value: unknown): PlatformAiProviderCapability | null {
   const normalized = toText(value).toLowerCase()
-  if (normalized === 'llm' || normalized === 'search' || normalized === 'asr' || normalized === 'tts')
+  if (normalized === 'llm' || normalized === 'search' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'voice')
     return normalized
+  if (normalized === 'embeddings' || normalized === 'embedding-only' || normalized === 'embedding_only' || normalized === 'vector')
+    return 'embedding'
   if (normalized === 'speech-to-text' || normalized === 'speech_to_text' || normalized === 'transcription')
     return 'asr'
   if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis')
     return 'tts'
+  if (normalized === 'realtime-voice' || normalized === 'voice-realtime' || normalized === 'voice_realtime' || normalized === 'coze-voice')
+    return 'voice'
   return null
 }
 
 function resolveProviderCapability(type: PlatformAiProviderType, value?: unknown): PlatformAiProviderCapability {
   if (SEARCH_PROVIDER_TYPES.has(type))
     return 'search'
+  if (type === 'coze-voice')
+    return 'voice'
 
   const explicit = normalizeProviderCapability(value)
   if (explicit && explicit !== 'search')
@@ -461,6 +486,8 @@ function toModelFormat(value: unknown, fallback: PlatformAiModelFormat): Platfor
 
 function sanitizeModelFormatForProvider(type: PlatformAiProviderType, format: PlatformAiModelFormat): PlatformAiModelFormat {
   if (type === 'dashscope-bailian')
+    return 'openai-compatible'
+  if (type === 'coze-voice')
     return 'openai-compatible'
   return format
 }
@@ -649,6 +676,42 @@ function serializeProviderModel(item: PlatformAiProviderModelConfig): PlatformAi
   }
 }
 
+function normalizeProviderVoiceConfig(raw: unknown): PlatformAiProviderVoiceConfig | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    return undefined
+
+  const source = raw as Record<string, unknown>
+  const authMode = toText(source.authMode).toLowerCase() === 'oauth' ? 'oauth' : 'pat'
+  const voice: PlatformAiProviderVoiceConfig = {
+    botId: toText(source.botId || source.bot_id),
+    connectorId: toText(source.connectorId || source.connector_id),
+    voiceId: toText(source.voiceId || source.voice_id),
+    authMode,
+  }
+
+  return Object.values(voice).some(Boolean) ? voice : undefined
+}
+
+function resolveProviderVoiceConfig(source: Record<string, unknown>, type: PlatformAiProviderType): PlatformAiProviderVoiceConfig | undefined {
+  const nested = normalizeProviderVoiceConfig(source.voice)
+  if (nested)
+    return nested
+  if (type !== 'coze-voice')
+    return undefined
+
+  return normalizeProviderVoiceConfig({
+    botId: source.botId,
+    connectorId: source.connectorId,
+    voiceId: source.voiceId,
+    authMode: source.authMode,
+  }) || {
+    botId: '',
+    connectorId: '',
+    voiceId: '',
+    authMode: 'pat',
+  }
+}
+
 function sanitizeProviderId(value: unknown, index: number): string {
   return toText(value) || `provider_${index + 1}`
 }
@@ -668,6 +731,8 @@ function buildProviderName(
     return 'NewAPI'
   if (type === 'dashscope-bailian')
     return '百炼 DashScope'
+  if (type === 'coze-voice')
+    return 'Coze 语音'
   return providerId
 }
 
@@ -688,8 +753,9 @@ function normalizeProvider(
   const formatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
   const embeddingApiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(source.embeddingApiStyle, runtime.ai.embeddingApiStyle)
   const embeddingDimensions = clampInt(source.embeddingDimensions, runtime.ai.embeddingDimensions, 0, 16384)
+  const voice = resolveProviderVoiceConfig(source, type)
 
-  const models = capability !== 'search' && Array.isArray(source.models)
+  const models = capability !== 'search' && capability !== 'voice' && Array.isArray(source.models)
     ? source.models
         .map(item => normalizeProviderModel(item, formatFallback, {
           providerType: type,
@@ -716,6 +782,7 @@ function normalizeProvider(
     fetchedAt: toText(source.fetchedAt || source.modelFetchedAt),
     embeddingApiStyle,
     embeddingDimensions,
+    voice,
     models: dedupeProviderModels(models),
   }
 }
@@ -779,6 +846,8 @@ function providerCanServeModelCapability(provider: PlatformAiProviderConfig, cap
     return false
   if (provider.capability === 'llm')
     return true
+  if (provider.capability === 'voice')
+    return capability === 'asr' || capability === 'tts'
   return provider.capability === capability
 }
 
@@ -1056,6 +1125,30 @@ function buildAiRuntimeFromModel(
   }
 }
 
+function providerCanServeModelLessChannel(provider: PlatformAiProviderConfig, key: PlatformAiChannelKey): boolean {
+  const capability = resolvePlatformAiChannelModelCapability(key)
+  return provider.capability === 'voice'
+    && provider.type === 'coze-voice'
+    && (capability === 'asr' || capability === 'tts')
+}
+
+function buildAiRuntimeFromProvider(
+  runtime: RuntimeSettings,
+  provider: PlatformAiProviderConfig,
+): AiRuntimeConfig {
+  return {
+    ...runtime.ai,
+    provider: provider.provider || provider.type,
+    clientType: provider.clientType,
+    baseURL: provider.baseURL,
+    apiKey: provider.apiKey,
+    model: '',
+    format: 'openai-compatible',
+    timeoutMs: provider.timeoutMs,
+    maxRetries: provider.maxRetries,
+  }
+}
+
 export function resolvePlatformAiChannelModelCapability(key: PlatformAiChannelKey): PlatformAiModelCapability {
   return resolveChannelDefinition(key).requiredModelCapability
 }
@@ -1193,6 +1286,17 @@ function resolveChannelCandidates(
       })
       candidateIndex += 1
     }
+  }
+
+  const modelLessProviders = eligibleProviders.filter(provider => providerCanServeModelLessChannel(provider, channel.key))
+  for (const provider of rotateProviders(channel.key, '__model_less__', modelLessProviders, channel.loadBalanceStrategy)) {
+    candidates.push({
+      index: candidateIndex,
+      provider,
+      modelConfig: null,
+      ai: buildAiRuntimeFromProvider(runtime, provider),
+    })
+    candidateIndex += 1
   }
 
   if (candidates.length > 0) {

@@ -34,6 +34,9 @@ catalogs:
     '@aws-sdk/client-s3':
       specifier: ^3.1012.0
       version: 3.1012.0
+    '@coze/api':
+      specifier: ^1.3.7
+      version: 1.3.7
     '@coze/realtime-api':
       specifier: ^1.3.2
       version: 1.3.2
@@ -292,6 +295,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 'catalog:'
         version: 3.1012.0
+      '@coze/api':
+        specifier: 'catalog:'
+        version: 1.3.7(axios@1.15.0)
       '@coze/realtime-api':
         specifier: 'catalog:'
         version: 1.3.2(axios@1.15.0)

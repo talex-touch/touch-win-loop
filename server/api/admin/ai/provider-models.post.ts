@@ -1,4 +1,4 @@
-import type { PlatformAiProviderCapability } from '~~/server/utils/platform-ai-channels'
+import type { PlatformAiProviderCapability, PlatformAiProviderVoiceConfig } from '~~/server/utils/platform-ai-channels'
 import { setResponseStatus } from 'h3'
 import { discoverProviderModels, resolveDashScopeMultimodalEmbeddingEndpoint } from '~~/server/services/admin-ai/provider-models'
 import { fail, ok } from '~~/server/utils/api'
@@ -26,6 +26,7 @@ interface ProviderDraftBody {
   apiKey?: string
   embeddingApiStyle?: string
   embeddingDimensions?: number
+  voice?: Partial<PlatformAiProviderVoiceConfig>
   models?: unknown[]
 }
 
@@ -96,7 +97,7 @@ export default defineEventHandler(async (event) => {
       })()
     : currentProvider
 
-  if (!resolvedProvider || resolvedProvider.capability === 'search') {
+  if (!resolvedProvider || resolvedProvider.capability === 'search' || resolvedProvider.capability === 'voice') {
     setResponseStatus(event, 400)
     return fail('当前 Provider 不支持模型池拉取。', {
       startedAt,

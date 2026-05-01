@@ -14,8 +14,8 @@ type AiConsoleTab = 'channel_models' | 'scenes' | 'audits' | 'logs'
 type SecretMode = 'keep' | 'replace' | 'clear'
 type ModelFormat = 'openai-compatible' | 'response'
 type PricingSource = 'provider' | 'manual' | 'none'
-type ProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'searchxng' | 'tavily'
-type ProviderCapability = 'llm' | 'search' | 'asr' | 'tts'
+type ProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'coze-voice' | 'searchxng' | 'tavily'
+type ProviderCapability = 'llm' | 'search' | 'embedding' | 'asr' | 'tts' | 'voice'
 type ModelCapability = 'chat' | 'vision' | 'embedding' | 'asr' | 'tts' | 'image-gen' | 'video-gen'
 type LoadBalanceStrategy = 'round_robin'
 type FailoverStrategy = 'model_then_provider'
@@ -82,10 +82,19 @@ interface ProviderItem {
   apiKeyConfigured: boolean
   embeddingApiStyle: EmbeddingApiStyle
   embeddingDimensions: number
+  voice?: ProviderVoiceConfig
   models: ProviderModelItem[]
 }
 
+interface ProviderVoiceConfig {
+  botId: string
+  connectorId: string
+  voiceId: string
+  authMode: 'pat' | 'oauth'
+}
+
 interface ProviderDraftItem extends ProviderItem {
+  voice: ProviderVoiceConfig
   apiKeyMode: SecretMode
   apiKey: string
 }
@@ -241,14 +250,17 @@ const providerTypeOptions: Array<{ value: ProviderType, label: string, capabilit
   { value: 'newapi', label: 'NewAPI', capability: 'llm' },
   { value: 'openai-compatible', label: 'OpenAI Compatible', capability: 'llm' },
   { value: 'dashscope-bailian', label: '百炼 DashScope', capability: 'llm' },
+  { value: 'coze-voice', label: 'Coze 语音 / Realtime', capability: 'voice' },
   { value: 'searchxng', label: 'SearchXNG', capability: 'search' },
   { value: 'tavily', label: 'Tavily', capability: 'search' },
 ]
 
 const providerCapabilityOptions: Array<{ value: ProviderCapability, label: string, hint: string }> = [
   { value: 'llm', label: 'LLM / 多模型', hint: '可承载聊天、视觉、Embedding、ASR、TTS 等模型能力，Scene 仍按模型能力过滤。' },
+  { value: 'embedding', label: 'Embedding only', hint: '只参与知识库文本或视觉 Embedding 场景，适合 DashScope Embeddings 独立接入。' },
   { value: 'asr', label: 'ASR only', hint: '只参与会议 ASR、录音转写等语音识别场景。' },
   { value: 'tts', label: 'TTS only', hint: '只参与文本转语音、朗读和语音播报场景。' },
+  { value: 'voice', label: 'Voice realtime', hint: 'Coze 语音 Provider，服务实时答辩、ASR 和 TTS，不进入普通聊天模型池。' },
   { value: 'search', label: 'Search only', hint: '搜索型 Provider 固定为 search，不参与模型场景路由。' },
 ]
 
@@ -306,6 +318,17 @@ const providerTypeGuides: Record<ProviderType, ProviderTypeGuide> = {
     apiKeyHint: '填写 DashScope API Key，不需要 Bearer 前缀；留空保持已保存密钥不变。',
     clientTypeHint: '当前不是 @langchain/community 的 AlibabaTongyi 包；聊天使用 @langchain/openai + 百炼 compatible-mode。',
     embeddingHint: '纯文本选 OpenAI 兼容文本；图片、视频或融合向量选百炼原生多模态，运行时使用 https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding。',
+  },
+  'coze-voice': {
+    title: 'Coze 语音 / Realtime',
+    summary: '用于 Coze 实时语音、ASR 和 TTS；token 作为 Provider API Key 保存，botId、connectorId 与 voiceId 单独维护。',
+    providerPlaceholder: 'coze',
+    baseURLPlaceholder: 'https://api.coze.cn',
+    baseURLHint: 'Base URL 填 Coze Open API 根地址，例如 https://api.coze.cn；实时答辩会复用同一组语音身份。',
+    apiKeyPlaceholder: 'pat_... / oauth token',
+    apiKeyHint: '填写 Coze PAT 或 OAuth Token；留空保持已保存 token 不变。',
+    clientTypeHint: 'Coze 语音不走普通 LLM 模型池，ASR/TTS 由 @coze/api audio 接口执行，答辩实时流由 @coze/realtime-api 执行。',
+    embeddingHint: 'Coze 语音 Provider 不配置 Embedding。',
   },
   'searchxng': {
     title: 'SearchXNG',
@@ -408,6 +431,12 @@ const providerEditorForm = reactive<ProviderDraftItem>({
   apiKeyConfigured: false,
   embeddingApiStyle: 'openai-compatible-text',
   embeddingDimensions: 1024,
+  voice: {
+    botId: '',
+    connectorId: '',
+    voiceId: '',
+    authMode: 'pat',
+  },
   models: [],
   apiKeyMode: 'keep',
   apiKey: '',
@@ -570,12 +599,16 @@ function dedupeStrings(items: string[]): string[] {
 
 function normalizeProviderCapability(value: unknown): ProviderCapability | null {
   const normalized = String(value || '').trim().toLowerCase()
-  if (normalized === 'llm' || normalized === 'search' || normalized === 'asr' || normalized === 'tts')
+  if (normalized === 'llm' || normalized === 'search' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'voice')
     return normalized
+  if (normalized === 'embeddings' || normalized === 'embedding-only' || normalized === 'embedding_only' || normalized === 'vector')
+    return 'embedding'
   if (normalized === 'speech-to-text' || normalized === 'speech_to_text' || normalized === 'transcription')
     return 'asr'
   if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis')
     return 'tts'
+  if (normalized === 'realtime-voice' || normalized === 'voice-realtime' || normalized === 'voice_realtime' || normalized === 'coze-voice')
+    return 'voice'
   return null
 }
 
@@ -586,6 +619,8 @@ function providerTypeDefaultCapability(type: ProviderType): ProviderCapability {
 function resolveProviderCapability(type: ProviderType, value?: unknown): ProviderCapability {
   if (providerTypeDefaultCapability(type) === 'search')
     return 'search'
+  if (providerTypeDefaultCapability(type) === 'voice')
+    return 'voice'
 
   const explicit = normalizeProviderCapability(value)
   if (explicit && explicit !== 'search')
@@ -686,7 +721,7 @@ function primaryModelCapability(item: Pick<ProviderPullItem, 'capabilities'>): M
 }
 
 function sanitizeModelFormatForProvider(providerType: ProviderType, format: ModelFormat): ModelFormat {
-  return providerType === 'dashscope-bailian' ? 'openai-compatible' : format
+  return providerType === 'dashscope-bailian' || providerType === 'coze-voice' ? 'openai-compatible' : format
 }
 
 function cloneModelItem(item: ProviderModelItem): ProviderModelItem {
@@ -699,6 +734,7 @@ function cloneModelItem(item: ProviderModelItem): ProviderModelItem {
 function cloneProviderItem(item: ProviderDraftItem): ProviderDraftItem {
   return {
     ...item,
+    voice: { ...(item.voice || createEmptyProviderDraft().voice) },
     models: item.models.map(model => cloneModelItem(model)),
   }
 }
@@ -720,6 +756,12 @@ function createEmptyProviderDraft(): ProviderDraftItem {
     apiKeyConfigured: false,
     embeddingApiStyle: 'openai-compatible-text',
     embeddingDimensions: 1024,
+    voice: {
+      botId: '',
+      connectorId: '',
+      voiceId: '',
+      authMode: 'pat',
+    },
     models: [],
     apiKeyMode: 'keep',
     apiKey: '',
@@ -810,9 +852,13 @@ function normalizePullItem(item: ProviderPullItem): ProviderPullItem {
   }
 }
 
+function providerCapabilitySupportsModels(capability: ProviderCapability): boolean {
+  return capability !== 'search' && capability !== 'voice'
+}
+
 function normalizeProviderDraft(provider: ProviderDraftItem): ProviderDraftItem {
   const capability = resolveProviderCapability(provider.type, provider.capability)
-  const models = capability !== 'search'
+  const models = providerCapabilitySupportsModels(capability)
     ? provider.models.map(item => normalizeModelItem(item, provider.type)).sort((a, b) => a.model.localeCompare(b.model, 'en'))
     : []
   const hasApiKey = provider.apiKeyMode === 'clear'
@@ -825,6 +871,12 @@ function normalizeProviderDraft(provider: ProviderDraftItem): ProviderDraftItem 
     name: String(provider.name || normalizeProviderTypeLabel(provider.type)).trim() || normalizeProviderTypeLabel(provider.type),
     baseURL: String(provider.baseURL || '').trim(),
     apiKeyConfigured: hasApiKey,
+    voice: {
+      botId: String(provider.voice?.botId || '').trim(),
+      connectorId: String(provider.voice?.connectorId || '').trim(),
+      voiceId: String(provider.voice?.voiceId || '').trim(),
+      authMode: provider.voice?.authMode === 'oauth' ? 'oauth' : 'pat',
+    },
     models,
   }
 }
@@ -930,13 +982,15 @@ const routableProviderOptions = computed(() => {
     }))
 })
 
-const providerEditorSupportsModels = computed(() => providerEditorForm.capability !== 'search')
+const providerEditorSupportsModels = computed(() => providerCapabilitySupportsModels(providerEditorForm.capability))
 const providerEditorCanRunChatTest = computed(() => providerEditorForm.capability === 'llm')
-const providerEditorCapabilityLocked = computed(() => providerTypeDefaultCapability(providerEditorForm.type) === 'search')
+const providerEditorCanRunVoiceTest = computed(() => providerEditorForm.capability === 'voice')
+const providerEditorCanRunProviderTest = computed(() => providerEditorCanRunChatTest.value || providerEditorCanRunVoiceTest.value)
+const providerEditorCapabilityLocked = computed(() => providerTypeDefaultCapability(providerEditorForm.type) === 'search' || providerTypeDefaultCapability(providerEditorForm.type) === 'voice')
 const providerEditorCapabilityOptions = computed(() => {
   const values: ProviderCapability[] = providerEditorCapabilityLocked.value
-    ? ['search']
-    : ['llm', 'asr', 'tts']
+    ? [providerTypeDefaultCapability(providerEditorForm.type)]
+    : ['llm', 'embedding', 'asr', 'tts']
   return providerCapabilityOptions.filter(item => values.includes(item.value))
 })
 const providerEditorTypeGuide = computed(() => providerTypeGuides[providerEditorForm.type] || providerTypeGuides['openai-compatible'])
@@ -1027,8 +1081,13 @@ function sceneEmbeddingApiStyleFilter(key: PlatformAiChannelKey): EmbeddingApiSt
   return sceneDefinitionForKey(key)?.embeddingApiStyle || null
 }
 
-function sceneCanRunChatTest(scene: Pick<SceneItem, 'key'>): boolean {
-  return sceneRequiredCapability(scene.key) === 'chat'
+function sceneCanRunChatTest(scene: Pick<SceneItem, 'key' | 'providerIds'>): boolean {
+  const capability = sceneRequiredCapability(scene.key)
+  if (capability === 'tts')
+    return true
+  if (capability !== 'chat')
+    return false
+  return scene.providerIds.some(id => providerIdMap.value.get(id)?.capability === 'llm')
 }
 
 function providerCanServeScene(provider: Pick<ProviderItem, 'capability'>, key: PlatformAiChannelKey): boolean {
@@ -1166,10 +1225,14 @@ const sceneRows = computed(() => {
 function providerSummary(provider: ProviderDraftItem): string {
   if (provider.capability === 'search')
     return '仅搜索能力，不参与当前 AI 场景模型路由'
+  if (provider.capability === 'embedding')
+    return 'Embedding Provider，只参与知识库向量场景模型路由'
   if (provider.capability === 'asr')
     return '语音识别 Provider，只参与 ASR 场景模型路由'
   if (provider.capability === 'tts')
     return '语音合成 Provider，只参与 TTS 场景模型路由'
+  if (provider.capability === 'voice')
+    return 'Coze 语音 Provider，参与实时答辩、ASR 和 TTS 场景'
   const enabledCount = provider.models.filter(item => item.enabled).length
   const capabilityText = modelCapabilityOptions
     .map(option => `${option.label} ${provider.models.filter(item => modelHasCapability(item, option.value)).length}`)
@@ -1189,7 +1252,15 @@ function sceneProvidersPreview(scene: SceneItem): string {
     .join(' / ')
 }
 
+function sceneUsesModelLessVoice(scene: Pick<SceneItem, 'key' | 'providerIds'>): boolean {
+  const capability = sceneRequiredCapability(scene.key)
+  return (capability === 'asr' || capability === 'tts' || scene.key === 'defense')
+    && scene.providerIds.some(id => providerIdMap.value.get(id)?.capability === 'voice')
+}
+
 function sceneModelPoolPreview(scene: SceneItem): string {
+  if (scene.models.length === 0 && sceneUsesModelLessVoice(scene))
+    return 'Coze 语音原生接口，无需模型池'
   if (scene.models.length === 0)
     return '未配置'
   return scene.models.join(' / ')
@@ -1197,6 +1268,8 @@ function sceneModelPoolPreview(scene: SceneItem): string {
 
 function sceneFallbackPreview(scene: SceneItem): string {
   if (scene.modelFallback.length === 0) {
+    if (sceneUsesModelLessVoice(scene))
+      return 'Coze 语音原生接口，无需回退模型'
     if (scene.models.length === 0)
       return '未配置'
     return `未单独配置，将按模型池顺序：${scene.models.join(' -> ')}`
@@ -1244,6 +1317,7 @@ function applyConsolePayload(payload: ProvidersPayload): void {
   providers.value = (payload.providers || []).map((item) => {
     const draft = normalizeProviderDraft({
       ...item,
+      voice: item.voice || createEmptyProviderDraft().voice,
       models: (item.models || []).map(model => normalizeModelItem(model, item.type)),
       apiKeyMode: 'keep',
       apiKey: '',
@@ -1312,6 +1386,7 @@ function buildProviderPayload(provider: ProviderDraftItem) {
     maxRetries: Number(normalized.maxRetries || 2),
     apiKeyMode: resolveProviderApiKeyMode(normalized),
     apiKey,
+    voice: normalized.voice,
     models: normalized.models.map(item => normalizeModelItem(item, normalized.type)),
   }
 }
@@ -1405,12 +1480,18 @@ function syncProviderType(type: ProviderType) {
   const previousType = providerEditorForm.type
   providerEditorForm.type = type
   providerEditorForm.capability = resolveProviderCapability(type, providerEditorForm.capability)
-  if (!providerEditorForm.provider || providerEditorForm.provider === previousType)
-    providerEditorForm.provider = type
-  if (providerEditorForm.capability === 'search') {
+  const previousProviderDefault = previousType === 'coze-voice' ? 'coze' : previousType
+  const nextProviderDefault = type === 'coze-voice' ? 'coze' : type
+  if (!providerEditorForm.provider || providerEditorForm.provider === previousType || providerEditorForm.provider === previousProviderDefault)
+    providerEditorForm.provider = nextProviderDefault
+  if (type === 'coze-voice' && !providerEditorForm.baseURL)
+    providerEditorForm.baseURL = 'https://api.coze.cn'
+  if (!providerEditorForm.voice)
+    providerEditorForm.voice = createEmptyProviderDraft().voice
+  if (!providerCapabilitySupportsModels(providerEditorForm.capability)) {
     providerEditorForm.models = []
   }
-  if (providerEditorForm.capability !== 'search')
+  if (providerCapabilitySupportsModels(providerEditorForm.capability))
     providerEditorForm.models = providerEditorForm.models.map(item => normalizeModelItem(item, type))
 }
 
@@ -1420,7 +1501,7 @@ function handleProviderTypeChange(value: string | number | boolean | Record<stri
 
 function handleProviderCapabilityChange(value: string | number | boolean | Record<string, unknown> | undefined) {
   providerEditorForm.capability = resolveProviderCapability(providerEditorForm.type, value)
-  if (providerEditorForm.capability === 'search')
+  if (!providerCapabilitySupportsModels(providerEditorForm.capability))
     providerEditorForm.models = []
 }
 
@@ -1720,7 +1801,7 @@ async function pullProviderModels() {
 }
 
 async function testProvider() {
-  if (!providerEditorCanRunChatTest.value) {
+  if (!providerEditorCanRunProviderTest.value) {
     Message.warning('当前 Provider 类型不支持连通性测试。')
     return
   }
@@ -1728,7 +1809,7 @@ async function testProvider() {
   providerEditorTestMessage.value = ''
   try {
     const testModel = providerEditorForm.models.find(item => item.enabled && modelHasCapability(item, 'chat'))?.model || ''
-    if (!testModel) {
+    if (providerEditorCanRunChatTest.value && !testModel) {
       Message.warning('当前 Provider 没有可用于聊天连通性测试的模型。')
       return
     }
@@ -1748,7 +1829,9 @@ async function testProvider() {
         model: testModel,
       },
     }, 'Provider 测试失败。')
-    providerEditorTestMessage.value = `${data.provider} / ${data.model} · ${data.responsePreview}`
+    providerEditorTestMessage.value = data.model
+      ? `${data.provider} / ${data.model} · ${data.responsePreview}`
+      : `${data.provider} · ${data.responsePreview}`
     Message.success('Provider 连通性测试成功。')
   }
   catch (error: any) {
@@ -1884,9 +1967,9 @@ async function testScene(scene: SceneItem) {
     }, '场景测试失败。')
 
     const chainText = (data.attemptChain || [])
-      .map(item => `${item.provider}/${item.model}${item.success ? '' : '(failed)'}`)
+      .map(item => `${item.provider}/${item.model || 'coze-voice'}${item.success ? '' : '(failed)'}`)
       .join(' -> ')
-    sceneTestMessage[scene.key] = `${data.provider} / ${data.model}${data.fallbackUsed ? ' · 已回退' : ''} · ${chainText || data.responsePreview}`
+    sceneTestMessage[scene.key] = `${data.provider} / ${data.model || 'coze-voice'}${data.fallbackUsed ? ' · 已回退' : ''} · ${chainText || data.responsePreview}`
     Message.success(`场景「${scene.label}」测试成功。`)
   }
   catch (error: any) {
@@ -2410,21 +2493,24 @@ onMounted(async () => {
                 </a-select>
               </a-form-item>
               <a-form-item label="Provider 能力">
-                <a-select
-                  v-model="providerEditorForm.capability"
-                  :disabled="providerEditorCapabilityLocked"
-                  @change="handleProviderCapabilityChange"
-                >
-                  <a-option
-                    v-for="item in providerEditorCapabilityOptions"
-                    :key="item.value"
-                    :value="item.value"
+                <div class="w-full space-y-1">
+                  <a-select
+                    v-model="providerEditorForm.capability"
+                    :disabled="providerEditorCapabilityLocked"
+                    class="w-full"
+                    @change="handleProviderCapabilityChange"
                   >
-                    {{ item.label }}
-                  </a-option>
-                </a-select>
-                <div class="text-xs text-slate-500 leading-relaxed mt-1">
-                  {{ providerCapabilityHint(providerEditorForm.capability) }}
+                    <a-option
+                      v-for="item in providerEditorCapabilityOptions"
+                      :key="item.value"
+                      :value="item.value"
+                    >
+                      {{ item.label }}
+                    </a-option>
+                  </a-select>
+                  <div class="text-xs text-slate-500 leading-relaxed">
+                    {{ providerCapabilityHint(providerEditorForm.capability) }}
+                  </div>
                 </div>
               </a-form-item>
               <a-form-item label="Provider 标识">
@@ -2471,15 +2557,48 @@ onMounted(async () => {
             </div>
           </div>
 
+          <div v-if="providerEditorForm.capability === 'voice'" class="px-4 py-4 border border-slate-200 rounded-lg bg-white space-y-3">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                Coze 语音参数
+              </div>
+              <div class="text-xs text-slate-500">
+                botId 与 connectorId 用于实时答辩房间；voiceId 用于 TTS。ASR 使用同一个 Provider token。
+              </div>
+            </div>
+            <div class="gap-4 grid md:grid-cols-2">
+              <a-form-item label="Bot ID">
+                <a-input v-model="providerEditorForm.voice.botId" placeholder="Coze botId" />
+              </a-form-item>
+              <a-form-item label="Connector ID">
+                <a-input v-model="providerEditorForm.voice.connectorId" placeholder="Coze connectorId" />
+              </a-form-item>
+              <a-form-item label="Voice ID">
+                <a-input v-model="providerEditorForm.voice.voiceId" placeholder="Coze voiceId" />
+              </a-form-item>
+              <a-form-item label="Token 类型">
+                <a-select v-model="providerEditorForm.voice.authMode">
+                  <a-option value="pat">
+                    PAT
+                  </a-option>
+                  <a-option value="oauth">
+                    OAuth
+                  </a-option>
+                </a-select>
+              </a-form-item>
+            </div>
+          </div>
+
           <div class="text-sm text-slate-500 flex flex-wrap gap-3 items-center">
             <span>能力：{{ providerCapabilityLabel(providerEditorForm.capability) }}</span>
-            <span>模型池拉取时间：{{ formatTime(providerEditorForm.fetchedAt) }}</span>
-            <span>当前模型数：{{ providerEditorForm.models.length }}</span>
+            <span v-if="providerEditorSupportsModels">模型池拉取时间：{{ formatTime(providerEditorForm.fetchedAt) }}</span>
+            <span v-if="providerEditorSupportsModels">当前模型数：{{ providerEditorForm.models.length }}</span>
+            <span v-else>模型池：无需配置</span>
             <span>API Key：{{ providerEditorForm.apiKeyConfigured ? '已配置' : '未配置' }}</span>
           </div>
 
           <div class="flex flex-wrap gap-2">
-            <a-button :loading="providerEditorTestLoading" :disabled="!providerEditorCanRunChatTest" @click="testProvider">
+            <a-button :loading="providerEditorTestLoading" :disabled="!providerEditorCanRunProviderTest" @click="testProvider">
               测试 Provider
             </a-button>
             <a-button :loading="providerPullLoading" :disabled="!providerEditorSupportsModels" @click="pullProviderModels">

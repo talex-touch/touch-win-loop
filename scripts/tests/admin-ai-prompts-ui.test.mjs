@@ -27,17 +27,20 @@ it('页面已切换为多 Provider 管理入口', async () => {
   assert.doesNotMatch(source, /这里只保留共享上游连接信息/, '不应继续展示共享上游说明')
 })
 
-it('provider 类型固定包含 LLM 与 search-only 首批枚举', async () => {
+it('provider 类型固定包含 LLM、voice 与 search-only 枚举', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
   assert.match(source, /value:\s*'newapi'[\s\S]*label:\s*'NewAPI'/, '缺少 NewAPI 类型')
   assert.match(source, /value:\s*'openai-compatible'[\s\S]*label:\s*'OpenAI Compatible'/, '缺少 OpenAI Compatible 类型')
   assert.match(source, /value:\s*'dashscope-bailian'[\s\S]*label:\s*'百炼 DashScope'/, '缺少百炼 DashScope 类型')
+  assert.match(source, /value:\s*'coze-voice'[\s\S]*label:\s*'Coze 语音 \/ Realtime'[\s\S]*capability:\s*'voice'/, '缺少 Coze 语音 Provider 类型')
   assert.match(source, /value:\s*'searchxng'[\s\S]*capability:\s*'search'/, '缺少 SearchXNG search-only 类型')
   assert.match(source, /value:\s*'tavily'[\s\S]*capability:\s*'search'/, '缺少 Tavily search-only 类型')
   assert.match(source, /providerCapabilityOptions/, '缺少 Provider 能力枚举')
+  assert.match(source, /value:\s*'embedding'[\s\S]*label:\s*'Embedding only'/, '缺少 Embedding Provider 能力')
   assert.match(source, /value:\s*'asr'[\s\S]*label:\s*'ASR only'/, '缺少 ASR Provider 能力')
   assert.match(source, /value:\s*'tts'[\s\S]*label:\s*'TTS only'/, '缺少 TTS Provider 能力')
+  assert.match(source, /value:\s*'voice'[\s\S]*label:\s*'Voice realtime'/, '缺少 Voice Provider 能力')
 })
 
 it('渠道和模型页不再暴露默认模型入口与联网能力卡片', async () => {
@@ -79,7 +82,21 @@ it('search-only Provider 不参与模型场景路由', async () => {
   assert.match(source, /v-for="item in sceneEditorProviderOptions"/, '单场景 Provider 下拉不应展示全部可路由 Provider')
   assert.match(source, /Provider 能力/, 'Provider 抽屉应允许显式选择模型路由能力')
   assert.match(source, /providerEditorCapabilityLocked/, 'search-only 类型应锁定 Provider 能力')
-  assert.match(source, /providerEditorCanRunChatTest/, 'Provider 连通性测试应仅面向 LLM Provider')
+  assert.match(source, /providerEditorCanRunProviderTest/, 'Provider 连通性测试应覆盖 LLM 与 voice Provider')
+})
+
+it('coze 语音 Provider 暴露语音参数并跳过普通模型池', async () => {
+  const source = await readFile(PAGE_FILE, 'utf8')
+
+  assert.match(source, /Coze 语音参数/, '缺少 Coze 语音参数配置区')
+  assert.match(source, /providerEditorForm\.voice\.botId/, '缺少 botId 配置')
+  assert.match(source, /providerEditorForm\.voice\.connectorId/, '缺少 connectorId 配置')
+  assert.match(source, /providerEditorForm\.voice\.voiceId/, '缺少 voiceId 配置')
+  assert.match(source, /providerEditorForm\.voice\.authMode/, '缺少 authMode 配置')
+  assert.match(source, /providerEditorSupportsModels[\s\S]*providerCapabilitySupportsModels/, 'Provider 是否支持模型池应按能力判断')
+  assert.match(source, /const nextProviderDefault = type === 'coze-voice' \? 'coze' : type[\s\S]*providerEditorForm\.provider = nextProviderDefault/, 'Coze 语音类型应默认使用 coze provider 标识')
+  assert.match(source, /模型池：无需配置/, 'voice Provider 应提示无需配置模型池')
+  assert.match(source, /sceneUsesModelLessVoice/, '场景页应识别 Coze 语音无模型运行时')
 })
 
 it('场景抽屉支持 Provider 绑定、模型池、回退顺序和故障转移策略', async () => {

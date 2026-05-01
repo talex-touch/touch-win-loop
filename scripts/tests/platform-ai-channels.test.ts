@@ -280,13 +280,16 @@ describe('platform-ai-channels', () => {
     const definitions = getPlatformAiChannelDefinitions()
     const meetingAsr = definitions.find(item => item.key === 'meeting_asr')
     const speechTts = definitions.find(item => item.key === 'speech_tts')
+    const defense = definitions.find(item => item.key === 'defense')
     const visualEmbedding = definitions.find(item => item.key === 'knowledge_visual_embedding')
 
     expect(meetingAsr?.requiredModelCapability).toBe('asr')
-    expect(meetingAsr?.allowedProviderCapabilities).toEqual(['llm', 'asr'])
+    expect(meetingAsr?.allowedProviderCapabilities).toEqual(['llm', 'asr', 'voice'])
     expect(speechTts?.requiredModelCapability).toBe('tts')
-    expect(speechTts?.allowedProviderCapabilities).toEqual(['llm', 'tts'])
+    expect(speechTts?.allowedProviderCapabilities).toEqual(['llm', 'tts', 'voice'])
+    expect(defense?.allowedProviderCapabilities).toEqual(['llm', 'voice'])
     expect(visualEmbedding?.requiredModelCapability).toBe('embedding')
+    expect(visualEmbedding?.allowedProviderCapabilities).toEqual(['llm', 'embedding'])
     expect(visualEmbedding?.embeddingApiStyle).toBe('bailian-multimodal')
   })
 
@@ -352,6 +355,111 @@ describe('platform-ai-channels', () => {
     expect(resolveAiRuntimeForChannel(runtime, 'meeting_asr').ai.model).toBe('whisper-1')
     expect(resolveAiRuntimeForChannel(runtime, 'speech_tts').ai.model).toBe('tts-1')
     expect(resolveAiRuntimeForChannel(runtime, 'project_chat').ai.model).toBe('')
+  })
+
+  it('dashScope Embedding only Provider 只进入知识库 Embedding 场景', () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'dashscope_embeddings',
+          name: 'DashScope Embeddings',
+          type: 'dashscope-bailian',
+          capability: 'embedding',
+          provider: 'dashscope',
+          baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          models: [
+            { model: 'text-embedding-v4', enabled: true, format: 'openai-compatible', capabilities: ['embedding'], embeddingApiStyle: 'openai-compatible-text' },
+            { model: 'tongyi-embedding-vision-plus', enabled: true, format: 'openai-compatible', capabilities: ['embedding'], embeddingApiStyle: 'bailian-multimodal' },
+          ],
+        },
+      ],
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'project_chat',
+          providerIds: ['dashscope_embeddings'],
+          models: ['text-embedding-v4'],
+          modelFallback: ['text-embedding-v4'],
+          enabled: true,
+        },
+        {
+          key: 'knowledge_embedding',
+          providerIds: ['dashscope_embeddings'],
+          models: ['text-embedding-v4'],
+          modelFallback: ['text-embedding-v4'],
+          enabled: true,
+        },
+        {
+          key: 'knowledge_visual_embedding',
+          providerIds: ['dashscope_embeddings'],
+          models: ['tongyi-embedding-vision-plus'],
+          modelFallback: ['tongyi-embedding-vision-plus'],
+          enabled: true,
+        },
+      ],
+    })
+
+    const registry = resolvePlatformAiRegistry(runtime)
+    expect(registry.providers[0]?.capability).toBe('embedding')
+    expect(registry.channels.find(item => item.key === 'project_chat')?.providerIds).toEqual([])
+    expect(registry.channels.find(item => item.key === 'knowledge_embedding')?.providerIds).toEqual(['dashscope_embeddings'])
+    expect(registry.channels.find(item => item.key === 'knowledge_visual_embedding')?.providerIds).toEqual(['dashscope_embeddings'])
+    expect(resolveAiRuntimeForChannel(runtime, 'project_chat').provider).toBeNull()
+    expect(resolveAiRuntimeForChannel(runtime, 'knowledge_embedding').ai.model).toBe('text-embedding-v4')
+    expect(resolveAiRuntimeForChannel(runtime, 'knowledge_visual_embedding').ai.model).toBe('tongyi-embedding-vision-plus')
+  })
+
+  it('coze 语音 Provider 可作为 ASR/TTS 的无模型运行时候选', () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'coze_voice',
+          name: 'Coze Voice',
+          type: 'coze-voice',
+          provider: 'coze',
+          baseURL: 'https://api.coze.cn',
+          apiKey: 'coze-token',
+          voice: {
+            botId: 'bot_1',
+            connectorId: 'connector_1',
+            voiceId: 'voice_1',
+            authMode: 'pat',
+          },
+        },
+      ],
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'meeting_asr',
+          providerIds: ['coze_voice'],
+          models: [],
+          modelFallback: [],
+          enabled: true,
+        },
+        {
+          key: 'speech_tts',
+          providerIds: ['coze_voice'],
+          models: [],
+          modelFallback: [],
+          enabled: true,
+        },
+      ],
+    })
+
+    const asr = resolveAiRuntimeForChannel(runtime, 'meeting_asr')
+    const tts = resolveAiRuntimeForChannel(runtime, 'speech_tts')
+
+    expect(asr.provider?.type).toBe('coze-voice')
+    expect(asr.provider?.capability).toBe('voice')
+    expect(asr.ai.model).toBe('')
+    expect(asr.candidates).toHaveLength(1)
+    expect(tts.provider?.type).toBe('coze-voice')
+    expect(tts.ai.model).toBe('')
+    expect(tts.candidates).toHaveLength(1)
   })
 
   it('保存 Provider registry 时不再持久化 defaults，也不会把旧默认模型写回模型池', () => {

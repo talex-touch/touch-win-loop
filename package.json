@@ -36,6 +36,7 @@
   "dependencies": {
     "@arco-design/web-vue": "catalog:frontend",
     "@aws-sdk/client-s3": "catalog:",
+    "@coze/api": "catalog:",
     "@coze/realtime-api": "catalog:",
     "@floating-ui/dom": "catalog:frontend",
     "@langchain/core": "catalog:",

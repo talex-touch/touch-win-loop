@@ -95,8 +95,8 @@ describe('admin-ai provider models', () => {
     const source = await readFile(PROVIDER_MODELS_GET_FILE, 'utf8')
 
     expect(source).toMatch(/const providerId = String\(query\.providerId \|\| ''\)\.trim\(\)/)
-    expect(source).toMatch(/registry\.providers\.find\(item => item\.capability !== 'search'\)/)
-    expect(source).toMatch(/provider\.capability === 'search'/)
+    expect(source).toMatch(/registry\.providers\.find\(item => item\.capability !== 'search' && item\.capability !== 'voice'\)/)
+    expect(source).toMatch(/provider\.capability === 'search' \|\| provider\.capability === 'voice'/)
     expect(source).toMatch(/Provider API Key 未配置/)
     expect(source).not.toMatch(/共享上游/)
   })
@@ -312,14 +312,38 @@ describe('admin-ai provider models', () => {
     expect(pageSource).toMatch(/sceneDefinitionForKey/)
     expect(pageSource).toMatch(/meeting_asr/)
     expect(pageSource).toMatch(/speech_tts/)
+    expect(pageSource).toMatch(/value: 'embedding'/)
     expect(pageSource).toMatch(/value: 'asr'/)
     expect(pageSource).toMatch(/value: 'tts'/)
+    expect(pageSource).toMatch(/value: 'voice'/)
+    expect(pageSource).toMatch(/value: 'coze-voice'/)
     expect(pageSource).toMatch(/providerCapabilityOptions/)
     expect(pageSource).toMatch(/Provider 能力/)
     expect(pageSource).toMatch(/routableProviderOptions/)
-    expect(pageSource).toMatch(/providerEditorCanRunChatTest/)
+    expect(pageSource).toMatch(/providerEditorCanRunProviderTest/)
     expect(pageSource).toMatch(/normalizeSceneProviderIds\(item\.providerIds(?: \|\| \[\])?, item\.key\)/)
     expect(pageSource).not.toMatch(/key === 'knowledge_embedding' \|\| key === 'knowledge_visual_embedding'/)
     expect(patchSource).toMatch(/capability: source\.capability \|\| currentProvider\?\.capability \|\| 'llm'/)
+    expect(patchSource).toMatch(/hasOwn\(source as Record<string, unknown>, 'voice'\)/)
+    expect(patchSource).toMatch(/currentProvider\?\.voice/)
+  })
+
+  it('coze 语音 Provider 走语音探针且不参与模型池拉取', async () => {
+    const [postSource, testSource, cozeVoiceSource, channelsTestSource] = await Promise.all([
+      readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
+      readFile(PROVIDERS_TEST_POST_FILE, 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/coze-voice.ts'), 'utf8'),
+      readFile(CHANNELS_TEST_POST_FILE, 'utf8'),
+    ])
+
+    expect(postSource).toMatch(/resolvedProvider\.capability === 'search' \|\| resolvedProvider\.capability === 'voice'/)
+    expect(testSource).toMatch(/resolvedProvider\.capability !== 'llm' && resolvedProvider\.capability !== 'voice'/)
+    expect(testSource).toMatch(/probeCozeVoiceProvider/)
+    expect(testSource).toMatch(/model:\s*'coze-voice'/)
+    expect(cozeVoiceSource).toMatch(/await import\('@coze\/api'\)/)
+    expect(cozeVoiceSource).toMatch(/client\.audio\.transcriptions\.create\(\{\s*file\s*\}\)/)
+    expect(cozeVoiceSource).toMatch(/client\.audio\.speech\.create\(/)
+    expect(channelsTestSource).toMatch(/synthesizeCozeVoiceSpeech/)
+    expect(channelsTestSource).toMatch(/requiredCapability === 'tts'/)
   })
 })
