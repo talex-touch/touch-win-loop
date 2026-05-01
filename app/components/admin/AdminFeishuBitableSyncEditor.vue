@@ -122,6 +122,20 @@ interface CurrentItemLogRunSampleState {
   pageData: FeishuSyncRunSamplePage
 }
 
+interface SyncManualRunResult {
+  status: 'running' | 'success' | 'partial_success' | 'failed'
+  itemCount: number
+  successCount: number
+  partialSuccessCount: number
+  failedCount: number
+  fetchedCount: number
+  createdCount: number
+  updatedCount: number
+  skippedCount: number
+  errorCount: number
+  writebackErrorCount: number
+}
+
 interface SyncIssueFilterState {
   status: SyncIssueFilterStatus
   reasonCode: string
@@ -476,6 +490,7 @@ const RUN_SAMPLE_TYPE_LIST: FeishuSyncRunSampleType[] = ['auto_sync_filtered', '
 
 const savingItem = ref(false)
 const savingSync = ref(false)
+const runningSync = ref(false)
 const runningItem = ref(false)
 const previewingItem = ref(false)
 const simulatingRecord = ref(false)
@@ -627,6 +642,7 @@ const normalizedDraftTableId = computed(() => toText(props.draftTableId))
 const normalizedDraftViewId = computed(() => toText(props.draftViewId))
 const archivedReadonly = computed(() => Boolean(props.includeArchived || syncDetail.value?.archivedAt))
 const syncExecutionDisabled = computed(() => Boolean(syncDetail.value) && !syncDetail.value?.enabled)
+const syncManualRunDisabled = computed(() => archivedReadonly.value || syncExecutionDisabled.value || !syncDetail.value?.enabledItemCount)
 const currentItemRunDisabled = computed(() => archivedReadonly.value || syncExecutionDisabled.value || !currentItem.value?.isEnabled)
 const cleanupConfirmMatched = computed(() => cleanupConfirmText.value.trim() === toText(cleanupPreviewResult.value?.confirmationToken))
 const activeMappingOptions = computed(() => MAPPING_OPTIONS[itemForm.entityType] || [])
@@ -1312,6 +1328,16 @@ function syncRunRuleFilterText(run?: FeishuBitableSyncItemRun | null): string {
   const recordStatusText = formatCountMap(diagnostics.autoSync.recordStatusValueCounts)
   const syncStatusText = formatCountMap(diagnostics.autoSync.syncStatusValueCounts)
   return `规则过滤 ${filteredCount}/${sourceFetchedCount}；${diagnostics.autoSync.recordStatusField || '记录状态'}：${recordStatusText || '-'}；${diagnostics.autoSync.syncStatusField || '同步信息'}：${syncStatusText || '-'}。`
+}
+
+function isForceSyncRun(run?: FeishuBitableSyncItemRun | null): boolean {
+  return run?.diagnostics?.force?.ignoreAutoSyncStatus === true
+}
+
+function syncRunForceText(run?: FeishuBitableSyncItemRun | null): string {
+  if (!isForceSyncRun(run))
+    return ''
+  return '本次为强制同步，已处理当前视图全部源行，并忽略自动同步状态筛选。'
 }
 
 function syncRunBusinessSkipText(run?: FeishuBitableSyncItemRun | null): string {
@@ -3134,7 +3160,50 @@ async function simulateCurrentItemRecord() {
   }
 }
 
-async function runCurrentItem() {
+async function runCurrentSync() {
+  if (archivedReadonly.value) {
+    setError('当前同步信息已归档，只允许查看，不允许手动执行。')
+    return
+  }
+  if (!normalizedSyncId.value)
+    return
+  if (!syncDetail.value?.enabled) {
+    setError('当前主同步信息已禁用，请先启用后再执行同步。')
+    return
+  }
+  if (!syncDetail.value.enabledItemCount) {
+    setError('当前无已启用的子表同步项。')
+    return
+  }
+
+  runningSync.value = true
+  clearFeedback()
+  try {
+    const result = await requestApi<SyncManualRunResult>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/run`),
+      {
+        method: 'POST',
+      },
+      '同步执行失败。',
+    )
+    await loadSyncDetail()
+    emit('updated')
+    const runText = `状态 ${runStatusLabel(result.status)} / 子项 ${result.itemCount} / 成功 ${result.successCount} / 部分成功 ${result.partialSuccessCount} / 失败 ${result.failedCount}`
+    const dataText = `抓取 ${result.fetchedCount} / 新增 ${result.createdCount} / 更新 ${result.updatedCount} / 跳过 ${result.skippedCount} / 错误 ${result.errorCount + result.writebackErrorCount}`
+    if (result.status === 'failed')
+      setError(`手动同步执行失败，${runText}。${dataText}。`)
+    else
+      setSuccess(`手动同步执行完成，${runText}。${dataText}。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '同步执行失败。'))
+  }
+  finally {
+    runningSync.value = false
+  }
+}
+
+async function runCurrentItem(force = false) {
   if (archivedReadonly.value) {
     setError('当前同步信息已归档，只允许查看，不允许手动执行。')
     return
@@ -3163,6 +3232,7 @@ async function runCurrentItem() {
       endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(itemId)}/run`),
       {
         method: 'POST',
+        body: force ? { force: true } : undefined,
       },
       '同步执行失败。',
     )
@@ -3172,7 +3242,7 @@ async function runCurrentItem() {
     currentItemLogVisible.value = true
     await loadCurrentItemLogDetail(itemId, result.runId)
     emit('updated')
-    setSuccess(`同步执行完成，已刷新最近运行结果。抓取 ${result.fetchedCount} / 新增 ${result.createdCount} / 更新 ${result.updatedCount} / 跳过 ${result.skippedCount} / 错误 ${result.errorCount}。`)
+    setSuccess(`${force ? '强制同步' : '同步执行'}完成，已刷新最近运行结果。抓取 ${result.fetchedCount} / 新增 ${result.createdCount} / 更新 ${result.updatedCount} / 跳过 ${result.skippedCount} / 错误 ${result.errorCount}。`)
   }
   catch (error: any) {
     setError(String(error?.data?.message || '同步执行失败。'))
@@ -3701,13 +3771,24 @@ watch(() => props.selectedItemId, (value) => {
     </section>
 
     <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
-      <div>
-        <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-          主同步调度
-        </h3>
-        <p class="text-[11px] text-slate-500 m-0 mt-1">
-          调度统一配置在多维同步信息层级；命中调度后会顺序执行当前主同步下所有已启用的子表同步项。
-        </p>
+      <div class="flex flex-wrap gap-2 items-start justify-between">
+        <div>
+          <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+            主同步调度
+          </h3>
+          <p class="text-[11px] text-slate-500 m-0 mt-1">
+            调度统一配置在多维同步信息层级；命中调度后会顺序执行当前主同步下所有已启用的子表同步项。
+          </p>
+        </div>
+        <a-button
+          size="small"
+          type="primary"
+          :loading="runningSync"
+          :disabled="syncManualRunDisabled"
+          @click="runCurrentSync"
+        >
+          手动执行同步
+        </a-button>
       </div>
       <div class="gap-3 grid md:grid-cols-5">
         <div class="text-[11px] text-slate-600 font-medium block">
@@ -4093,9 +4174,18 @@ watch(() => props.selectedItemId, (value) => {
                   <a-button size="small" status="danger" :disabled="archivedReadonly" @click="openCleanupDialog">
                     清理同步数据
                   </a-button>
-                  <a-button size="small" type="primary" :loading="runningItem" :disabled="currentItemRunDisabled" @click="runCurrentItem">
+                  <a-button size="small" type="primary" :loading="runningItem" :disabled="currentItemRunDisabled" @click="runCurrentItem(false)">
                     手动执行
                   </a-button>
+                  <a-popconfirm
+                    content="强制同步会处理当前视图里的全部源行，并忽略自动同步状态筛选；但仍会尊重主同步启用状态、子表启用状态和关联映射阻断。确认继续？"
+                    type="warning"
+                    @ok="runCurrentItem(true)"
+                  >
+                    <a-button size="small" status="warning" :loading="runningItem" :disabled="currentItemRunDisabled">
+                      强制同步
+                    </a-button>
+                  </a-popconfirm>
                   <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem('main')">
                     保存配置
                   </a-button>
@@ -4876,6 +4966,9 @@ watch(() => props.selectedItemId, (value) => {
                       <a-tag size="small" color="arcoblue">
                         {{ syncRunModeLabel(run.mode) }}
                       </a-tag>
+                      <a-tag v-if="isForceSyncRun(run)" size="small" color="gold">
+                        强制同步
+                      </a-tag>
                       <span class="text-[10px] text-slate-500 font-mono">{{ run.id }}</span>
                     </div>
                     <p class="text-[11px] text-slate-900 m-0 mt-2">
@@ -4889,6 +4982,9 @@ watch(() => props.selectedItemId, (value) => {
                       class="text-[10px] text-amber-600 m-0 mt-1"
                     >
                       {{ syncRunHintText(currentItem.entityType, run) }}
+                    </p>
+                    <p v-if="syncRunForceText(run)" class="text-[10px] text-amber-600 m-0 mt-1">
+                      {{ syncRunForceText(run) }}
                     </p>
                     <p v-if="run.deltaRecordCount !== undefined" class="text-[10px] text-slate-500 m-0 mt-1">
                       Delta 记录数：{{ run.deltaRecordCount }}
@@ -5103,7 +5199,13 @@ watch(() => props.selectedItemId, (value) => {
                   <a-tag size="small" color="cyan">
                     业务去重/覆盖 {{ currentItemLogSelectedRun.diagnostics.sourceDuplicateExternalIdCount || 0 }}
                   </a-tag>
+                  <a-tag v-if="isForceSyncRun(currentItemLogSelectedRun)" size="small" color="gold">
+                    强制同步
+                  </a-tag>
                 </div>
+                <p v-if="syncRunForceText(currentItemLogSelectedRun)" class="text-[10px] text-amber-600 m-0">
+                  {{ syncRunForceText(currentItemLogSelectedRun) }}
+                </p>
                 <p v-if="syncRunRuleFilterText(currentItemLogSelectedRun)" class="text-[10px] text-amber-600 m-0">
                   {{ syncRunRuleFilterText(currentItemLogSelectedRun) }}
                 </p>

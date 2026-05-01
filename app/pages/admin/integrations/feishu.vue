@@ -32,6 +32,7 @@ definePageMeta({
 type SecretMode = 'keep' | 'replace' | 'clear'
 type BuildValueSource = 'env' | 'runtime' | 'missing'
 type CreateSyncSourceMode = 'url' | 'manual'
+type SyncConfigImportSourceType = 'url' | 'file'
 
 interface FeishuIntegrationConfigView extends FeishuIntegrationConfig {
   startupEffectiveVersion?: string
@@ -116,6 +117,8 @@ const issueActionMutating = reactive<Record<string, boolean>>({})
 const createSyncDrawerVisible = ref(false)
 const editSyncDrawerVisible = ref(false)
 const syncConfigImportDrawerVisible = ref(false)
+const syncConfigImportMenuVisible = ref(false)
+const syncActionMenuVisibleId = ref('')
 const createSourceMode = ref<CreateSyncSourceMode>('url')
 const configDialogVisible = ref(false)
 const editingSyncId = ref('')
@@ -137,7 +140,11 @@ const syncs = ref<FeishuBitableSync[]>([])
 const startupNotifyChatOptions = ref<FeishuChatCandidate[]>([])
 const startupNotifyChatSearchKeyword = ref('')
 const syncConfigShares = reactive<Record<string, FeishuBitableSyncConfigShare | null>>({})
+const syncConfigImportFileInputRef = ref<HTMLInputElement | null>(null)
+const syncConfigImportSourceType = ref<SyncConfigImportSourceType>('url')
 const syncConfigImportUrl = ref('')
+const syncConfigImportFileName = ref('')
+const syncConfigImportPackage = ref<FeishuBitableSyncConfigPackage | null>(null)
 const syncConfigImportPreview = ref<FeishuBitableSyncConfigImportPreview | null>(null)
 const syncConfigImportLoading = ref(false)
 const syncConfigImporting = ref(false)
@@ -1324,16 +1331,96 @@ function openCreateSyncDrawer() {
   createSyncDrawerVisible.value = true
 }
 
-function resetSyncConfigImportState() {
+function resetSyncConfigImportState(sourceType: SyncConfigImportSourceType = 'url') {
+  syncConfigImportSourceType.value = sourceType
   syncConfigImportUrl.value = ''
+  syncConfigImportFileName.value = ''
+  syncConfigImportPackage.value = null
   syncConfigImportPreview.value = null
   syncConfigImportErrorText.value = ''
 }
 
-function openSyncConfigImportDrawer() {
+function openSyncConfigImportDrawer(sourceType: SyncConfigImportSourceType = 'url') {
   clearFeedback()
-  resetSyncConfigImportState()
+  resetSyncConfigImportState(sourceType)
   syncConfigImportDrawerVisible.value = true
+}
+
+function openSyncConfigUrlImport() {
+  syncConfigImportMenuVisible.value = false
+  openSyncConfigImportDrawer('url')
+}
+
+function setSyncActionMenuVisible(syncId: string, visible: boolean) {
+  const normalizedSyncId = String(syncId || '').trim()
+  if (!normalizedSyncId)
+    return
+  if (visible) {
+    syncActionMenuVisibleId.value = normalizedSyncId
+    return
+  }
+  if (syncActionMenuVisibleId.value === normalizedSyncId)
+    syncActionMenuVisibleId.value = ''
+}
+
+function closeSyncActionMenu(sync: FeishuBitableSync) {
+  const syncId = String(sync.id || '').trim()
+  if (syncActionMenuVisibleId.value === syncId)
+    syncActionMenuVisibleId.value = ''
+}
+
+function readSyncConfigImportFile(file: File): Promise<FeishuBitableSyncConfigPackage> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('配置文件读取失败。'))
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || '').trim()
+        if (!text) {
+          reject(new Error('配置文件为空。'))
+          return
+        }
+        resolve(JSON.parse(text) as FeishuBitableSyncConfigPackage)
+      }
+      catch {
+        reject(new Error('配置文件解析失败，请确认选择的是导出的 JSON 配置包。'))
+      }
+    }
+    reader.readAsText(file)
+  })
+}
+
+function selectSyncConfigImportFile() {
+  if (!canManageBitable.value)
+    return
+  clearFeedback()
+  resetSyncConfigImportState('file')
+  syncConfigImportMenuVisible.value = false
+  syncConfigImportFileInputRef.value?.click()
+}
+
+async function handleSyncConfigImportFileChange(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (input)
+    input.value = ''
+  if (!file)
+    return
+
+  resetSyncConfigImportState('file')
+  syncConfigImportFileName.value = file.name || '配置文件'
+  syncConfigImportDrawerVisible.value = true
+  syncConfigImportLoading.value = true
+  try {
+    syncConfigImportPackage.value = await readSyncConfigImportFile(file)
+    await previewSyncConfigImport()
+  }
+  catch (error) {
+    syncConfigImportErrorText.value = error instanceof Error ? error.message : '配置文件解析失败。'
+  }
+  finally {
+    syncConfigImportLoading.value = false
+  }
 }
 
 function syncConfigShareFor(sync: FeishuBitableSync): FeishuBitableSyncConfigShare | null {
@@ -1576,7 +1663,18 @@ async function previewSyncConfigImport() {
     return
 
   const url = syncConfigImportUrl.value.trim()
-  if (!url) {
+  const filePackage = syncConfigImportPackage.value
+  const body = syncConfigImportSourceType.value === 'file'
+    ? { package: filePackage }
+    : { url }
+
+  if (syncConfigImportSourceType.value === 'file') {
+    if (!filePackage) {
+      syncConfigImportErrorText.value = '请先选择配置文件。'
+      return
+    }
+  }
+  else if (!url) {
     syncConfigImportErrorText.value = '请先填写公网配置 URL。'
     return
   }
@@ -1589,7 +1687,7 @@ async function previewSyncConfigImport() {
       endpoint('/admin/integrations/feishu/bitable-syncs/config-import/preview'),
       {
         method: 'POST',
-        body: { url },
+        body,
       },
       '配置包预览失败。',
     )
@@ -1614,15 +1712,20 @@ async function confirmSyncConfigImport() {
   syncConfigImporting.value = true
   syncConfigImportErrorText.value = ''
   try {
+    const importBody = syncConfigImportSourceType.value === 'file'
+      ? {
+          package: syncConfigImportPreview.value.package,
+        }
+      : {
+          url: syncConfigImportUrl.value.trim(),
+          shareKey: extractShareKeyFromConfigUrl(syncConfigImportUrl.value),
+          package: syncConfigImportPreview.value.package,
+        }
     const result = await requestApi<FeishuBitableSyncConfigImportResult>(
       endpoint('/admin/integrations/feishu/bitable-syncs/config-import/import'),
       {
         method: 'POST',
-        body: {
-          url: syncConfigImportUrl.value.trim(),
-          shareKey: extractShareKeyFromConfigUrl(syncConfigImportUrl.value),
-          package: syncConfigImportPreview.value.package,
-        },
+        body: importBody,
       },
       '配置包导入失败。',
     )
@@ -1735,6 +1838,41 @@ async function restoreSync(sync: FeishuBitableSync) {
   finally {
     restoringSyncMutating[syncId] = false
   }
+}
+
+function downloadSyncConfigPackageFromMenu(sync: FeishuBitableSync) {
+  closeSyncActionMenu(sync)
+  void downloadSyncConfigPackage(sync)
+}
+
+function createSyncConfigShareFromMenu(sync: FeishuBitableSync) {
+  closeSyncActionMenu(sync)
+  void createSyncConfigShare(sync)
+}
+
+function copySyncConfigShareUrlFromMenu(sync: FeishuBitableSync) {
+  closeSyncActionMenu(sync)
+  void copySyncConfigShareUrl(sync)
+}
+
+async function revokeSyncConfigShareFromMenu(sync: FeishuBitableSync) {
+  await revokeSyncConfigShare(sync)
+  closeSyncActionMenu(sync)
+}
+
+function toggleSyncEnabledFromMenu(sync: FeishuBitableSync) {
+  closeSyncActionMenu(sync)
+  void toggleSyncEnabled(sync, !sync.enabled)
+}
+
+async function archiveSyncFromMenu(sync: FeishuBitableSync) {
+  await archiveSync(sync)
+  closeSyncActionMenu(sync)
+}
+
+async function restoreSyncFromMenu(sync: FeishuBitableSync) {
+  await restoreSync(sync)
+  closeSyncActionMenu(sync)
 }
 
 watch(editSyncDrawerVisible, (visible, oldVisible) => {
@@ -1948,9 +2086,42 @@ onMounted(initializePage)
                   <a-switch v-model="showArchivedSyncs" size="small" @change="refreshSyncList" />
                   <span>显示已归档</span>
                 </label>
-                <a-button size="small" @click="openSyncConfigImportDrawer">
-                  从配置 URL 导入
-                </a-button>
+                <a-trigger
+                  trigger="click"
+                  position="bottom"
+                  :popup-visible="syncConfigImportMenuVisible"
+                  @popup-visible-change="syncConfigImportMenuVisible = $event"
+                >
+                  <a-button size="small" @click.stop>
+                    导入
+                  </a-button>
+
+                  <template #content>
+                    <div class="p-2 border border-slate-200 bg-white w-44">
+                      <button
+                        class="text-[12px] text-slate-700 px-3 py-2 text-left flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+                        type="button"
+                        @click.stop="openSyncConfigUrlImport"
+                      >
+                        <span>从配置 URL 导入</span>
+                      </button>
+                      <button
+                        class="text-[12px] text-slate-700 px-3 py-2 text-left flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+                        type="button"
+                        @click.stop="selectSyncConfigImportFile"
+                      >
+                        <span>从配置文件导入</span>
+                      </button>
+                    </div>
+                  </template>
+                </a-trigger>
+                <input
+                  ref="syncConfigImportFileInputRef"
+                  class="hidden"
+                  accept="application/json,.json"
+                  type="file"
+                  @change="handleSyncConfigImportFileChange"
+                >
                 <a-button size="small" type="primary" @click="openCreateSyncDrawer">
                   新建同步信息
                 </a-button>
@@ -2097,7 +2268,7 @@ onMounted(initializePage)
               </template>
 
               <template #actions="{ record }">
-                <div class="flex flex-wrap gap-1">
+                <div class="flex flex-wrap gap-1 items-center">
                   <a-button
                     v-if="canReadSyncedData"
                     size="mini"
@@ -2114,75 +2285,97 @@ onMounted(initializePage)
                   >
                     {{ record.archivedAt ? '查看同步信息' : '编辑同步信息' }}
                   </a-button>
-                  <a-button size="mini" @click="downloadSyncConfigPackage(record)">
-                    导出配置
-                  </a-button>
-                  <a-button
-                    size="mini"
-                    :loading="syncConfigShareMutating[record.id]"
-                    @click="createSyncConfigShare(record)"
+                  <a-trigger
+                    trigger="click"
+                    position="br"
+                    :popup-visible="syncActionMenuVisibleId === record.id"
+                    @popup-visible-change="setSyncActionMenuVisible(record.id, $event)"
                   >
-                    创建公网配置
-                  </a-button>
-                  <a-button
-                    size="mini"
-                    :disabled="!syncConfigShareFor(record)"
-                    @click="copySyncConfigShareUrl(record)"
-                  >
-                    复制公网配置
-                  </a-button>
-                  <a-popconfirm
-                    content="确认撤销该同步信息的公网配置链接吗？撤销后已有链接将无法继续导入。"
-                    type="warning"
-                    @ok="revokeSyncConfigShare(record)"
-                  >
-                    <a-button
-                      size="mini"
-                      :disabled="syncConfigShareMutating[record.id]"
-                    >
-                      撤销公网配置
+                    <a-button size="mini" @click.stop>
+                      更多
                     </a-button>
-                  </a-popconfirm>
-                  <a-button
-                    v-if="!record.archivedAt"
-                    size="mini"
-                    :type="record.enabled ? 'outline' : 'primary'"
-                    :status="record.enabled ? 'warning' : 'success'"
-                    :loading="syncToggleMutating[record.id]"
-                    :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id]"
-                    @click="toggleSyncEnabled(record, !record.enabled)"
-                  >
-                    {{ record.enabled ? '禁用' : '启用' }}
-                  </a-button>
-                  <a-popconfirm
-                    v-if="!record.archivedAt"
-                    content="确认归档该同步信息吗？归档后会自动停用全部子表同步项与定时调度，列表默认不再展示。"
-                    type="warning"
-                    @ok="archiveSync(record)"
-                  >
-                    <a-button
-                      size="mini"
-                      status="danger"
-                      :loading="archivingSyncMutating[record.id]"
-                      :disabled="restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
-                    >
-                      归档
-                    </a-button>
-                  </a-popconfirm>
-                  <a-popconfirm
-                    v-else
-                    content="确认恢复该同步信息吗？恢复后只会恢复主记录本身，子表同步项与定时调度仍保持停用，需要手动重新启用。"
-                    type="warning"
-                    @ok="restoreSync(record)"
-                  >
-                    <a-button
-                      size="mini"
-                      :loading="restoringSyncMutating[record.id]"
-                      :disabled="archivingSyncMutating[record.id] || syncToggleMutating[record.id]"
-                    >
-                      恢复归档
-                    </a-button>
-                  </a-popconfirm>
+
+                    <template #content>
+                      <div class="p-2 border border-slate-200 bg-white w-44 space-y-1">
+                        <a-button long size="mini" @click="downloadSyncConfigPackageFromMenu(record)">
+                          导出配置
+                        </a-button>
+                        <a-button
+                          long
+                          size="mini"
+                          :loading="syncConfigShareMutating[record.id]"
+                          @click="createSyncConfigShareFromMenu(record)"
+                        >
+                          创建公网配置
+                        </a-button>
+                        <a-button
+                          long
+                          size="mini"
+                          :disabled="!syncConfigShareFor(record)"
+                          @click="copySyncConfigShareUrlFromMenu(record)"
+                        >
+                          复制公网配置
+                        </a-button>
+                        <a-popconfirm
+                          content="确认撤销该同步信息的公网配置链接吗？撤销后已有链接将无法继续导入。"
+                          type="warning"
+                          @ok="revokeSyncConfigShareFromMenu(record)"
+                        >
+                          <a-button
+                            long
+                            size="mini"
+                            :disabled="syncConfigShareMutating[record.id]"
+                          >
+                            撤销公网配置
+                          </a-button>
+                        </a-popconfirm>
+                        <div class="my-1 border-t border-slate-100" />
+                        <a-button
+                          v-if="!record.archivedAt"
+                          long
+                          size="mini"
+                          :type="record.enabled ? 'outline' : 'primary'"
+                          :status="record.enabled ? 'warning' : 'success'"
+                          :loading="syncToggleMutating[record.id]"
+                          :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id]"
+                          @click="toggleSyncEnabledFromMenu(record)"
+                        >
+                          {{ record.enabled ? '禁用' : '启用' }}
+                        </a-button>
+                        <a-popconfirm
+                          v-if="!record.archivedAt"
+                          content="确认归档该同步信息吗？归档后会自动停用全部子表同步项与定时调度，列表默认不再展示。"
+                          type="warning"
+                          @ok="archiveSyncFromMenu(record)"
+                        >
+                          <a-button
+                            long
+                            size="mini"
+                            status="danger"
+                            :loading="archivingSyncMutating[record.id]"
+                            :disabled="restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
+                          >
+                            归档
+                          </a-button>
+                        </a-popconfirm>
+                        <a-popconfirm
+                          v-else
+                          content="确认恢复该同步信息吗？恢复后只会恢复主记录本身，子表同步项与定时调度仍保持停用，需要手动重新启用。"
+                          type="warning"
+                          @ok="restoreSyncFromMenu(record)"
+                        >
+                          <a-button
+                            long
+                            size="mini"
+                            :loading="restoringSyncMutating[record.id]"
+                            :disabled="archivingSyncMutating[record.id] || syncToggleMutating[record.id]"
+                          >
+                            恢复归档
+                          </a-button>
+                        </a-popconfirm>
+                      </div>
+                    </template>
+                  </a-trigger>
                 </div>
               </template>
 
@@ -2897,7 +3090,7 @@ onMounted(initializePage)
 
     <a-drawer
       v-model:visible="syncConfigImportDrawerVisible"
-      title="从配置 URL 导入"
+      :title="syncConfigImportSourceType === 'file' ? '从配置文件导入' : '从配置 URL 导入'"
       :mask-closable="!syncConfigImporting"
       :closable="!syncConfigImporting"
       :esc-to-close="!syncConfigImporting"
@@ -2914,7 +3107,7 @@ onMounted(initializePage)
           </p>
         </section>
 
-        <label class="text-[10px] text-slate-600 font-medium block">
+        <label v-if="syncConfigImportSourceType === 'url'" class="text-[10px] text-slate-600 font-medium block">
           公网配置 URL
           <a-textarea
             v-model="syncConfigImportUrl"
@@ -2924,9 +3117,27 @@ onMounted(initializePage)
             placeholder="https://your-domain/api/feishu/bitable-sync-config/..."
           />
         </label>
+        <section v-else class="p-3 border border-slate-200 bg-white flex flex-wrap gap-2 items-center justify-between">
+          <div>
+            <p class="text-[10px] text-slate-500 m-0">
+              配置文件
+            </p>
+            <p class="text-[11px] text-slate-900 font-medium m-0 mt-1 break-all">
+              {{ syncConfigImportFileName || '未选择' }}
+            </p>
+          </div>
+          <a-button size="small" :disabled="syncConfigImporting" @click="selectSyncConfigImportFile">
+            重新选择
+          </a-button>
+        </section>
 
         <div class="flex gap-2 justify-end">
-          <a-button size="small" :loading="syncConfigImportLoading" @click="previewSyncConfigImport">
+          <a-button
+            size="small"
+            :loading="syncConfigImportLoading"
+            :disabled="syncConfigImportSourceType === 'file' && !syncConfigImportPackage"
+            @click="previewSyncConfigImport"
+          >
             预览配置
           </a-button>
         </div>
