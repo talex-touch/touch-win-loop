@@ -19,7 +19,7 @@ describe('飞书多维同步稳定性修复', () => {
     assert.match(serviceSource, /const successfulBusinessExternalIds = new Set<string>\(\)/, '执行链路未改用成功业务实体集合做 prune 保护')
     assert.match(serviceSource, /if \(input\.entityType !== 'persona' && result\.status !== 'skipped' && toText\(result\.externalId\)\)/, '执行链路仍会把被跳过记录算进 prune externalId 集合')
     assert.match(serviceSource, /&& successfulBusinessExternalIds\.size > 0/, 'authoritative prune 未要求本轮至少命中一个有效业务实体')
-    assert.match(serviceSource, /const authoritativePrune = mode === 'full' && deltaRecordIds\.length === 0 && autoSync\.enabled !== true/, '自动同步开启时 full run 不应触发权威清理')
+    assert.match(serviceSource, /const authoritativePrune = !ignoreAutoSyncStatus && mode === 'full' && deltaRecordIds\.length === 0 && autoSync\.enabled !== true/, '自动同步开启或强制同步时 full run 不应触发权威清理')
     assert.match(serviceSource, /preserveExternalIds: \[\.\.\.successfulBusinessExternalIds\]/, 'authoritative prune 未使用成功业务实体 externalId 作为保留集合')
     assert.match(serviceSource, /缺少 contestExternalId 映射，也没有默认 contestId 兜底/, '服务端未提供 contest 关联缺失阻断提示')
     assert.match(serviceSource, /缺少 trackExternalId 映射。请先在“映射配置”补齐对应赛道字段后再手动执行。/, '服务端未提供 track timeline 关联缺失阻断提示')
@@ -33,6 +33,41 @@ describe('飞书多维同步稳定性修复', () => {
     assert.match(editorSource, /<a-alert v-if="currentItemRelationGuardText" type="warning" :show-icon="true">/, '编辑器未展示运行前关联阻断提示')
     assert.match(editorSource, /if \(currentItemRelationGuardText\.value\) \{\s+setError\(currentItemRelationGuardText\.value\)\s+return\s+\}/, '编辑器手动执行前未先给出本地阻断反馈')
     assert.match(editorSource, /const itemId = currentItem\.value\.id[\s\S]*currentItemLogVisible\.value = true[\s\S]*await loadCurrentItemLogDetail\(itemId, result\.runId\)/, '编辑器手动执行成功后未用本次同步项和 runId 打开日志')
+  })
+
+  it('子表手动强制同步只忽略自动同步状态筛选，不绕过执行闸门', async () => {
+    const [serviceSource, runApiSource, workflowProviderSource, feishuProviderSource, typeSource, editorSource] = await Promise.all([
+      readSource('server/services/feishu/bitable-sync.ts'),
+      readSource('server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId]/run.post.ts'),
+      readSource('server/services/workflow/workflow-provider.ts'),
+      readSource('server/services/workflow/providers/feishu-bitable-provider.ts'),
+      readSource('shared/types/domain-legacy.ts'),
+      readSource('app/components/admin/AdminFeishuBitableSyncEditor.vue'),
+    ])
+
+    assert.match(runApiSource, /import \{ readBody, setResponseStatus \} from 'h3'/, '手动执行接口未读取请求 body')
+    assert.match(runApiSource, /interface RunSyncItemBody \{[\s\S]*force\?: boolean[\s\S]*\}/, '手动执行接口未声明 force body')
+    assert.match(runApiSource, /const force = body\?\.force === true/, '手动执行接口未规范化 force 参数')
+    assert.match(runApiSource, /runWorkflow\(\{[\s\S]*triggerSource: 'manual'[\s\S]*force,/, '手动执行接口未把 force 透传给 workflow')
+    assert.match(workflowProviderSource, /force\?: boolean/, 'workflow 输入未声明 force 参数')
+    assert.match(feishuProviderSource, /force: input\.force/, '飞书 workflow provider 未透传 force')
+
+    assert.match(serviceSource, /const ignoreAutoSyncStatus = input\.force === true && triggerSource === 'manual'/, '执行服务未限制 force 只作用于手动执行')
+    assert.match(serviceSource, /if \(!ignoreAutoSyncStatus\) \{[\s\S]*ensureAutoSyncConfigReady\(autoSync\)[\s\S]*validateAutoSyncFields\(autoSync, records\)[\s\S]*\}/, '强制同步仍会执行自动同步字段校验')
+    assert.match(serviceSource, /const filteredRecords = ignoreAutoSyncStatus \? records : filterRecordsByAutoSync\(records, autoSync\)/, '强制同步未绕过自动同步状态过滤')
+    assert.match(serviceSource, /const authoritativePrune = !ignoreAutoSyncStatus && mode === 'full' && deltaRecordIds\.length === 0 && autoSync\.enabled !== true/, '强制同步仍可能触发权威清理')
+    assert.match(serviceSource, /autoSyncFilteredCount: autoSync\.enabled && !ignoreAutoSyncStatus \? Math\.max\(0, sourceFetchedCount - processedCount\) : 0/, '强制同步未清零规则过滤计数')
+    assert.match(serviceSource, /force: ignoreAutoSyncStatus[\s\S]*ignoreAutoSyncStatus: true/, '执行诊断未记录强制同步标记')
+    assert.match(serviceSource, /if \(configAndTask\.sync && !configAndTask\.sync\.enabled\)[\s\S]*FEISHU_BITABLE_SYNC_DISABLED/, '强制同步不应绕过主同步禁用闸门')
+    assert.match(serviceSource, /if \(!configAndTask\.task\.isEnabled\)[\s\S]*FEISHU_BITABLE_SYNC_ITEM_INACTIVE/, '强制同步不应绕过子表同步项禁用闸门')
+
+    assert.match(typeSource, /force\?: \{[\s\S]*ignoreAutoSyncStatus\?: boolean[\s\S]*\}/, '执行诊断类型未暴露强制同步标记')
+    assert.match(editorSource, /async function runCurrentItem\(force = false\)/, '编辑器手动执行函数未接收 force 参数')
+    assert.match(editorSource, /<a-popconfirm[\s\S]*content="强制同步会处理当前视图里的全部源行，并忽略自动同步状态筛选；但仍会尊重主同步启用状态、子表启用状态和关联映射阻断。确认继续？"[\s\S]*@ok="runCurrentItem\(true\)"/, '编辑器强制同步缺少确认弹窗')
+    assert.match(editorSource, /body: force \? \{ force: true \} : undefined/, '编辑器强制同步请求未提交 force body')
+    assert.match(editorSource, /@ok="runCurrentItem\(true\)"[\s\S]*强制同步/, '编辑器未提供强制同步按钮')
+    assert.match(editorSource, /function isForceSyncRun\(run\?: FeishuBitableSyncItemRun \| null\): boolean \{[\s\S]*ignoreAutoSyncStatus === true/, '编辑器未识别强制同步日志')
+    assert.match(editorSource, /本次为强制同步，已处理当前视图全部源行，并忽略自动同步状态筛选。/, '编辑器执行日志未展示强制同步说明')
   })
 
   it('共享 contest release draft 被其他子表更新后，查询仍按节点级 syncSource 保持竞赛和赛道归属稳定', async () => {
