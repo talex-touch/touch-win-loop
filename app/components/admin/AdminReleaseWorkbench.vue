@@ -620,38 +620,6 @@ function openResourcePreview(item: ContestReleaseResourceSnapshot) {
   resourcePreviewDrawerVisible.value = true
 }
 
-function joinUniqueMetadataTexts(items: unknown[]): string {
-  const seen = new Set<string>()
-  const values: string[] = []
-  for (const item of items) {
-    const text = metadataText(item)
-    if (!text || seen.has(text))
-      continue
-    seen.add(text)
-    values.push(text)
-  }
-  return values.join('；')
-}
-
-function inferLatestTimelineSeason(snapshot: ContestReleaseSnapshot): string {
-  const years = [...snapshot.timelines, ...snapshot.trackTimelines]
-    .map(item => Number(item.year || 0))
-    .filter(year => Number.isFinite(year) && year >= 1900)
-  if (!years.length)
-    return ''
-  return String(Math.max(...years))
-}
-
-function contestParticipantRequirementsText(snapshot: ContestReleaseSnapshot): string {
-  return metadataText(snapshot.contest?.participantRequirements)
-    || joinUniqueMetadataTexts(snapshot.tracks.map(item => item.participantRequirements))
-}
-
-function contestCurrentSeasonText(snapshot: ContestReleaseSnapshot): string {
-  return metadataText(snapshot.contest?.currentSeason)
-    || inferLatestTimelineSeason(snapshot)
-}
-
 function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
   if (!snapshot)
     return []
@@ -667,9 +635,6 @@ function contestMetadataFormRows(snapshot: ContestReleaseSnapshot | null) {
     { key: 'disciplines', label: '学科门类', value: arrayText(contest?.disciplines), source: feishuContestSource },
     { key: 'keywords', label: '关键词', value: keywordTags(contest?.keywords).join('、') || '-', source: feishuContestSource, kind: 'keywords' },
     { key: 'recommendedFor', label: '适配人群', value: arrayText(contest?.recommendedFor), source: feishuContestSource },
-    { key: 'organizer', label: '主办方', value: metadataText(contest?.organizer) || '-', source: '本地/发布保留：contest.organizer 不从 Feishu contest 库写回' },
-    { key: 'participantRequirements', label: '参赛对象', value: contestParticipantRequirementsText(snapshot) || '-', source: '本地/发布保留：contest.participantRequirements 不从 Feishu contest 库写回；缺失时按同版本赛道参赛对象聚合' },
-    { key: 'currentSeason', label: '当前届次', value: contestCurrentSeasonText(snapshot) || '-', source: '本地/发布保留：currentSeason 不作为 Feishu target；缺失时按时间线年份推断' },
   ]
 }
 
@@ -773,37 +738,6 @@ function isTrackTimelineForTrack(timeline: ContestReleaseTrackTimelineSnapshot, 
   return timelineCandidates.some(timelineIdentity =>
     candidates.some(candidate => timelineIdentityMatches(candidate, timelineIdentity)),
   )
-}
-
-function mergedContestTimelineReviewText(snapshot: ContestReleaseSnapshot | null) {
-  if (!snapshot)
-    return '-'
-
-  const sections: string[] = []
-  const contestText = contestTimelineText(snapshot.timelines)
-  if (contestText !== '-')
-    sections.push(contestText)
-
-  const matchedTrackTimelineIds = new Set<string>()
-  for (const track of snapshot.tracks) {
-    const trackTimelines = snapshot.trackTimelines.filter((timeline) => {
-      const matched = isTrackTimelineForTrack(timeline, track)
-      if (matched)
-        matchedTrackTimelineIds.add(timeline.externalId)
-      return matched
-    })
-    const text = trackTimelineReviewText(trackTimelines, track.timelineText)
-    if (text === '-')
-      continue
-    const trackName = metadataText(track.name) || metadataText(track.externalId) || '未命名赛道'
-    sections.push(`${trackName}：\n${text}`)
-  }
-
-  const unmatchedTrackTimelines = snapshot.trackTimelines.filter(item => !matchedTrackTimelineIds.has(item.externalId))
-  if (unmatchedTrackTimelines.length > 0)
-    sections.push(`未关联赛道：\n${trackTimelineText(unmatchedTrackTimelines)}`)
-
-  return sections.join('\n\n') || '-'
 }
 
 interface TrackFormRow {
@@ -2025,7 +1959,7 @@ onMounted(() => {
               <p class="text-slate-400 mb-1">
                 时间节点
               </p>
-              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ mergedContestTimelineReviewText(detailContestSnapshot) }}</pre>
+              <pre class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-slate-50 whitespace-pre-wrap break-words">{{ contestTimelineText(detailContestSnapshot.timelines) }}</pre>
             </div>
           </div>
         </section>
