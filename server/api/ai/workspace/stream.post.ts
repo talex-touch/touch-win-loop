@@ -38,6 +38,7 @@ import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { getProjectSettingsSnapshot } from '~~/server/utils/platform-store'
+import { getVisibleProjectCompetitionLoop } from '~~/server/utils/project-competition-loop-store'
 import {
   createAiProjectChangeRequests,
   createProjectIssueReportWithIssues,
@@ -67,6 +68,29 @@ type WorkspaceRequestContext = NonNullable<AiWorkspaceRequest['context']>
 
 function toText(value: unknown): string {
   return String(value || '').trim()
+}
+
+function summarizeCompetitionLoop(loop: Awaited<ReturnType<typeof getVisibleProjectCompetitionLoop>>): string {
+  if (!loop)
+    return ''
+
+  const riskLines = loop.risks
+    .filter(item => item.status !== 'resolved' && item.status !== 'ignored')
+    .slice(0, 5)
+    .map(item => `- [${item.severity}] ${item.title}：${item.summary}`)
+  const taskLines = loop.tasks
+    .filter(item => item.status !== 'done' && item.status !== 'ignored')
+    .slice(0, 5)
+    .map(item => `- [${item.priority}] ${item.title}：${item.description}`)
+
+  return [
+    '项目参赛主链：',
+    `- 当前状态：${loop.snapshot.status}`,
+    `- 匹配度：${loop.analysis.matchScore}`,
+    `- 知识库：${loop.knowledge.status}（${loop.knowledge.readyCount}/${loop.knowledge.totalResources} ready）`,
+    riskLines.length > 0 ? `开放风险：\n${riskLines.join('\n')}` : '开放风险：暂无',
+    taskLines.length > 0 ? `联动任务：\n${taskLines.join('\n')}` : '联动任务：暂无',
+  ].join('\n')
 }
 
 function normalizeMode(value: unknown): WorkspaceAiMode {
@@ -617,10 +641,21 @@ export default defineEventHandler(async (event) => {
           limit: 6,
           event,
         })
+        const competitionLoop = request.projectId
+          ? await getVisibleProjectCompetitionLoop(db, {
+              user,
+              projectId: request.projectId,
+              syncKnowledge: false,
+              persist: false,
+            }).catch(() => null)
+          : null
         return {
           projectSettingsSummary: summarizeProjectSettings(projectSettings),
           projectOutlineSummary: summarizeOutline(projectOutline),
-          resourceSummary: knowledgeContext.summaryText,
+          resourceSummary: [
+            knowledgeContext.summaryText,
+            summarizeCompetitionLoop(competitionLoop),
+          ].filter(Boolean).join('\n\n'),
           knowledge: {
             citations: knowledgeContext.citations,
             warning: knowledgeContext.warning,
@@ -858,6 +893,14 @@ export default defineEventHandler(async (event) => {
               issues: execution.data.data.issueDrafts,
             })
           : null
+        if (issuePayload && request.projectId) {
+          await getVisibleProjectCompetitionLoop(db, {
+            user,
+            projectId: request.projectId,
+            syncKnowledge: false,
+            persist: true,
+          }).catch(() => null)
+        }
         throwIfAborted(abortController.signal)
 
         await recordContestAuditLog(db, {

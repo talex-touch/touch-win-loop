@@ -5,6 +5,7 @@ import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { listVisibleProjects } from '~~/server/utils/platform-store'
+import { listProjectCompetitionLoopDigests } from '~~/server/utils/project-competition-loop-store'
 
 type DashboardCompetitionStatus = 'ongoing' | 'upcoming'
 type DashboardCompetitionTone = 'blue' | 'violet' | 'amber'
@@ -104,6 +105,13 @@ export default defineEventHandler(async (event) => {
     })
     const contests = contestResult.items
     const projects = await listVisibleProjects(db, user)
+    const loopDigests = await listProjectCompetitionLoopDigests(db, {
+      projectIds: projects.map(item => item.id),
+    }).catch(() => [])
+    const loopDigestMap = new Map(loopDigests.map(item => [item.projectId, item]))
+    const loopReadyCount = loopDigests.filter(item => item.status === 'ready').length
+    const loopRiskCount = loopDigests.reduce((sum, item) => sum + item.openRiskCount, 0)
+    const loopTaskCount = loopDigests.reduce((sum, item) => sum + item.openTaskCount, 0)
 
     const now = new Date()
     const tones: DashboardCompetitionTone[] = ['blue', 'violet', 'amber']
@@ -149,11 +157,13 @@ export default defineEventHandler(async (event) => {
         tone: 'success',
         publishedAt: '刚刚',
         title: `你当前可见项目 ${projects.length} 个`,
-        description: projects.length > 0
-          ? `其中草稿 ${projects.filter(item => item.status === 'draft').length} 个，建议优先推进即将截止赛事对应项目。`
+        description: loopDigests.length > 0
+          ? `已接入主链快照 ${loopDigests.length} 个，当前开放风险 ${loopRiskCount} 条、待办 ${loopTaskCount} 个，建议优先推进风险最高项目。`
+          : projects.length > 0
+            ? `其中草稿 ${projects.filter(item => item.status === 'draft').length} 个，建议先在项目台刷新主链，生成风险、待办与看板口径。`
           : '当前尚无项目记录，建议先进入工作台创建首个项目草案。',
         metricIcon: 'dashboard',
-        metricText: `进行中 ${projects.filter(item => item.status === 'in_progress').length}`,
+        metricText: loopDigests.length > 0 ? `主链 ready ${loopReadyCount}` : `进行中 ${projects.filter(item => item.status === 'in_progress').length}`,
         actionText: '进入工作台',
       },
     ]
@@ -165,10 +175,22 @@ export default defineEventHandler(async (event) => {
     const teamScore = Math.max(30, Math.min(96, Math.round(
       projects.reduce((sum, item) => sum + (item.collegeBindings.length * 12 + item.advisorBindings.length * 15), 0) / scoredProjects + 40,
     )))
+    const loopMatchScore = loopDigests.length > 0
+      ? Math.round(loopDigests.reduce((sum, item) => sum + item.matchScore, 0) / loopDigests.length)
+      : 0
+    const loopRiskScore = loopDigests.length > 0
+      ? Math.round(loopDigests.reduce((sum, item) => sum + item.riskScore, 0) / loopDigests.length)
+      : 0
 
     const skillMetrics = [
       { id: 'skill-tech', label: '技术能力', score: techScore },
       { id: 'skill-team', label: '团队协作', score: teamScore },
+      ...(loopDigests.length > 0
+        ? [
+            { id: 'skill-loop-match', label: '主链匹配', score: loopMatchScore },
+            { id: 'skill-loop-risk', label: '风险健康', score: loopRiskScore },
+          ]
+        : []),
     ]
 
     const scheduleItems = contests
@@ -184,10 +206,25 @@ export default defineEventHandler(async (event) => {
           time: contest.submissionDeadline ? `${contest.submissionDeadline} 23:59` : '时间待公布',
         }
       })
+    const loopScheduleItems = projects
+      .map(project => ({ project, digest: loopDigestMap.get(project.id) }))
+      .filter(item => item.digest && item.digest.openTaskCount > 0)
+      .slice(0, 4)
+      .map((item) => {
+        return {
+          id: `loop-task-${item.project.id}`,
+          month: 'TASK',
+          day: String(Math.min(99, item.digest?.openTaskCount || 0)).padStart(2, '0'),
+          title: `${item.project.title} 主链待办`,
+          time: `${item.digest?.openTaskCount || 0} 个待处理任务`,
+        }
+      })
 
     const summary = {
       greeting: `你好，${user.username}`,
-      subtitle: '这是为你准备的实时竞赛分析概览。',
+      subtitle: loopDigests.length > 0
+        ? '这是基于项目参赛主链生成的实时竞赛分析概览。'
+        : '这是为你准备的实时竞赛分析概览，刷新项目主链后会接入风险和任务口径。',
       ongoingCount,
       upcomingCount,
       insightCount: insights.length,
@@ -198,7 +235,7 @@ export default defineEventHandler(async (event) => {
       insights,
       competitions,
       skillMetrics,
-      scheduleItems,
+      scheduleItems: [...loopScheduleItems, ...scheduleItems].slice(0, 6),
     }
   })
 

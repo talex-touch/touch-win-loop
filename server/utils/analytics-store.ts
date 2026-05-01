@@ -1,4 +1,5 @@
 import type { Queryable } from '~~/server/utils/db'
+import type { ProjectCompetitionLoopDigest } from '~~/shared/types/project-competition-loop'
 import type {
   AnalyticsAwardFeatureAnalysisPayload,
   AnalyticsAwardFeatureSample,
@@ -31,6 +32,7 @@ import type { AuthUser, Contest, Project, RubricDimension, TopicProposalCompareM
 import { randomUUID } from 'node:crypto'
 import { listContestLibrary } from '~~/server/utils/contest-store'
 import { getVisibleProjectById, listVisibleProjects } from '~~/server/utils/platform-store'
+import { listProjectCompetitionLoopDigests } from '~~/server/utils/project-competition-loop-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamListUserWorkspaces } from '~~/server/utils/team-workspace-store'
 
@@ -125,6 +127,7 @@ interface AnalyticsSnapshot {
   eventCount: number
   aiUsageUnits: number
   syncTaskCount: number
+  loopDigests: ProjectCompetitionLoopDigest[]
   lastUpdatedAt: string
 }
 
@@ -450,6 +453,15 @@ function buildAwardSamples(snapshot: AnalyticsSnapshot): AnalyticsAwardFeatureSa
 }
 
 function buildCapabilityRadar(snapshot: AnalyticsSnapshot, topTrendLabel: string): AnalyticsCapabilityRadarItem[] {
+  const loopReadiness = snapshot.loopDigests.length > 0
+    ? {
+        key: 'loop',
+        label: '主链闭环',
+        score: clamp(Math.round(snapshot.loopDigests.reduce((sum, item) => sum + item.matchScore, 0) / snapshot.loopDigests.length), 0, 100),
+        evidence: `来自 ${snapshot.loopDigests.length} 个项目主链快照，开放风险 ${snapshot.loopDigests.reduce((sum, item) => sum + item.openRiskCount, 0)} 条。`,
+      }
+    : null
+
   if (snapshot.compareRows.length > 0) {
     const average = (key: keyof TopicProposalCompareMatrixRow) => Math.round(
       snapshot.compareRows.reduce((sum, item) => sum + toCount(item[key]), 0) / Math.max(snapshot.compareRows.length, 1),
@@ -461,7 +473,8 @@ function buildCapabilityRadar(snapshot: AnalyticsSnapshot, topTrendLabel: string
       { key: 'trend', label: '趋势把握', score: average('trendHeat'), evidence: topTrendLabel ? `当前热点主要集中在 ${topTrendLabel}。` : '趋势热词样本仍在持续累积。' },
       { key: 'team', label: '团队匹配', score: average('teamMatch'), evidence: `结合 ${snapshot.projects.length} 个可见项目的团队配置估算。` },
       { key: 'feasibility', label: '执行可行', score: average('workloadFeasibility'), evidence: '基于题目板工作量与难度评分的平均值。' },
-    ]
+      ...(loopReadiness ? [loopReadiness] : []),
+    ].slice(0, 6)
   }
 
   const averageProjectRichness = snapshot.projects.length === 0
@@ -477,7 +490,8 @@ function buildCapabilityRadar(snapshot: AnalyticsSnapshot, topTrendLabel: string
     { key: 'trend', label: '趋势把握', score: topTrendLabel ? 66 : 42, evidence: topTrendLabel ? `当前已识别热点：${topTrendLabel}。` : '尚未形成稳定趋势样本。' },
     { key: 'team', label: '团队匹配', score: clamp(Math.round(36 + averageTeamSupport * 8), 24, 80), evidence: '当前暂以院校和指导老师绑定情况估算协同能力。' },
     { key: 'feasibility', label: '执行可行', score: clamp(Math.round(58 + averageProjectRichness * 2), 34, 84), evidence: '当前暂以交付物、风险和技术路线完整度估算。' },
-  ]
+    ...(loopReadiness ? [loopReadiness] : []),
+  ].slice(0, 6)
 }
 
 function buildCapabilityProjects(snapshot: AnalyticsSnapshot): AnalyticsCapabilityProjectItem[] {
@@ -622,6 +636,7 @@ function buildDataGaps(input: {
   featureCount: number
   docSucceededCount: number
   syncTaskCount: number
+  loopDigestCount: number
 }): AnalyticsDataGap[] {
   const gaps: AnalyticsDataGap[] = []
 
@@ -663,6 +678,14 @@ function buildDataGaps(input: {
       title: '外部同步链路未形成反馈',
       description: '当前仍主要依赖库内数据，外部同步结果尚未进入分析闭环。',
       level: 'info',
+    })
+  }
+  if (input.loopDigestCount === 0) {
+    gaps.push({
+      id: 'project-loop',
+      title: '项目参赛主链尚未刷新',
+      description: '趋势、推荐、日程和竞争力分析还未接入项目风险、任务和知识库统一快照。',
+      level: 'warning',
     })
   }
   if (gaps.length === 0) {
@@ -792,6 +815,7 @@ function buildDifficultyDataGaps(snapshot: AnalyticsSnapshot, input: {
     featureCount: 1,
     docSucceededCount: snapshot.docSucceededCount,
     syncTaskCount: snapshot.syncTaskCount,
+    loopDigestCount: snapshot.loopDigests.length,
   }).filter(item => ['topic-boards', 'documents'].includes(item.id))
 
   if (input.trackCount === 0) {
@@ -1353,7 +1377,7 @@ async function buildAnalyticsSnapshot(db: Queryable, input: {
   const workspaceIds = scope.workspaceIds
   const workspaceNameMap = scope.workspaceNameMap
 
-  const [trendRows, resourceRows, boardRows, docSucceededCount, eventCount, aiUsageUnits, syncTaskCount] = await Promise.all([
+  const [trendRows, resourceRows, boardRows, docSucceededCount, eventCount, aiUsageUnits, syncTaskCount, loopDigests] = await Promise.all([
     loadContestTrends(db, contestIds, rangeStart),
     loadContestResources(db, contestIds),
     loadTopicBoards(db, projectIds),
@@ -1361,6 +1385,7 @@ async function buildAnalyticsSnapshot(db: Queryable, input: {
     loadEventCount(db, { user: input.user, workspaceIds, filters, rangeStart }),
     loadAiUsageUnits(db, { user: input.user, workspaceIds, filters, rangeStart }),
     loadSyncTaskCount(db, { contestIds, rangeStart }),
+    listProjectCompetitionLoopDigests(db, { projectIds }).catch(() => []),
   ])
 
   const candidateRows = await loadTopicCandidates(db, boardRows.map(item => item.id))
@@ -1388,6 +1413,7 @@ async function buildAnalyticsSnapshot(db: Queryable, input: {
     eventCount,
     aiUsageUnits,
     syncTaskCount,
+    loopDigests,
     lastUpdatedAt: new Date().toISOString(),
   }
 }
@@ -1408,6 +1434,7 @@ export async function getAnalyticsOverview(db: Queryable, input: {
     featureCount: awardFeatureTags.length,
     docSucceededCount: snapshot.docSucceededCount,
     syncTaskCount: snapshot.syncTaskCount,
+    loopDigestCount: snapshot.loopDigests.length,
   })
 
   return {
@@ -1474,6 +1501,7 @@ export async function getContestTrendAnalysis(db: Queryable, input: {
     featureCount: 1,
     docSucceededCount: snapshot.docSucceededCount,
     syncTaskCount: snapshot.syncTaskCount,
+    loopDigestCount: snapshot.loopDigests.length,
   }).filter(item => ['events', 'sync', 'healthy'].includes(item.id))
 
   return {
@@ -1502,6 +1530,7 @@ export async function getAwardFeatureAnalysis(db: Queryable, input: {
     featureCount: featureTags.length,
     docSucceededCount: snapshot.docSucceededCount,
     syncTaskCount: snapshot.syncTaskCount,
+    loopDigestCount: snapshot.loopDigests.length,
   }).filter(item => ['award-features', 'documents', 'healthy'].includes(item.id))
 
   return {
@@ -1532,6 +1561,7 @@ export async function getCapabilityProfileAnalysis(db: Queryable, input: {
     featureCount: 1,
     docSucceededCount: snapshot.docSucceededCount,
     syncTaskCount: snapshot.syncTaskCount,
+    loopDigestCount: snapshot.loopDigests.length,
   }).filter(item => ['topic-boards', 'documents', 'healthy'].includes(item.id))
 
   return {
@@ -1601,6 +1631,7 @@ export async function getPreparationCadenceAnalysis(db: Queryable, input: {
     featureCount: 1,
     docSucceededCount: snapshot.docSucceededCount,
     syncTaskCount: snapshot.syncTaskCount,
+    loopDigestCount: snapshot.loopDigests.length,
   }).filter(item => ['events', 'healthy'].includes(item.id))
 
   return {

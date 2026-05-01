@@ -17,9 +17,34 @@ import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+import { getVisibleProjectCompetitionLoop } from '~~/server/utils/project-competition-loop-store'
 import { runWithRetry } from '~~/server/utils/retry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
+
+function summarizeCompetitionLoop(loop: Awaited<ReturnType<typeof getVisibleProjectCompetitionLoop>>): string {
+  if (!loop)
+    return ''
+
+  const riskLines = loop.risks
+    .filter(item => item.status !== 'resolved' && item.status !== 'ignored')
+    .slice(0, 5)
+    .map(item => `- [${item.severity}] ${item.title}：${item.summary}`)
+  const taskLines = loop.tasks
+    .filter(item => item.status !== 'done' && item.status !== 'ignored')
+    .slice(0, 5)
+    .map(item => `- [${item.priority}] ${item.title}：${item.description}`)
+
+  return [
+    '项目参赛主链：',
+    `- 当前状态：${loop.snapshot.status}`,
+    `- 匹配度：${loop.analysis.matchScore}`,
+    `- 规则覆盖：${loop.analysis.rubricCoverageScore}`,
+    `- 知识库：${loop.knowledge.status}（${loop.knowledge.readyCount}/${loop.knowledge.totalResources} ready）`,
+    riskLines.length > 0 ? `开放风险：\n${riskLines.join('\n')}` : '开放风险：暂无',
+    taskLines.length > 0 ? `联动任务：\n${taskLines.join('\n')}` : '联动任务：暂无',
+  ].join('\n')
+}
 
 function buildSessionTitle(contestName: string, trackName: string): string {
   const left = contestName.trim()
@@ -130,6 +155,14 @@ export default defineEventHandler(async (event) => {
         workspaceId,
         projectId: safeRequest.context.projectId,
       })
+      const competitionLoop = safeRequest.context.projectId
+        ? await getVisibleProjectCompetitionLoop(db, {
+            user,
+            projectId: safeRequest.context.projectId,
+            syncKnowledge: false,
+            persist: false,
+          }).catch(() => null)
+        : null
 
       const contestName = detail?.contest?.name || ''
       const trackName = detail?.contest?.tracks.find(item => item.id === safeRequest.context.trackId)?.name || ''
@@ -147,7 +180,10 @@ export default defineEventHandler(async (event) => {
       return {
         detail,
         injectedPrompt,
-        localContext: knowledgeContext.summaryText,
+        localContext: [
+          knowledgeContext.summaryText,
+          summarizeCompetitionLoop(competitionLoop),
+        ].filter(Boolean).join('\n\n'),
         knowledge: {
           ...knowledgeContext,
           retrievalPlan: knowledgeContext.retrievalPlan,
