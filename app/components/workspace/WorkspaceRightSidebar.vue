@@ -645,7 +645,8 @@ const issueReportStatusLabel = computed(() => {
 })
 
 const showContestExportPanel = computed(() => {
-  return Boolean(props.selectedContest || props.contestExportProfiles.length > 0 || props.contestExportJobs.length > 0)
+  return props.workbenchMode === 'final_review'
+    && Boolean(props.selectedContest || props.contestExportProfiles.length > 0 || props.contestExportJobs.length > 0)
 })
 
 const contestExportProfileMap = computed(() => {
@@ -671,18 +672,20 @@ function resolveContestExportJobSummary(job: ProjectExportJob): string {
 }
 
 function handleContestExportProfileChange(event: Event): void {
+  if (!showContestExportPanel.value)
+    return
   const target = event.target as HTMLSelectElement | null
   emit('updateContestExportProfile', String(target?.value || '').trim())
 }
 
 function requestRunContestBundleExport(): void {
-  if (props.contestBundleExporting)
+  if (!showContestExportPanel.value || props.contestBundleExporting)
     return
   emit('runContestBundleExport')
 }
 
 function requestRetryContestBundleExport(jobId: string): void {
-  if (!jobId || props.contestBundleRetryingJobId)
+  if (!showContestExportPanel.value || !jobId || props.contestBundleRetryingJobId)
     return
   emit('retryContestBundleExport', jobId)
 }
@@ -3165,7 +3168,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                       <p v-if="job.errorMessage" class="text-[10px] text-rose-600 mt-1">
                         失败原因：{{ job.errorMessage }}
                       </p>
-                      <div v-if="job.artifacts.length > 0" class="flex gap-2 items-center flex-wrap mt-2">
+                      <div v-if="job.artifacts.length > 0" class="mt-2 flex flex-wrap gap-2 items-center">
                         <button
                           v-for="artifact in job.artifacts.filter(item => item.resourceId)"
                           :key="artifact.id"

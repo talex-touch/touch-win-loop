@@ -58,6 +58,7 @@ export interface WorkspaceOutlineNode {
   label: string
   depth: number
   meta?: string
+  sourceResourceIds?: string[]
   locator: WorkspaceOutlineLocator
   children: WorkspaceOutlineNode[]
   statusText?: string
@@ -98,6 +99,13 @@ const WORKSPACE_OUTLINE_NODE_KINDS: WorkspaceOutlineNodeKind[] = [
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function normalizeSourceResourceIds(value: unknown): string[] {
+  if (!Array.isArray(value))
+    return []
+
+  return [...new Set(value.map(item => normalizeString(item)).filter(Boolean))]
 }
 
 function isWorkspaceOutlineSurface(value: unknown): value is WorkspaceOutlineSurface {
@@ -320,18 +328,19 @@ function buildProjectOutlineTreeNodes(nodes: ProjectOutlineNode[], parentOrders:
 
       const order = Math.max(1, Number(node.order || 1))
       const numberChain = [...parentOrders, order]
-      const sourceCount = Array.isArray(node.sourceResourceIds) ? node.sourceResourceIds.length : 0
+      const sourceResourceIds = normalizeSourceResourceIds(node.sourceResourceIds)
       return [{
         id: `project-outline:${normalizeString(node.id) || numberChain.join('.')}`,
         kind: 'project_outline',
         label: `${numberChain.join('.')} ${title}`,
         depth,
-        meta: sourceCount > 0 ? `${sourceCount} 个来源` : undefined,
+        meta: sourceResourceIds.length > 0 ? `${sourceResourceIds.length} 个来源` : undefined,
+        sourceResourceIds,
         locator: {
           surface: 'project',
           kind: 'project_outline',
           projectOutlineId: normalizeString(node.id) || numberChain.join('.'),
-          resourceId: normalizeString(node.sourceResourceIds?.[0]),
+          resourceId: sourceResourceIds[0],
         },
         children: buildProjectOutlineTreeNodes(node.children || [], numberChain, depth + 1),
       } satisfies WorkspaceOutlineNode]
@@ -646,11 +655,14 @@ export function buildWorkspaceOutlineNavigationHash(node: WorkspaceOutlineNode):
   if (!locator)
     return ''
 
+  const sourceResourceIds = normalizeSourceResourceIds(node.sourceResourceIds)
   const payload = {
     id: normalizeString(node.id) || `${locator.surface}:${locator.kind}`,
     kind: node.kind,
     label: normalizeOutlineText(node.label, '结构项'),
     locator,
+    meta: normalizeString(node.meta) || undefined,
+    sourceResourceIds: sourceResourceIds.length > 0 ? sourceResourceIds : undefined,
   }
 
   return `${WORKSPACE_OUTLINE_HASH_PREFIX}${encodeURIComponent(JSON.stringify(payload))}`
@@ -681,6 +693,7 @@ export function parseWorkspaceOutlineNavigationHash(hash: string): WorkspaceOutl
       locator,
       children: [],
       meta: normalizeString(parsed.meta) || undefined,
+      sourceResourceIds: normalizeSourceResourceIds(parsed.sourceResourceIds),
     }
   }
   catch {

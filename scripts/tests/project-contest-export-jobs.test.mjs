@@ -63,6 +63,7 @@ it('竞赛导出任务层已补齐任务状态、重试链路与右栏入口', a
   assert.match(workspaceSource, /:contest-export-profiles="projectExportProfiles"/, '项目页未向右栏透传导出 profile')
   assert.match(workspaceSource, /@run-contest-bundle-export="runContestBundleExport"/, '项目页未接收右栏导出动作')
   assert.match(workspaceSource, /@retry-contest-bundle-export="retryContestBundleExport"/, '项目页未接收右栏重试动作')
+  assert.match(sidebarSource, /return props\.workbenchMode === 'final_review'[\s\S]*props\.contestExportProfiles\.length > 0[\s\S]*props\.contestExportJobs\.length > 0/, '右栏竞赛导出面板未限定在终审工作台')
   assert.match(sidebarSource, /data-testid="workspace-contest-export-panel"/, '右栏缺少竞赛导出面板锚点')
   assert.match(sidebarSource, /最近导出任务/, '右栏缺少最近导出任务区块')
   assert.match(sidebarSource, /emit\('runContestBundleExport'\)/, '右栏缺少发起竞赛导出事件')

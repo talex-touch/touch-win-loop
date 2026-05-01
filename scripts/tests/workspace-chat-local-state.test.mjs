@@ -5,29 +5,44 @@ import { it } from 'vitest'
 
 const WORKSPACE_CHAT_LOCAL_STATE_FILE = resolve(process.cwd(), 'shared/utils/workspace-chat-local-state.ts')
 
-it('toWorkspaceModelMessages 会忽略 system 与 localOnly 临时消息', async () => {
+it('toWorkspaceModelMessages 会保留当前本地用户输入并过滤临时输出', async () => {
   const {
     createWorkspaceLocalChatMessage,
     toWorkspaceModelMessages,
   } = await import(pathToFileURL(WORKSPACE_CHAT_LOCAL_STATE_FILE).href)
 
-  const localUserMessage = createWorkspaceLocalChatMessage({
+  const streamingLocalUserMessage = createWorkspaceLocalChatMessage({
     role: 'user',
-    content: '这条不该进入下一轮',
+    content: '当前输入应进入模型',
     localRequestId: 'req-local',
     streamState: 'streaming',
+  })
+  const streamingLocalAssistantMessage = createWorkspaceLocalChatMessage({
+    role: 'assistant',
+    content: '流式半截回答不应进入模型',
+    localRequestId: 'req-local',
+    streamState: 'streaming',
+  })
+  const abortedLocalUserMessage = createWorkspaceLocalChatMessage({
+    role: 'user',
+    content: '已中断输入不应进入下一轮',
+    localRequestId: 'req-aborted',
+    streamState: 'aborted',
   })
 
   const result = toWorkspaceModelMessages([
     { role: 'system', content: '进度：整理上下文' },
     { role: 'user', content: '保留历史用户消息' },
     { role: 'assistant', content: '保留历史助手消息' },
-    localUserMessage,
+    streamingLocalUserMessage,
+    streamingLocalAssistantMessage,
+    abortedLocalUserMessage,
   ])
 
   assert.deepEqual(result, [
     { role: 'user', content: '保留历史用户消息' },
     { role: 'assistant', content: '保留历史助手消息' },
+    { role: 'user', content: '当前输入应进入模型' },
   ])
 })
 

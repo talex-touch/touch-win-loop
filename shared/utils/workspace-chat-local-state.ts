@@ -30,7 +30,10 @@ export function toWorkspaceModelMessages(messages: ChatMessage[]): ChatMessage[]
         return false
 
       const metadata = toMetadataRecord(message.metadata)
-      return metadata.localOnly !== true
+      if (metadata.localOnly === true)
+        return message.role === 'user' && metadata.streamState === 'streaming'
+
+      return true
     })
     .map(message => ({
       role: message.role,

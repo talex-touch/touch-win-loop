@@ -308,8 +308,6 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
             </span>
           </div>
 
-          <WinLoopTextLogo class="loopy-center__wordmark" />
-
           <div class="loopy-center__title-wrap">
             <h2 class="loopy-center__title">
               连接数据，洞察语义，驱动智能
@@ -473,36 +471,6 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
           <div class="loopy-center__entry-notice">
             {{ overview.entry.issue }}
-          </div>
-
-          <div class="loopy-center__actions">
-            <button
-              class="loopy-center__action loopy-center__action--primary"
-              type="button"
-              :disabled="!hasActiveProject || props.loading || Boolean(props.reindexingTarget)"
-              @click="emit('reindexProjectKnowledge', 'all')"
-            >
-              {{ props.reindexingTarget === 'all' ? '重建中...' : '全量重建' }}
-            </button>
-            <button
-              class="loopy-center__action"
-              type="button"
-              :disabled="!hasActiveProject || props.loading || Boolean(props.reindexingTarget)"
-              @click="emit('reindexProjectKnowledge', 'stale')"
-            >
-              {{ props.reindexingTarget === 'stale' ? '重建中...' : '重建 stale' }}
-            </button>
-            <button
-              class="loopy-center__action"
-              type="button"
-              :disabled="!hasActiveProject || props.loading || Boolean(props.reindexingTarget)"
-              @click="emit('reindexProjectKnowledge', 'failed')"
-            >
-              {{ props.reindexingTarget === 'failed' ? '重建中...' : '重建 failed' }}
-            </button>
-            <button class="loopy-center__action" type="button" :disabled="props.loading" @click="emit('reload')">
-              刷新
-            </button>
           </div>
         </div>
 
@@ -817,8 +785,9 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
 
 .loopy-center__hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(292px, 312px);
+  grid-template-columns: minmax(0, 1fr) minmax(304px, 340px);
   gap: var(--dc-gap-4);
+  align-items: start;
 }
 
 .loopy-center__hero-main {
@@ -872,6 +841,13 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   font-weight: 700;
 }
 
+.loopy-center__project-chip {
+  max-width: min(320px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .loopy-center__health-chip[data-tone='success'] {
   border-color: rgba(15, 159, 98, 0.28);
   background: var(--dc-success-soft);
@@ -890,17 +866,13 @@ const analyticsReady = computed(() => Boolean(props.dashboard?.analytics.allRead
   color: var(--dc-danger);
 }
 
-.loopy-center__wordmark {
-  --winloop-text-logo-width: clamp(146px, 11vw, 186px);
-}
-
 .loopy-center__title {
   margin: 0;
   color: var(--dc-text);
-  font-size: clamp(24px, 1.8vw, var(--dc-title-size));
+  font-size: var(--dc-title-size);
   font-weight: 900;
-  line-height: 1.04;
-  letter-spacing: -0.04em;
+  line-height: 1.08;
+  letter-spacing: 0;
 }
 
 .loopy-center__subtitle {

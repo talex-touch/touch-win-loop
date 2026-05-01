@@ -99,6 +99,21 @@ interface WorkspaceLinkedContestResourceDisplayGroup extends WorkspaceLinkedCont
   categories: WorkspaceLinkedContestResourceCategoryGroup[]
 }
 
+interface OutlineSourceReference {
+  id: string
+  label: string
+  detail?: string
+}
+
+interface OutlineCitationTooltipState {
+  id: string
+  count: number
+  references: OutlineSourceReference[]
+  left: number
+  top: number
+  placement: 'top' | 'bottom'
+}
+
 type ResourceSectionId = 'projectResources' | 'meetingNotes' | 'linkedContestResources' | 'outline'
 
 const props = withDefaults(defineProps<{
@@ -261,6 +276,7 @@ const activeOutlineId = ref('')
 const pendingOutlineCommandId = ref('')
 const resourceActionOpenId = ref('')
 const outlineActionMenuOpenId = ref('')
+const outlineCitationTooltip = ref<OutlineCitationTooltipState | null>(null)
 const projectResourceBatchEditMode = ref(false)
 const projectResourceBatchSelectedIds = ref<string[]>([])
 const projectResourceBatchMenuOpen = ref(false)
@@ -367,6 +383,36 @@ const outlineRowsBySectionId = computed(() => {
 
   return groups
 })
+const outlineSourceResourceReferenceMap = computed(() => {
+  const map = new Map<string, OutlineSourceReference>()
+  const registerResource = (resource: Resource) => {
+    const resourceId = String(resource.id || '').trim()
+    if (!resourceId || map.has(resourceId))
+      return
+    const details = [
+      resolveResourceCategoryLabel(String(resource.category || '')),
+      resourceSourceLabel(resource),
+    ].map(item => String(item || '').trim()).filter(item => item && item !== '-')
+    map.set(resourceId, {
+      id: resourceId,
+      label: resourceDisplayTitle(resource),
+      detail: details.join(' · '),
+    })
+  }
+
+  for (const resource of props.selectedResources)
+    registerResource(resource)
+  for (const resource of props.recycleResources)
+    registerResource(resource)
+  for (const resource of props.resourceLibrary)
+    registerResource(resource)
+  for (const group of props.linkedContestResourceGroups || []) {
+    for (const resource of group.resources || [])
+      registerResource(resource)
+  }
+
+  return map
+})
 const uploadTaskMap = computed(() => {
   const map = new Map<string, ProjectUploadTask>()
   for (const task of visibleUploadTasks.value) {
@@ -379,6 +425,106 @@ const uploadTaskMap = computed(() => {
 
 function resolveOutlineSectionRows(sectionId: WorkspaceOutlineSection['id']): WorkspaceOutlineRow[] {
   return outlineRowsBySectionId.value.get(sectionId) || []
+}
+
+function resolveOutlineSourceResourceIds(node: WorkspaceOutlineNode): string[] {
+  if (!Array.isArray(node.sourceResourceIds))
+    return []
+
+  return [...new Set(node.sourceResourceIds.map(item => String(item || '').trim()).filter(Boolean))]
+}
+
+function resolveOutlineSourceReferences(node: WorkspaceOutlineNode): OutlineSourceReference[] {
+  const referenceMap = outlineSourceResourceReferenceMap.value
+  return resolveOutlineSourceResourceIds(node).map((id, index) => ({
+    id,
+    label: referenceMap.get(id)?.label || `引用 ${index + 1}`,
+    detail: referenceMap.get(id)?.detail || id,
+  }))
+}
+
+function resolveOutlineCitationCount(node: WorkspaceOutlineNode): number {
+  return resolveOutlineSourceResourceIds(node).length
+}
+
+function resolveOutlineCitationTag(node: WorkspaceOutlineNode): string {
+  const count = resolveOutlineCitationCount(node)
+  return count > 0 ? `[${count}]` : ''
+}
+
+function resolveOutlineCitationTooltipText(node: WorkspaceOutlineNode): string {
+  const references = resolveOutlineSourceReferences(node)
+  if (references.length === 0)
+    return ''
+
+  return [
+    `${references.length} 个引用`,
+    ...references.map((reference, index) => {
+      const detail = reference.detail ? ` · ${reference.detail}` : ''
+      return `${index + 1}. ${reference.label}${detail}`
+    }),
+  ].join('\n')
+}
+
+function resolveOutlineCitationTooltipKey(node: WorkspaceOutlineNode): string {
+  return `${node.id}:${resolveOutlineCitationCount(node)}`
+}
+
+function showOutlineCitationTooltip(node: WorkspaceOutlineNode, event: PointerEvent | FocusEvent): void {
+  if (!import.meta.client)
+    return
+
+  const references = resolveOutlineSourceReferences(node)
+  if (references.length === 0)
+    return
+
+  const target = event.currentTarget
+  if (!(target instanceof HTMLElement))
+    return
+
+  const rect = target.getBoundingClientRect()
+  const viewportPadding = 12
+  const tooltipWidth = 260
+  const tooltipHeight = Math.min(280, 38 + references.length * 36)
+  const hasBottomRoom = rect.bottom + 8 + tooltipHeight <= window.innerHeight - viewportPadding
+  const placement: OutlineCitationTooltipState['placement'] = hasBottomRoom ? 'bottom' : 'top'
+  const left = Math.max(
+    viewportPadding,
+    Math.min(rect.left + rect.width / 2 - tooltipWidth / 2, window.innerWidth - tooltipWidth - viewportPadding),
+  )
+  const top = placement === 'bottom'
+    ? rect.bottom + 8
+    : Math.max(viewportPadding, rect.top - tooltipHeight - 8)
+
+  outlineCitationTooltip.value = {
+    id: resolveOutlineCitationTooltipKey(node),
+    count: references.length,
+    references,
+    left,
+    top,
+    placement,
+  }
+}
+
+function hideOutlineCitationTooltip(node?: WorkspaceOutlineNode): void {
+  if (!node) {
+    outlineCitationTooltip.value = null
+    return
+  }
+
+  if (outlineCitationTooltip.value?.id === resolveOutlineCitationTooltipKey(node))
+    outlineCitationTooltip.value = null
+}
+
+function resolveOutlineItemTitle(node: WorkspaceOutlineNode): string {
+  return [
+    node.label,
+    resolveOutlineCitationTooltipText(node) || node.meta,
+  ].filter(Boolean).join('\n')
+}
+
+function resolveOutlineItemNativeTitle(node: WorkspaceOutlineNode): string | undefined {
+  return resolveOutlineCitationCount(node) > 0 ? undefined : resolveOutlineItemTitle(node)
 }
 
 function shouldShowOutlineSectionTitle(section: WorkspaceOutlineSection): boolean {
@@ -3846,13 +3992,25 @@ onBeforeUnmount(() => {
                       class="workspace-tree-item workspace-tree-item--stacked"
                       :class="{ 'workspace-tree-item--active': activeOutlineId === row.id }"
                       type="button"
-                      :title="row.node.meta ? `${row.node.label} · ${row.node.meta}` : row.node.label"
+                      :title="resolveOutlineItemNativeTitle(row.node)"
                       @click="selectOutline(row)"
                     >
                       <span class="workspace-tree-item__lead-spacer" aria-hidden="true" />
                       <span class="workspace-tree-item__content">
-                        <span class="workspace-tree-item__label">{{ row.node.label }}</span>
-                        <span v-if="row.node.meta" class="workspace-tree-item__meta">
+                        <span class="workspace-tree-item__title-line">
+                          <span class="workspace-tree-item__label">{{ row.node.label }}</span>
+                          <span
+                            v-if="resolveOutlineCitationCount(row.node) > 0"
+                            class="workspace-outline-citation-tag"
+                            :aria-label="resolveOutlineCitationTooltipText(row.node)"
+                            @click.stop
+                            @pointerenter.stop="showOutlineCitationTooltip(row.node, $event)"
+                            @pointerleave.stop="hideOutlineCitationTooltip(row.node)"
+                          >
+                            {{ resolveOutlineCitationTag(row.node) }}
+                          </span>
+                        </span>
+                        <span v-if="row.node.meta && resolveOutlineCitationCount(row.node) === 0" class="workspace-tree-item__meta">
                           {{ row.node.meta }}
                         </span>
                       </span>
@@ -4314,5 +4472,35 @@ onBeforeUnmount(() => {
       :disabled="!hasActiveProject || resourceMutating"
       @select-files="handleResourceUpload"
     />
+
+    <Teleport to="body">
+      <div
+        v-if="outlineCitationTooltip"
+        class="workspace-outline-citation-tooltip"
+        :class="`workspace-outline-citation-tooltip--${outlineCitationTooltip.placement}`"
+        :style="{
+          left: `${outlineCitationTooltip.left}px`,
+          top: `${outlineCitationTooltip.top}px`,
+        }"
+        role="tooltip"
+      >
+        <span class="workspace-outline-citation-tooltip__title">
+          {{ outlineCitationTooltip.count }} 个引用
+        </span>
+        <span
+          v-for="(reference, index) in outlineCitationTooltip.references"
+          :key="reference.id"
+          class="workspace-outline-citation-tooltip__item"
+        >
+          <span class="workspace-outline-citation-tooltip__index">{{ index + 1 }}</span>
+          <span class="workspace-outline-citation-tooltip__content">
+            <span class="workspace-outline-citation-tooltip__label">{{ reference.label }}</span>
+            <span v-if="reference.detail" class="workspace-outline-citation-tooltip__detail">
+              {{ reference.detail }}
+            </span>
+          </span>
+        </span>
+      </div>
+    </Teleport>
   </div>
 </template>

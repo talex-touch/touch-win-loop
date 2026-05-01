@@ -1319,10 +1319,126 @@
   gap: 1px;
 }
 
+.workspace-tree-item__title-line {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-tree-item__title-line .workspace-tree-item__label {
+  flex: 0 1 auto;
+}
+
 .workspace-tree-item__meta {
   font-size: 10px;
   line-height: 1.25;
   color: #8895aa;
+}
+
+.workspace-outline-citation-tag {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+  min-width: 18px;
+  padding: 0 5px;
+  border: 1px solid #c9d3e3;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #53637d;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  cursor: help;
+}
+
+.workspace-outline-citation-tooltip {
+  position: fixed;
+  z-index: 10000;
+  width: 260px;
+  max-width: calc(100vw - 24px);
+  padding: 8px;
+  border: 1px solid #d8e0ed;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #475569;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  pointer-events: none;
+}
+
+.workspace-outline-citation-tooltip::after {
+  position: absolute;
+  left: 10px;
+  width: 8px;
+  height: 8px;
+  background: #ffffff;
+  content: '';
+  transform: rotate(45deg);
+}
+
+.workspace-outline-citation-tooltip--bottom::after {
+  top: -5px;
+  border-top: 1px solid #d8e0ed;
+  border-left: 1px solid #d8e0ed;
+}
+
+.workspace-outline-citation-tooltip--top::after {
+  bottom: -5px;
+  border-right: 1px solid #d8e0ed;
+  border-bottom: 1px solid #d8e0ed;
+}
+
+.workspace-outline-citation-tooltip__title {
+  display: block;
+  margin-bottom: 5px;
+  color: #26364f;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.workspace-outline-citation-tooltip__item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.workspace-outline-citation-tooltip__item + .workspace-outline-citation-tooltip__item {
+  margin-top: 3px;
+}
+
+.workspace-outline-citation-tooltip__index {
+  color: #8a97ab;
+  text-align: right;
+}
+
+.workspace-outline-citation-tooltip__label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-outline-citation-tooltip__content {
+  min-width: 0;
+}
+
+.workspace-outline-citation-tooltip__detail {
+  display: block;
+  margin-top: 1px;
+  color: #8a97ab;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-empty-text {
