@@ -1,10 +1,9 @@
-import { runWorkflow } from '~~/server/services/workflow/workflow-orchestrator'
+import { runFeishuBitableSync } from '~~/server/services/feishu/bitable-sync-runner'
 import { withTransaction } from '~~/server/utils/db'
 import {
   claimNextDueFeishuBitableSync,
   completeScheduledFeishuSyncExecution,
   getFeishuBitableSyncById,
-  listFeishuBitableSyncItems,
   releaseFeishuSyncScheduleLock,
 } from '~~/server/utils/feishu-integration-store'
 import { computeNextScheduledRunAtOrNull } from '~~/server/utils/feishu-task-schedule'
@@ -74,40 +73,23 @@ async function executeClaimedSync(input: {
   let lastError = ''
 
   try {
-    const items = await withTransaction(undefined, async (db) => {
-      return listFeishuBitableSyncItems(db, {
-        syncId: input.syncId,
-      })
+    const summary = await runFeishuBitableSync(undefined, {
+      syncId: input.syncId,
+      actorUserId: input.actorUserId,
+      triggerSource: 'scheduled',
+      onItemError(error, item) {
+        const message = toErrorMessage(error)
+        console.error('[feishu-bitable-scheduler-worker] sync item failed:', {
+          syncId: input.syncId,
+          syncItemId: item.id,
+          error: message,
+        })
+        captureServerException(error, {
+          module: 'feishu-bitable-scheduler-worker',
+        })
+      },
     })
-    if (!items.length) {
-      lastError = '当前无已启用的子表同步项。'
-    }
-    else {
-      const errors: string[] = []
-      for (const item of items) {
-        try {
-          await runWorkflow({
-            providerName: 'feishu_bitable',
-            syncItemId: item.id,
-            actorUserId: input.actorUserId,
-            triggerSource: 'scheduled',
-          })
-        }
-        catch (error) {
-          const message = toErrorMessage(error)
-          errors.push(`${item.name || item.id}: ${message}`)
-          console.error('[feishu-bitable-scheduler-worker] sync item failed:', {
-            syncId: input.syncId,
-            syncItemId: item.id,
-            error: message,
-          })
-          captureServerException(error, {
-            module: 'feishu-bitable-scheduler-worker',
-          })
-        }
-      }
-      lastError = errors.slice(0, 3).join('；')
-    }
+    lastError = summary.errors.slice(0, 3).join('；')
   }
   catch (error) {
     lastError = toErrorMessage(error)

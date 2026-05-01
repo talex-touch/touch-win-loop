@@ -1533,6 +1533,9 @@ function resolveAutoSyncMismatchReason(completed: boolean, pending: boolean): 'r
 function collectAutoSyncRunDiagnostics(
   sourceRecords: FeishuBitableRecord[],
   autoSync?: NormalizedAutoSync | null,
+  options: {
+    ignoreAutoSyncStatus?: boolean
+  } = {},
 ): {
   diagnostics: FeishuBitableSyncRunDiagnostics['autoSync']
   runSamples: SyncRunSampleDraft[]
@@ -1561,7 +1564,7 @@ function collectAutoSyncRunDiagnostics(
       if (completed && pending) {
         matchedCount += 1
       }
-      else {
+      else if (!options.ignoreAutoSyncStatus) {
         const reason = resolveAutoSyncMismatchReason(completed, pending)
         const previewSample = {
           recordId: record.recordId,
@@ -1615,6 +1618,7 @@ function buildRunDiagnostics(input: {
   sourceRecords?: FeishuBitableRecord[]
   sourceRecordCount?: number
   autoSync?: NormalizedAutoSync | null
+  ignoreAutoSyncStatus?: boolean
 }): {
   diagnostics: FeishuBitableSyncRunDiagnostics
   runSamples: SyncRunSampleDraft[]
@@ -1626,17 +1630,25 @@ function buildRunDiagnostics(input: {
   )
   const sourceRecords = input.sourceRecords || input.records
   const autoSync = input.autoSync || normalizeAutoSyncConfig(null)
-  const autoSyncDiagnostics = collectAutoSyncRunDiagnostics(sourceRecords, autoSync)
+  const ignoreAutoSyncStatus = Boolean(input.ignoreAutoSyncStatus)
+  const autoSyncDiagnostics = collectAutoSyncRunDiagnostics(sourceRecords, autoSync, {
+    ignoreAutoSyncStatus,
+  })
 
   return {
     diagnostics: {
       sourceFetchedCount,
       processedCount,
-      autoSyncFilteredCount: autoSync.enabled ? Math.max(0, sourceFetchedCount - processedCount) : 0,
+      autoSyncFilteredCount: autoSync.enabled && !ignoreAutoSyncStatus ? Math.max(0, sourceFetchedCount - processedCount) : 0,
       businessSkippedCount: 0,
       skipReasonCounts: {},
       missingRequiredFieldCounts: {},
       autoSync: autoSyncDiagnostics.diagnostics,
+      force: ignoreAutoSyncStatus
+        ? {
+            ignoreAutoSyncStatus: true,
+          }
+        : undefined,
       businessSkipSamples: [],
     },
     runSamples: autoSyncDiagnostics.runSamples,
@@ -1648,6 +1660,7 @@ function buildSummaryBase(input: {
   sourceRecords?: FeishuBitableRecord[]
   sourceRecordCount?: number
   autoSync?: NormalizedAutoSync | null
+  ignoreAutoSyncStatus?: boolean
 }): SyncSummary {
   const records = input.records
   const processedCount = Math.max(0, Math.trunc(Number(records.length) || 0))
@@ -3068,6 +3081,7 @@ async function executeRecords(
     sourceRecords?: FeishuBitableRecord[]
     sourceRecordCount?: number
     autoSync?: NormalizedAutoSync
+    ignoreAutoSyncStatus?: boolean
     authoritativePrune?: boolean
     dryRun: boolean
   },
@@ -3077,6 +3091,7 @@ async function executeRecords(
     sourceRecords: input.sourceRecords,
     sourceRecordCount: input.sourceRecordCount,
     autoSync: input.autoSync,
+    ignoreAutoSyncStatus: input.ignoreAutoSyncStatus,
   })
   const writebackRecords: Array<{ recordId: string, fields: Record<string, unknown> }> = []
   const activePersonaExternalIds = new Set<string>()
@@ -4015,10 +4030,12 @@ async function runFeishuBitableSyncItemById(
     triggerSource?: FeishuBitableSyncRunTriggerSource
     mode?: FeishuSyncRunMode
     recordIds?: string[]
+    force?: boolean
   },
 ): Promise<SyncSummary & { runId: string, status: 'success' | 'partial_success' | 'failed' }> {
   const triggerSource = input.triggerSource || 'manual'
   const mode: FeishuSyncRunMode = input.mode === 'delta' ? 'delta' : 'full'
+  const ignoreAutoSyncStatus = input.force === true && triggerSource === 'manual'
   const deltaRecordIds = [...new Set((input.recordIds || []).map(item => toText(item)).filter(Boolean))]
   const configAndTask = await withClient(event, async (db) => {
     const config = await readFeishuIntegrationConfig(db)
@@ -4070,11 +4087,13 @@ async function runFeishuBitableSyncItemById(
       const mapping = normalizeMapping(task.mapping, task.options, entityType)
       const options = normalizeOptions(task.options, mapping.defaults)
       const autoSync = normalizeAutoSyncConfig(task.autoSync)
-      const authoritativePrune = mode === 'full' && deltaRecordIds.length === 0 && autoSync.enabled !== true
-      ensureAutoSyncConfigReady(autoSync)
-      validateAutoSyncFields(autoSync, records)
+      const authoritativePrune = !ignoreAutoSyncStatus && mode === 'full' && deltaRecordIds.length === 0 && autoSync.enabled !== true
+      if (!ignoreAutoSyncStatus) {
+        ensureAutoSyncConfigReady(autoSync)
+        validateAutoSyncFields(autoSync, records)
+      }
       const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback, autoSync)
-      const filteredRecords = filterRecordsByAutoSync(records, autoSync)
+      const filteredRecords = ignoreAutoSyncStatus ? records : filterRecordsByAutoSync(records, autoSync)
       return executeRecords(db, {
         actorUserId: input.actorUserId,
         runId,
@@ -4091,6 +4110,7 @@ async function runFeishuBitableSyncItemById(
         sourceRecords: records,
         sourceRecordCount: records.length,
         autoSync,
+        ignoreAutoSyncStatus,
         authoritativePrune,
         dryRun: false,
       })
@@ -4156,6 +4176,7 @@ export async function runFeishuBitableSyncItem(
     triggerSource?: FeishuBitableSyncRunTriggerSource
     mode?: FeishuSyncRunMode
     recordIds?: string[]
+    force?: boolean
   },
 ): Promise<SyncSummary & { runId: string, status: 'success' | 'partial_success' | 'failed' }> {
   return runFeishuBitableSyncItemById(event, {
@@ -4164,6 +4185,7 @@ export async function runFeishuBitableSyncItem(
     triggerSource: input.triggerSource,
     mode: input.mode,
     recordIds: input.recordIds,
+    force: input.force,
   })
 }
 

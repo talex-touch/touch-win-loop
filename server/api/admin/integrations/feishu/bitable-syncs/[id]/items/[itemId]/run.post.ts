@@ -1,4 +1,4 @@
-import { setResponseStatus } from 'h3'
+import { readBody, setResponseStatus } from 'h3'
 import { getFeishuSyncItemManualRunBlockReason } from '~~/server/services/feishu/bitable-sync'
 import { runWorkflow } from '~~/server/services/workflow/workflow-orchestrator'
 import { fail, ok } from '~~/server/utils/api'
@@ -8,12 +8,18 @@ import { readRuntimeSettings } from '~~/server/utils/env'
 import { getFeishuBitableSyncItemById } from '~~/server/utils/feishu-integration-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
+interface RunSyncItemBody {
+  force?: boolean
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const syncId = String(getRouterParam(event, 'id') || '').trim()
   const syncItemId = String(getRouterParam(event, 'itemId') || '').trim()
+  const body = await readBody<RunSyncItemBody>(event).catch(() => ({} as RunSyncItemBody))
+  const force = body?.force === true
 
   const canWrite = await checkPlatformPermission(event, user, 'contest.write')
   if (!canWrite) {
@@ -73,6 +79,7 @@ export default defineEventHandler(async (event) => {
     syncItemId,
     actorUserId: user.id,
     triggerSource: 'manual',
+    force,
   }).catch((error) => {
     const code = error instanceof Error ? error.message : String(error || '')
     if (code === 'FEISHU_BITABLE_SYNC_ITEM_NOT_FOUND' || code === 'FEISHU_BITABLE_SYNC_NOT_FOUND') {

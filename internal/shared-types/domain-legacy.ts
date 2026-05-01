@@ -5189,6 +5189,9 @@ export interface FeishuBitableSyncRunDiagnostics {
     count: number
     recordIds: string[]
   }>
+  force?: {
+    ignoreAutoSyncStatus?: boolean
+  }
   skipReasonCounts: Record<string, number>
   missingRequiredFieldCounts: Record<string, number>
   autoSync: FeishuBitableAutoSyncRunDiagnostics
