@@ -289,14 +289,18 @@ export function useLoginPage() {
 
     const oauthError = readQueryText(['oauthError', 'casdoorError'])
     const feishuError = readQueryText('feishuError')
+    const magicError = readQueryText('magicError')
     if (oauthError) {
       errorText.value = oauthError
     }
     else if (feishuError) {
       errorText.value = feishuError
     }
+    else if (magicError) {
+      errorText.value = magicError
+    }
 
-    if (sessionState === 'unauthenticated' && !oauthError && !feishuError)
+    if (sessionState === 'unauthenticated' && !oauthError && !feishuError && !magicError)
       await tryFeishuAutoLogin()
   })
 

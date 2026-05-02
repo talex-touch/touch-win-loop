@@ -1,7 +1,7 @@
 import { sendRedirect } from 'h3'
 import { buildAuthLoginResult } from '~~/server/services/auth/login-session'
-import { clearSessionCookie, setSessionCookie } from '~~/server/utils/auth'
 import { findAdminAuthUserForMagicLink, markAdminUserMagicLinkUsed } from '~~/server/utils/admin-user-store'
+import { clearSessionCookie, setSessionCookie } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { hashToken } from '~~/server/utils/security'
 

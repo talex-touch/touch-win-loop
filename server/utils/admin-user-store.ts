@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { createSessionToken, hashToken } from '~~/server/utils/security'
 
 export type AdminUserStatus = 'active' | 'inactive' | 'disabled'
+export const ADMIN_USER_MAGIC_LINK_TOKEN_PREFIX = 'wl_magic_'
 
 export interface AdminUserListItem {
   userId: string
@@ -493,7 +494,7 @@ export async function createAdminUserMagicLink(
     throw new Error('TARGET_DISABLED')
 
   const ttlMinutes = Math.max(5, Math.min(120, Math.trunc(Number(input.ttlMinutes || 15))))
-  const token = createSessionToken()
+  const token = `${ADMIN_USER_MAGIC_LINK_TOKEN_PREFIX}${createSessionToken()}`
   const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString()
 
   await db.query(
