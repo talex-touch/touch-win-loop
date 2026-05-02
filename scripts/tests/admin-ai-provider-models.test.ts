@@ -113,6 +113,20 @@ describe('admin-ai provider models', () => {
     expect(postSource).not.toMatch(/runtime\.ai\.model/)
   })
 
+  it('编辑 Provider 时空草稿密钥不会覆盖已保存密钥', async () => {
+    const [providerModelsPost, providersTestPost] = await Promise.all([
+      readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
+      readFile(PROVIDERS_TEST_POST_FILE, 'utf8'),
+    ])
+
+    for (const source of [providerModelsPost, providersTestPost]) {
+      expect(source).toMatch(/const providedApiKey = toText\(body\.apiKey \?\? draftProvider\.apiKey\)/)
+      expect(source).toMatch(/apiKey: apiKeyMode === 'clear'[\s\S]*providedApiKey \|\| currentProvider\?\.apiKey \|\| ''/)
+      expect(source).toMatch(/currentApiKey: resolvedProvider\.apiKey/)
+      expect(source).toMatch(/providedApiKey: body\.apiKey \?\? draftProvider\?\.apiKey/)
+    }
+  })
+
   it('provider 连通性测试不会用旧全局模型填充失败 meta', async () => {
     const source = await readFile(PROVIDERS_TEST_POST_FILE, 'utf8')
 
@@ -282,6 +296,7 @@ describe('admin-ai provider models', () => {
     expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.capabilities).toEqual(['embedding'])
     expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.sourceEndpoint).toBe('https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding')
     expect(items.find(item => item.model === 'text-embedding-v4')?.rawText).toContain('Text Embedding V4')
+    expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.pricingText).toBe('默认未计费')
   })
 
   it('缺少 provider 或 baseURL 时会直接报配置错误', async () => {

@@ -69,6 +69,9 @@ it('provider 抽屉支持独立测试、拉取模型和维护模型池', async (
   assert.match(source, /为聊天补 compatible-mode\/v1\/chat\/completions/, '百炼路径应由系统自动补齐')
   assert.doesNotMatch(source, /API Key 模式/, 'Provider API Key 不应再暴露模式下拉')
   assert.match(source, /填写即替换并持久化；留空则保持已保存密钥不变。/, 'API Key 应采用输入即替换、留空保持的规则')
+  assert.match(source, /<a-form-item label="API Key">[\s\S]*<div class="w-full space-y-1">[\s\S]*providerEditorTypeGuide\.apiKeyHint/, 'API Key 提示应位于输入框下方')
+  assert.match(source, /apiKey\?: string/, 'Provider 草稿请求体应允许省略空 API Key')
+  assert.match(source, /if \(apiKey\)\s*payload\.apiKey = apiKey/, 'Provider 草稿不应把空 API Key 传给保存/拉取接口')
   assert.doesNotMatch(source, /百炼原生 SDK/, '暂不应暴露不可用的百炼原生聊天接入')
 })
 
@@ -119,6 +122,10 @@ it('场景抽屉支持 Provider 绑定、模型池、回退顺序和故障转移
   assert.match(source, /只配置模型路由，无需执行对话测试/, '非聊天场景不应执行对话测试')
   assert.match(source, /复制当前策略到全部场景/, '缺少一键复制当前场景策略入口')
   assert.match(source, /一键设置全部场景/, '缺少批量配置入口')
+  assert.match(source, /内置提示词/, '场景编辑抽屉应展示内置提示词')
+  assert.match(source, /sceneDefinitionForKey\(sceneEditorForm\.key\)\?\.builtinPrompt/, '场景编辑抽屉应从后端定义读取内置提示词')
+  assert.match(source, /label="自定义提示词"/, '场景追加提示词应命名为自定义提示词')
+  assert.match(source, /sceneModelEmptyHint/, '场景模型池空态应说明过滤原因')
 })
 
 it('知识库 Embedding 场景只使用 embedding 模型并禁用对话测试', async () => {
@@ -147,6 +154,14 @@ it('模型编辑与导入弹窗支持能力配置和 embedding 搜索', async ()
   assert.match(source, /未从该 Provider 拉取到 Embedding 模型/, '缺少 embedding 空结果提示')
   assert.match(source, /tongyi-embedding-vision-plus/, '缺少百炼多模态 Embedding 模型提示')
   assert.match(source, /providerEditorForm\.type !== 'dashscope-bailian'[\s\S]*value="response"/, 'DashScope 应隐藏 response 格式')
+})
+
+it('provider 删除和缺失价格展示提供安全兜底', async () => {
+  const source = await readFile(PAGE_FILE, 'utf8')
+
+  assert.match(source, /a-popconfirm[\s\S]*确认删除该 Provider 吗[\s\S]*@ok="removeProvider\(scope\.record\.id\)"/, 'Provider 删除缺少二次确认')
+  assert.match(source, /return '默认未计费'/, '缺失价格应显示统一兜底文案')
+  assert.doesNotMatch(source, /return 'none'/, '缺失价格不应继续显示 none')
 })
 
 it('logs 表格与详情展示 AI 请求耗时和尝试链', async () => {

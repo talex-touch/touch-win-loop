@@ -281,16 +281,21 @@ describe('platform-ai-channels', () => {
     const meetingAsr = definitions.find(item => item.key === 'meeting_asr')
     const speechTts = definitions.find(item => item.key === 'speech_tts')
     const defense = definitions.find(item => item.key === 'defense')
+    const knowledgeEmbedding = definitions.find(item => item.key === 'knowledge_embedding')
     const visualEmbedding = definitions.find(item => item.key === 'knowledge_visual_embedding')
 
     expect(meetingAsr?.requiredModelCapability).toBe('asr')
+    expect(meetingAsr?.builtinPrompt).toContain('会议音频')
     expect(meetingAsr?.allowedProviderCapabilities).toEqual(['llm', 'asr', 'voice'])
     expect(speechTts?.requiredModelCapability).toBe('tts')
     expect(speechTts?.allowedProviderCapabilities).toEqual(['llm', 'tts', 'voice'])
     expect(defense?.allowedProviderCapabilities).toEqual(['llm', 'voice'])
+    expect(knowledgeEmbedding?.embeddingApiStyle).toBe('openai-compatible-text')
+    expect(knowledgeEmbedding?.builtinPrompt).toContain('OpenAI 兼容文本')
     expect(visualEmbedding?.requiredModelCapability).toBe('embedding')
     expect(visualEmbedding?.allowedProviderCapabilities).toEqual(['llm', 'embedding'])
     expect(visualEmbedding?.embeddingApiStyle).toBe('bailian-multimodal')
+    expect(visualEmbedding?.builtinPrompt).toContain('百炼原生多模态')
   })
 
   it('asr/tts 场景只从允许 Provider 的匹配模型池解析运行时', () => {
