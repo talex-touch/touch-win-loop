@@ -1130,6 +1130,94 @@ export async function getReleaseVersionDetail(
   }
 }
 
+export async function patchContestReleaseTrackTimelines(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    releaseVersionId: string
+    trackExternalId: string
+    trackTimelines: ContestReleaseTrackTimelineSnapshot[]
+  },
+): Promise<ReleaseVersionDetail> {
+  const row = await getLockedReleaseVersion(db, input.releaseVersionId)
+  if (!row)
+    throw new Error('RELEASE_VERSION_NOT_FOUND')
+  if (row.scope_kind !== 'contest')
+    throw new Error('RELEASE_SCOPE_INVALID')
+  if (row.status !== 'pending_first_review')
+    throw new Error('RELEASE_TRACK_TIMELINE_PATCH_STATUS_INVALID')
+
+  const snapshot = toContestSnapshot(row.snapshot_json, row.scope_id)
+  const trackExternalId = normalizeText(input.trackExternalId)
+  const track = snapshot.tracks.find(item => normalizeText(item.externalId) === trackExternalId)
+  if (!track)
+    throw new Error('RELEASE_TRACK_NOT_FOUND')
+
+  const allowedNodeTypes = new Set<TimelineNodeType>(['registration', 'submission', 'preliminary', 'final', 'other'])
+  const normalizedTimelines = input.trackTimelines.map((item, index) => {
+    const nodeType = allowedNodeTypes.has(item.nodeType) ? item.nodeType : 'other'
+    const externalId = normalizeText(item.externalId) || `${buildTrackDerivedTimelinePrefix(trackExternalId)}manual:${index}:${normalizeText(item.businessNodeLabel || item.note) || randomUUID()}`
+    return {
+      ...item,
+      externalId,
+      trackExternalId,
+      trackLiveId: track.liveId || item.trackLiveId || null,
+      year: normalizeInteger(item.year, new Date().getFullYear()),
+      nodeType,
+      businessNodeLabel: normalizeText(item.businessNodeLabel),
+      recognitionStatus: 'manual_adjusted' as const,
+      startAt: normalizeText(item.startAt) || null,
+      endAt: normalizeText(item.endAt) || null,
+      note: normalizeText(item.note),
+      sourceLink: normalizeText(item.sourceLink),
+      syncSource: item.syncSource || track.syncSource,
+    }
+  })
+
+  snapshot.trackTimelines = [
+    ...snapshot.trackTimelines.filter(item => normalizeText(item.trackExternalId) !== trackExternalId),
+    ...normalizedTimelines,
+  ]
+  const sanitizedSnapshot = sanitizeContestReleaseSnapshot(snapshot)
+  const base = (await loadBaseSnapshot(db, {
+    scopeKind: 'contest',
+    scopeId: row.scope_id,
+  })).contestSnapshot || createEmptyContestSnapshot(row.scope_id)
+  const diffSummary = computeContestDiffSummary(base, sanitizedSnapshot)
+
+  await db.query(
+    `UPDATE release_versions
+     SET snapshot_json = $2::JSONB,
+         diff_summary_json = $3::JSONB,
+         updated_by_user_id = $4,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      input.releaseVersionId,
+      JSON.stringify(sanitizedSnapshot),
+      JSON.stringify(diffSummary),
+      input.actorUserId,
+    ],
+  )
+
+  await insertReleaseReviewLog(db, {
+    releaseVersionId: input.releaseVersionId,
+    actorUserId: input.actorUserId,
+    action: 'manual_generated',
+    payload: {
+      scope: 'track_timeline',
+      trackExternalId,
+      changedCount: normalizedTimelines.length,
+      reason: '赛道确认表单人工修正结构化节点。',
+    },
+  })
+
+  const detail = await getReleaseVersionDetail(db, input.releaseVersionId)
+  if (!detail)
+    throw new Error('RELEASE_VERSION_NOT_FOUND')
+  return detail
+}
+
 export async function listContestReleaseVersions(
   db: Queryable,
   input: {
@@ -2223,6 +2311,7 @@ async function buildContestLiveBaseSnapshot(
         externalId,
         year: normalizeInteger(item.year, new Date().getFullYear()),
         nodeType: item.nodeType as TimelineNodeType,
+        businessNodeLabel: item.businessNodeLabel || '',
         startAt: item.startAt || null,
         endAt: item.endAt || null,
         note: stripManagedNotePrefix(item.note),
@@ -2248,6 +2337,7 @@ async function buildContestLiveBaseSnapshot(
       trackLiveId: item.trackId,
       year: normalizeInteger(item.year, new Date().getFullYear()),
       nodeType: item.nodeType as TimelineNodeType,
+      businessNodeLabel: item.businessNodeLabel || '',
       startAt: item.startAt || null,
       endAt: item.endAt || null,
       note: stripManagedNotePrefix(item.note),
@@ -4051,18 +4141,20 @@ async function publishContestRelease(
         contest_id,
         year,
         node_type,
+        business_node_label,
         start_at,
         end_at,
         note,
         source_link,
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`,
       [
         randomUUID(),
         contestId,
         normalizeInteger(timeline.year, new Date().getFullYear()),
         timeline.nodeType,
+        normalizeText(timeline.businessNodeLabel),
         timeline.startAt || null,
         timeline.endAt || null,
         buildManagedNote(timeline.externalId, timeline.note),
@@ -4109,6 +4201,7 @@ async function publishContestRelease(
           trackId,
           year: normalizeInteger(timeline.year, new Date().getFullYear()),
           nodeType: timeline.nodeType,
+          businessNodeLabel: normalizeText(timeline.businessNodeLabel),
           startAt: timeline.startAt || null,
           endAt: timeline.endAt || null,
           note: buildManagedNote(timeline.externalId, timeline.note),
@@ -4125,6 +4218,7 @@ async function publishContestRelease(
         trackId,
         year: normalizeInteger(timeline.year, new Date().getFullYear()),
         nodeType: timeline.nodeType,
+        businessNodeLabel: normalizeText(timeline.businessNodeLabel),
         startAt: timeline.startAt || null,
         endAt: timeline.endAt || null,
         note: buildManagedNote(timeline.externalId, timeline.note),
@@ -4163,19 +4257,21 @@ async function publishContestRelease(
         track_id,
         year,
         node_type,
+        business_node_label,
         start_at,
         end_at,
         note,
         source_link,
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())`,
       [
         randomUUID(),
         contestId,
         trackId,
         normalizeInteger(timeline.year, new Date().getFullYear()),
         timeline.nodeType,
+        normalizeText(timeline.businessNodeLabel),
         timeline.startAt || null,
         timeline.endAt || null,
         buildManagedNote(timeline.externalId, timeline.note),

@@ -101,6 +101,7 @@ const loading = ref(false)
 const detailLoading = ref(false)
 const actionLoading = ref(false)
 const refreshFromFeishuLoading = ref(false)
+const trackTimelineSaving = ref(false)
 const errorText = ref('')
 const successText = ref('')
 const rejectReason = ref('')
@@ -117,6 +118,7 @@ const queueTotal = ref<number | null>(null)
 const insights = ref<ReleaseQueueInsights | null>(null)
 const currentUserId = ref('')
 const selectedTrack = ref<ContestReleaseTrackSnapshot | null>(null)
+const trackTimelineDrafts = ref<ContestReleaseTrackTimelineSnapshot[]>([])
 const selectedReviewLog = ref<ReleaseReviewLog | null>(null)
 const selectedResourcePreview = ref<ResourcePreviewState | null>(null)
 
@@ -159,6 +161,14 @@ const coverPreviewFrames = [
   { key: 'banner', label: '16:9 横幅', className: 'aspect-[16/9]' },
   { key: 'card', label: '4:3 卡片', className: 'aspect-[4/3]' },
   { key: 'square', label: '1:1 方图', className: 'aspect-square' },
+]
+
+const timelineNodeTypeOptions: Array<{ value: TimelineNodeType, label: string }> = [
+  { value: 'registration', label: '报名' },
+  { value: 'submission', label: '提交/截止' },
+  { value: 'preliminary', label: '初赛/阶段赛' },
+  { value: 'final', label: '决赛' },
+  { value: 'other', label: '其他' },
 ]
 
 interface ResourcePreviewState {
@@ -246,6 +256,15 @@ function formatDate(value?: string | null): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+function formatDateTimeInput(value?: string | null): string {
+  if (!value)
+    return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return value.slice(0, 16)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
 function timelineNodeTypeLabel(type: TimelineNodeType): string {
   if (type === 'registration')
     return '报名'
@@ -256,6 +275,14 @@ function timelineNodeTypeLabel(type: TimelineNodeType): string {
   if (type === 'final')
     return '决赛'
   return '其他'
+}
+
+function timelineRecognitionStatusLabel(item: ContestReleaseTimelineSnapshot | ContestReleaseTrackTimelineSnapshot): string {
+  if (item.recognitionStatus === 'manual_adjusted')
+    return '已人工修改'
+  if (item.recognitionStatus === 'needs_confirmation' || !isTimelineSnapshotAutoRecognized(item))
+    return '待人工确认'
+  return '自动识别'
 }
 
 function statusLabel(status: ReleaseVersionStatus): string {
@@ -653,7 +680,9 @@ function formatTimelineSnapshotItem(item: ContestReleaseTimelineSnapshot | Conte
     return note || '-'
 
   const label = item.nodeType === 'other' ? '' : timelineNodeTypeLabel(item.nodeType)
+  const businessLabel = metadataText(item.businessNodeLabel)
   return [
+    businessLabel,
     label,
     dateText,
     note,
@@ -676,7 +705,7 @@ function trackTimelineReviewSections(items: ContestReleaseTrackTimelineSnapshot[
     .map(formatTimelineSnapshotItem)
     .filter(item => item && item !== '-')
   const pendingConfirmation = items
-    .filter(item => !isTimelineSnapshotAutoRecognized(item))
+    .filter(item => item.recognitionStatus === 'needs_confirmation' || !isTimelineSnapshotAutoRecognized(item))
     .map(item => metadataText(item.note) || formatTimelineSnapshotItem(item))
     .filter(item => item && item !== '-')
   const fallback = metadataText(fallbackText)
@@ -740,6 +769,13 @@ function isTrackTimelineForTrack(timeline: ContestReleaseTrackTimelineSnapshot, 
   )
 }
 
+function trackTimelinesForTrack(item: ContestReleaseTrackSnapshot | null, snapshot: ContestReleaseSnapshot | null): ContestReleaseTrackTimelineSnapshot[] {
+  if (!item)
+    return []
+  return (snapshot?.trackTimelines || [])
+    .filter(timeline => isTrackTimelineForTrack(timeline, item))
+}
+
 interface TrackFormRow {
   label: string
   value: string
@@ -750,8 +786,7 @@ interface TrackFormRow {
 function trackFormRows(item: ContestReleaseTrackSnapshot | null, snapshot: ContestReleaseSnapshot | null) {
   if (!item)
     return []
-  const trackTimelines = (snapshot?.trackTimelines || [])
-    .filter(timeline => isTrackTimelineForTrack(timeline, item))
+  const trackTimelines = trackTimelinesForTrack(item, snapshot)
   const coverValue = item.coverImageUrl || '-'
   const coverPreviewSource = (isCoverPreviewUrl(coverValue) ? resolveCoverPreviewSource(coverValue) : '')
     || buildMappedCoverPreviewSource(coverValue, item.syncSource, 'coverImageUrl')
@@ -928,7 +963,92 @@ async function openRouteVersionDetail(items: ReleaseVersion[] = versions.value) 
 
 function openTrackDetail(item: ContestReleaseTrackSnapshot) {
   selectedTrack.value = item
+  trackTimelineDrafts.value = trackTimelinesForTrack(item, detailContestSnapshot.value)
+    .map(timeline => ({
+      ...timeline,
+      startAt: formatDateTimeInput(timeline.startAt),
+      endAt: formatDateTimeInput(timeline.endAt),
+      businessNodeLabel: timeline.businessNodeLabel || '',
+      recognitionStatus: timeline.recognitionStatus || (isTimelineSnapshotAutoRecognized(timeline) ? 'auto_recognized' : 'needs_confirmation'),
+    }))
   trackDetailVisible.value = true
+}
+
+function canEditSelectedTrackTimelines(): boolean {
+  return detail.value?.version.status === 'pending_first_review'
+}
+
+function addTrackTimelineDraft() {
+  if (!selectedTrack.value)
+    return
+  trackTimelineDrafts.value.push({
+    externalId: `manual:draft:${Date.now()}:${trackTimelineDrafts.value.length}`,
+    trackExternalId: selectedTrack.value.externalId,
+    trackLiveId: selectedTrack.value.liveId || null,
+    year: new Date().getFullYear(),
+    nodeType: 'other',
+    businessNodeLabel: '',
+    recognitionStatus: 'manual_adjusted',
+    startAt: null,
+    endAt: null,
+    note: '',
+    sourceLink: '',
+  })
+}
+
+function removeTrackTimelineDraft(index: number) {
+  trackTimelineDrafts.value.splice(index, 1)
+}
+
+async function saveTrackTimelineDrafts() {
+  const versionId = detail.value?.version.id
+  const track = selectedTrack.value
+  if (!versionId || !track)
+    return
+  trackTimelineSaving.value = true
+  errorText.value = ''
+  successText.value = ''
+  try {
+    const nextDetail = await requestApi<ReleaseVersionDetail>(
+      endpoint(`/admin/releases/${encodeURIComponent(versionId)}/track-timelines`),
+      {
+        method: 'POST',
+        body: {
+          trackExternalId: track.externalId,
+          trackTimelines: trackTimelineDrafts.value.map(item => ({
+            ...item,
+            trackExternalId: track.externalId,
+            trackLiveId: track.liveId || item.trackLiveId || null,
+            year: Number(item.year || new Date().getFullYear()),
+            businessNodeLabel: metadataText(item.businessNodeLabel),
+            recognitionStatus: 'manual_adjusted',
+            startAt: item.startAt || null,
+            endAt: item.endAt || null,
+            note: metadataText(item.note),
+            sourceLink: metadataText(item.sourceLink),
+          })),
+        },
+      },
+      '结构化节点保存失败。',
+    )
+    detail.value = nextDetail
+    const refreshedTrack = detailContestSnapshot.value?.tracks.find(item => item.externalId === track.externalId) || track
+    selectedTrack.value = refreshedTrack
+    trackTimelineDrafts.value = trackTimelinesForTrack(refreshedTrack, detailContestSnapshot.value)
+      .map(item => ({
+        ...item,
+        startAt: formatDateTimeInput(item.startAt),
+        endAt: formatDateTimeInput(item.endAt),
+      }))
+    successText.value = '结构化节点已保存到当前待审版本。建议同步修正飞书赛道库原始时间节点后重新导入。'
+    await loadVersions()
+  }
+  catch (error: any) {
+    errorText.value = String(error?.data?.message || '结构化节点保存失败。')
+  }
+  finally {
+    trackTimelineSaving.value = false
+  }
 }
 
 function openReviewLogDetail(item: ReleaseReviewLog) {
@@ -2079,10 +2199,13 @@ onMounted(() => {
     <a-drawer
       v-model:visible="trackDetailVisible"
       title="赛道确认表单"
-      :width="secondaryDrawerWidth"
+      :width="releaseDetailDrawerWidth"
       unmount-on-close
     >
       <a-form v-if="selectedTrack" :model="selectedTrack" layout="vertical" class="text-xs">
+        <div class="mb-3 px-3 py-2 border border-amber-200 rounded bg-amber-50 text-[11px] text-amber-800">
+          平台侧修改只保存到当前待审版本；后续重新导入会以飞书赛道库为准。建议同步修正飞书“时间节点”原字段后重新导入。
+        </div>
         <div class="gap-3 grid md:grid-cols-2">
           <a-form-item
             v-for="item in trackFormRows(selectedTrack, detailContestSnapshot)"
@@ -2115,7 +2238,56 @@ onMounted(() => {
             />
           </a-form-item>
         </div>
-        <div class="pt-2 flex justify-end">
+        <div class="mt-4 border border-slate-200 rounded bg-slate-50 p-3">
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p class="text-xs text-slate-900 font-semibold">
+                结构化时间节点
+              </p>
+              <p class="text-[11px] text-slate-500 mt-1">
+                业务节点可自由填写，系统类型保持稳定枚举。
+              </p>
+            </div>
+            <button class="dense-btn" type="button" :disabled="!canEditSelectedTrackTimelines() || trackTimelineSaving" @click="addTrackTimelineDraft">
+              新增节点
+            </button>
+          </div>
+
+          <div v-if="trackTimelineDrafts.length" class="space-y-3">
+            <div
+              v-for="(timeline, index) in trackTimelineDrafts"
+              :key="timeline.externalId || index"
+              class="border border-slate-200 rounded bg-white p-3"
+            >
+              <div class="mb-2 flex items-center justify-between gap-2">
+                <a-tag size="small" :color="timeline.recognitionStatus === 'manual_adjusted' ? 'green' : timeline.recognitionStatus === 'needs_confirmation' ? 'orange' : 'arcoblue'">
+                  {{ timelineRecognitionStatusLabel(timeline) }}
+                </a-tag>
+                <button class="dense-btn" type="button" :disabled="!canEditSelectedTrackTimelines() || trackTimelineSaving" @click="removeTrackTimelineDraft(index)">
+                  删除
+                </button>
+              </div>
+              <div class="gap-2 grid md:grid-cols-5">
+                <a-input v-model="timeline.businessNodeLabel" size="small" placeholder="业务节点，如 校赛/省赛" :disabled="!canEditSelectedTrackTimelines()" />
+                <a-select v-model="timeline.nodeType" size="small" placeholder="系统类型" :disabled="!canEditSelectedTrackTimelines()">
+                  <a-option v-for="option in timelineNodeTypeOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </a-option>
+                </a-select>
+                <a-input v-model="timeline.year" size="small" placeholder="年份" :disabled="!canEditSelectedTrackTimelines()" />
+                <input v-model="timeline.startAt" class="dense-input" type="datetime-local" :disabled="!canEditSelectedTrackTimelines()">
+                <input v-model="timeline.endAt" class="dense-input" type="datetime-local" :disabled="!canEditSelectedTrackTimelines()">
+                <a-textarea v-model="timeline.note" class="md:col-span-5" size="small" placeholder="说明" :auto-size="{ minRows: 1, maxRows: 3 }" :disabled="!canEditSelectedTrackTimelines()" />
+              </div>
+            </div>
+          </div>
+          <a-empty v-else description="暂无结构化时间节点，可新增后保存到待审版本。" />
+        </div>
+
+        <div class="pt-3 flex justify-end gap-2">
+          <button class="dense-btn" type="button" :disabled="!canEditSelectedTrackTimelines() || trackTimelineSaving" @click="saveTrackTimelineDrafts">
+            {{ trackTimelineSaving ? '保存中...' : '保存时间节点' }}
+          </button>
           <button class="dense-btn" type="button" @click="trackDetailVisible = false">
             确认
           </button>

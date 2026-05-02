@@ -86,6 +86,7 @@ import {
   shouldCleanupFeishuPersonaStaleData,
   summarizeFeishuPersonaRowResult,
 } from '~~/shared/utils/feishu-persona-sync'
+import { parseTimelineTextLines } from '~~/shared/utils/feishu-timeline-parser'
 
 interface SyncSummary {
   fetchedCount: number
@@ -1368,126 +1369,6 @@ async function resolveTrackIdByExternal(
   }
 }
 
-function formatTimelineDateToIso(
-  value: string,
-  mode: 'start' | 'end',
-): string | null {
-  const normalized = toText(value)
-    .replace(/[年/.]/g, '-')
-    .replace(/月/g, '-')
-    .replace(/日/g, '')
-    .replace(/\s+/g, '')
-  if (!normalized)
-    return null
-
-  const matched = normalized.match(/^(?<year>\d{4})-(?<month>\d{1,2})-(?<day>\d{1,2})$/)
-  if (!matched?.groups)
-    return null
-
-  const year = Number(matched.groups.year)
-  const month = Number(matched.groups.month)
-  const day = Number(matched.groups.day)
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day))
-    return null
-
-  const date = new Date(Date.UTC(year, month - 1, day))
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day)
-    return null
-
-  const time = mode === 'start' ? '00:00:00' : '23:59:59'
-  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${time}+08:00`
-}
-
-function parseTimelineNodeTypeFromLabel(value: string): TimelineNodeType {
-  return mapTimelineNodeType(value) || 'other'
-}
-
-function inferTimelineYearFromText(value: string): number {
-  const matched = value.match(/\b(20\d{2}|21\d{2})\b/)
-  const year = Number(matched?.[1] || 0)
-  return Number.isInteger(year) && year >= 2000 && year <= 2100
-    ? year
-    : new Date().getFullYear()
-}
-
-function collectExplicitTimelineDateTokens(value: string): string[] {
-  const text = toText(value)
-  if (!text)
-    return []
-
-  const dateMatches: Array<{ index: number, token: string }> = []
-  const seen = new Set<string>()
-  const pushToken = (token: string, index: number | undefined) => {
-    const normalized = toText(token)
-    if (!normalized || seen.has(normalized))
-      return
-    seen.add(normalized)
-    dateMatches.push({
-      index: Number.isFinite(index) ? Number(index) : text.indexOf(token),
-      token: normalized,
-    })
-  }
-
-  const chineseDatePattern = /\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日/g
-  for (const match of text.matchAll(chineseDatePattern))
-    pushToken(match[0], match.index)
-
-  const numericDatePattern = /\d{4}([./-])\d{1,2}\1\d{1,2}/g
-  for (const match of text.matchAll(numericDatePattern))
-    pushToken(match[0], match.index)
-
-  return dateMatches
-    .sort((left, right) => left.index - right.index)
-    .map(item => item.token)
-}
-
-function parseTimelineTextLines(raw: string): Array<{
-  rawLine: string
-  nodeType: TimelineNodeType
-  startAt: string | null
-  endAt: string | null
-  year: number
-}> {
-  const lines = toText(raw)
-    .split(/\r?\n/)
-    .map(item => item.trim())
-    .filter(Boolean)
-
-  const result: Array<{
-    rawLine: string
-    nodeType: TimelineNodeType
-    startAt: string | null
-    endAt: string | null
-    year: number
-  }> = []
-
-  for (const line of lines) {
-    const colonIndex = line.search(/[:：]/)
-    const label = colonIndex >= 0 ? line.slice(0, colonIndex).trim() : ''
-    const body = colonIndex >= 0 ? line.slice(colonIndex + 1).trim() : line
-    const nodeType = label ? parseTimelineNodeTypeFromLabel(label) : parseTimelineNodeTypeFromLabel(line)
-    const tokens = collectExplicitTimelineDateTokens(body)
-    const first = tokens[0] || ''
-    const second = tokens[1] || ''
-    const firstStart = first ? formatTimelineDateToIso(first, 'start') : null
-    const firstEnd = first ? formatTimelineDateToIso(first, 'end') : null
-    const secondEnd = second ? formatTimelineDateToIso(second, 'end') : null
-    const inferredYear = first ? Number(first.replace(/[./]/g, '-').slice(0, 4)) : inferTimelineYearFromText(line)
-    const startAt = second ? firstStart : (nodeType === 'registration' ? firstStart : null)
-    const endAt = second ? secondEnd : firstEnd
-
-    result.push({
-      rawLine: line,
-      nodeType,
-      startAt,
-      endAt,
-      year: Number.isFinite(inferredYear) ? inferredYear : new Date().getFullYear(),
-    })
-  }
-
-  return result
-}
-
 function buildContestReleaseTimelines(
   contestExternalId: string,
   timelineText: string,
@@ -1496,6 +1377,8 @@ function buildContestReleaseTimelines(
     externalId: buildContestDerivedTimelineExternalId(contestExternalId, item.rawLine),
     year: item.year,
     nodeType: item.nodeType,
+    businessNodeLabel: item.businessNodeLabel,
+    recognitionStatus: item.recognitionStatus,
     startAt: item.startAt,
     endAt: item.endAt,
     note: item.rawLine,
@@ -1512,6 +1395,8 @@ function buildTrackReleaseTimelines(
     trackExternalId,
     year: item.year,
     nodeType: item.nodeType,
+    businessNodeLabel: item.businessNodeLabel,
+    recognitionStatus: item.recognitionStatus,
     startAt: item.startAt,
     endAt: item.endAt,
     note: item.rawLine,

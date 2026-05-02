@@ -399,6 +399,7 @@ async function upsertContestTimelineNode(
     contest_id: input.contestId,
     year: created.year,
     node_type: created.nodeType,
+    business_node_label: created.businessNodeLabel || '',
     start_at: created.startAt,
     end_at: created.endAt,
     note: created.note,
@@ -507,6 +508,7 @@ interface TimelineRow {
   contest_id: string
   year: number
   node_type: TimelineNodeType
+  business_node_label: string
   start_at: string | null
   end_at: string | null
   note: string
@@ -519,6 +521,7 @@ interface TrackTimelineRow {
   track_id: string
   year: number
   node_type: TimelineNodeType
+  business_node_label: string
   start_at: string | null
   end_at: string | null
   note: string
@@ -769,6 +772,7 @@ function mapTimeline(row: TimelineRow): ContestTimeline {
     contestId: row.contest_id,
     year: Number(row.year || 0),
     nodeType: row.node_type,
+    businessNodeLabel: row.business_node_label || '',
     startAt: row.start_at,
     endAt: row.end_at,
     note: row.note,
@@ -783,6 +787,7 @@ function mapTrackTimeline(row: TrackTimelineRow): TrackTimeline {
     trackId: row.track_id,
     year: Number(row.year || 0),
     nodeType: row.node_type,
+    businessNodeLabel: row.business_node_label || '',
     startAt: row.start_at,
     endAt: row.end_at,
     note: row.note,
@@ -942,7 +947,7 @@ function mapWorkspaceBillingOrder(row: WorkspaceBillingOrderRow): WorkspaceBilli
     amountYuan: Number((amountCents / 100).toFixed(2)),
     status: row.status || 'pending',
     provider: 'mock',
-    estimate: Object.keys(estimate).length > 0 ? estimate as WorkspaceBillingEstimate : null,
+    estimate: Object.keys(estimate).length > 0 ? estimate as unknown as WorkspaceBillingEstimate : null,
     createdByUserId: row.created_by_user_id,
     paidAt: row.paid_at,
     createdAt: row.created_at,
@@ -1377,6 +1382,7 @@ export async function ensureContestLibrarySeeded(
         contest_id,
         year,
         node_type,
+        business_node_label,
         start_at,
         end_at,
         note,
@@ -1384,7 +1390,7 @@ export async function ensureContestLibrarySeeded(
         created_at,
         updated_at
       )
-      SELECT $1, $2, $3, 'registration', $4, $5, '', '', $6, $6
+      SELECT $1, $2, $3, 'registration', '', $4, $5, '', '', $6, $6
       WHERE NOT EXISTS (
         SELECT 1
         FROM contest_timelines
@@ -1401,6 +1407,7 @@ export async function ensureContestLibrarySeeded(
         contest_id,
         year,
         node_type,
+        business_node_label,
         start_at,
         end_at,
         note,
@@ -1408,7 +1415,7 @@ export async function ensureContestLibrarySeeded(
         created_at,
         updated_at
       )
-      SELECT $1, $2, $3, 'submission', NULL, $4, '', '', $5, $5
+      SELECT $1, $2, $3, 'submission', '', NULL, $4, '', '', $5, $5
       WHERE NOT EXISTS (
         SELECT 1
         FROM contest_timelines
@@ -1595,7 +1602,7 @@ async function loadTimelines(db: Queryable, contestIds: string[]): Promise<Timel
     return []
 
   const result = await db.query<TimelineRow>(
-    `SELECT id, contest_id, year, node_type, start_at::TEXT, end_at::TEXT, note, source_link
+    `SELECT id, contest_id, year, node_type, business_node_label, start_at::TEXT, end_at::TEXT, note, source_link
      FROM contest_timelines
      WHERE contest_id = ANY($1::TEXT[])
      ORDER BY year DESC, created_at ASC`,
@@ -1616,6 +1623,7 @@ async function loadTrackTimelines(db: Queryable, contestIds: string[]): Promise<
       track_id,
       year,
       node_type,
+      business_node_label,
       start_at::TEXT,
       end_at::TEXT,
       note,
@@ -3065,6 +3073,7 @@ export async function createAdminTimeline(
     bypassReleaseWorkflowGuard?: boolean
     year: number
     nodeType: TimelineNodeType
+    businessNodeLabel?: string
     startAt?: string | null
     endAt?: string | null
     note?: string
@@ -3085,18 +3094,20 @@ export async function createAdminTimeline(
       contest_id,
       year,
       node_type,
+      business_node_label,
       start_at,
       end_at,
       note,
       source_link,
       created_at,
       updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
     [
       timelineId,
       input.contestId,
       Number(input.year || new Date().getFullYear()),
       input.nodeType,
+      normalizeString(input.businessNodeLabel),
       input.startAt || null,
       input.endAt || null,
       normalizeString(input.note),
@@ -3116,7 +3127,7 @@ export async function createAdminTimeline(
   })
 
   const result = await db.query<TimelineRow>(
-    `SELECT id, contest_id, year, node_type, start_at::TEXT, end_at::TEXT, note, source_link
+    `SELECT id, contest_id, year, node_type, business_node_label, start_at::TEXT, end_at::TEXT, note, source_link
      FROM contest_timelines
      WHERE id = $1
      LIMIT 1`,
@@ -3136,6 +3147,7 @@ export async function patchAdminTimeline(
     patch: {
       year?: number
       nodeType?: TimelineNodeType
+      businessNodeLabel?: string
       startAt?: string | null
       endAt?: string | null
       note?: string
@@ -3155,6 +3167,8 @@ export async function patchAdminTimeline(
     addSet('year', Number(input.patch.year || new Date().getFullYear()))
   if (input.patch.nodeType !== undefined)
     addSet('node_type', input.patch.nodeType)
+  if (input.patch.businessNodeLabel !== undefined)
+    addSet('business_node_label', normalizeString(input.patch.businessNodeLabel))
   if (input.patch.startAt !== undefined)
     addSet('start_at', input.patch.startAt || null)
   if (input.patch.endAt !== undefined)
@@ -3191,7 +3205,7 @@ export async function patchAdminTimeline(
   })
 
   const result = await db.query<TimelineRow>(
-    `SELECT id, contest_id, year, node_type, start_at::TEXT, end_at::TEXT, note, source_link
+    `SELECT id, contest_id, year, node_type, business_node_label, start_at::TEXT, end_at::TEXT, note, source_link
      FROM contest_timelines
      WHERE id = $1 AND contest_id = $2
      LIMIT 1`,
@@ -3216,6 +3230,7 @@ export async function createAdminTrackTimeline(
     trackId: string
     year: number
     nodeType: TimelineNodeType
+    businessNodeLabel?: string
     startAt?: string | null
     endAt?: string | null
     note?: string
@@ -3238,19 +3253,21 @@ export async function createAdminTrackTimeline(
       track_id,
       year,
       node_type,
+      business_node_label,
       start_at,
       end_at,
       note,
       source_link,
       created_at,
       updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
     [
       timelineId,
       input.contestId,
       input.trackId,
       Number(input.year || new Date().getFullYear()),
       input.nodeType,
+      normalizeString(input.businessNodeLabel),
       input.startAt || null,
       input.endAt || null,
       normalizeString(input.note),
@@ -3301,6 +3318,7 @@ export async function patchAdminTrackTimeline(
       trackId?: string
       year?: number
       nodeType?: TimelineNodeType
+      businessNodeLabel?: string
       startAt?: string | null
       endAt?: string | null
       note?: string
@@ -3325,6 +3343,8 @@ export async function patchAdminTrackTimeline(
     addSet('year', Number(input.patch.year || new Date().getFullYear()))
   if (input.patch.nodeType !== undefined)
     addSet('node_type', input.patch.nodeType)
+  if (input.patch.businessNodeLabel !== undefined)
+    addSet('business_node_label', normalizeString(input.patch.businessNodeLabel))
   if (input.patch.startAt !== undefined)
     addSet('start_at', input.patch.startAt || null)
   if (input.patch.endAt !== undefined)
@@ -3367,6 +3387,7 @@ export async function patchAdminTrackTimeline(
       track_id,
       year,
       node_type,
+      business_node_label,
       start_at::TEXT,
       end_at::TEXT,
       note,

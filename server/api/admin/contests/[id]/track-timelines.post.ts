@@ -11,6 +11,7 @@ interface CreateTrackTimelineBody {
   trackId?: string
   year?: number
   nodeType?: TimelineNodeType
+  businessNodeLabel?: string
   startAt?: string | null
   endAt?: string | null
   note?: string
@@ -66,6 +67,7 @@ export default defineEventHandler(async (event) => {
         trackId: body.trackId!,
         year: Number(body?.year || new Date().getFullYear()),
         nodeType: body.nodeType!,
+        businessNodeLabel: body?.businessNodeLabel,
         startAt: body?.startAt || null,
         endAt: body?.endAt || null,
         note: body?.note,

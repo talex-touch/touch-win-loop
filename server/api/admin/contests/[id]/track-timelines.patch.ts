@@ -12,6 +12,7 @@ interface PatchTrackTimelineBody {
   trackId?: string
   year?: number
   nodeType?: TimelineNodeType
+  businessNodeLabel?: string
   startAt?: string | null
   endAt?: string | null
   note?: string
@@ -58,6 +59,7 @@ export default defineEventHandler(async (event) => {
           trackId: body?.trackId,
           year: body?.year,
           nodeType: body?.nodeType,
+          businessNodeLabel: body?.businessNodeLabel,
           startAt: body?.startAt,
           endAt: body?.endAt,
           note: body?.note,

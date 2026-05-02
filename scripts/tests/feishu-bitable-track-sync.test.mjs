@@ -8,10 +8,25 @@ async function readSource(relativePath) {
 }
 
 describe('版本审批与赛道同步新流程', () => {
+  it('赛道时间节点解析支持业务节点标签、同年补全和人工确认状态', async () => {
+    const { parseTimelineTextLines } = await import('../../shared/utils/feishu-timeline-parser.ts')
+    const items = parseTimelineTextLines('截至 2025-05-15：企业命题征集：2025年5月15日前。\n报名：2024年5月15日 - 8月1日报名；6-8月校赛 / 省赛；10月12-15日总决赛')
+
+    assert.ok(items.some(item => item.businessNodeLabel === '命题征集' && item.nodeType === 'submission' && item.endAt?.startsWith('2025-05-15')), '命题征集截止未识别为业务节点')
+    assert.ok(items.some(item => item.businessNodeLabel === '报名' && item.startAt?.startsWith('2024-05-15') && item.endAt?.startsWith('2024-08-01')), '报名同年日期区间未补全')
+    assert.ok(items.some(item => item.businessNodeLabel === '校赛' && item.startAt?.startsWith('2024-06-01') && item.endAt?.startsWith('2024-08-31')), '校赛月份区间未识别')
+    assert.ok(items.some(item => item.businessNodeLabel === '总决赛' && item.startAt?.startsWith('2024-10-12') && item.endAt?.startsWith('2024-10-15')), '总决赛月日范围未识别')
+
+    const unknown = parseTimelineTextLines('路演彩排另行通知')
+    assert.equal(unknown[0]?.nodeType, 'other')
+    assert.equal(unknown[0]?.recognitionStatus, 'needs_confirmation')
+  })
+
   it('赛道同步映射已覆盖赛道字段，并统一收敛到 timelineText', async () => {
     const componentSource = await readSource('app/components/admin/AdminFeishuBitableSyncEditor.vue')
     const configSource = await readSource('shared/utils/feishu-bitable-sync-config.ts')
     const serviceSource = await readSource('server/services/feishu/bitable-sync.ts')
+    const timelineParserSource = await readSource('shared/utils/feishu-timeline-parser.ts')
     const releaseStoreSource = await readSource('server/utils/release-store.ts')
     const contestStoreSource = await readSource('server/utils/contest-store.ts')
     const typeSource = await readSource('shared/types/domain-legacy.ts')
@@ -38,9 +53,11 @@ describe('版本审批与赛道同步新流程', () => {
     assert.match(serviceSource, /input\.resolver\.getValue\('coverImageUrl'\)/, '赛道封面同步不应只读取附件文件名')
     assert.match(serviceSource, /const trackSnapshot: ContestReleaseTrackSnapshot = \{[\s\S]*teamRule,[\s\S]*timelineText,[\s\S]*awardRatio/, '赛道同步未把原始 timelineText 保留到赛道快照')
     assert.match(serviceSource, /const trackTimelines = buildTrackReleaseTimelines\(input\.externalId, timelineText\)/, '赛道同步未从 timelineText 构造赛道时间节点')
-    assert.match(serviceSource, /function collectExplicitTimelineDateTokens\(/, '赛道时间节点解析应只收集明确日级日期 token')
-    assert.match(serviceSource, /numericDatePattern/, '赛道时间节点解析缺少数字日期严格匹配')
-    assert.match(serviceSource, /chineseDatePattern/, '赛道时间节点解析缺少中文年月日严格匹配')
+    assert.match(timelineParserSource, /function collectExplicitTimelineDateTokens\(/, '赛道时间节点解析应只收集明确日级日期 token')
+    assert.match(timelineParserSource, /businessNodeLabel/, '赛道时间节点解析应输出可扩展业务节点标签')
+    assert.match(timelineParserSource, /recognitionStatus/, '赛道时间节点解析应输出识别状态')
+    assert.match(timelineParserSource, /numericDatePattern|\\d\{4\}\(\[\.\/-\]\)\\d\{1,2\}\\1\\d\{1,2\}/, '赛道时间节点解析缺少数字日期严格匹配')
+    assert.match(timelineParserSource, /chineseDatePattern|\\d\{4\}\\s\*年\\s\*\\d\{1,2\}\\s\*月\\s\*\\d\{1,2\}\\s\*日/, '赛道时间节点解析缺少中文年月日严格匹配')
     assert.doesNotMatch(serviceSource, /body\.match\(\/\\d\{4\}\[\.\/-\]\\d\{1,2\}\[\.\/-\]\\d\{1,2\}\/g\)/, '赛道时间节点不应把 2026.5-6 月误解析成日级日期')
     assert.doesNotMatch(serviceSource, /if \(!startAt && !endAt\)\s+continue/, '时间节点解析不应丢弃只有月份或说明的赛道库原文')
     assert.match(releaseStoreSource, /if \(\(input\.trackTimelines \|\| \[\]\)\.length > 0\)/, '赛道记录未提供可解析时间节点时不应清空已有时间节点')

@@ -10,6 +10,7 @@ import { checkPlatformPermission } from '~~/server/utils/platform-access'
 interface CreateTimelineBody {
   year?: number
   nodeType?: TimelineNodeType
+  businessNodeLabel?: string
   startAt?: string | null
   endAt?: string | null
   note?: string
@@ -65,6 +66,7 @@ export default defineEventHandler(async (event) => {
         contestId,
         year: Number(body?.year || new Date().getFullYear()),
         nodeType: body.nodeType!,
+        businessNodeLabel: body?.businessNodeLabel,
         startAt: body?.startAt || null,
         endAt: body?.endAt || null,
         note: body?.note,

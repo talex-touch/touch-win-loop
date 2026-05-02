@@ -146,6 +146,7 @@ export interface ContestTimeline {
   contestId: string
   year: number
   nodeType: TimelineNodeType
+  businessNodeLabel?: string
   startAt: string | null
   endAt: string | null
   note: string
@@ -158,6 +159,7 @@ export interface TrackTimeline {
   trackId: string
   year: number
   nodeType: TimelineNodeType
+  businessNodeLabel?: string
   startAt: string | null
   endAt: string | null
   note: string
@@ -2158,6 +2160,8 @@ export interface ContestReleaseTimelineSnapshot {
   externalId: string
   year: number
   nodeType: TimelineNodeType
+  businessNodeLabel?: string
+  recognitionStatus?: 'auto_recognized' | 'needs_confirmation' | 'manual_adjusted'
   startAt: string | null
   endAt: string | null
   note: string
@@ -2171,6 +2175,8 @@ export interface ContestReleaseTrackTimelineSnapshot {
   trackLiveId?: string | null
   year: number
   nodeType: TimelineNodeType
+  businessNodeLabel?: string
+  recognitionStatus?: 'auto_recognized' | 'needs_confirmation' | 'manual_adjusted'
   startAt: string | null
   endAt: string | null
   note: string
@@ -4704,6 +4710,27 @@ export interface WorkspaceBillingEstimate {
   estimatedAmountYuan: number
   aiQuotaTotal: number
   includedAiQuota: number
+  updatedAt: string
+}
+
+export type WorkspaceBillingOrderStatus = 'pending' | 'paid' | 'cancelled' | 'failed'
+
+export interface WorkspaceBillingOrder {
+  id: string
+  teamId: string
+  workspaceId: string
+  planId: string
+  planCode: string
+  planName: string
+  billingCycle: BillingCycle
+  amountCents: number
+  amountYuan: number
+  status: WorkspaceBillingOrderStatus
+  provider: 'mock'
+  estimate: WorkspaceBillingEstimate | null
+  createdByUserId?: string | null
+  paidAt?: string | null
+  createdAt: string
   updatedAt: string
 }
 

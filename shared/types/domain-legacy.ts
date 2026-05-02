@@ -146,6 +146,7 @@ export interface ContestTimeline {
   contestId: string
   year: number
   nodeType: TimelineNodeType
+  businessNodeLabel?: string
   startAt: string | null
   endAt: string | null
   note: string
@@ -158,6 +159,7 @@ export interface TrackTimeline {
   trackId: string
   year: number
   nodeType: TimelineNodeType
+  businessNodeLabel?: string
   startAt: string | null
   endAt: string | null
   note: string
@@ -2158,6 +2160,8 @@ export interface ContestReleaseTimelineSnapshot {
   externalId: string
   year: number
   nodeType: TimelineNodeType
+  businessNodeLabel?: string
+  recognitionStatus?: 'auto_recognized' | 'needs_confirmation' | 'manual_adjusted'
   startAt: string | null
   endAt: string | null
   note: string
@@ -2171,6 +2175,8 @@ export interface ContestReleaseTrackTimelineSnapshot {
   trackLiveId?: string | null
   year: number
   nodeType: TimelineNodeType
+  businessNodeLabel?: string
+  recognitionStatus?: 'auto_recognized' | 'needs_confirmation' | 'manual_adjusted'
   startAt: string | null
   endAt: string | null
   note: string
