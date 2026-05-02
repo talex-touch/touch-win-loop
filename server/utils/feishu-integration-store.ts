@@ -44,6 +44,7 @@ import type {
   FeishuTaskIssueStats,
   FeishuTaskLatestRunSummary,
   FeishuTaskScheduleConfig,
+  ExternalAuthProvider,
   PlatformRole,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
@@ -1036,7 +1037,7 @@ export async function writeCasdoorIntegrationConfig(
 export async function findAuthIdentityByProviderUserId(
   db: Queryable,
   input: {
-    provider: 'feishu' | 'casdoor'
+    provider: ExternalAuthProvider
     providerUserId: string
   },
 ): Promise<AuthIdentityRow | null> {
@@ -1062,7 +1063,7 @@ export async function findAuthIdentityByProviderUserId(
 export async function findAuthIdentityByProviderAndUserId(
   db: Queryable,
   input: {
-    provider: 'feishu' | 'casdoor'
+    provider: ExternalAuthProvider
     userId: string
   },
 ): Promise<AuthIdentityRow | null> {
@@ -1089,7 +1090,7 @@ export async function findAuthIdentityByProviderAndUserId(
 export async function upsertAuthIdentity(
   db: Queryable,
   input: {
-    provider: 'feishu' | 'casdoor'
+    provider: ExternalAuthProvider
     providerUserId: string
     userId: string
     profile?: Record<string, unknown>

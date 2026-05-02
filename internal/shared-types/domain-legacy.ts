@@ -2599,6 +2599,8 @@ export interface AuthLoginResult {
   workspaces: WorkspaceWithQuota[]
   onboarding: {
     needCreateTeam: boolean
+    needsProfileSetup?: boolean
+    pendingProvider?: ExternalAuthProvider
   }
 }
 
@@ -2608,6 +2610,8 @@ export interface AuthMeResult {
   workspaces: WorkspaceWithQuota[]
   onboarding: {
     needCreateTeam: boolean
+    needsProfileSetup?: boolean
+    pendingProvider?: ExternalAuthProvider
   }
 }
 
@@ -2615,6 +2619,37 @@ export interface AuthSessionProbeResult {
   authenticated: true
   userId: string
   expiresAt: string
+}
+
+export type ExternalAuthProvider = 'feishu' | 'casdoor' | 'oauth'
+
+export interface AuthOnboardingPendingResult {
+  pending: boolean
+  provider?: ExternalAuthProvider
+  providerLabel?: string
+  suggestedUsername?: string
+  displayName?: string
+  avatarUrl?: string
+  email?: string
+}
+
+export interface AuthOnboardingCompleteRequest {
+  mode: 'create' | 'link'
+  username: string
+  password?: string
+}
+
+export interface AuthOnboardingCompleteResult {
+  user: AuthUser
+  session: AuthSession
+  teams: TeamWithQuota[]
+  workspaces: WorkspaceWithQuota[]
+  onboarding: {
+    needCreateTeam: boolean
+    needsProfileSetup?: boolean
+    pendingProvider?: ExternalAuthProvider
+  }
+  redirectTarget: string
 }
 
 export interface CasdoorAuthMeta {

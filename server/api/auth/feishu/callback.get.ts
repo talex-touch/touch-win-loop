@@ -14,7 +14,7 @@ function sanitizeRedirectTarget(value: unknown): string {
     return ''
   if (!redirect.startsWith('/') || redirect.startsWith('//'))
     return ''
-  if (redirect.startsWith('/login'))
+  if (redirect.startsWith('/login') || redirect.startsWith('/auth/onboarding'))
     return ''
   return redirect
 }
@@ -93,10 +93,15 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const loginResult = await loginByFeishuOAuthCode(event, code)
     const redirectFromCookie = consumeFeishuOAuthRedirect(event)
-    clearFeishuOAuthState(event)
     const redirectFromQuery = sanitizeRedirectTarget(query.redirect)
+    const loginResult = await loginByFeishuOAuthCode(event, code, {
+      redirectTarget: redirectFromCookie || redirectFromQuery,
+    })
+    clearFeishuOAuthState(event)
+    if ('needsOnboarding' in loginResult)
+      return sendRedirect(event, '/auth/onboarding', 302)
+
     const target = resolveSuccessfulRedirectTarget({
       loginResult,
       requestedTarget: redirectFromCookie || redirectFromQuery,

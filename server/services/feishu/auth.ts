@@ -1,9 +1,7 @@
 import type { H3Event } from 'h3'
+import type { ExternalAuthLoginResult } from '~~/server/services/auth/external-identity'
 import type { FeishuOAuthLoginProfile } from '~~/server/services/feishu/client'
-import type { AuthLoginResult } from '~~/shared/types/domain'
-import { buildAuthLoginResult } from '~~/server/services/auth/login-session'
-import { ensureLocalUserByFeishuProfile } from '~~/server/services/feishu/user-provision'
-import { withTransaction } from '~~/server/utils/db'
+import { loginWithExternalAuthProfile } from '~~/server/services/auth/external-identity'
 
 export async function loginWithFeishuProfile(
   event: H3Event,
@@ -11,13 +9,25 @@ export async function loginWithFeishuProfile(
   input: {
     preferredUserId?: string | null
     allowRegistration?: boolean
+    redirectTarget?: string
   } = {},
-): Promise<AuthLoginResult & { sessionToken: string }> {
-  return withTransaction(event, async (db) => {
-    const provisioned = await ensureLocalUserByFeishuProfile(db, profile, {
-      preferredUserId: input.preferredUserId,
-      allowRegistration: input.allowRegistration,
-    })
-    return buildAuthLoginResult(db, provisioned.user)
-  })
+): Promise<ExternalAuthLoginResult> {
+  return loginWithExternalAuthProfile(event, {
+    provider: 'feishu',
+    providerUserId: profile.unionId,
+    displayName: profile.enName || profile.name || profile.email,
+    preferredUsername: profile.enName || profile.name || profile.email,
+    avatarUrl: profile.avatarUrl,
+    email: profile.email,
+    mobile: profile.mobile,
+    rawProfile: {
+      unionId: profile.unionId,
+      openId: profile.openId,
+      name: profile.name,
+      enName: profile.enName,
+      avatarUrl: profile.avatarUrl,
+      email: profile.email,
+      mobile: profile.mobile,
+    },
+  }, input)
 }

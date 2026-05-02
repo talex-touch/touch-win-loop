@@ -42,6 +42,9 @@ export function useLoginPage() {
   }
 
   function resolveFeishuLoginTarget(result: AuthLoginResult): string {
+    if (result.onboarding?.needsProfileSetup)
+      return '/auth/onboarding'
+
     const explicitTarget = resolveExplicitRedirectTarget()
     if (explicitTarget)
       return explicitTarget
@@ -211,6 +214,7 @@ export function useLoginPage() {
       method: 'POST',
       body: {
         code: normalizedCode,
+        redirectTarget: resolveExplicitRedirectTarget(),
       },
     })
     await navigateTo(resolveFeishuLoginTarget(response.data), { replace: true })

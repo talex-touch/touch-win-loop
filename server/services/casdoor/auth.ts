@@ -1,9 +1,7 @@
 import type { H3Event } from 'h3'
+import type { ExternalAuthLoginResult } from '~~/server/services/auth/external-identity'
 import type { CasdoorOAuthLoginProfile } from '~~/server/services/casdoor/client'
-import type { AuthLoginResult } from '~~/shared/types/domain'
-import { buildAuthLoginResult } from '~~/server/services/auth/login-session'
-import { ensureLocalUserByCasdoorProfile } from '~~/server/services/casdoor/user-provision'
-import { withTransaction } from '~~/server/utils/db'
+import { loginWithExternalAuthProfile } from '~~/server/services/auth/external-identity'
 
 export async function loginWithCasdoorProfile(
   event: H3Event,
@@ -11,13 +9,22 @@ export async function loginWithCasdoorProfile(
   input: {
     preferredUserId?: string | null
     allowRegistration?: boolean
+    redirectTarget?: string
   } = {},
-): Promise<AuthLoginResult & { sessionToken: string }> {
-  return withTransaction(event, async (db) => {
-    const provisioned = await ensureLocalUserByCasdoorProfile(db, profile, {
-      preferredUserId: input.preferredUserId,
-      allowRegistration: input.allowRegistration,
-    })
-    return buildAuthLoginResult(db, provisioned.user)
-  })
+): Promise<ExternalAuthLoginResult> {
+  return loginWithExternalAuthProfile(event, {
+    provider: 'casdoor',
+    providerUserId: profile.sub,
+    displayName: profile.name || profile.preferredUsername || profile.email,
+    preferredUsername: profile.preferredUsername || profile.name || profile.email,
+    avatarUrl: profile.avatarUrl,
+    email: profile.email,
+    rawProfile: {
+      sub: profile.sub,
+      name: profile.name,
+      preferredUsername: profile.preferredUsername,
+      email: profile.email,
+      avatarUrl: profile.avatarUrl,
+    },
+  }, input)
 }

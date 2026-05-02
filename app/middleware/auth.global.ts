@@ -3,6 +3,7 @@ import { buildAuthRequestErrorInfo, logAuthProbeDegraded, resolveAuthRequestErro
 
 const PUBLIC_PATH_PREFIXES = [
   '/login',
+  '/auth/onboarding',
   '/meeting',
   '/contests',
   '/resources',

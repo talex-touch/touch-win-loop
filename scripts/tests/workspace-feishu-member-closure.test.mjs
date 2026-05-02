@@ -56,7 +56,8 @@ describe('workspace Feishu member and login closure contracts', () => {
     ])
 
     assert.doesNotMatch(authSource, /applyFeishuWorkspaceAutoJoin/, '飞书登录链路不应再触发 workspace 自动加入')
-    assert.match(authSource, /ensureLocalUserByFeishuProfile[\s\S]*buildAuthLoginResult/, '飞书登录应只完成本地账号与平台 session 建立')
+    assert.match(authSource, /loginWithExternalAuthProfile/, '飞书登录应复用统一第三方身份登录服务')
+    assert.doesNotMatch(authSource, /fs_/, '飞书登录不应再在登录链路生成 fs_ 用户名')
 
     assert.match(panelSource, /directoryCandidates/, '连接器面板缺少通讯录候选状态')
     assert.match(panelSource, /selectedFeishuUnionIds/, '连接器面板缺少用户白名单选择')

@@ -13,7 +13,7 @@ function sanitizeRedirectTarget(value: unknown): string {
     return '/dashboard'
   if (!redirect.startsWith('/') || redirect.startsWith('//'))
     return '/dashboard'
-  if (redirect.startsWith('/login'))
+  if (redirect.startsWith('/login') || redirect.startsWith('/auth/onboarding'))
     return '/dashboard'
   return redirect
 }
@@ -73,10 +73,15 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    await loginByCasdoorOAuthCode(event, code)
     const redirectFromCookie = consumeCasdoorOAuthRedirect(event)
-    clearCasdoorOAuthState(event)
     const redirectFromQuery = sanitizeRedirectTarget(query.redirect)
+    const loginResult = await loginByCasdoorOAuthCode(event, code, {
+      redirectTarget: redirectFromCookie || redirectFromQuery,
+    })
+    clearCasdoorOAuthState(event)
+    if ('needsOnboarding' in loginResult)
+      return sendRedirect(event, '/auth/onboarding', 302)
+
     const target = redirectFromCookie || redirectFromQuery || '/dashboard'
     return sendRedirect(event, target, 302)
   }
