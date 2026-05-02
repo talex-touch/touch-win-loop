@@ -344,21 +344,28 @@ describe('admin-ai provider models', () => {
   })
 
   it('coze 语音 Provider 走语音探针且不参与模型池拉取', async () => {
-    const [postSource, testSource, cozeVoiceSource, channelsTestSource] = await Promise.all([
+    const [postSource, testSource, cozeVoiceSource, dashscopeTtsSource, channelsTestSource] = await Promise.all([
       readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
       readFile(PROVIDERS_TEST_POST_FILE, 'utf8'),
       readFile(resolve(process.cwd(), 'server/services/admin-ai/coze-voice.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/dashscope-tts.ts'), 'utf8'),
       readFile(CHANNELS_TEST_POST_FILE, 'utf8'),
     ])
 
     expect(postSource).toMatch(/resolvedProvider\.capability === 'search' \|\| resolvedProvider\.capability === 'voice'/)
-    expect(testSource).toMatch(/resolvedProvider\.capability !== 'llm' && resolvedProvider\.capability !== 'voice'/)
+    expect(testSource).toMatch(/resolvedProvider\.capability !== 'llm' && resolvedProvider\.capability !== 'voice' && resolvedProvider\.capability !== 'tts'/)
     expect(testSource).toMatch(/probeCozeVoiceProvider/)
     expect(testSource).toMatch(/model:\s*'coze-voice'/)
+    expect(testSource).toMatch(/synthesizeDashScopeTtsSpeech/)
+    expect(testSource).toMatch(/resolvedProvider\.capability === 'tts'/)
     expect(cozeVoiceSource).toMatch(/await import\('@coze\/api'\)/)
     expect(cozeVoiceSource).toMatch(/client\.audio\.transcriptions\.create\(\{\s*file\s*\}\)/)
     expect(cozeVoiceSource).toMatch(/client\.audio\.speech\.create\(/)
+    expect(dashscopeTtsSource).toMatch(/\/api\/v1\/services\/aigc\/multimodal-generation\/generation/)
+    expect(dashscopeTtsSource).toMatch(/model:\s*input\.config\.model/)
+    expect(dashscopeTtsSource).toMatch(/voice:\s*normalizeString\(input\.voice\) \|\| input\.config\.voice/)
     expect(channelsTestSource).toMatch(/synthesizeCozeVoiceSpeech/)
+    expect(channelsTestSource).toMatch(/synthesizeDashScopeTtsSpeech/)
     expect(channelsTestSource).toMatch(/requiredCapability === 'tts'/)
   })
 })

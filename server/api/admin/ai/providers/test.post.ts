@@ -2,6 +2,7 @@ import type { PlatformAiProviderCapability, PlatformAiProviderVoiceConfig } from
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { setResponseStatus } from 'h3'
 import { probeCozeVoiceProvider, resolveCozeVoiceRuntimeConfig } from '~~/server/services/admin-ai/coze-voice'
+import { resolveDashScopeTtsRuntimeConfig, synthesizeDashScopeTtsSpeech } from '~~/server/services/admin-ai/dashscope-tts'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail, ok } from '~~/server/utils/api'
@@ -123,7 +124,7 @@ export default defineEventHandler(async (event) => {
       })()
     : currentProvider
 
-  if (!resolvedProvider || (resolvedProvider.capability !== 'llm' && resolvedProvider.capability !== 'voice')) {
+  if (!resolvedProvider || (resolvedProvider.capability !== 'llm' && resolvedProvider.capability !== 'voice' && resolvedProvider.capability !== 'tts')) {
     setResponseStatus(event, 400)
     return fail('当前 Provider 不支持连通性测试。', {
       startedAt,
@@ -223,7 +224,10 @@ export default defineEventHandler(async (event) => {
   const preferredModel = toText(body.model)
   const modelConfig = preferredModel
     ? resolvedProvider.models.find(item => item.model === preferredModel && item.enabled) || null
-    : resolvedProvider.models.find(item => item.enabled) || resolvedProvider.models[0] || null
+    : resolvedProvider.models.find(item => item.enabled && (resolvedProvider.capability !== 'tts' || item.capabilities.includes('tts')))
+      || resolvedProvider.models.find(item => item.enabled)
+      || resolvedProvider.models[0]
+      || null
 
   const resolved = {
     provider: resolvedProvider,
@@ -250,6 +254,89 @@ export default defineEventHandler(async (event) => {
       fallbackUsed: false,
       attempts: 1,
     }, 40097)
+  }
+
+  if (resolvedProvider.capability === 'tts') {
+    if (!resolved.ai.model) {
+      setResponseStatus(event, 400)
+      return fail('当前 TTS Provider 未配置可用 TTS 模型，无法执行连通性测试。', {
+        startedAt,
+        provider: resolved.ai.provider,
+        model: '',
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40099)
+    }
+
+    const config = resolveDashScopeTtsRuntimeConfig({
+      provider: {
+        ...resolvedProvider,
+        apiKey,
+        baseURL,
+      },
+      ai: resolved.ai,
+      runtime,
+    })
+    if (!config) {
+      setResponseStatus(event, 400)
+      return fail('当前 TTS Provider 未完整配置，或不是 DashScope TTS Provider。', {
+        startedAt,
+        provider: resolved.ai.provider,
+        model: resolved.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40098)
+    }
+
+    try {
+      const speech = await synthesizeDashScopeTtsSpeech({
+        config,
+        text: String(body.message || '').trim() || 'DashScope voice test',
+      })
+      const responsePreview = speech.audioBuffer?.byteLength
+        ? `DashScope TTS ${speech.audioBuffer.byteLength} bytes`
+        : `DashScope TTS ${speech.audioUrl ? `audio_url ${speech.audioUrl.slice(0, 120)}` : '已返回结果'}`
+
+      await withTransaction(event, async (db) => {
+        await recordContestAuditLog(db, {
+          actorUserId: user.id,
+          action: 'test.admin.ai.provider',
+          payload: {
+            providerId: resolvedProvider.id,
+            provider: resolved.ai.provider,
+            model: resolved.ai.model,
+            responsePreview,
+            requestId: speech.requestId,
+            latencyMs: Date.now() - startedAt,
+          },
+        })
+      })
+
+      return ok({
+        providerId: resolvedProvider.id,
+        provider: resolved.ai.provider,
+        model: resolved.ai.model,
+        responsePreview,
+        latencyMs: Date.now() - startedAt,
+      }, {
+        startedAt,
+        provider: resolved.ai.provider,
+        model: resolved.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      })
+    }
+    catch (error: any) {
+      setResponseStatus(event, 502)
+      const sourceLabel = usedProvidedApiKey ? '当前输入的 API Key' : '已保存的 API Key'
+      return fail(`[${sourceLabel}] ${String(error?.message || 'DashScope TTS Provider 测试失败。')}`, {
+        startedAt,
+        provider: resolved.ai.provider,
+        model: resolved.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 50297)
+    }
   }
 
   if (!resolved.ai.model) {

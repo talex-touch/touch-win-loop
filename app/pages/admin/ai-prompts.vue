@@ -1000,7 +1000,8 @@ const routableProviderOptions = computed(() => {
 const providerEditorSupportsModels = computed(() => providerCapabilitySupportsModels(providerEditorForm.capability))
 const providerEditorCanRunChatTest = computed(() => providerEditorForm.capability === 'llm')
 const providerEditorCanRunVoiceTest = computed(() => providerEditorForm.capability === 'voice')
-const providerEditorCanRunProviderTest = computed(() => providerEditorCanRunChatTest.value || providerEditorCanRunVoiceTest.value)
+const providerEditorCanRunTtsTest = computed(() => providerEditorForm.capability === 'tts')
+const providerEditorCanRunProviderTest = computed(() => providerEditorCanRunChatTest.value || providerEditorCanRunVoiceTest.value || providerEditorCanRunTtsTest.value)
 const providerEditorCapabilityLocked = computed(() => providerTypeDefaultCapability(providerEditorForm.type) === 'search' || providerTypeDefaultCapability(providerEditorForm.type) === 'voice')
 const providerEditorCapabilityOptions = computed(() => {
   const values: ProviderCapability[] = providerEditorCapabilityLocked.value
@@ -1098,8 +1099,12 @@ function sceneEmbeddingApiStyleFilter(key: PlatformAiChannelKey): EmbeddingApiSt
 
 function sceneCanRunChatTest(scene: Pick<SceneItem, 'key' | 'providerIds'>): boolean {
   const capability = sceneRequiredCapability(scene.key)
-  if (capability === 'tts')
-    return true
+  if (capability === 'tts') {
+    return scene.providerIds.some((id) => {
+      const provider = providerIdMap.value.get(id)
+      return provider?.capability === 'tts' || provider?.capability === 'voice' || provider?.capability === 'llm'
+    })
+  }
   if (capability !== 'chat')
     return false
   return scene.providerIds.some(id => providerIdMap.value.get(id)?.capability === 'llm')
@@ -1839,9 +1844,14 @@ async function testProvider() {
   providerEditorTestLoading.value = true
   providerEditorTestMessage.value = ''
   try {
-    const testModel = providerEditorForm.models.find(item => item.enabled && modelHasCapability(item, 'chat'))?.model || ''
+    const targetCapability: ModelCapability = providerEditorCanRunTtsTest.value ? 'tts' : 'chat'
+    const testModel = providerEditorForm.models.find(item => item.enabled && modelHasCapability(item, targetCapability))?.model || ''
     if (providerEditorCanRunChatTest.value && !testModel) {
       Message.warning('当前 Provider 没有可用于聊天连通性测试的模型。')
+      return
+    }
+    if (providerEditorCanRunTtsTest.value && !testModel) {
+      Message.warning('当前 Provider 没有可用于 TTS 连通性测试的模型。')
       return
     }
     const data = await requestApi<{

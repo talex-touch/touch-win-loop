@@ -85,7 +85,8 @@ it('search-only Provider 不参与模型场景路由', async () => {
   assert.match(source, /v-for="item in sceneEditorProviderOptions"/, '单场景 Provider 下拉不应展示全部可路由 Provider')
   assert.match(source, /Provider 能力/, 'Provider 抽屉应允许显式选择模型路由能力')
   assert.match(source, /providerEditorCapabilityLocked/, 'search-only 类型应锁定 Provider 能力')
-  assert.match(source, /providerEditorCanRunProviderTest/, 'Provider 连通性测试应覆盖 LLM 与 voice Provider')
+  assert.match(source, /providerEditorCanRunTtsTest/, 'Provider 连通性测试应覆盖 TTS Provider')
+  assert.match(source, /providerEditorCanRunProviderTest[\s\S]*providerEditorCanRunTtsTest/, 'Provider 连通性测试应覆盖 LLM、voice 与 TTS Provider')
 })
 
 it('coze 语音 Provider 暴露语音参数并跳过普通模型池', async () => {
@@ -138,6 +139,7 @@ it('知识库 Embedding 场景只使用 embedding 模型并禁用对话测试', 
   assert.match(source, /modelFallback: normalizeSceneModels\(/, '场景回退顺序未按模型池裁剪')
   assert.match(source, /if \(!sceneCanRunChatTest\(scene\)\)[\s\S]*无需执行对话测试/, 'Embedding 场景测试入口未拦截对话测试')
   assert.match(source, /:disabled="!sceneCanRunChatTest\(scope\.record\)"[\s\S]*无需测试/, 'Embedding 场景测试按钮未禁用并提示无需测试')
+  assert.match(source, /if \(capability === 'tts'\)[\s\S]*provider\?\.capability === 'tts'/, 'TTS 场景应允许执行 TTS 连通性测试')
   assert.match(source, /sceneAllowedProviderCapabilities/, '场景 Provider 过滤应从后端定义读取允许 Provider 类型')
   assert.doesNotMatch(source, /回退默认模型池/, '场景页不应再出现默认模型池兜底文案')
   assert.doesNotMatch(source, /回退默认模型/, '场景页不应再出现默认模型兜底文案')

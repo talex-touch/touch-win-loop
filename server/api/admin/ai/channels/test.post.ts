@@ -2,6 +2,7 @@ import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { setResponseStatus } from 'h3'
 import { isCozeVoiceProvider, resolveCozeVoiceRuntimeConfig, synthesizeCozeVoiceSpeech } from '~~/server/services/admin-ai/coze-voice'
+import { resolveDashScopeTtsRuntimeConfig, synthesizeDashScopeTtsSpeech } from '~~/server/services/admin-ai/dashscope-tts'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail, ok } from '~~/server/utils/api'
@@ -68,19 +69,34 @@ export default defineEventHandler(async (event) => {
   if (requiredCapability === 'tts') {
     try {
       const result = await runWithPlatformAiChannelFallback(runtime, channelKey, async ({ ai, provider, channel }) => {
-        if (!isCozeVoiceProvider(provider))
-          throw new Error('当前 TTS 场景测试只支持 Coze 语音 Provider。')
-        const config = resolveCozeVoiceRuntimeConfig({ provider, ai, runtime })
+        const text = String(body.message || '').trim() || 'SCENE_TTS_OK'
+        if (isCozeVoiceProvider(provider)) {
+          const config = resolveCozeVoiceRuntimeConfig({ provider, ai, runtime })
+          if (!config)
+            throw new Error('Coze 语音 Provider 未完整配置。')
+          const speech = await synthesizeCozeVoiceSpeech({
+            config,
+            text,
+            responseFormat: 'wav',
+          })
+          return {
+            channel,
+            reply: `Coze TTS OK，返回 ${speech.audioBuffer.byteLength} bytes。`,
+          }
+        }
+
+        const config = resolveDashScopeTtsRuntimeConfig({ provider, ai, runtime })
         if (!config)
-          throw new Error('Coze 语音 Provider 未完整配置。')
-        const speech = await synthesizeCozeVoiceSpeech({
+          throw new Error('当前 TTS Provider 未完整配置，或不是 Coze / DashScope TTS Provider。')
+        const speech = await synthesizeDashScopeTtsSpeech({
           config,
-          text: String(body.message || '').trim() || 'SCENE_TTS_OK',
-          responseFormat: 'wav',
+          text,
         })
+        const resultSize = speech.audioBuffer?.byteLength || 0
+        const resultRef = resultSize > 0 ? `${resultSize} bytes` : (speech.audioUrl ? `audio_url ${speech.audioUrl.slice(0, 120)}` : '已返回结果')
         return {
           channel,
-          reply: `Coze TTS OK，返回 ${speech.audioBuffer.byteLength} bytes。`,
+          reply: `DashScope TTS OK，返回 ${resultRef}。`,
         }
       })
 
