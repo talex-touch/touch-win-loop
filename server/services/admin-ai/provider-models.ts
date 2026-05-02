@@ -87,7 +87,7 @@ function formatPricingText(
   currency: string,
 ): string {
   if (inputPricePer1M === null && outputPricePer1M === null)
-    return '价格未返回'
+    return '默认未计费'
 
   if (inputPricePer1M !== null && outputPricePer1M !== null)
     return `输入 ${formatPriceValue(inputPricePer1M, currency)} · 输出 ${formatPriceValue(outputPricePer1M, currency)}`
@@ -271,7 +271,7 @@ function buildSuggestedProviderModels(input: {
     outputPricePer1M: null,
     currency: 'USD',
     pricingSource: 'none',
-    pricingText: '价格未返回',
+    pricingText: '默认未计费',
   }]
 }
 

@@ -76,12 +76,17 @@ export default defineEventHandler(async (event) => {
     : null
   const resolvedProvider = draftProvider
     ? (() => {
+        const apiKeyMode = toMode(body.apiKeyMode)
+        const providedApiKey = toText(body.apiKey ?? draftProvider.apiKey)
         const seed = {
           ...currentProvider,
           ...draftProvider,
           id: toText(draftProvider.id) || currentProvider?.id || 'provider_1',
           provider: toText(draftProvider.provider) || currentProvider?.provider || '',
           baseURL: normalizePlatformAiBaseURL(draftProvider.baseURL, toText(draftProvider.provider) || currentProvider?.provider || ''),
+          apiKey: apiKeyMode === 'clear'
+            ? ''
+            : providedApiKey || currentProvider?.apiKey || '',
           models: Array.isArray(draftProvider.models) ? draftProvider.models : currentProvider?.models || [],
         }
         const draftRuntime = {

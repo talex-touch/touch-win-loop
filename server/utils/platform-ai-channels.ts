@@ -107,6 +107,7 @@ export interface PlatformAiChannelDefinition {
   key: PlatformAiChannelKey
   label: string
   description: string
+  builtinPrompt: string
   requiredModelCapability: PlatformAiModelCapability
   allowedProviderCapabilities: PlatformAiProviderCapability[]
   embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
@@ -188,39 +189,42 @@ function defineChannel(
   const requiredModelCapability = definition.requiredModelCapability || 'chat'
   return {
     ...definition,
+    builtinPrompt: definition.builtinPrompt || '',
     requiredModelCapability,
     allowedProviderCapabilities: definition.allowedProviderCapabilities || ['llm'],
   }
 }
 
 const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
-  defineChannel({ key: 'contest_filter', label: '选赛过滤', description: '竞赛筛选与推荐排序' }),
-  defineChannel({ key: 'project_chat', label: '项目聊天', description: '项目草案对话与改写' }),
-  defineChannel({ key: 'topic_proposal', label: '选题助手', description: '命题建议与路线生成' }),
+  defineChannel({ key: 'contest_filter', label: '选赛过滤', description: '竞赛筛选与推荐排序', builtinPrompt: '根据用户画像、赛题条件与项目方向筛选竞赛，并给出可解释排序。' }),
+  defineChannel({ key: 'project_chat', label: '项目聊天', description: '项目草案对话与改写', builtinPrompt: '围绕当前项目资料回答问题，优先引用已有上下文，避免编造未提供事实。' }),
+  defineChannel({ key: 'topic_proposal', label: '选题助手', description: '命题建议与路线生成', builtinPrompt: '基于竞赛要求和项目资源提出选题方向、技术路线和落地计划。' }),
   defineChannel({
     key: 'defense',
     label: '答辩模拟',
     description: '评委问答与评分反馈',
+    builtinPrompt: '模拟评委追问项目价值、技术可行性、创新点、风险和答辩表达，并给出改进建议。',
     allowedProviderCapabilities: ['llm', 'voice'],
   }),
-  defineChannel({ key: 'workspace_dialog_ask', label: '工作台-对话询问', description: '工作台只读问答' }),
-  defineChannel({ key: 'workspace_auto_optimize', label: '工作台-自动优化', description: '工作台提案优化' }),
-  defineChannel({ key: 'workspace_issue_discovery', label: '工作台-寻疑发现', description: '工作台问题扫描' }),
-  defineChannel({ key: 'workspace_document_summarize', label: '文档总结', description: '基于当前选区生成精炼摘要' }),
-  defineChannel({ key: 'workspace_document_rewrite', label: '文档润写', description: '对当前选区进行润写改写' }),
-  defineChannel({ key: 'workspace_document_continue', label: '文档续写', description: '基于当前上下文续写文档内容' }),
-  defineChannel({ key: 'workspace_document_expand', label: '文档扩写', description: '对当前选区做扩写和展开' }),
-  defineChannel({ key: 'workspace_document_complete_context', label: '文档补全上下文', description: '补全文档缺失上下文与衔接内容' }),
-  defineChannel({ key: 'workspace_document_restructure', label: '文档结构整理', description: '重整结构与层次，保持内容可直接落文' }),
-  defineChannel({ key: 'workspace_canvas_generate', label: '画布生成', description: '生成流程图、脑图、ER 图或架构图结构源' }),
-  defineChannel({ key: 'workspace_canvas_complete', label: '画布补全', description: '基于现有图结构补全缺失节点与关系' }),
-  defineChannel({ key: 'workspace_canvas_refine', label: '画布续改', description: '基于现有图结构重写和优化结构源' }),
-  defineChannel({ key: 'admin_general', label: '管理助手-通用', description: '后台管理通用任务' }),
-  defineChannel({ key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议' }),
+  defineChannel({ key: 'workspace_dialog_ask', label: '工作台-对话询问', description: '工作台只读问答', builtinPrompt: '以只读方式回答工作台问题，基于当前项目上下文给出明确结论。' }),
+  defineChannel({ key: 'workspace_auto_optimize', label: '工作台-自动优化', description: '工作台提案优化', builtinPrompt: '识别当前项目草案的表达、结构和证据问题，并给出可落地优化建议。' }),
+  defineChannel({ key: 'workspace_issue_discovery', label: '工作台-寻疑发现', description: '工作台问题扫描', builtinPrompt: '扫描项目资料中的缺口、冲突、风险和需要补证的问题。' }),
+  defineChannel({ key: 'workspace_document_summarize', label: '文档总结', description: '基于当前选区生成精炼摘要', builtinPrompt: '提炼当前选区的核心结论、依据和后续动作，保持简洁准确。' }),
+  defineChannel({ key: 'workspace_document_rewrite', label: '文档润写', description: '对当前选区进行润写改写', builtinPrompt: '在不改变事实的前提下提升表达清晰度、逻辑顺序和专业性。' }),
+  defineChannel({ key: 'workspace_document_continue', label: '文档续写', description: '基于当前上下文续写文档内容', builtinPrompt: '延续当前上下文语气和结构续写，避免引入未确认事实。' }),
+  defineChannel({ key: 'workspace_document_expand', label: '文档扩写', description: '对当前选区做扩写和展开', builtinPrompt: '围绕当前选区补充论据、步骤和细节，使内容更完整。' }),
+  defineChannel({ key: 'workspace_document_complete_context', label: '文档补全上下文', description: '补全文档缺失上下文与衔接内容', builtinPrompt: '补全文档断裂处的背景、过渡和上下文衔接。' }),
+  defineChannel({ key: 'workspace_document_restructure', label: '文档结构整理', description: '重整结构与层次，保持内容可直接落文', builtinPrompt: '重排内容层级和标题结构，保留原始事实并输出可直接落文的结构。' }),
+  defineChannel({ key: 'workspace_canvas_generate', label: '画布生成', description: '生成流程图、脑图、ER 图或架构图结构源', builtinPrompt: '根据需求生成可视化结构源，优先保证节点、关系和层级清晰。' }),
+  defineChannel({ key: 'workspace_canvas_complete', label: '画布补全', description: '基于现有图结构补全缺失节点与关系', builtinPrompt: '基于现有画布补全合理缺失，不破坏已有结构。' }),
+  defineChannel({ key: 'workspace_canvas_refine', label: '画布续改', description: '基于现有图结构重写和优化结构源', builtinPrompt: '优化现有画布结构，使关系更清晰、命名更一致。' }),
+  defineChannel({ key: 'admin_general', label: '管理助手-通用', description: '后台管理通用任务', builtinPrompt: '聚焦后台配置状态、风险识别、问题定位与可执行修复步骤。' }),
+  defineChannel({ key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议', builtinPrompt: '聚焦发布阻断项、字段缺口、模块级修复动作。' }),
   defineChannel({
     key: 'knowledge_embedding',
     label: '知识库文本 Embedding',
     description: '知识库文本向量与检索索引',
+    builtinPrompt: '为纯文本知识内容生成检索向量，要求使用 OpenAI 兼容文本 Embedding 接入。',
     requiredModelCapability: 'embedding',
     allowedProviderCapabilities: ['llm', 'embedding'],
     embeddingApiStyle: 'openai-compatible-text',
@@ -229,22 +233,25 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
     key: 'knowledge_visual_embedding',
     label: '知识库视觉 Embedding',
     description: '图片、视频、多图与图文融合向量',
+    builtinPrompt: '为图片、视频、多图或图文融合内容生成百炼原生多模态向量。',
     requiredModelCapability: 'embedding',
     allowedProviderCapabilities: ['llm', 'embedding'],
     embeddingApiStyle: 'bailian-multimodal',
   }),
-  defineChannel({ key: 'knowledge_query_planner', label: '知识检索规划', description: '项目知识查询意图、召回策略与证据链规划' }),
+  defineChannel({ key: 'knowledge_query_planner', label: '知识检索规划', description: '项目知识查询意图、召回策略与证据链规划', builtinPrompt: '分析用户问题的检索意图，规划召回关键词、向量查询和证据链组织。' }),
   defineChannel({
     key: 'knowledge_visual_projection',
     label: '知识库视觉投影',
     description: '图片、截图、OCR 与视觉摘要提取',
+    builtinPrompt: '从图片、截图和 OCR 内容中提取结构化视觉摘要，用于知识检索和证据组织。',
     requiredModelCapability: 'vision',
   }),
-  defineChannel({ key: 'document_analysis', label: '文档分析', description: '文档解析、预览与重解析' }),
+  defineChannel({ key: 'document_analysis', label: '文档分析', description: '文档解析、预览与重解析', builtinPrompt: '分析文档结构、页面内容和可检索信息，输出稳定的解析与摘要结果。' }),
   defineChannel({
     key: 'meeting_asr',
     label: '会议 ASR',
     description: '会议字幕、录音转写与语音识别',
+    builtinPrompt: '将会议音频转写为准确字幕，保留关键术语和发言内容。',
     requiredModelCapability: 'asr',
     allowedProviderCapabilities: ['llm', 'asr', 'voice'],
   }),
@@ -252,6 +259,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
     key: 'speech_tts',
     label: '语音 TTS',
     description: '文本转语音、朗读与语音播报',
+    builtinPrompt: '将文本合成为清晰可听的语音，用于朗读和语音播报。',
     requiredModelCapability: 'tts',
     allowedProviderCapabilities: ['llm', 'tts', 'voice'],
   }),
@@ -1348,7 +1356,7 @@ function buildModelCatalogJson(providers: PlatformAiProviderConfig[]): string {
         .filter(item => item.enabled)
         .map((item) => {
           const priceText = item.inputPricePer1M === null && item.outputPricePer1M === null
-            ? '价格未配置'
+            ? '默认未计费'
             : `输入 ${item.inputPricePer1M === null ? '-' : `${item.currency} ${item.inputPricePer1M.toFixed(4)}/1M`} · 输出 ${item.outputPricePer1M === null ? '-' : `${item.currency} ${item.outputPricePer1M.toFixed(4)}/1M`}`
           return {
             id: `${provider.id}:${item.model}`,
