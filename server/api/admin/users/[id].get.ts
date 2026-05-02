@@ -1,5 +1,5 @@
 import { setResponseStatus } from 'h3'
-import { listAdminUsers } from '~~/server/utils/admin-user-store'
+import { getAdminUserDetail } from '~~/server/utils/admin-user-store'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
@@ -10,22 +10,44 @@ export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
+  const userId = String(getRouterParam(event, 'id') || '').trim()
 
   const canAssign = await checkPlatformPermission(event, user, 'role.assign')
   if (!canAssign) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权访问用户管理。', {
+    return fail('当前用户无权查看用户详情。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40391)
+    }, 40395)
   }
 
-  const users = await withClient(event, db => listAdminUsers(db))
+  if (!userId) {
+    setResponseStatus(event, 400)
+    return fail('缺少用户 ID。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40098)
+  }
 
-  return ok(users, {
+  const detail = await withClient(event, db => getAdminUserDetail(db, userId))
+  if (!detail) {
+    setResponseStatus(event, 404)
+    return fail('目标用户不存在。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40494)
+  }
+
+  return ok(detail, {
     startedAt,
     provider: runtime.ai.provider,
     model: runtime.ai.model,
