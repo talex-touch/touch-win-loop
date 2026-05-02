@@ -103,6 +103,7 @@ interface SceneDefinition {
   key: PlatformAiChannelKey
   label: string
   description: string
+  builtinPrompt: string
   requiredModelCapability: ModelCapability
   allowedProviderCapabilities: ProviderCapability[]
   embeddingApiStyle?: EmbeddingApiStyle
@@ -825,7 +826,7 @@ function normalizeModelItem(item: ProviderModelItem, providerType: ProviderType 
 
 function buildPriceText(item: Pick<ProviderModelItem, 'inputPricePer1M' | 'outputPricePer1M' | 'currency'>): string {
   if (item.inputPricePer1M === null && item.outputPricePer1M === null)
-    return 'none'
+    return '默认未计费'
   const input = item.inputPricePer1M === null ? '-' : `${item.currency} ${Number(item.inputPricePer1M).toFixed(4)}/1M`
   const output = item.outputPricePer1M === null ? '-' : `${item.currency} ${Number(item.outputPricePer1M).toFixed(4)}/1M`
   return `输入 ${input} · 输出 ${output}`
@@ -833,10 +834,24 @@ function buildPriceText(item: Pick<ProviderModelItem, 'inputPricePer1M' | 'outpu
 
 function buildImportedPriceText(item: Pick<ProviderModelItem, 'providerInputPricePer1M' | 'providerOutputPricePer1M' | 'currency'>): string {
   if (item.providerInputPricePer1M === null && item.providerOutputPricePer1M === null)
-    return '未导入'
+    return '默认未计费'
   const input = item.providerInputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerInputPricePer1M).toFixed(4)}/1M`
   const output = item.providerOutputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerOutputPricePer1M).toFixed(4)}/1M`
   return `输入 ${input} · 输出 ${output}`
+}
+
+function sceneModelEmptyHint(): string {
+  if (sceneEditorForm.providerIds.length === 0)
+    return '请先绑定可服务该场景的 Provider。'
+  const requiredCapability = modelCapabilityLabel(sceneRequiredCapability(sceneEditorForm.key))
+  const embeddingApiStyle = sceneEmbeddingApiStyleFilter(sceneEditorForm.key)
+  if (sceneEditorForm.key === 'knowledge_embedding') {
+    return `当前场景需要 ${requiredCapability} 模型，且接入类型必须为 OpenAI 兼容文本；DashScope 的 tongyi-embedding-vision-plus 属于百炼原生多模态，请改用 text-embedding-v4 等文本向量模型。`
+  }
+  if (sceneEditorForm.key === 'knowledge_visual_embedding') {
+    return `当前场景需要 ${requiredCapability} 模型，且接入类型必须为百炼原生多模态；可选择 tongyi-embedding-vision-plus。`
+  }
+  return `当前绑定 Provider 中没有启用的 ${requiredCapability}${embeddingApiStyle ? ` / ${embeddingApiStyle}` : ''} 模型，请先在 Provider 模型池中新增或启用匹配模型。`
 }
 
 function normalizePullItem(item: ProviderPullItem): ProviderPullItem {
@@ -1374,7 +1389,21 @@ async function loadConsole() {
 function buildProviderPayload(provider: ProviderDraftItem) {
   const normalized = normalizeProviderDraft(provider)
   const apiKey = String(normalized.apiKey || '').trim()
-  return {
+  const payload: {
+    id: string
+    name: string
+    type: ProviderType
+    capability: ProviderCapability
+    provider: string
+    baseURL: string
+    enabled: boolean
+    timeoutMs: number
+    maxRetries: number
+    apiKeyMode: SecretMode
+    apiKey?: string
+    voice: ProviderVoiceConfig
+    models: ProviderModelItem[]
+  } = {
     id: normalized.id,
     name: normalized.name,
     type: normalized.type,
@@ -1385,10 +1414,12 @@ function buildProviderPayload(provider: ProviderDraftItem) {
     timeoutMs: Number(normalized.timeoutMs || 15000),
     maxRetries: Number(normalized.maxRetries || 2),
     apiKeyMode: resolveProviderApiKeyMode(normalized),
-    apiKey,
     voice: normalized.voice,
     models: normalized.models.map(item => normalizeModelItem(item, normalized.type)),
   }
+  if (apiKey)
+    payload.apiKey = apiKey
+  return payload
 }
 
 async function saveConsole() {
@@ -2161,9 +2192,15 @@ onMounted(async () => {
                     <a-button size="mini" @click="openEditProviderDrawer(scope.record)">
                       编辑
                     </a-button>
-                    <a-button size="mini" status="danger" @click="removeProvider(scope.record.id)">
-                      删除
-                    </a-button>
+                    <a-popconfirm
+                      content="确认删除该 Provider 吗？删除后会同步从所有已绑定场景中移除；需要点击“保存配置”后才会持久化。"
+                      type="warning"
+                      @ok="removeProvider(scope.record.id)"
+                    >
+                      <a-button size="mini" status="danger">
+                        删除
+                      </a-button>
+                    </a-popconfirm>
                   </div>
                 </template>
               </a-table-column>
@@ -2538,14 +2575,16 @@ onMounted(async () => {
                 <a-input v-model="providerEditorForm.baseURL" :placeholder="providerEditorTypeGuide.baseURLPlaceholder" />
               </a-form-item>
               <a-form-item label="API Key">
-                <a-input-password
-                  v-model="providerEditorForm.apiKey"
-                  :placeholder="providerEditorTypeGuide.apiKeyPlaceholder"
-                  autocomplete="new-password"
-                  allow-clear
-                />
-                <div class="text-xs text-slate-500 leading-relaxed mt-1">
-                  {{ providerEditorTypeGuide.apiKeyHint }}
+                <div class="w-full space-y-1">
+                  <a-input-password
+                    v-model="providerEditorForm.apiKey"
+                    :placeholder="providerEditorTypeGuide.apiKeyPlaceholder"
+                    autocomplete="new-password"
+                    allow-clear
+                  />
+                  <div class="text-xs text-slate-500 leading-relaxed">
+                    {{ providerEditorTypeGuide.apiKeyHint }}
+                  </div>
                 </div>
               </a-form-item>
               <a-form-item label="超时(ms)">
@@ -3050,6 +3089,16 @@ onMounted(async () => {
               placeholder="按绑定 Provider 的模型池汇总选择"
               @change="handleSceneModelsChange"
             >
+              <template #empty>
+                <div class="px-4 py-5 text-left">
+                  <div class="text-sm text-slate-700 font-medium">
+                    没有匹配当前场景的模型
+                  </div>
+                  <div class="text-xs text-slate-500 leading-relaxed mt-1">
+                    {{ sceneModelEmptyHint() }}
+                  </div>
+                </div>
+              </template>
               <a-option
                 v-for="item in sceneEditorModelPoolOptions"
                 :key="`scene-model-pool-${item.model}`"
@@ -3118,11 +3167,18 @@ onMounted(async () => {
             当前故障转移：{{ sceneFailoverStrategyLabel(sceneEditorForm) }}
           </div>
 
-          <a-form-item label="场景提示词">
+          <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-2">
+            <div class="text-sm text-slate-900 font-medium">
+              内置提示词
+            </div>
+            <pre class="text-xs text-slate-600 leading-relaxed m-0 whitespace-pre-wrap">{{ sceneDefinitionForKey(sceneEditorForm.key)?.builtinPrompt || '未配置内置提示词。' }}</pre>
+          </div>
+
+          <a-form-item label="自定义提示词">
             <a-textarea
               v-model="sceneEditorForm.prompt"
               :auto-size="{ minRows: 8, maxRows: 16 }"
-              placeholder="留空表示不追加场景提示词。"
+              placeholder="留空表示不追加自定义提示词。"
             />
           </a-form-item>
         </div>
