@@ -1,10 +1,50 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { describe, it } from 'vitest'
+import { describe, it, vi } from 'vitest'
+
+vi.mock('#imports', () => ({
+  useRuntimeConfig: () => ({}),
+}))
 
 async function readSource(relativePath) {
   return readFile(resolve(process.cwd(), relativePath), 'utf8')
+}
+
+function buildReleaseVersionRow({ id, snapshot }) {
+  return {
+    id,
+    scope_kind: 'contest',
+    scope_id: snapshot.contestExternalId,
+    live_entity_id: 'contest-live-1',
+    scope_title: snapshot.contest?.name || snapshot.contestExternalId,
+    version_number: 1,
+    status: 'pending_first_review',
+    snapshot_json: snapshot,
+    diff_summary_json: {
+      createdCount: 0,
+      updatedCount: 0,
+      removedCount: 0,
+      changedExternalIds: [],
+    },
+    sync_item_id: null,
+    sync_run_id: null,
+    first_review_by_user_id: null,
+    first_review_at: null,
+    second_review_claimed_by_user_id: null,
+    second_review_claimed_at: null,
+    second_review_by_user_id: null,
+    second_review_at: null,
+    rejected_by_user_id: null,
+    rejected_at: null,
+    reject_reason: '',
+    published_by_user_id: null,
+    published_at: null,
+    created_by_user_id: 'admin-1',
+    updated_by_user_id: 'admin-1',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  }
 }
 
 describe('版本审批与赛道同步新流程', () => {
@@ -100,6 +140,156 @@ describe('版本审批与赛道同步新流程', () => {
     assert.match(approveApiSource, /approveReleaseVersion/, '审批 API 未接入 release-store')
     assert.match(rejectApiSource, /rejectReleaseVersion/, '驳回 API 未接入 release-store')
     assert.match(publishApiSource, /publishReleaseVersion/, '发布 API 未接入 release-store')
+  })
+
+  it('赛道确认表单保存会按统一赛道身份替换结构化节点', async () => {
+    const { patchContestReleaseTrackTimelines } = await import('../../server/utils/release-store.ts')
+    const releaseVersionId = 'release_track_timeline_patch'
+    const trackExternalId = 'track-ext-1'
+    const snapshot = {
+      contestExternalId: 'contest-ext-1',
+      contest: {
+        externalId: 'contest-ext-1',
+        name: '结构化节点替换测试竞赛',
+        level: 'national',
+        officialUrl: 'https://example.test/contest',
+        summary: '用于验证赛道确认表单保存行为。',
+        disciplines: ['计算机'],
+        keywords: [],
+        recommendedFor: [],
+        visibility: 'internal',
+      },
+      tracks: [{
+        externalId: trackExternalId,
+        liveId: 'track-live-1',
+        name: '目标赛道',
+      }, {
+        externalId: 'track-ext-2',
+        liveId: 'track-live-2',
+        name: '其他赛道',
+      }],
+      timelines: [],
+      trackTimelines: [
+        {
+          externalId: 'direct-old',
+          trackExternalId,
+          trackLiveId: null,
+          year: 2024,
+          nodeType: 'registration',
+          businessNodeLabel: '旧报名',
+          recognitionStatus: 'auto_recognized',
+          startAt: null,
+          endAt: null,
+          note: '',
+          sourceLink: '',
+        },
+        {
+          externalId: 'live-old',
+          trackExternalId: '',
+          trackLiveId: 'track-live-1',
+          year: 2024,
+          nodeType: 'preliminary',
+          businessNodeLabel: '旧初赛',
+          recognitionStatus: 'needs_confirmation',
+          startAt: null,
+          endAt: null,
+          note: '',
+          sourceLink: '',
+        },
+        {
+          externalId: `derived:track:${trackExternalId}:old-derived`,
+          trackExternalId: '',
+          trackLiveId: null,
+          year: 2024,
+          nodeType: 'final',
+          businessNodeLabel: '旧派生',
+          recognitionStatus: 'auto_recognized',
+          startAt: null,
+          endAt: null,
+          note: '',
+          sourceLink: '',
+        },
+        {
+          externalId: `legacy:track:${trackExternalId}:old-legacy`,
+          trackExternalId: '',
+          trackLiveId: null,
+          year: 2024,
+          nodeType: 'other',
+          businessNodeLabel: '旧兼容',
+          recognitionStatus: 'auto_recognized',
+          startAt: null,
+          endAt: null,
+          note: '',
+          sourceLink: '',
+        },
+        {
+          externalId: 'other-track-node',
+          trackExternalId: 'track-ext-2',
+          trackLiveId: 'track-live-2',
+          year: 2024,
+          nodeType: 'registration',
+          businessNodeLabel: '其他赛道报名',
+          recognitionStatus: 'auto_recognized',
+          startAt: null,
+          endAt: null,
+          note: '',
+          sourceLink: '',
+        },
+      ],
+      resources: [],
+    }
+    const queries = []
+    const db = {
+      async query(sql, values = []) {
+        queries.push({ sql, values })
+        if (sql.includes('FOR UPDATE')) {
+          return { rows: [buildReleaseVersionRow({ id: releaseVersionId, snapshot })] }
+        }
+        if (sql.includes('FROM release_versions') && sql.includes('status = $3')) {
+          return { rows: [] }
+        }
+        if (sql.includes('FROM release_versions') && sql.includes('id = $1') && sql.includes('LIMIT 1')) {
+          const updateQuery = queries.find(item => item.sql.includes('SET snapshot_json = $2::JSONB'))
+          const nextSnapshot = updateQuery ? JSON.parse(updateQuery.values[1]) : snapshot
+          return { rows: [buildReleaseVersionRow({ id: releaseVersionId, snapshot: nextSnapshot })] }
+        }
+        if (sql.includes('FROM release_review_logs'))
+          return { rows: [] }
+        if (sql.includes('INSERT INTO release_review_logs'))
+          return { rows: [] }
+        if (sql.includes('UPDATE release_versions'))
+          return { rows: [] }
+        if (sql.includes('FROM feishu_external_refs'))
+          return { rows: [] }
+        return { rows: [] }
+      },
+    }
+
+    const detail = await patchContestReleaseTrackTimelines(db, {
+      actorUserId: 'admin-1',
+      releaseVersionId,
+      trackExternalId,
+      trackTimelines: [{
+        externalId: 'manual-new',
+        trackExternalId,
+        trackLiveId: null,
+        year: 2026,
+        nodeType: 'other',
+        businessNodeLabel: '新节点',
+        recognitionStatus: 'manual_adjusted',
+        startAt: null,
+        endAt: null,
+        note: '',
+        sourceLink: '',
+      }],
+    })
+
+    const savedExternalIds = detail.version.snapshot.trackTimelines.map(item => item.externalId).sort()
+    assert.deepEqual(savedExternalIds, ['manual-new', 'other-track-node'])
+    const savedTimeline = detail.version.snapshot.trackTimelines.find(item => item.externalId === 'manual-new')
+    assert.equal(savedTimeline.trackExternalId, trackExternalId)
+    assert.equal(savedTimeline.trackLiveId, 'track-live-1')
+    assert.equal(savedTimeline.recognitionStatus, 'manual_adjusted')
   })
 
   it('contest release snapshot 与发布链路不再依赖竞赛库已移除字段', async () => {
