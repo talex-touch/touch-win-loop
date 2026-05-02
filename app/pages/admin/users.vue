@@ -607,7 +607,7 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="mt-3 grid gap-2 md:grid-cols-4">
+        <div class="mt-3 gap-2 grid md:grid-cols-4">
           <div class="p-3 border border-slate-200 bg-slate-50">
             <p class="text-[10px] text-slate-500 m-0">
               用户总数
@@ -654,7 +654,7 @@ onMounted(async () => {
             size="small"
           >
             <template #user="{ record }">
-              <div class="min-w-0 flex gap-2 items-center">
+              <div class="flex gap-2 min-w-0 items-center">
                 <UnifiedAvatar :name="record.username" :src="record.avatarUrl" :size="30" />
                 <div class="min-w-0">
                   <p class="text-[12px] text-slate-900 font-semibold m-0 truncate">
@@ -759,7 +759,7 @@ onMounted(async () => {
         <div class="text-[11px] pb-8 space-y-4">
           <div class="p-3 border border-slate-200 bg-slate-50">
             <div class="flex gap-3 items-center justify-between">
-              <div class="min-w-0 flex gap-3 items-center">
+              <div class="flex gap-3 min-w-0 items-center">
                 <UnifiedAvatar :name="form.username || selectedUser?.username" :src="selectedUser?.avatarUrl" :size="44" />
                 <div class="min-w-0">
                   <p class="text-[13px] text-slate-900 font-semibold m-0 truncate">
@@ -873,7 +873,7 @@ onMounted(async () => {
                   <p class="text-[10px] text-slate-500 tracking-wider font-bold m-0 uppercase">
                     一次性登录链接
                   </p>
-                  <p class="text-[10px] text-slate-500 m-0 leading-5">
+                  <p class="text-[10px] text-slate-500 leading-5 m-0">
                     链接 15 分钟内有效，首次访问后立即换发正常会话并撤销该票据。
                   </p>
                   <div class="flex flex-wrap gap-2">
@@ -888,7 +888,7 @@ onMounted(async () => {
                     <p class="text-[10px] text-slate-500 m-0">
                       过期时间：{{ formatDate(generatedMagicLink.expiresAt) }}
                     </p>
-                    <p class="text-[10px] text-slate-600 font-mono break-all m-0 mt-2">
+                    <p class="text-[10px] text-slate-600 font-mono m-0 mt-2 break-all">
                       {{ generatedMagicLink.url }}
                     </p>
                   </div>
@@ -935,7 +935,7 @@ onMounted(async () => {
               </div>
 
               <div v-else-if="detail" class="space-y-4">
-                <section class="grid gap-2 md:grid-cols-3">
+                <section class="gap-2 grid md:grid-cols-3">
                   <div class="p-3 border border-slate-200 bg-slate-50">
                     <p class="text-[10px] text-slate-500 m-0">
                       工作空间
@@ -978,10 +978,10 @@ onMounted(async () => {
                         </a-tag>
                         <span class="text-[10px] text-slate-500">{{ formatDate(identity.updatedAt) }}</span>
                       </div>
-                      <p class="text-[10px] text-slate-600 font-mono break-all m-0 mt-2">
+                      <p class="text-[10px] text-slate-600 font-mono m-0 mt-2 break-all">
                         {{ identity.providerUserId }}
                       </p>
-                      <p class="text-[10px] text-slate-500 break-all m-0 mt-1">
+                      <p class="text-[10px] text-slate-500 m-0 mt-1 break-all">
                         {{ JSON.stringify(identity.profile) }}
                       </p>
                     </div>

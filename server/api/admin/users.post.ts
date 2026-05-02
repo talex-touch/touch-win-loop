@@ -1,13 +1,13 @@
 import type { PlatformRole } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { createUserWithPersonalWorkspace } from '~~/server/utils/platform-store'
-import { setPlatformRolesByUserId } from '~~/server/utils/contest-store'
 import { listAdminUsers } from '~~/server/utils/admin-user-store'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { setPlatformRolesByUserId } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { createUserWithPersonalWorkspace } from '~~/server/utils/platform-store'
 import { hashPassword } from '~~/server/utils/security'
 
 interface CreateAdminUserBody {
