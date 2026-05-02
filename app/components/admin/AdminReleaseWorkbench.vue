@@ -129,7 +129,6 @@ const actionableFilter = ref<'all' | 'pending_first' | 'claimed_second' | 'ready
 const selectedVersionId = ref('')
 const failedCoverPreviewSources = ref<Record<string, true>>({})
 const releaseDetailDrawerWidth = 'min(1180px, calc(100vw - 48px))'
-const secondaryDrawerWidth = 'min(860px, calc(100vw - 48px))'
 const routeVersionId = computed(() => {
   const value = route.query.versionId
   return Array.isArray(value) ? String(value[0] || '').trim() : String(value || '').trim()
@@ -693,12 +692,6 @@ function isTimelineSnapshotAutoRecognized(item: ContestReleaseTimelineSnapshot |
   return Boolean(formatDate(item.startAt) || formatDate(item.endAt))
 }
 
-function trackTimelineText(items: ContestReleaseTrackTimelineSnapshot[]) {
-  return items
-    .map(formatTimelineSnapshotItem)
-    .join('\n') || '-'
-}
-
 function trackTimelineReviewSections(items: ContestReleaseTrackTimelineSnapshot[], fallbackText?: string) {
   const autoRecognized = items
     .filter(isTimelineSnapshotAutoRecognized)
@@ -893,6 +886,12 @@ async function loadVersions() {
   }
 }
 
+function syncVersionListItem(version: ReleaseVersion) {
+  const index = versions.value.findIndex(item => item.id === version.id)
+  if (index >= 0)
+    versions.value.splice(index, 1, version)
+}
+
 async function openDetail(versionId: string) {
   detailLoading.value = true
   errorText.value = ''
@@ -1032,6 +1031,8 @@ async function saveTrackTimelineDrafts() {
       '结构化节点保存失败。',
     )
     detail.value = nextDetail
+    selectedVersionId.value = versionId
+    syncVersionListItem(nextDetail.version)
     const refreshedTrack = detailContestSnapshot.value?.tracks.find(item => item.externalId === track.externalId) || track
     selectedTrack.value = refreshedTrack
     trackTimelineDrafts.value = trackTimelinesForTrack(refreshedTrack, detailContestSnapshot.value)
@@ -1041,7 +1042,6 @@ async function saveTrackTimelineDrafts() {
         endAt: formatDateTimeInput(item.endAt),
       }))
     successText.value = '结构化节点已保存到当前待审版本。建议同步修正飞书赛道库原始时间节点后重新导入。'
-    await loadVersions()
   }
   catch (error: any) {
     errorText.value = String(error?.data?.message || '结构化节点保存失败。')

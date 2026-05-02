@@ -1175,7 +1175,7 @@ export async function patchContestReleaseTrackTimelines(
   })
 
   snapshot.trackTimelines = [
-    ...snapshot.trackTimelines.filter(item => normalizeText(item.trackExternalId) !== trackExternalId),
+    ...snapshot.trackTimelines.filter(item => !isTrackTimelineForSnapshotTrack(item, track)),
     ...normalizedTimelines,
   ]
   const sanitizedSnapshot = sanitizeContestReleaseSnapshot(snapshot)
