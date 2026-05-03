@@ -157,7 +157,8 @@ describe('admin-ai provider models', () => {
   it('非聊天场景测试不会再泄露旧全局 embedding 模型', async () => {
     const source = await readFile(CHANNELS_TEST_POST_FILE, 'utf8')
 
-    expect(source).toMatch(/resolveAiRuntimeForChannel\(runtime, channelKey\)/)
+    expect(source).toMatch(/const testRuntime = buildChannelTestRuntime\(runtime,/)
+    expect(source).toMatch(/resolveAiRuntimeForChannel\(testRuntime, channelKey\)/)
     expect(source).toMatch(/model:\s*channelRuntime\.ai\.model/)
     expect(source).not.toMatch(/runtime\.ai\.model/)
     expect(source).not.toMatch(/runtime\.ai\.embeddingModel/)
@@ -363,28 +364,48 @@ describe('admin-ai provider models', () => {
   })
 
   it('coze 语音 Provider 走语音探针且不参与模型池拉取', async () => {
-    const [postSource, testSource, cozeVoiceSource, dashscopeTtsSource, channelsTestSource] = await Promise.all([
+    const [postSource, testSource, cozeVoiceSource, dashscopeTtsSource, dashscopeAsrSource, asrProbeSource, channelsTestSource, pageSource] = await Promise.all([
       readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
       readFile(PROVIDERS_TEST_POST_FILE, 'utf8'),
       readFile(resolve(process.cwd(), 'server/services/admin-ai/coze-voice.ts'), 'utf8'),
       readFile(resolve(process.cwd(), 'server/services/admin-ai/dashscope-tts.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/dashscope-asr.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/asr-probe.ts'), 'utf8'),
       readFile(CHANNELS_TEST_POST_FILE, 'utf8'),
+      readFile(AI_PROMPTS_PAGE_FILE, 'utf8'),
     ])
 
     expect(postSource).toMatch(/resolvedProvider\.capability === 'search' \|\| resolvedProvider\.capability === 'voice'/)
-    expect(testSource).toMatch(/resolvedProvider\.capability !== 'llm' && resolvedProvider\.capability !== 'voice' && resolvedProvider\.capability !== 'tts'/)
+    expect(testSource).toMatch(/resolvedProvider\.capability !== 'llm' && resolvedProvider\.capability !== 'voice' && resolvedProvider\.capability !== 'tts' && resolvedProvider\.capability !== 'asr'/)
     expect(testSource).toMatch(/probeCozeVoiceProvider/)
     expect(testSource).toMatch(/model:\s*'coze-voice'/)
     expect(testSource).toMatch(/synthesizeDashScopeTtsSpeech/)
+    expect(testSource).toMatch(/runAdminAiAsrProbe/)
     expect(testSource).toMatch(/resolvedProvider\.capability === 'tts'/)
+    expect(testSource).toMatch(/resolvedProvider\.capability === 'asr'/)
     expect(cozeVoiceSource).toMatch(/await import\('@coze\/api'\)/)
     expect(cozeVoiceSource).toMatch(/client\.audio\.transcriptions\.create\(\{\s*file\s*\}\)/)
     expect(cozeVoiceSource).toMatch(/client\.audio\.speech\.create\(/)
     expect(dashscopeTtsSource).toMatch(/\/api\/v1\/services\/aigc\/multimodal-generation\/generation/)
     expect(dashscopeTtsSource).toMatch(/model:\s*input\.config\.model/)
     expect(dashscopeTtsSource).toMatch(/voice:\s*normalizeString\(input\.voice\) \|\| input\.config\.voice/)
+    expect(dashscopeAsrSource).toMatch(/\/chat\/completions/)
+    expect(dashscopeAsrSource).toMatch(/type:\s*'input_audio'/)
+    expect(dashscopeAsrSource).toMatch(/qwen3-asr-flash/)
+    expect(asrProbeSource).toMatch(/transcribeCozeVoiceAudio/)
+    expect(asrProbeSource).toMatch(/transcribeDashScopeAsrAudio/)
+    expect(asrProbeSource).toMatch(/\/audio\/transcriptions/)
     expect(channelsTestSource).toMatch(/synthesizeCozeVoiceSpeech/)
     expect(channelsTestSource).toMatch(/synthesizeDashScopeTtsSpeech/)
-    expect(channelsTestSource).toMatch(/requiredCapability === 'tts'/)
+    expect(channelsTestSource).toMatch(/runAdminAiAsrProbe/)
+    expect(channelsTestSource).toMatch(/providerId\?: string/)
+    expect(channelsTestSource).toMatch(/profileId\?: string/)
+    expect(channelsTestSource).toMatch(/attemptChain/)
+    expect(pageSource).toMatch(/sceneTestDrawerVisible/)
+    expect(pageSource).toMatch(/openSceneTestDrawer/)
+    expect(pageSource).toMatch(/sceneTestProviderOptions/)
+    expect(pageSource).toMatch(/sceneTestProfileOptions/)
+    expect(pageSource).toMatch(/日志链路/)
+    expect(pageSource).toMatch(/回退链路/)
   })
 })

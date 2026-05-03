@@ -125,7 +125,7 @@ interface ProviderVoiceConfig {
       sortOrder: number
     }>
   }
-  coze?: {
+  coze: {
     agents: Array<{
       id: string
       name: string
@@ -149,7 +149,7 @@ interface ProviderVoiceConfig {
       roomNamePrefix: string
     }
   }
-  billing?: {
+  billing: {
     realtimeStartupUnits: number
     realtimeUnitsPerMinute: number
     asrUnitsPerMinute: number
@@ -297,6 +297,33 @@ interface LogsPayload {
   total: number
   days: number
   items: LogItem[]
+}
+
+type SceneTestMode = 'chat' | 'asr' | 'tts' | 'embedding'
+
+interface SceneTestAttempt {
+  provider: string
+  model: string
+  success: boolean
+  latencyMs: number
+  error?: string
+}
+
+interface SceneTestPayload {
+  channelKey: PlatformAiChannelKey
+  channelLabel: string
+  provider: string
+  providerId?: string
+  model: string
+  profileId?: string
+  testMode: SceneTestMode
+  fallbackUsed: boolean
+  promptConfigured: boolean
+  responsePreview: string
+  attemptChain: SceneTestAttempt[]
+  latencyMs: number
+  auditAction?: string
+  logs?: string[]
 }
 
 interface ProviderTypeGuide {
@@ -573,6 +600,17 @@ const expandedModelPullSeriesKeys = ref<string[]>([])
 
 const sceneTesting = reactive<Record<string, boolean>>({})
 const sceneTestMessage = reactive<Record<string, string>>({})
+const sceneTestDrawerVisible = ref(false)
+const sceneTestTarget = ref<SceneItem | null>(null)
+const sceneTestResult = ref<SceneTestPayload | null>(null)
+const sceneTestError = ref('')
+const sceneTestForm = reactive({
+  providerId: '',
+  model: '',
+  profileId: '',
+  testMode: 'chat' as SceneTestMode,
+  message: '',
+})
 const sceneEditorVisible = ref(false)
 const sceneEditorForm = reactive({
   key: 'project_chat' as PlatformAiChannelKey,
@@ -1284,6 +1322,17 @@ function sceneRequiredCapability(key: PlatformAiChannelKey): ModelCapability {
   return sceneDefinitionForKey(key)?.requiredModelCapability || 'chat'
 }
 
+function sceneDefaultTestMode(key: PlatformAiChannelKey): SceneTestMode {
+  const capability = sceneRequiredCapability(key)
+  if (capability === 'asr')
+    return 'asr'
+  if (capability === 'tts')
+    return 'tts'
+  if (capability === 'embedding')
+    return 'embedding'
+  return 'chat'
+}
+
 function sceneAllowedProviderCapabilities(key: PlatformAiChannelKey): ProviderCapability[] {
   return sceneDefinitionForKey(key)?.allowedProviderCapabilities || ['llm']
 }
@@ -1292,8 +1341,20 @@ function sceneEmbeddingApiStyleFilter(key: PlatformAiChannelKey): EmbeddingApiSt
   return sceneDefinitionForKey(key)?.embeddingApiStyle || null
 }
 
-function sceneCanRunChatTest(scene: Pick<SceneItem, 'key' | 'providerIds'>): boolean {
+function sceneCanRunTest(scene: Pick<SceneItem, 'key' | 'providerIds'>): boolean {
   const capability = sceneRequiredCapability(scene.key)
+  if (capability === 'embedding') {
+    return scene.providerIds.some((id) => {
+      const provider = providerIdMap.value.get(id)
+      return provider?.capability === 'embedding' || provider?.capability === 'llm'
+    })
+  }
+  if (capability === 'asr') {
+    return scene.providerIds.some((id) => {
+      const provider = providerIdMap.value.get(id)
+      return provider?.capability === 'asr' || provider?.capability === 'voice' || provider?.capability === 'realtime' || provider?.capability === 'llm'
+    })
+  }
   if (capability === 'tts') {
     return scene.providerIds.some((id) => {
       const provider = providerIdMap.value.get(id)
@@ -1304,6 +1365,74 @@ function sceneCanRunChatTest(scene: Pick<SceneItem, 'key' | 'providerIds'>): boo
     return false
   return scene.providerIds.some(id => providerIdMap.value.get(id)?.capability === 'llm')
 }
+
+const sceneTestProviderOptions = computed(() => {
+  const scene = sceneTestTarget.value
+  if (!scene)
+    return []
+  const providerSet = new Set(scene.providerIds)
+  return providers.value
+    .filter(item => providerSet.has(item.id) && providerCanServeScene(item, scene.key))
+    .map(item => ({
+      id: item.id,
+      name: item.name,
+      provider: item.provider,
+      capability: item.capability,
+      enabled: item.enabled,
+    }))
+})
+
+const sceneTestModelOptions = computed(() => {
+  const scene = sceneTestTarget.value
+  if (!scene || !sceneTestForm.providerId)
+    return []
+  const capability = sceneRequiredCapability(scene.key)
+  const provider = providerIdMap.value.get(sceneTestForm.providerId)
+  if (!provider || provider.capability === 'voice' || provider.capability === 'realtime')
+    return []
+  return provider.models
+    .filter(item => item.enabled && modelHasCapability(item, capability) && (!sceneEmbeddingApiStyleFilter(scene.key) || item.embeddingApiStyle === sceneEmbeddingApiStyleFilter(scene.key)))
+    .map(item => ({
+      model: item.model,
+      label: item.label,
+      priceText: buildPriceText(item),
+    }))
+})
+
+const sceneTestProfileOptions = computed(() => {
+  const scene = sceneTestTarget.value
+  const provider = sceneTestForm.providerId ? providerIdMap.value.get(sceneTestForm.providerId) : null
+  if (!scene || !provider)
+    return []
+  if (sceneTestForm.testMode === 'asr') {
+    return (provider.voice?.qwen?.asrProfiles || [])
+      .filter(item => item.enabled)
+      .map(item => ({
+        id: item.id,
+        label: `${item.name || item.id} · ${item.model}`,
+      }))
+  }
+  if (sceneTestForm.testMode === 'tts') {
+    const qwenProfiles = (provider.voice?.qwen?.ttsProfiles || [])
+      .filter(item => item.enabled)
+      .map(item => ({
+        id: item.id,
+        label: `${item.name || item.id} · ${item.model}${item.voiceId ? ` · ${item.voiceId}` : ''}`,
+      }))
+    const cozeVoices = (provider.voice?.coze?.voices || [])
+      .filter(item => item.enabled)
+      .map(item => ({
+        id: item.id,
+        label: `${item.name || item.id} · ${item.voiceId}`,
+      }))
+    return [...qwenProfiles, ...cozeVoices]
+  }
+  return []
+})
+
+const sceneTestSelectedProvider = computed(() => {
+  return sceneTestForm.providerId ? providerIdMap.value.get(sceneTestForm.providerId) || null : null
+})
 
 function providerCanServeScene(provider: Pick<ProviderItem, 'capability'>, key: PlatformAiChannelKey): boolean {
   return sceneAllowedProviderCapabilities(key).includes(provider.capability)
@@ -2294,38 +2423,80 @@ function applyCurrentSceneConfigToAll() {
   Message.success(`已将「${sceneEditorForm.label}」的 Provider 绑定、模型池与故障转移策略复制到全部场景。`)
 }
 
-async function testScene(scene: SceneItem) {
-  if (!sceneCanRunChatTest(scene)) {
-    Message.info(`${modelCapabilityLabel(sceneRequiredCapability(scene.key))} 场景只配置模型路由，无需执行对话测试。`)
+function sceneTestModeLabel(mode: SceneTestMode): string {
+  if (mode === 'asr')
+    return 'ASR'
+  if (mode === 'tts')
+    return 'TTS'
+  if (mode === 'embedding')
+    return 'Embedding'
+  return 'Chat'
+}
+
+function openSceneTestDrawer(scene: SceneItem) {
+  if (!sceneCanRunTest(scene)) {
+    Message.info(`${modelCapabilityLabel(sceneRequiredCapability(scene.key))} 场景未绑定可测试 Provider。`)
     return
   }
+
+  sceneTestTarget.value = scene
+  sceneTestResult.value = null
+  sceneTestError.value = ''
+  sceneTestForm.testMode = sceneDefaultTestMode(scene.key)
+  sceneTestForm.providerId = normalizeSceneProviderIds(scene.providerIds || [], scene.key)[0] || ''
+  sceneTestForm.model = ''
+  sceneTestForm.profileId = ''
+  sceneTestForm.message = sceneTestForm.testMode === 'asr'
+    ? '会议 ASR 字幕探针'
+    : sceneTestForm.testMode === 'tts'
+      ? '这是一次语音合成场景测试。'
+      : sceneTestForm.testMode === 'embedding'
+        ? 'WinLoop knowledge embedding probe'
+        : '请回复“SCENE_OK”，并附带一句简短诊断说明。'
+  sceneTestDrawerVisible.value = true
+}
+
+function closeSceneTestDrawer() {
+  sceneTestDrawerVisible.value = false
+}
+
+function handleSceneTestProviderChange() {
+  sceneTestForm.model = ''
+  sceneTestForm.profileId = ''
+}
+
+async function runSceneTest() {
+  const scene = sceneTestTarget.value
+  if (!scene)
+    return
   sceneTesting[scene.key] = true
   sceneTestMessage[scene.key] = ''
+  sceneTestResult.value = null
+  sceneTestError.value = ''
   try {
-    const data = await requestApi<{
-      channelKey: PlatformAiChannelKey
-      channelLabel: string
-      provider: string
-      model: string
-      fallbackUsed: boolean
-      responsePreview: string
-      attemptChain: Array<{ provider: string, model: string, success: boolean, error?: string }>
-    }>(endpoint('/admin/ai/channels/test'), {
+    const data = await requestApi<SceneTestPayload>(endpoint('/admin/ai/channels/test'), {
       method: 'POST',
       body: {
         channelKey: scene.key,
+        providerId: sceneTestForm.providerId,
+        model: sceneTestForm.model,
+        profileId: sceneTestForm.profileId,
+        testMode: sceneTestForm.testMode,
+        message: sceneTestForm.message,
       },
     }, '场景测试失败。')
 
     const chainText = (data.attemptChain || [])
       .map(item => `${item.provider}/${item.model || 'coze-voice'}${item.success ? '' : '(failed)'}`)
       .join(' -> ')
-    sceneTestMessage[scene.key] = `${data.provider} / ${data.model || 'coze-voice'}${data.fallbackUsed ? ' · 已回退' : ''} · ${chainText || data.responsePreview}`
+    sceneTestResult.value = data
+    sceneTestMessage[scene.key] = `${sceneTestModeLabel(data.testMode)} · ${data.provider} / ${data.model || 'coze-voice'}${data.fallbackUsed ? ' · 已回退' : ''} · ${chainText || data.responsePreview}`
     Message.success(`场景「${scene.label}」测试成功。`)
   }
   catch (error: any) {
     const message = normalizeError(error, '场景测试失败。')
     sceneTestMessage[scene.key] = message
+    sceneTestError.value = message
     Message.error(message)
   }
   finally {
@@ -2629,8 +2800,8 @@ onMounted(async () => {
                   <a-button size="mini" @click="openSceneDrawer(scope.record)">
                     编辑
                   </a-button>
-                  <a-button size="mini" :disabled="!sceneCanRunChatTest(scope.record)" :loading="sceneTesting[scope.record.key]" @click="testScene(scope.record)">
-                    {{ sceneCanRunChatTest(scope.record) ? '测试' : '无需测试' }}
+                  <a-button size="mini" :disabled="!sceneCanRunTest(scope.record)" :loading="sceneTesting[scope.record.key]" @click="openSceneTestDrawer(scope.record)">
+                    {{ sceneCanRunTest(scope.record) ? '测试' : '不可测' }}
                   </a-button>
                 </div>
               </template>
@@ -2971,7 +3142,7 @@ onMounted(async () => {
               </div>
 
               <div v-for="(profile, index) in providerEditorForm.voice.qwen?.realtimeProfiles || []" :key="profile.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
-                <div class="flex items-center justify-between gap-3">
+                <div class="flex gap-3 items-center justify-between">
                   <strong class="text-sm text-slate-900">Realtime Profile</strong>
                   <a-button size="mini" status="danger" @click="removeQwenRealtimeProfile(index)">
                     删除
@@ -2987,9 +3158,15 @@ onMounted(async () => {
                   <a-input v-model="profile.asrProfileId" placeholder="ASR Profile ID" />
                   <a-input v-model="profile.ttsProfileId" placeholder="TTS Profile ID" />
                   <a-select v-model="profile.vadMode">
-                    <a-option value="server_vad">server_vad</a-option>
-                    <a-option value="semantic_vad">semantic_vad</a-option>
-                    <a-option value="manual">manual</a-option>
+                    <a-option value="server_vad">
+                      server_vad
+                    </a-option>
+                    <a-option value="semantic_vad">
+                      semantic_vad
+                    </a-option>
+                    <a-option value="manual">
+                      manual
+                    </a-option>
                   </a-select>
                   <a-input-number v-model="profile.frameIntervalMs" :min="250" :max="5000" :step="250" class="w-full" placeholder="视频帧间隔 ms" />
                   <a-switch v-model="profile.enabled" />
@@ -2997,7 +3174,7 @@ onMounted(async () => {
               </div>
 
               <div v-for="(profile, index) in providerEditorForm.voice.qwen?.asrProfiles || []" :key="profile.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
-                <div class="flex items-center justify-between gap-3">
+                <div class="flex gap-3 items-center justify-between">
                   <strong class="text-sm text-slate-900">ASR Profile</strong>
                   <a-button size="mini" status="danger" @click="removeQwenAsrProfile(index)">
                     删除
@@ -3012,7 +3189,7 @@ onMounted(async () => {
               </div>
 
               <div v-for="(profile, index) in providerEditorForm.voice.qwen?.ttsProfiles || []" :key="profile.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
-                <div class="flex items-center justify-between gap-3">
+                <div class="flex gap-3 items-center justify-between">
                   <strong class="text-sm text-slate-900">TTS Profile</strong>
                   <a-button size="mini" status="danger" @click="removeQwenTtsProfile(index)">
                     删除
@@ -3056,7 +3233,7 @@ onMounted(async () => {
                 </a-form-item>
               </div>
               <div v-for="(agent, index) in providerEditorForm.voice.coze?.agents || []" :key="agent.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
-                <div class="flex items-center justify-between gap-3">
+                <div class="flex gap-3 items-center justify-between">
                   <strong class="text-sm text-slate-900">Coze 智能体</strong>
                   <a-button size="mini" status="danger" @click="removeCozeAgent(index)">
                     删除
@@ -3065,10 +3242,18 @@ onMounted(async () => {
                 <div class="gap-3 grid md:grid-cols-4">
                   <a-input v-model="agent.name" placeholder="名称" />
                   <a-select v-model="agent.judgeType">
-                    <a-option value="technical">技术评委</a-option>
-                    <a-option value="business">业务评委</a-option>
-                    <a-option value="expression">表达评委</a-option>
-                    <a-option value="custom">自定义评委</a-option>
+                    <a-option value="technical">
+                      技术评委
+                    </a-option>
+                    <a-option value="business">
+                      业务评委
+                    </a-option>
+                    <a-option value="expression">
+                      表达评委
+                    </a-option>
+                    <a-option value="custom">
+                      自定义评委
+                    </a-option>
                   </a-select>
                   <a-input v-model="agent.botId" placeholder="Bot ID" />
                   <a-input v-model="agent.connectorId" placeholder="Connector ID" />
@@ -3077,7 +3262,7 @@ onMounted(async () => {
                 </div>
               </div>
               <div v-for="(voice, index) in providerEditorForm.voice.coze?.voices || []" :key="voice.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
-                <div class="flex items-center justify-between gap-3">
+                <div class="flex gap-3 items-center justify-between">
                   <strong class="text-sm text-slate-900">Coze 音色</strong>
                   <a-button size="mini" status="danger" @click="removeCozeVoice(index)">
                     删除
@@ -3693,6 +3878,190 @@ onMounted(async () => {
           </a-button>
           <a-button type="primary" @click="saveSceneDrawer">
             保存场景
+          </a-button>
+        </div>
+      </template>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="sceneTestDrawerVisible"
+      :title="sceneTestTarget ? `测试场景 · ${sceneTestTarget.label}` : '测试场景'"
+      :width="760"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <div v-if="sceneTestTarget" class="gap-4 grid">
+          <a-alert type="info" :show-icon="true">
+            点击执行后会走统一 Channel 路由，返回实际 Provider、模型/Profile、回退链路、延迟和审计动作。
+          </a-alert>
+
+          <div class="gap-3 grid md:grid-cols-2">
+            <div class="text-sm px-4 py-3 rounded-lg bg-slate-50">
+              <div class="text-xs text-slate-500">
+                场景
+              </div>
+              <div class="text-slate-900 font-medium mt-1">
+                {{ sceneTestTarget.label }} · {{ sceneTestTarget.key }}
+              </div>
+            </div>
+            <div class="text-sm px-4 py-3 rounded-lg bg-slate-50">
+              <div class="text-xs text-slate-500">
+                能力
+              </div>
+              <div class="text-slate-900 font-medium mt-1">
+                {{ modelCapabilityLabel(sceneRequiredCapability(sceneTestTarget.key)) }}
+              </div>
+            </div>
+          </div>
+
+          <a-form-item label="测试类型">
+            <a-select v-model="sceneTestForm.testMode">
+              <a-option value="chat">
+                Chat
+              </a-option>
+              <a-option value="asr">
+                ASR
+              </a-option>
+              <a-option value="tts">
+                TTS
+              </a-option>
+              <a-option value="embedding">
+                Embedding
+              </a-option>
+            </a-select>
+          </a-form-item>
+
+          <a-form-item label="Provider">
+            <a-select
+              v-model="sceneTestForm.providerId"
+              allow-clear
+              placeholder="留空则按场景配置顺序测试"
+              @change="handleSceneTestProviderChange"
+            >
+              <a-option
+                v-for="item in sceneTestProviderOptions"
+                :key="item.id"
+                :value="item.id"
+                :disabled="!item.enabled"
+              >
+                {{ item.name }} <span class="text-xs text-slate-400">({{ item.provider }} · {{ item.capability }})</span>
+              </a-option>
+            </a-select>
+          </a-form-item>
+
+          <a-form-item v-if="sceneTestModelOptions.length > 0" label="模型">
+            <a-select v-model="sceneTestForm.model" allow-clear allow-search placeholder="留空则按场景回退顺序测试">
+              <a-option
+                v-for="item in sceneTestModelOptions"
+                :key="item.model"
+                :value="item.model"
+              >
+                <div class="space-y-0.5">
+                  <div class="flex gap-3 items-center justify-between">
+                    <span>{{ item.model }}</span>
+                    <span v-if="item.label && item.label !== item.model" class="text-xs text-slate-400">
+                      {{ item.label }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-slate-400">
+                    {{ item.priceText }}
+                  </div>
+                </div>
+              </a-option>
+            </a-select>
+          </a-form-item>
+
+          <a-form-item v-if="sceneTestProfileOptions.length > 0" label="Profile">
+            <a-select v-model="sceneTestForm.profileId" allow-clear allow-search placeholder="留空则使用 Provider 默认 Profile">
+              <a-option
+                v-for="item in sceneTestProfileOptions"
+                :key="item.id"
+                :value="item.id"
+              >
+                {{ item.label }}
+              </a-option>
+            </a-select>
+          </a-form-item>
+
+          <div v-if="sceneTestSelectedProvider" class="text-xs text-slate-500 px-4 py-3 rounded-lg bg-slate-50">
+            当前选择：{{ sceneTestSelectedProvider.name }} · {{ sceneTestSelectedProvider.provider }} · {{ providerCapabilityLabel(sceneTestSelectedProvider.capability) }}
+          </div>
+
+          <a-form-item label="测试输入">
+            <a-textarea
+              v-model="sceneTestForm.message"
+              :auto-size="{ minRows: 3, maxRows: 8 }"
+              placeholder="按测试类型传入提示词、ASR context、TTS 文本或 embedding 文本"
+            />
+          </a-form-item>
+
+          <a-alert v-if="sceneTestError" type="error" :show-icon="true">
+            {{ sceneTestError }}
+          </a-alert>
+
+          <div v-if="sceneTestResult" class="space-y-3">
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-white">
+              <div class="flex flex-wrap gap-2 items-center">
+                <a-tag color="green">
+                  {{ sceneTestModeLabel(sceneTestResult.testMode) }}
+                </a-tag>
+                <a-tag :color="sceneTestResult.fallbackUsed ? 'orange' : 'arcoblue'">
+                  {{ sceneTestResult.fallbackUsed ? '已回退' : '主链路' }}
+                </a-tag>
+                <a-tag color="gray">
+                  {{ formatLatency(sceneTestResult.latencyMs) }}
+                </a-tag>
+              </div>
+              <div class="text-sm text-slate-900 font-medium mt-3">
+                {{ sceneTestResult.provider }} / {{ sceneTestResult.model || 'model-less' }}
+              </div>
+              <div class="text-xs text-slate-500 mt-2 whitespace-pre-wrap">
+                {{ sceneTestResult.responsePreview }}
+              </div>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50">
+              <div class="text-sm text-slate-900 font-medium">
+                回退链路
+              </div>
+              <div class="mt-3 space-y-2">
+                <div
+                  v-for="(item, index) in sceneTestResult.attemptChain"
+                  :key="`${item.provider}-${item.model}-${index}`"
+                  class="text-xs flex flex-wrap gap-2 items-center"
+                >
+                  <a-tag :color="item.success ? 'green' : 'red'">
+                    {{ item.success ? 'OK' : 'FAIL' }}
+                  </a-tag>
+                  <span class="text-slate-700">{{ index + 1 }}. {{ item.provider }} / {{ item.model || 'model-less' }}</span>
+                  <span class="text-slate-400">{{ formatLatency(item.latencyMs) }}</span>
+                  <span v-if="item.error" class="text-red-500">{{ item.error }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50">
+              <div class="text-sm text-slate-900 font-medium">
+                日志链路
+              </div>
+              <div class="text-xs text-slate-600 mt-3 space-y-1">
+                <div v-for="(item, index) in sceneTestResult.logs || []" :key="`${index}-${item}`">
+                  {{ item }}
+                </div>
+                <div>审计动作：{{ sceneTestResult.auditAction || 'test.admin.ai.channel' }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="closeSceneTestDrawer">
+            关闭
+          </a-button>
+          <a-button type="primary" :loading="sceneTestTarget ? sceneTesting[sceneTestTarget.key] : false" @click="runSceneTest">
+            执行测试
           </a-button>
         </div>
       </template>

@@ -1,29 +1,116 @@
 import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { setResponseStatus } from 'h3'
+import { runAdminAiAsrProbe } from '~~/server/services/admin-ai/asr-probe'
 import { isCozeVoiceProvider, resolveCozeVoiceRuntimeConfig, synthesizeCozeVoiceSpeech } from '~~/server/services/admin-ai/coze-voice'
 import { resolveDashScopeTtsRuntimeConfig, synthesizeDashScopeTtsSpeech } from '~~/server/services/admin-ai/dashscope-tts'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { createKnowledgeEmbedding } from '~~/server/services/knowledge-ai'
 import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { getPlatformAiChannelDefinitions, resolveAiRuntimeForChannel, resolvePlatformAiChannelModelCapability, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
+import { buildPlatformAiChannelsJson, getPlatformAiChannelDefinitions, resolveAiRuntimeForChannel, resolvePlatformAiChannelModelCapability, resolvePlatformAiRegistry, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 
 interface ChannelTestBody {
   channelKey?: PlatformAiChannelKey
   message?: string
+  providerId?: string
+  model?: string
+  profileId?: string
+  testMode?: 'auto' | 'chat' | 'asr' | 'tts' | 'embedding'
 }
 
 const DEFAULT_CHANNEL: PlatformAiChannelKey = 'project_chat'
+
+function normalizeString(value: unknown): string {
+  return String(value || '').trim()
+}
 
 function resolveChannelKey(raw: unknown): PlatformAiChannelKey {
   const text = String(raw || '').trim() as PlatformAiChannelKey
   const allowed = getPlatformAiChannelDefinitions().map(item => item.key)
   return allowed.includes(text) ? text : DEFAULT_CHANNEL
+}
+
+function buildChannelTestRuntime(
+  runtime: Awaited<ReturnType<typeof readEffectiveRuntimeSettings>>['runtime'],
+  input: {
+    channelKey: PlatformAiChannelKey
+    providerId?: string
+    model?: string
+  },
+) {
+  const providerId = normalizeString(input.providerId)
+  const model = normalizeString(input.model)
+  if (!providerId && !model)
+    return runtime
+
+  const registry = resolvePlatformAiRegistry(runtime)
+  const channels = registry.channels.map((channel) => {
+    if (channel.key !== input.channelKey)
+      return channel
+    const providerIds = providerId ? [providerId] : channel.providerIds
+    const models = model ? [model] : channel.models
+    return {
+      ...channel,
+      providerIds,
+      models,
+      modelFallback: model ? [model] : channel.modelFallback,
+    }
+  })
+
+  return {
+    ...runtime,
+    ai: {
+      ...runtime.ai,
+      channelsJson: buildPlatformAiChannelsJson(runtime, channels, registry.providers),
+    },
+  }
+}
+
+function resolveTestMode(
+  requested: unknown,
+  requiredCapability: ReturnType<typeof resolvePlatformAiChannelModelCapability>,
+): 'chat' | 'asr' | 'tts' | 'embedding' {
+  const normalized = normalizeString(requested)
+  if (normalized === 'chat' || normalized === 'asr' || normalized === 'tts' || normalized === 'embedding')
+    return normalized
+  if (requiredCapability === 'asr')
+    return 'asr'
+  if (requiredCapability === 'tts')
+    return 'tts'
+  if (requiredCapability === 'embedding')
+    return 'embedding'
+  return 'chat'
+}
+
+function resolveTtsProfile(
+  provider: Parameters<typeof resolveCozeVoiceRuntimeConfig>[0]['provider'],
+  profileId: string,
+): { model?: string, voiceId?: string } {
+  const normalizedProfileId = normalizeString(profileId)
+  if (!normalizedProfileId || !provider?.voice)
+    return {}
+  const qwenProfile = provider.voice.qwen?.ttsProfiles.find(item => item.id === normalizedProfileId && item.enabled)
+    || provider.voice.qwen?.ttsProfiles.find(item => item.id === normalizedProfileId)
+  if (qwenProfile) {
+    return {
+      model: qwenProfile.model,
+      voiceId: qwenProfile.voiceId,
+    }
+  }
+  const cozeVoice = provider.voice.coze?.voices.find(item => item.id === normalizedProfileId && item.enabled)
+    || provider.voice.coze?.voices.find(item => item.id === normalizedProfileId)
+  if (cozeVoice) {
+    return {
+      voiceId: cozeVoice.voiceId,
+    }
+  }
+  return {}
 }
 
 function extractMessageText(content: unknown): string {
@@ -64,18 +151,105 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody<ChannelTestBody>(event).catch(() => ({} as ChannelTestBody))
   const channelKey = resolveChannelKey(body.channelKey)
-  const channelRuntime = resolveAiRuntimeForChannel(runtime, channelKey)
+  const testRuntime = buildChannelTestRuntime(runtime, {
+    channelKey,
+    providerId: body.providerId,
+    model: body.model,
+  })
+  const channelRuntime = resolveAiRuntimeForChannel(testRuntime, channelKey)
   const requiredCapability = resolvePlatformAiChannelModelCapability(channelKey)
-  if (requiredCapability === 'tts') {
+  const testMode = resolveTestMode(body.testMode, requiredCapability)
+  const profileId = normalizeString(body.profileId)
+  if (testMode === 'asr') {
     try {
-      const result = await runWithPlatformAiChannelFallback(runtime, channelKey, async ({ ai, provider, channel }) => {
+      const result = await runWithPlatformAiChannelFallback(testRuntime, channelKey, async ({ ai, provider, channel }) => {
+        const probe = await runAdminAiAsrProbe({
+          runtime: testRuntime,
+          provider,
+          ai,
+          message: body.message,
+          profileId,
+        })
+        return {
+          channel,
+          probe,
+          reply: probe.detail,
+        }
+      })
+
+      await withTransaction(event, async (db) => {
+        await recordContestAuditLog(db, {
+          actorUserId: user.id,
+          action: 'test.admin.ai.channel',
+          payload: {
+            channelKey,
+            testMode,
+            provider: result.ai.provider,
+            model: result.data.probe.model || result.ai.model,
+            profileId,
+            fallbackUsed: result.usedFallback,
+            attemptChain: result.attemptChain,
+            latencyMs: Date.now() - startedAt,
+          },
+        })
+      })
+
+      return ok({
+        channelKey,
+        channelLabel: result.channel.label,
+        provider: result.ai.provider,
+        providerId: result.provider?.id || '',
+        model: result.data.probe.model || result.ai.model || 'qwen3-asr-flash',
+        profileId,
+        testMode,
+        fallbackUsed: result.usedFallback,
+        promptConfigured: Boolean(String(result.prompt || '').trim()),
+        responsePreview: result.data.reply.slice(0, 300),
+        attemptChain: result.attemptChain,
+        latencyMs: Date.now() - startedAt,
+        auditAction: 'test.admin.ai.channel',
+        logs: [
+          `场景：${result.channel.label} (${channelKey})`,
+          `测试类型：ASR`,
+          `Provider：${result.ai.provider}`,
+          `模型/Profile：${result.data.probe.model || result.ai.model || 'coze-voice'}${profileId ? ` / ${profileId}` : ''}`,
+          `音频探针：${result.data.probe.audioBytes} bytes wav`,
+          `回退链路：${result.attemptChain.map(item => `${item.provider}/${item.model || 'model-less'}:${item.success ? 'ok' : item.error || 'failed'}`).join(' -> ')}`,
+        ],
+      }, {
+        startedAt,
+        provider: result.ai.provider,
+        model: result.data.probe.model || result.ai.model || 'qwen3-asr-flash',
+        fallbackUsed: result.usedFallback,
+        attempts: result.attemptChain.length,
+      })
+    }
+    catch (error: any) {
+      setResponseStatus(event, 502)
+      return fail(String(error?.message || 'ASR 场景测试失败。'), {
+        startedAt,
+        provider: channelRuntime.ai.provider,
+        model: channelRuntime.ai.model,
+        fallbackUsed: channelRuntime.usedFallback,
+        attempts: 1,
+      }, 50299)
+    }
+  }
+
+  if (testMode === 'tts') {
+    try {
+      const result = await runWithPlatformAiChannelFallback(testRuntime, channelKey, async ({ ai, provider, channel }) => {
         const text = String(body.message || '').trim() || 'SCENE_TTS_OK'
+        const ttsProfile = resolveTtsProfile(provider, profileId)
         if (isCozeVoiceProvider(provider)) {
           const config = resolveCozeVoiceRuntimeConfig({ provider, ai, runtime })
           if (!config)
             throw new Error('Coze 语音 Provider 未完整配置。')
           const speech = await synthesizeCozeVoiceSpeech({
-            config,
+            config: {
+              ...config,
+              voiceId: ttsProfile.voiceId || config.voiceId,
+            },
             text,
             responseFormat: 'wav',
           })
@@ -89,7 +263,11 @@ export default defineEventHandler(async (event) => {
         if (!config)
           throw new Error('当前 TTS Provider 未完整配置，或不是 Coze / DashScope TTS Provider。')
         const speech = await synthesizeDashScopeTtsSpeech({
-          config,
+          config: {
+            ...config,
+            model: ttsProfile.model || config.model,
+            voice: ttsProfile.voiceId || config.voice,
+          },
           text,
         })
         const resultSize = speech.audioBuffer?.byteLength || 0
@@ -106,8 +284,10 @@ export default defineEventHandler(async (event) => {
           action: 'test.admin.ai.channel',
           payload: {
             channelKey,
+            testMode,
             provider: result.ai.provider,
             model: result.ai.model,
+            profileId,
             fallbackUsed: result.usedFallback,
             attemptChain: result.attemptChain,
             latencyMs: Date.now() - startedAt,
@@ -119,12 +299,23 @@ export default defineEventHandler(async (event) => {
         channelKey,
         channelLabel: result.channel.label,
         provider: result.ai.provider,
+        providerId: result.provider?.id || '',
         model: result.ai.model || 'coze-voice',
+        profileId,
+        testMode,
         fallbackUsed: result.usedFallback,
         promptConfigured: Boolean(String(result.prompt || '').trim()),
         responsePreview: result.data.reply.slice(0, 300),
         attemptChain: result.attemptChain,
         latencyMs: Date.now() - startedAt,
+        auditAction: 'test.admin.ai.channel',
+        logs: [
+          `场景：${result.channel.label} (${channelKey})`,
+          `测试类型：TTS`,
+          `Provider：${result.ai.provider}`,
+          `模型/Profile：${result.ai.model || 'coze-voice'}${profileId ? ` / ${profileId}` : ''}`,
+          `回退链路：${result.attemptChain.map(item => `${item.provider}/${item.model || 'model-less'}:${item.success ? 'ok' : item.error || 'failed'}`).join(' -> ')}`,
+        ],
       }, {
         startedAt,
         provider: result.ai.provider,
@@ -145,9 +336,83 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  if (requiredCapability !== 'chat') {
+  if (testMode === 'embedding') {
+    try {
+      const result = await runWithPlatformAiChannelFallback(testRuntime, channelKey, async ({ channel }) => {
+        const text = String(body.message || '').trim() || 'WinLoop embedding probe'
+        const embedding = await createKnowledgeEmbedding({
+          text,
+          inputType: channelKey === 'knowledge_visual_embedding' ? 'text' : 'text',
+          runtime: testRuntime,
+        })
+        return {
+          channel,
+          reply: `Embedding OK，dimensions=${embedding.dimensions || embedding.embedding.length}，apiStyle=${embedding.apiStyle}。`,
+          embedding,
+        }
+      })
+
+      await withTransaction(event, async (db) => {
+        await recordContestAuditLog(db, {
+          actorUserId: user.id,
+          action: 'test.admin.ai.channel',
+          payload: {
+            channelKey,
+            testMode,
+            provider: result.data.embedding.provider || result.ai.provider,
+            model: result.data.embedding.model || result.ai.model,
+            fallbackUsed: result.usedFallback,
+            attemptChain: result.attemptChain,
+            latencyMs: Date.now() - startedAt,
+          },
+        })
+      })
+
+      return ok({
+        channelKey,
+        channelLabel: result.channel.label,
+        provider: result.data.embedding.provider || result.ai.provider,
+        providerId: result.provider?.id || '',
+        model: result.data.embedding.model || result.ai.model,
+        profileId,
+        testMode,
+        fallbackUsed: result.usedFallback || result.data.embedding.fallbackUsed,
+        promptConfigured: Boolean(String(result.prompt || '').trim()),
+        responsePreview: result.data.reply.slice(0, 300),
+        attemptChain: result.attemptChain,
+        latencyMs: Date.now() - startedAt,
+        auditAction: 'test.admin.ai.channel',
+        logs: [
+          `场景：${result.channel.label} (${channelKey})`,
+          `测试类型：Embedding`,
+          `Provider：${result.data.embedding.provider || result.ai.provider}`,
+          `模型：${result.data.embedding.model || result.ai.model}`,
+          `维度：${result.data.embedding.dimensions || result.data.embedding.embedding.length}`,
+          `回退链路：${result.attemptChain.map(item => `${item.provider}/${item.model || 'model-less'}:${item.success ? 'ok' : item.error || 'failed'}`).join(' -> ')}`,
+        ],
+      }, {
+        startedAt,
+        provider: result.data.embedding.provider || result.ai.provider,
+        model: result.data.embedding.model || result.ai.model,
+        fallbackUsed: result.usedFallback || result.data.embedding.fallbackUsed,
+        attempts: result.attemptChain.length,
+      })
+    }
+    catch (error: any) {
+      setResponseStatus(event, 502)
+      return fail(String(error?.message || 'Embedding 场景测试失败。'), {
+        startedAt,
+        provider: channelRuntime.ai.provider,
+        model: channelRuntime.ai.model,
+        fallbackUsed: channelRuntime.usedFallback,
+        attempts: 1,
+      }, 50299)
+    }
+  }
+
+  if (testMode !== 'chat') {
     setResponseStatus(event, 400)
-    return fail('当前场景不是聊天模型场景，无需执行对话连通性测试。', {
+    return fail('当前测试类型暂不支持该场景。', {
       startedAt,
       provider: channelRuntime.ai.provider,
       model: channelRuntime.ai.model,
@@ -158,7 +423,7 @@ export default defineEventHandler(async (event) => {
   const testMessage = String(body.message || '').trim() || '请回复“SCENE_OK”，并附带一句简短诊断说明。'
 
   try {
-    const result = await runWithPlatformAiChannelFallback(runtime, channelKey, async ({ ai, channel, prompt }) => {
+    const result = await runWithPlatformAiChannelFallback(testRuntime, channelKey, async ({ ai, channel, prompt }) => {
       if (!isAiRuntimeConfigured(ai))
         throw new Error('该场景未配置可用模型（provider/baseURL/apiKey/model 缺失）。')
 
@@ -195,6 +460,7 @@ export default defineEventHandler(async (event) => {
         action: 'test.admin.ai.channel',
         payload: {
           channelKey,
+          testMode,
           provider: result.ai.provider,
           model: result.ai.model,
           fallbackUsed: result.usedFallback,
@@ -208,12 +474,23 @@ export default defineEventHandler(async (event) => {
       channelKey,
       channelLabel: result.channel.label,
       provider: result.ai.provider,
+      providerId: result.provider?.id || '',
       model: result.ai.model,
+      profileId,
+      testMode,
       fallbackUsed: result.usedFallback,
       promptConfigured: Boolean(String(result.prompt || '').trim()),
       responsePreview: result.data.reply.slice(0, 300),
       attemptChain: result.attemptChain,
       latencyMs: Date.now() - startedAt,
+      auditAction: 'test.admin.ai.channel',
+      logs: [
+        `场景：${result.channel.label} (${channelKey})`,
+        `测试类型：Chat`,
+        `Provider：${result.ai.provider}`,
+        `模型：${result.ai.model}`,
+        `回退链路：${result.attemptChain.map(item => `${item.provider}/${item.model || 'model-less'}:${item.success ? 'ok' : item.error || 'failed'}`).join(' -> ')}`,
+      ],
     }, {
       startedAt,
       provider: result.ai.provider,

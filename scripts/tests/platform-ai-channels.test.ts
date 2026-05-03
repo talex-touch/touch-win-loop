@@ -286,10 +286,10 @@ describe('platform-ai-channels', () => {
 
     expect(meetingAsr?.requiredModelCapability).toBe('asr')
     expect(meetingAsr?.builtinPrompt).toContain('会议音频')
-    expect(meetingAsr?.allowedProviderCapabilities).toEqual(['llm', 'asr', 'voice'])
+    expect(meetingAsr?.allowedProviderCapabilities).toEqual(['llm', 'asr', 'voice', 'realtime'])
     expect(speechTts?.requiredModelCapability).toBe('tts')
-    expect(speechTts?.allowedProviderCapabilities).toEqual(['llm', 'tts', 'voice'])
-    expect(defense?.allowedProviderCapabilities).toEqual(['llm', 'voice'])
+    expect(speechTts?.allowedProviderCapabilities).toEqual(['llm', 'tts', 'voice', 'realtime'])
+    expect(defense?.allowedProviderCapabilities).toEqual(['llm', 'voice', 'realtime'])
     expect(knowledgeEmbedding?.embeddingApiStyle).toBe('openai-compatible-text')
     expect(knowledgeEmbedding?.builtinPrompt).toContain('OpenAI 兼容文本')
     expect(visualEmbedding?.requiredModelCapability).toBe('embedding')

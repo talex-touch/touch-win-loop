@@ -598,6 +598,7 @@ export async function createKnowledgeEmbedding(input: {
   inputType?: ProjectKnowledgeEmbeddingInputType
   enableFusion?: boolean
   event?: H3Event
+  runtime?: RuntimeSettings
 }): Promise<KnowledgeEmbeddingResult> {
   const profile = await resolveKnowledgeEmbeddingRuntimeProfile(input)
   const useCache = Boolean(input.event)

@@ -1,6 +1,7 @@
 import type { PlatformAiProviderCapability, PlatformAiProviderVoiceConfig } from '~~/server/utils/platform-ai-channels'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { setResponseStatus } from 'h3'
+import { runAdminAiAsrProbe } from '~~/server/services/admin-ai/asr-probe'
 import { probeCozeVoiceProvider, resolveCozeVoiceRuntimeConfig } from '~~/server/services/admin-ai/coze-voice'
 import { resolveDashScopeTtsRuntimeConfig, synthesizeDashScopeTtsSpeech } from '~~/server/services/admin-ai/dashscope-tts'
 import { createChatModel } from '~~/server/services/ai/llm-client'
@@ -124,7 +125,7 @@ export default defineEventHandler(async (event) => {
       })()
     : currentProvider
 
-  if (!resolvedProvider || (resolvedProvider.capability !== 'llm' && resolvedProvider.capability !== 'voice' && resolvedProvider.capability !== 'tts')) {
+  if (!resolvedProvider || (resolvedProvider.capability !== 'llm' && resolvedProvider.capability !== 'voice' && resolvedProvider.capability !== 'tts' && resolvedProvider.capability !== 'asr')) {
     setResponseStatus(event, 400)
     return fail('当前 Provider 不支持连通性测试。', {
       startedAt,
@@ -330,6 +331,62 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 502)
       const sourceLabel = usedProvidedApiKey ? '当前输入的 API Key' : '已保存的 API Key'
       return fail(`[${sourceLabel}] ${String(error?.message || 'DashScope TTS Provider 测试失败。')}`, {
+        startedAt,
+        provider: resolved.ai.provider,
+        model: resolved.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 50297)
+    }
+  }
+
+  if (resolvedProvider.capability === 'asr') {
+    try {
+      const probe = await runAdminAiAsrProbe({
+        runtime,
+        provider: {
+          ...resolvedProvider,
+          apiKey,
+          baseURL,
+        },
+        ai: resolved.ai,
+        message: body.message,
+      })
+      const responsePreview = probe.detail
+
+      await withTransaction(event, async (db) => {
+        await recordContestAuditLog(db, {
+          actorUserId: user.id,
+          action: 'test.admin.ai.provider',
+          payload: {
+            providerId: resolvedProvider.id,
+            provider: resolved.ai.provider,
+            model: probe.model,
+            responsePreview,
+            requestId: probe.requestId,
+            latencyMs: Date.now() - startedAt,
+          },
+        })
+      })
+
+      return ok({
+        providerId: resolvedProvider.id,
+        provider: resolved.ai.provider,
+        model: probe.model,
+        responsePreview,
+        latencyMs: Date.now() - startedAt,
+      }, {
+        startedAt,
+        provider: resolved.ai.provider,
+        model: probe.model,
+        fallbackUsed: false,
+        attempts: 1,
+      })
+    }
+    catch (error: any) {
+      setResponseStatus(event, 502)
+      const sourceLabel = usedProvidedApiKey ? '当前输入的 API Key' : '已保存的 API Key'
+      return fail(`[${sourceLabel}] ${String(error?.message || 'DashScope ASR Provider 测试失败。')}`, {
         startedAt,
         provider: resolved.ai.provider,
         model: resolved.ai.model,
