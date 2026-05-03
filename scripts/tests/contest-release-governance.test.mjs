@@ -224,14 +224,17 @@ describe('赛事版本流与前台可见性收口', () => {
   })
 
   it('政策库发布失败会返回可读错误', async () => {
-    const [releaseStoreSource, publishApiSource] = await Promise.all([
+    const [releaseStoreSource, publishApiSource, bitableSyncSource] = await Promise.all([
       readSource('server/utils/release-store.ts'),
       readSource('server/api/admin/releases/[id]/publish.post.ts'),
+      readSource('server/services/feishu/bitable-sync.ts'),
     ])
 
     assert.match(releaseStoreSource, /POLICY_RELEASE_ITEM_INVALID/, '政策库发布前未校验必要字段')
     assert.match(publishApiSource, /POLICY_RELEASE_ITEM_INVALID/, '政策库发布错误未映射为 API 错误')
     assert.match(publishApiSource, /缺少政策编号或会议名称/, '政策库发布失败缺少可读提示')
+    assert.match(bitableSyncSource, /const policyItem: PolicyLibraryItemSnapshot = \{\s*externalId: explicitExternalId,/, '政策库发布草稿应使用显式政策编号，不能用 recordId 兜底 externalId')
+    assert.match(bitableSyncSource, /status: draft\.existed \? 'updated' : 'created',\s*externalId: explicitExternalId,/, '政策库同步结果应回传显式政策编号')
   })
 
   it('发布审批队列统计使用全量口径，不受当前列表 limit 截断', async () => {
