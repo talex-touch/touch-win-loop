@@ -7,31 +7,13 @@ definePageMeta({
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const route = useRoute()
-
-const contestId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.id
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const isEmbedMode = computed(() => {
-  const value = route.query.embed
-  if (Array.isArray(value))
-    return value[0] === '1'
-  return value === '1'
-})
-
-function withEmbed(path: string): string | { path: string, query: { embed: string } } {
-  if (isEmbedMode.value)
-    return { path, query: { embed: '1' } }
-  return path
-}
+const { contestId, withEmbed } = useAdminContestRoute()
 
 const loading = ref(false)
 const errorText = ref('')
 const items = ref<TrackTimeline[]>([])
 const tracks = ref<Track[]>([])
+let loadRequestId = 0
 const trackColumns = [
   { title: '赛道', dataIndex: 'trackId', slotName: 'track', width: 180 },
   { title: '年份', dataIndex: 'year', width: 100 },
@@ -44,9 +26,21 @@ const trackColumns = [
 
 const trackNameMap = computed(() => {
   const map = new Map<string, string>()
-  for (const item of tracks.value)
-    map.set(item.id, item.name)
+  for (const item of tracks.value) {
+    if (item.contestId === contestId.value)
+      map.set(item.id, item.name)
+  }
   return map
+})
+
+const visibleItems = computed(() => {
+  return items.value.filter((item) => {
+    const state = item as TrackTimeline & { deletedAt?: string | null, status?: string | null }
+    return item.contestId === contestId.value
+      && !state.deletedAt
+      && state.status !== 'deleted'
+      && state.status !== 'archived'
+  })
 })
 
 function formatTime(value?: string | null): string {
@@ -54,27 +48,43 @@ function formatTime(value?: string | null): string {
 }
 
 async function loadItems() {
-  loading.value = true
+  const requestId = ++loadRequestId
+  const targetContestId = contestId.value
   errorText.value = ''
+  if (!targetContestId) {
+    loading.value = false
+    items.value = []
+    tracks.value = []
+    return
+  }
+
+  loading.value = true
   try {
     const [timelineRes, trackRes] = await Promise.all([
-      unsafeFetch<ApiResponse<TrackTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/track-timelines`)),
-      unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
+      unsafeFetch<ApiResponse<TrackTimeline[]>>(endpoint(`/admin/contests/${targetContestId}/track-timelines`)),
+      unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${targetContestId}/tracks`)),
     ])
+    if (requestId !== loadRequestId)
+      return
     items.value = timelineRes.data
     tracks.value = trackRes.data
   }
   catch (error: any) {
+    if (requestId !== loadRequestId)
+      return
     items.value = []
     tracks.value = []
     errorText.value = String(error?.data?.message || '赛道时间线加载失败。')
   }
   finally {
-    loading.value = false
+    if (requestId === loadRequestId)
+      loading.value = false
   }
 }
 
-onMounted(loadItems)
+watch(contestId, () => {
+  void loadItems()
+}, { immediate: true })
 </script>
 
 <template>
@@ -90,6 +100,9 @@ onMounted(loadItems)
           </p>
         </div>
         <div class="flex gap-2 items-center">
+          <button class="dense-btn" type="button" :disabled="loading" @click="loadItems">
+            刷新
+          </button>
           <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/track-timelines/new`)">
             新增赛道节点
           </NuxtLink>
@@ -105,7 +118,7 @@ onMounted(loadItems)
 
     <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-table
-        :data="items"
+        :data="visibleItems"
         :columns="trackColumns"
         row-key="id"
         size="small"

@@ -7,13 +7,15 @@ definePageMeta({
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const { contestId, timelineId, withEmbed } = useAdminContestRoute()
+const { contestId, timelineId, isEmbedMode, withEmbed } = useAdminContestRoute()
 
-const loading = ref(false)
+const loading = ref(true)
 const saving = ref(false)
 const errorText = ref('')
+const notFoundText = ref('')
 const draftText = ref('')
 const draftBridge = useAdminAgentDraft()
+let loadRequestId = 0
 
 const form = reactive<{
   year: number
@@ -32,6 +34,8 @@ const form = reactive<{
 })
 
 const moduleDraft = computed(() => draftBridge.getDraft(contestId.value, 'timelines'))
+const listPath = computed(() => `/admin/contests/${contestId.value}/timelines`)
+const listRoute = computed(() => withEmbed(listPath.value))
 const draftUpdatedAt = computed(() => {
   const value = moduleDraft.value?.updatedAt
   if (!value)
@@ -41,6 +45,18 @@ const draftUpdatedAt = computed(() => {
     timeZone: 'Asia/Shanghai',
   })
 })
+
+function resolveListRoute(targetContestId = contestId.value, embed = isEmbedMode.value): string | { path: string, query: { embed: string } } {
+  const path = `/admin/contests/${targetContestId}/timelines`
+  if (embed)
+    return { path, query: { embed: '1' } }
+  return path
+}
+
+function isAvailableTimeline(item: ContestTimeline): boolean {
+  const state = item as ContestTimeline & { deletedAt?: string | null, status?: string | null }
+  return !state.deletedAt && state.status !== 'deleted' && state.status !== 'archived'
+}
 
 function applyAiDraft() {
   const payload = moduleDraft.value?.payload || {}
@@ -63,13 +79,32 @@ function clearAiDraft() {
 }
 
 async function loadTimeline() {
-  loading.value = true
+  const requestId = ++loadRequestId
+  const targetContestId = contestId.value
+  const targetTimelineId = timelineId.value
+
   errorText.value = ''
+  notFoundText.value = ''
+
+  if (!targetContestId || !targetTimelineId) {
+    loading.value = false
+    notFoundText.value = '时间节点不存在或已被删除，请返回列表刷新后再操作。'
+    return
+  }
+
+  loading.value = true
   try {
-    const response = await unsafeFetch<ApiResponse<ContestTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/timelines`))
-    const item = response.data.find(timeline => timeline.id === timelineId.value)
+    const response = await unsafeFetch<ApiResponse<ContestTimeline[]>>(endpoint(`/admin/contests/${targetContestId}/timelines`))
+    if (requestId !== loadRequestId)
+      return
+
+    const item = response.data.find(timeline =>
+      timeline.id === targetTimelineId
+      && timeline.contestId === targetContestId
+      && isAvailableTimeline(timeline),
+    )
     if (!item) {
-      errorText.value = '未找到该时间节点。'
+      notFoundText.value = '时间节点不存在或已被删除，请返回列表刷新后再操作。'
       return
     }
 
@@ -81,21 +116,33 @@ async function loadTimeline() {
     form.sourceLink = item.sourceLink || ''
   }
   catch (error: any) {
+    if (requestId !== loadRequestId)
+      return
     errorText.value = String(error?.data?.message || '时间节点加载失败。')
   }
   finally {
-    loading.value = false
+    if (requestId === loadRequestId)
+      loading.value = false
   }
 }
 
 async function save() {
+  const targetContestId = contestId.value
+  const targetTimelineId = timelineId.value
+  const targetEmbedMode = isEmbedMode.value
+
+  if (!targetContestId || !targetTimelineId || notFoundText.value) {
+    errorText.value = '时间节点不存在或已被删除，请返回列表刷新后再操作。'
+    return
+  }
+
   saving.value = true
   errorText.value = ''
   try {
-    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/timelines`), {
+    await unsafeFetch(endpoint(`/admin/contests/${targetContestId}/timelines`), {
       method: 'PATCH',
       body: {
-        timelineId: timelineId.value,
+        timelineId: targetTimelineId,
         year: Number(form.year || new Date().getFullYear()),
         nodeType: form.nodeType,
         startAt: fromDatetimeLocal(form.startAt),
@@ -104,7 +151,7 @@ async function save() {
         sourceLink: form.sourceLink.trim(),
       },
     })
-    await navigateTo(withEmbed(`/admin/contests/${contestId.value}/timelines`))
+    await navigateTo(resolveListRoute(targetContestId, targetEmbedMode), { replace: true })
   }
   catch (error: any) {
     errorText.value = String(error?.data?.message || '时间节点更新失败。')
@@ -114,20 +161,43 @@ async function save() {
   }
 }
 
-onMounted(loadTimeline)
+watch(
+  () => [contestId.value, timelineId.value],
+  () => {
+    void loadTimeline()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
   <PageShell size="compact">
     <PageHeader title="编辑时间节点" :meta="`timeline_id：${timelineId}`">
       <template #actions>
-        <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/timelines`)">
+        <NuxtLink class="dense-btn" :to="listRoute">
           返回时间节点列表
         </NuxtLink>
       </template>
     </PageHeader>
 
+    <StateBlock
+      v-if="notFoundText && !loading"
+      tone="warning"
+      title="时间节点不可用"
+      :description="notFoundText"
+    >
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button class="dense-btn" type="button" @click="loadTimeline">
+          重新检查
+        </button>
+        <NuxtLink class="dense-btn" :to="listRoute">
+          返回列表
+        </NuxtLink>
+      </div>
+    </StateBlock>
+
     <AdminTimelineForm
+      v-else
       :form="form"
       :loading="loading"
       :saving="saving"
