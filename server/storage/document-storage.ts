@@ -1,4 +1,5 @@
 import type { Writable } from 'node:stream'
+import type { RuntimeSettings } from '~~/server/utils/env'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
@@ -9,6 +10,10 @@ import process from 'node:process'
 import { PassThrough, Readable } from 'node:stream'
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import {
+  applyPlatformRuntimeOverrides,
+  getCachedPlatformRuntimeOverridesSnapshot,
+} from '~~/server/utils/platform-runtime-config-store'
 
 export interface StoredObjectInput {
   key: string
@@ -337,6 +342,7 @@ class S3DocumentStorage implements DocumentStorage {
 }
 
 let storageInstance: DocumentStorage | null = null
+let storageInstanceKey = ''
 
 function toAbsoluteRoot(localRoot: string): string {
   if (localRoot.startsWith('/'))
@@ -344,35 +350,53 @@ function toAbsoluteRoot(localRoot: string): string {
   return resolve(process.cwd(), localRoot)
 }
 
-export function getDocumentStorage(): DocumentStorage {
-  if (storageInstance)
+function resolveDocumentStorageRuntime(runtime?: RuntimeSettings): RuntimeSettings {
+  if (runtime)
+    return runtime
+  return applyPlatformRuntimeOverrides(readRuntimeSettings(), getCachedPlatformRuntimeOverridesSnapshot())
+}
+
+function buildStorageInstanceKey(runtime: RuntimeSettings): string {
+  return JSON.stringify(runtime.storage)
+}
+
+export function invalidateDocumentStorage(): void {
+  storageInstance = null
+  storageInstanceKey = ''
+}
+
+export function getDocumentStorage(runtime?: RuntimeSettings): DocumentStorage {
+  const resolvedRuntime = resolveDocumentStorageRuntime(runtime)
+  const nextKey = buildStorageInstanceKey(resolvedRuntime)
+  if (storageInstance && storageInstanceKey === nextKey)
     return storageInstance
 
-  const runtime = readRuntimeSettings()
-  const provider = runtime.storage.provider.trim().toLowerCase()
+  const provider = resolvedRuntime.storage.provider.trim().toLowerCase()
 
   if (provider === 'local') {
-    storageInstance = new LocalDocumentStorage(toAbsoluteRoot(runtime.storage.localRoot))
+    storageInstance = new LocalDocumentStorage(toAbsoluteRoot(resolvedRuntime.storage.localRoot))
+    storageInstanceKey = nextKey
     return storageInstance
   }
 
   if (provider === 's3' || provider === 'minio') {
-    if (!runtime.storage.bucket) {
+    if (!resolvedRuntime.storage.bucket) {
       throw new Error('对象存储配置缺失：WINLOOP_STORAGE_BUCKET 不能为空。')
     }
-    if (provider === 'minio' && !runtime.storage.endpoint) {
+    if (provider === 'minio' && !resolvedRuntime.storage.endpoint) {
       throw new Error('MinIO 模式下 WINLOOP_STORAGE_ENDPOINT 不能为空。')
     }
 
     storageInstance = new S3DocumentStorage({
       provider,
-      endpoint: runtime.storage.endpoint,
-      region: runtime.storage.region || 'auto',
-      bucket: runtime.storage.bucket,
-      accessKey: runtime.storage.accessKey,
-      secretKey: runtime.storage.secretKey,
-      forcePathStyle: runtime.storage.forcePathStyle,
+      endpoint: resolvedRuntime.storage.endpoint,
+      region: resolvedRuntime.storage.region || 'auto',
+      bucket: resolvedRuntime.storage.bucket,
+      accessKey: resolvedRuntime.storage.accessKey,
+      secretKey: resolvedRuntime.storage.secretKey,
+      forcePathStyle: resolvedRuntime.storage.forcePathStyle,
     })
+    storageInstanceKey = nextKey
     return storageInstance
   }
 

@@ -138,6 +138,7 @@ async function processSingleMeetingJob(): Promise<'none' | 'success' | 'failure'
           meeting: latestMeeting,
           actorUserId: latestMeeting.startedByUserId,
           artifact,
+          runtime,
         })
         await patchProjectMeeting(db, {
           projectId: latestMeeting.projectId,

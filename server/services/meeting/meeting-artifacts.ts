@@ -1,6 +1,7 @@
 import type { MeetingSummaryResult } from '~~/server/services/meeting/meeting-summary'
 import type { RtcRecordingArtifact } from '~~/server/services/meeting/rtc-provider'
 import type { Queryable } from '~~/server/utils/db'
+import type { RuntimeSettings } from '~~/server/utils/env'
 import type {
   ProjectMeeting,
   Resource,
@@ -15,6 +16,8 @@ import * as projectResourceStore from '~~/server/utils/project-resource-store'
 const MEETING_MEMORY_SECTION_DIVIDER = '\n\n---\n\n'
 const MEETING_MEMORY_AUTO_SECTION_TITLE = '## 自动汇总'
 const MEETING_MEMORY_MANUAL_SECTION_TITLE = '## 手动补充'
+const MEETING_RECORDING_DOWNLOAD_RETRY_COUNT = 3
+const MEETING_RECORDING_DOWNLOAD_TIMEOUT_MS = 30000
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -28,6 +31,22 @@ function normalizeLineBreaks(value: unknown): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, ms)))
+}
+
+function sanitizeArtifactDownloadUrl(value: string): string {
+  try {
+    const parsed = new URL(value)
+    parsed.search = ''
+    parsed.hash = ''
+    return parsed.toString()
+  }
+  catch {
+    return ''
+  }
 }
 
 function meetingModeLabel(meeting: ProjectMeeting): string {
@@ -184,11 +203,29 @@ async function resolveArtifactBuffer(artifact: RtcRecordingArtifact): Promise<Bu
   if (artifact.localFilePath)
     return readFile(artifact.localFilePath)
   if (artifact.downloadUrl) {
-    const response = await fetch(artifact.downloadUrl)
-    if (!response.ok)
-      throw new Error(`MEETING_RECORDING_DOWNLOAD_${response.status}`)
-    const arrayBuffer = await response.arrayBuffer()
-    return Buffer.from(arrayBuffer)
+    let lastError = ''
+    for (let attempt = 1; attempt <= MEETING_RECORDING_DOWNLOAD_RETRY_COUNT; attempt += 1) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), MEETING_RECORDING_DOWNLOAD_TIMEOUT_MS)
+      try {
+        const response = await fetch(artifact.downloadUrl, {
+          signal: controller.signal,
+        })
+        if (!response.ok)
+          throw new Error(`MEETING_RECORDING_DOWNLOAD_${response.status}`)
+        const arrayBuffer = await response.arrayBuffer()
+        return Buffer.from(arrayBuffer)
+      }
+      catch (error) {
+        lastError = error instanceof Error ? normalizeString(error.message) : 'MEETING_RECORDING_DOWNLOAD_FAILED'
+        if (attempt < MEETING_RECORDING_DOWNLOAD_RETRY_COUNT)
+          await sleep(attempt * 500)
+      }
+      finally {
+        clearTimeout(timer)
+      }
+    }
+    throw new Error(`MEETING_RECORDING_DOWNLOAD_FAILED:${lastError}`)
   }
   throw new Error('MEETING_RECORDING_ARTIFACT_MISSING')
 }
@@ -199,6 +236,7 @@ export async function persistMeetingRecordingResource(
     meeting: ProjectMeeting
     actorUserId: string
     artifact: RtcRecordingArtifact
+    runtime?: RuntimeSettings
   },
 ): Promise<Resource> {
   if (input.meeting.recordingResourceId) {
@@ -213,7 +251,7 @@ export async function persistMeetingRecordingResource(
   const buffer = await resolveArtifactBuffer(input.artifact)
   const fileName = normalizeString(input.artifact.fileName) || `meeting-recording-${input.meeting.id}.bin`
   const mimeType = normalizeString(input.artifact.mimeType) || 'application/octet-stream'
-  const storage = getDocumentStorage()
+  const storage = getDocumentStorage(input.runtime)
   const objectKey = buildDocumentObjectKey(`project-${input.meeting.projectId}`, fileName)
   const meetingMemory = await projectResourceStore.ensureProjectMeetingMemoryResource(db, {
     projectId: input.meeting.projectId,
@@ -242,6 +280,9 @@ export async function persistMeetingRecordingResource(
       artifactKind: 'meeting_recording',
       meetingId: input.meeting.id,
       provider: input.meeting.provider,
+      sourceStorageProvider: storage.provider,
+      artifactDownloadUrl: input.artifact.downloadUrl ? sanitizeArtifactDownloadUrl(input.artifact.downloadUrl) : '',
+      artifactLocalFilePath: input.artifact.localFilePath ? normalizeString(input.artifact.localFilePath) : '',
       ...input.artifact.metadata,
     },
   })

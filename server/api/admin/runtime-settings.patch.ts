@@ -1,4 +1,5 @@
 import { setResponseStatus } from 'h3'
+import { invalidateDocumentStorage } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
@@ -32,6 +33,18 @@ interface RuntimeSettingsPatchBody {
   contest?: {
     autoSeed?: boolean
   }
+  storage?: {
+    provider?: string
+    localRoot?: string
+    endpoint?: string
+    region?: string
+    bucket?: string
+    accessKey?: string
+    accessKeyMode?: 'keep' | 'replace' | 'clear'
+    secretKey?: string
+    secretKeyMode?: 'keep' | 'replace' | 'clear'
+    forcePathStyle?: boolean
+  }
 }
 
 function hasOwn(source: Record<string, unknown>, key: string): boolean {
@@ -56,6 +69,20 @@ function toNumber(raw: unknown, fieldName: string): number {
   if (!Number.isFinite(value))
     throw new Error(`${fieldName} 必须为有效数字。`)
   return value
+}
+
+function toSecretMode(raw: unknown): 'keep' | 'replace' | 'clear' {
+  const normalized = String(raw || '').trim()
+  if (normalized === 'replace' || normalized === 'clear')
+    return normalized
+  return 'keep'
+}
+
+function normalizeStorageProvider(raw: unknown): string {
+  const normalized = String(raw || '').trim().toLowerCase()
+  if (normalized === 'local' || normalized === 's3' || normalized === 'minio')
+    return normalized
+  throw new Error('storage.provider 仅支持 local/s3/minio。')
 }
 
 function clamp(input: number, min: number, max: number, integer = false): number {
@@ -138,6 +165,39 @@ export default defineEventHandler(async (event) => {
         next.contest = section
       }
 
+      const storage = body?.storage && typeof body.storage === 'object'
+        ? body.storage as Record<string, unknown>
+        : null
+      if (storage) {
+        const section = { ...(next.storage || {}) }
+        if (hasOwn(storage, 'provider'))
+          section.provider = normalizeStorageProvider(storage.provider)
+        if (hasOwn(storage, 'localRoot'))
+          section.localRoot = String(storage.localRoot || '').trim() || './tmp/document-storage'
+        if (hasOwn(storage, 'endpoint'))
+          section.endpoint = String(storage.endpoint || '').trim().replace(/\/+$/g, '')
+        if (hasOwn(storage, 'region'))
+          section.region = String(storage.region || '').trim()
+        if (hasOwn(storage, 'bucket'))
+          section.bucket = String(storage.bucket || '').trim()
+        if (hasOwn(storage, 'forcePathStyle'))
+          section.forcePathStyle = toBoolean(storage.forcePathStyle, 'storage.forcePathStyle')
+
+        const accessKeyMode = toSecretMode(storage.accessKeyMode)
+        if (accessKeyMode === 'replace')
+          section.accessKey = String(storage.accessKey || '')
+        if (accessKeyMode === 'clear')
+          section.accessKey = ''
+
+        const secretKeyMode = toSecretMode(storage.secretKeyMode)
+        if (secretKeyMode === 'replace')
+          section.secretKey = String(storage.secretKey || '')
+        if (secretKeyMode === 'clear')
+          section.secretKey = ''
+
+        next.storage = section
+      }
+
       next.updatedAt = new Date().toISOString()
       next.updatedByUserId = user.id
 
@@ -151,9 +211,12 @@ export default defineEventHandler(async (event) => {
           hasFeishuSchedulerUpdate: Boolean(feishuScheduler),
           hasResourceRecycleUpdate: Boolean(resourceRecycle),
           hasContestUpdate: Boolean(contest),
+          hasStorageUpdate: Boolean(storage),
+          storageProvider: storage ? next.storage?.provider || '' : '',
         },
       })
     })
+    invalidateDocumentStorage()
   }
   catch (error) {
     setResponseStatus(event, 400)
@@ -186,6 +249,16 @@ export default defineEventHandler(async (event) => {
     },
     contest: {
       autoSeed: runtime.contest.autoSeed,
+    },
+    storage: {
+      provider: runtime.storage.provider,
+      localRoot: runtime.storage.localRoot,
+      endpoint: runtime.storage.endpoint,
+      region: runtime.storage.region,
+      bucket: runtime.storage.bucket,
+      accessKeyConfigured: Boolean(runtime.storage.accessKey),
+      secretKeyConfigured: Boolean(runtime.storage.secretKey),
+      forcePathStyle: runtime.storage.forcePathStyle,
     },
     overrideState: getPlatformRuntimeOverrideState(overrides),
     configSource,

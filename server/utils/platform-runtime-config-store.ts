@@ -3,6 +3,7 @@ import type { Queryable } from '~~/server/utils/db'
 import type { RuntimeSettings } from '~~/server/utils/env'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { decryptConfigSecretSafe, encryptConfigSecret, hasConfigMasterKey, isEncryptedConfigValue } from '~~/server/utils/secure-config'
 
 const PLATFORM_RUNTIME_OVERRIDES_KEY = 'platform_runtime_overrides.v1'
 const PLATFORM_RUNTIME_OVERRIDES_CACHE_KEY = Symbol.for('winloop.platform-runtime-overrides.cache.v1')
@@ -32,6 +33,16 @@ export interface PlatformRuntimeOverrides {
   contest?: {
     autoSeed?: boolean
   }
+  storage?: {
+    provider?: string
+    localRoot?: string
+    endpoint?: string
+    region?: string
+    bucket?: string
+    accessKey?: string
+    secretKey?: string
+    forcePathStyle?: boolean
+  }
   updatedAt?: string
   updatedByUserId?: string
 }
@@ -41,6 +52,7 @@ export interface RuntimeSettingsConfigSource {
   feishuScheduler: 'env' | 'override'
   resourceRecycle: 'env' | 'override'
   contestAutoSeed: 'env' | 'override'
+  storage: 'env' | 'override'
 }
 
 function hasOwn(source: Record<string, unknown>, key: string): boolean {
@@ -175,6 +187,44 @@ function normalizeContestSection(raw: unknown): PlatformRuntimeOverrides['contes
   return Object.keys(output).length > 0 ? output : undefined
 }
 
+function normalizeStorageProvider(raw: unknown): string {
+  const normalized = toText(raw).toLowerCase()
+  if (normalized === 's3' || normalized === 'minio')
+    return normalized
+  if (normalized === 'local')
+    return normalized
+  return normalized
+}
+
+function normalizeStorageSection(raw: unknown): PlatformRuntimeOverrides['storage'] {
+  const source = parseJsonObject(raw)
+  if (Object.keys(source).length === 0)
+    return undefined
+
+  const output: NonNullable<PlatformRuntimeOverrides['storage']> = {}
+  if (hasOwn(source, 'provider'))
+    output.provider = normalizeStorageProvider(source.provider)
+  if (hasOwn(source, 'localRoot'))
+    output.localRoot = toText(source.localRoot) || './tmp/document-storage'
+  if (hasOwn(source, 'endpoint'))
+    output.endpoint = toText(source.endpoint).replace(/\/+$/g, '')
+  if (hasOwn(source, 'region'))
+    output.region = toText(source.region)
+  if (hasOwn(source, 'bucket'))
+    output.bucket = toText(source.bucket)
+  if (hasOwn(source, 'accessKey'))
+    output.accessKey = String(source.accessKey || '')
+  if (hasOwn(source, 'secretKey'))
+    output.secretKey = String(source.secretKey || '')
+  if (hasOwn(source, 'forcePathStyle')) {
+    const value = toBoolean(source.forcePathStyle)
+    if (value !== undefined)
+      output.forcePathStyle = value
+  }
+
+  return Object.keys(output).length > 0 ? output : undefined
+}
+
 function hasSectionOverrides(section: Record<string, unknown> | undefined): boolean {
   if (!section)
     return false
@@ -201,6 +251,10 @@ export function invalidatePlatformRuntimeOverridesCache(): void {
   cache.overrides = {}
 }
 
+export function getCachedPlatformRuntimeOverridesSnapshot(): PlatformRuntimeOverrides {
+  return normalizePlatformRuntimeOverrides(getCachedRuntimeOverridesState().overrides)
+}
+
 export function normalizePlatformRuntimeOverrides(raw: unknown): PlatformRuntimeOverrides {
   const source = parseJsonObject(raw)
 
@@ -209,6 +263,7 @@ export function normalizePlatformRuntimeOverrides(raw: unknown): PlatformRuntime
     feishuScheduler: normalizeFeishuSchedulerSection(source.feishuScheduler),
     resourceRecycle: normalizeResourceRecycleSection(source.resourceRecycle),
     contest: normalizeContestSection(source.contest),
+    storage: normalizeStorageSection(source.storage),
     updatedAt: hasOwn(source, 'updatedAt') ? toText(source.updatedAt) : '',
     updatedByUserId: hasOwn(source, 'updatedByUserId') ? toText(source.updatedByUserId) : '',
   }
@@ -221,6 +276,8 @@ export function normalizePlatformRuntimeOverrides(raw: unknown): PlatformRuntime
     delete normalized.resourceRecycle
   if (!normalized.contest)
     delete normalized.contest
+  if (!normalized.storage)
+    delete normalized.storage
   if (!normalized.updatedAt)
     delete normalized.updatedAt
   if (!normalized.updatedByUserId)
@@ -240,7 +297,12 @@ export async function readPlatformRuntimeOverrides(db: Queryable): Promise<Platf
     return {}
 
   try {
-    return normalizePlatformRuntimeOverrides(JSON.parse(raw))
+    const normalized = normalizePlatformRuntimeOverrides(JSON.parse(raw))
+    if (normalized.storage && Object.prototype.hasOwnProperty.call(normalized.storage, 'accessKey'))
+      normalized.storage.accessKey = decryptConfigSecretSafe(normalized.storage.accessKey, undefined)
+    if (normalized.storage && Object.prototype.hasOwnProperty.call(normalized.storage, 'secretKey'))
+      normalized.storage.secretKey = decryptConfigSecretSafe(normalized.storage.secretKey, undefined)
+    return normalized
   }
   catch {
     return {}
@@ -252,12 +314,22 @@ export async function writePlatformRuntimeOverrides(
   overrides: PlatformRuntimeOverrides,
 ): Promise<PlatformRuntimeOverrides> {
   const normalized = normalizePlatformRuntimeOverrides(overrides)
+  const persistable = normalizePlatformRuntimeOverrides(normalized)
+  const masterKeyReady = hasConfigMasterKey()
+  if (persistable.storage && Object.prototype.hasOwnProperty.call(persistable.storage, 'accessKey')) {
+    const value = String(persistable.storage.accessKey || '')
+    persistable.storage.accessKey = masterKeyReady && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
+  }
+  if (persistable.storage && Object.prototype.hasOwnProperty.call(persistable.storage, 'secretKey')) {
+    const value = String(persistable.storage.secretKey || '')
+    persistable.storage.secretKey = masterKeyReady && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
+  }
   await db.query(
     `INSERT INTO migrations_meta (key, value, updated_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (key)
      DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
-    [PLATFORM_RUNTIME_OVERRIDES_KEY, JSON.stringify(normalized)],
+    [PLATFORM_RUNTIME_OVERRIDES_KEY, JSON.stringify(persistable)],
   )
   invalidatePlatformRuntimeOverridesCache()
   return normalized
@@ -271,6 +343,7 @@ export function applyPlatformRuntimeOverrides(
     ...runtime,
     auth: { ...runtime.auth },
     contest: { ...runtime.contest },
+    storage: { ...runtime.storage },
     resourceRecycle: { ...runtime.resourceRecycle },
     feishuScheduler: { ...runtime.feishuScheduler },
   }
@@ -317,6 +390,26 @@ export function applyPlatformRuntimeOverrides(
     }
   }
 
+  const storage = overrides.storage
+  if (storage) {
+    if (storage.provider !== undefined)
+      next.storage.provider = normalizeStorageProvider(storage.provider)
+    if (storage.localRoot !== undefined)
+      next.storage.localRoot = storage.localRoot || next.storage.localRoot
+    if (storage.endpoint !== undefined)
+      next.storage.endpoint = storage.endpoint
+    if (storage.region !== undefined)
+      next.storage.region = storage.region
+    if (storage.bucket !== undefined)
+      next.storage.bucket = storage.bucket
+    if (storage.accessKey !== undefined)
+      next.storage.accessKey = storage.accessKey
+    if (storage.secretKey !== undefined)
+      next.storage.secretKey = storage.secretKey
+    if (storage.forcePathStyle !== undefined)
+      next.storage.forcePathStyle = Boolean(storage.forcePathStyle)
+  }
+
   const feishuScheduler = overrides.feishuScheduler
   if (feishuScheduler) {
     if (feishuScheduler.enabled !== undefined)
@@ -356,6 +449,7 @@ export function getRuntimeSettingsConfigSource(overrides: PlatformRuntimeOverrid
     feishuScheduler: hasSectionOverrides(overrides.feishuScheduler as Record<string, unknown> | undefined) ? 'override' : 'env',
     resourceRecycle: hasSectionOverrides(overrides.resourceRecycle as Record<string, unknown> | undefined) ? 'override' : 'env',
     contestAutoSeed: hasSectionOverrides(overrides.contest as Record<string, unknown> | undefined) ? 'override' : 'env',
+    storage: hasSectionOverrides(overrides.storage as Record<string, unknown> | undefined) ? 'override' : 'env',
   }
 }
 
@@ -397,10 +491,14 @@ export async function readEffectivePlatformRuntimeSettings(
 }
 
 export function getPlatformRuntimeOverrideState(overrides: PlatformRuntimeOverrides): {
+  storageAccessKeyOverridden: boolean
+  storageSecretKeyOverridden: boolean
   updatedAt: string
   updatedByUserId: string
 } {
   return {
+    storageAccessKeyOverridden: Boolean(overrides.storage && Object.prototype.hasOwnProperty.call(overrides.storage, 'accessKey')),
+    storageSecretKeyOverridden: Boolean(overrides.storage && Object.prototype.hasOwnProperty.call(overrides.storage, 'secretKey')),
     updatedAt: String(overrides.updatedAt || ''),
     updatedByUserId: String(overrides.updatedByUserId || ''),
   }

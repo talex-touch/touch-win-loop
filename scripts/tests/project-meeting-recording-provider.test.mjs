@@ -8,6 +8,12 @@ const PROVIDER_EVENTS_FILE = resolve(process.cwd(), 'server/api/internal/meeting
 const MEETING_END_API_FILE = resolve(process.cwd(), 'server/api/projects/[id]/meetings/[meetingId]/end.post.ts')
 const MEETING_ARTIFACTS_FILE = resolve(process.cwd(), 'server/services/meeting/meeting-artifacts.ts')
 const PROJECT_RESOURCE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-resource-store.ts')
+const DOCUMENT_STORAGE_FILE = resolve(process.cwd(), 'server/storage/document-storage.ts')
+const RUNTIME_CONFIG_STORE_FILE = resolve(process.cwd(), 'server/utils/platform-runtime-config-store.ts')
+const RUNTIME_SETTINGS_API_FILE = resolve(process.cwd(), 'server/api/admin/runtime-settings.patch.ts')
+const STORAGE_TEST_API_FILE = resolve(process.cwd(), 'server/api/admin/runtime-settings/storage-test.post.ts')
+const RUNTIME_SETTINGS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/runtime-settings.vue')
+const PLATFORM_RUNTIME_CACHE_PLUGIN_FILE = resolve(process.cwd(), 'server/plugins/platform-runtime-config-cache.ts')
 const COMPOSE_FILE = resolve(process.cwd(), 'deploy/meeting/compose.yaml')
 const LIVEKIT_CONFIG_FILE = resolve(process.cwd(), 'deploy/meeting/livekit.yaml.example')
 const EGRESS_CONFIG_FILE = resolve(process.cwd(), 'deploy/meeting/egress.yaml.example')
@@ -23,6 +29,51 @@ it('livekit RTC provider 已接入 egress 录制与原生 webhook 校验', async
   assert.match(rtcProviderSource, /verifyLiveKitWebhookToken\(/, 'RTC provider 未校验原生 LiveKit webhook JWT')
   assert.match(rtcProviderSource, /payload\.sha256/, 'RTC provider 未校验 webhook body sha256')
   assert.match(rtcProviderSource, /localFilePath\?: string/, 'RTC recording artifact 未支持本地文件路径')
+})
+
+it('录制资源支持后台 S3/MinIO 存储配置、远端 URL 重试导入与存储探针', async () => {
+  const [
+    meetingArtifactsSource,
+    workerSource,
+    storageSource,
+    runtimeStoreSource,
+    runtimeApiSource,
+    storageTestSource,
+    runtimePageSource,
+    runtimeCachePluginSource,
+    setupDocSource,
+    deployDocSource,
+  ] = await Promise.all([
+    readFile(MEETING_ARTIFACTS_FILE, 'utf8'),
+    readFile(resolve(process.cwd(), 'server/plugins/project-meeting-job-worker.ts'), 'utf8'),
+    readFile(DOCUMENT_STORAGE_FILE, 'utf8'),
+    readFile(RUNTIME_CONFIG_STORE_FILE, 'utf8'),
+    readFile(RUNTIME_SETTINGS_API_FILE, 'utf8'),
+    readFile(STORAGE_TEST_API_FILE, 'utf8'),
+    readFile(RUNTIME_SETTINGS_PAGE_FILE, 'utf8'),
+    readFile(PLATFORM_RUNTIME_CACHE_PLUGIN_FILE, 'utf8'),
+    readFile(SETUP_DOC_FILE, 'utf8'),
+    readFile(DEPLOY_DOC_FILE, 'utf8'),
+  ])
+
+  assert.match(meetingArtifactsSource, /MEETING_RECORDING_DOWNLOAD_RETRY_COUNT = 3/, '会议录制远端 URL 导入缺少重试次数')
+  assert.match(meetingArtifactsSource, /AbortController/, '会议录制远端 URL 导入缺少超时控制')
+  assert.match(meetingArtifactsSource, /artifactDownloadUrl: input\.artifact\.downloadUrl \? sanitizeArtifactDownloadUrl/, '会议录制 metadata 未记录脱敏后的下载来源')
+  assert.match(meetingArtifactsSource, /sourceStorageProvider: storage\.provider/, '会议录制 metadata 未记录实际存储 provider')
+  assert.match(workerSource, /runtime,[\s\S]*\}\)/, '会议 worker 未把 effective runtime 传入录制持久化')
+  assert.match(storageSource, /export function invalidateDocumentStorage\(\): void/, '文档存储层缺少配置变更失效入口')
+  assert.match(storageSource, /getCachedPlatformRuntimeOverridesSnapshot/, '文档存储层未读取后台 runtime storage override')
+  assert.match(runtimeCachePluginSource, /readEffectivePlatformRuntimeSettings\(\)/, '平台 runtime override 未在服务启动时预热缓存')
+  assert.match(runtimeStoreSource, /storage\?: \{[\s\S]*provider\?: string[\s\S]*accessKey\?: string[\s\S]*secretKey\?: string/, '平台 runtime override 未纳入 storage 配置')
+  assert.match(runtimeStoreSource, /encryptConfigSecret\(value\)/, 'storage 密钥未进入加密保存流程')
+  assert.match(runtimeApiSource, /storage\?: \{[\s\S]*accessKeyMode\?: 'keep' \| 'replace' \| 'clear'/, 'runtime 设置接口未支持 storage 密钥替换模式')
+  assert.match(runtimeApiSource, /invalidateDocumentStorage\(\)/, 'runtime 设置保存后未失效文档存储缓存')
+  assert.match(storageTestSource, /storage-probe/, '缺少对象存储写读删探针')
+  assert.match(storageTestSource, /putObject[\s\S]*getObjectBuffer[\s\S]*deleteObject/, '对象存储探针未覆盖写读删')
+  assert.match(runtimePageSource, /对象存储（storage \/ S3）/, '后台系统设置页未暴露对象存储配置区')
+  assert.match(runtimePageSource, /\/admin\/runtime-settings\/storage-test/, '后台系统设置页未接入对象存储探针接口')
+  assert.match(setupDocSource, /\/admin\/runtime-settings[\s\S]*`local`、`s3` 或 `minio`/, '会议运行说明未描述后台 Storage 配置')
+  assert.match(deployDocSource, /\/admin\/runtime-settings[\s\S]*`local`、`s3` 或 `minio`/, '部署说明未描述后台 Storage 配置')
 })
 
 it('provider webhook 路由已归一化 LiveKit 原生事件并支持本地录制 artifact', async () => {
