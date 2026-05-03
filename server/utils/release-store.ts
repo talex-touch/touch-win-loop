@@ -1173,6 +1173,8 @@ export async function patchContestReleaseTrackTimelines(
       syncSource: item.syncSource || track.syncSource,
     }
   })
+  if (normalizedTimelines.length === 0)
+    track.timelineText = ''
 
   snapshot.trackTimelines = [
     ...snapshot.trackTimelines.filter(item => !isTrackTimelineForSnapshotTrack(item, track)),
@@ -2740,6 +2742,18 @@ async function getLatestMergeableContestReleaseDraft(
   return items[0] || null
 }
 
+async function getLatestMergeablePolicyReleaseDraft(
+  db: Queryable,
+): Promise<ReleaseVersion | null> {
+  const items = await listReleaseScopedVersions(db, {
+    scopeKind: 'policy_library',
+    scopeId: 'policy_library',
+    statuses: ['pending_first_review'],
+    limit: 1,
+  })
+  return items[0] || null
+}
+
 async function createWorkingReleaseVersion(
   db: Queryable,
   input: {
@@ -3076,6 +3090,93 @@ export async function upsertPolicyLibraryReleaseDraft(
   return {
     version: createdVersion,
     existed: merged.existed,
+  }
+}
+
+export async function prunePolicyLibraryReleaseDraftForSyncRun(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    syncRunId: string
+    preserveExternalIds: string[]
+    scopeTitle?: string
+  },
+): Promise<{ version: ReleaseVersion | null, removedCount: number }> {
+  const scopeId = 'policy_library'
+  const existingVersion = await findSyncRunScopedReleaseVersion(db, {
+    scopeKind: 'policy_library',
+    scopeId,
+    syncRunId: input.syncRunId,
+  })
+  const mergeBaseVersion = existingVersion
+    ? null
+    : await getLatestMergeablePolicyReleaseDraft(db)
+  const baseResult = await loadBaseSnapshot(db, {
+    scopeKind: 'policy_library',
+    scopeId,
+  })
+  const base = baseResult.policySnapshot || createEmptyPolicySnapshot()
+  const current = existingVersion
+    ? toPolicySnapshot(existingVersion.snapshot)
+    : mergeBaseVersion
+      ? toPolicySnapshot(mergeBaseVersion.snapshot)
+      : toPolicySnapshot(base)
+  const preserveExternalIds = new Set(input.preserveExternalIds.map(item => normalizeText(item)).filter(Boolean))
+  const beforeCount = current.items.length
+  current.items = current.items.filter((item) => {
+    const owner = normalizeReleaseSyncSource(item.syncSource)
+    if (owner?.syncItemId !== normalizeText(input.syncItemId))
+      return true
+    return preserveExternalIds.has(normalizeText(item.externalId))
+  })
+  const removedCount = beforeCount - current.items.length
+  if (removedCount <= 0)
+    return { version: existingVersion, removedCount: 0 }
+
+  const diffSummary = computePolicyDiffSummary(base, current)
+  if (existingVersion) {
+    await db.query(
+      `UPDATE release_versions
+       SET scope_title = $2,
+           snapshot_json = $3::JSONB,
+           diff_summary_json = $4::JSONB,
+           sync_item_id = $5,
+           sync_run_id = $6,
+           updated_by_user_id = $7,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        existingVersion.id,
+        normalizeText(input.scopeTitle) || '政策库',
+        JSON.stringify(current),
+        JSON.stringify(diffSummary),
+        input.syncItemId,
+        input.syncRunId,
+        input.actorUserId,
+      ],
+    )
+    return {
+      version: (await getReleaseVersionById(db, existingVersion.id))!,
+      removedCount,
+    }
+  }
+
+  const createdVersion = await createWorkingReleaseVersion(db, {
+    actorUserId: input.actorUserId,
+    scopeKind: 'policy_library',
+    scopeId,
+    scopeTitle: normalizeText(input.scopeTitle) || '政策库',
+    syncItemId: input.syncItemId,
+    syncRunId: input.syncRunId,
+    liveEntityId: normalizeText(mergeBaseVersion?.liveEntityId) || baseResult.liveEntityId,
+    snapshot: current,
+    diffSummary,
+  })
+
+  return {
+    version: createdVersion,
+    removedCount,
   }
 }
 
@@ -4403,6 +4504,10 @@ async function publishPolicyRelease(
   },
 ): Promise<{ liveEntityId: string, snapshot: PolicyLibraryReleaseSnapshot }> {
   const snapshot = toPolicySnapshot(input.version.snapshot)
+  const invalidItem = snapshot.items.find(item => !normalizeText(item.externalId) || !normalizeText(item.meetingName))
+  if (invalidItem)
+    throw new Error('POLICY_RELEASE_ITEM_INVALID')
+
   const refResult = await db.query<FeishuExternalRefRow>(
     `SELECT scope, external_id, entity_id, metadata
      FROM feishu_external_refs

@@ -74,6 +74,7 @@ import {
   cleanupFeishuManagedReleaseDrafts,
   findReleaseSnapshotOwnerByExternalId,
   listReleaseVersions,
+  prunePolicyLibraryReleaseDraftForSyncRun,
   upsertContestReleaseDraft,
   upsertPolicyLibraryReleaseDraft,
 } from '~~/server/utils/release-store'
@@ -3098,12 +3099,23 @@ async function executeRecords(
     && successfulBusinessExternalIds.size > 0
 
   if (authoritativePrune) {
-    await cleanupFeishuManagedReleaseDrafts(db, {
-      actorUserId: input.actorUserId,
-      syncItemId: input.syncItemId,
-      entityType: input.entityType,
-      preserveExternalIds: [...successfulBusinessExternalIds],
-    })
+    if (input.entityType === 'policy' && input.runId) {
+      await prunePolicyLibraryReleaseDraftForSyncRun(db, {
+        actorUserId: input.actorUserId,
+        syncItemId: input.syncItemId,
+        syncRunId: input.runId,
+        preserveExternalIds: [...successfulBusinessExternalIds],
+        scopeTitle: '政策库',
+      })
+    }
+    else {
+      await cleanupFeishuManagedReleaseDrafts(db, {
+        actorUserId: input.actorUserId,
+        syncItemId: input.syncItemId,
+        entityType: input.entityType,
+        preserveExternalIds: [...successfulBusinessExternalIds],
+      })
+    }
   }
 
   const shouldCleanupPersonaStaleData = !input.dryRun

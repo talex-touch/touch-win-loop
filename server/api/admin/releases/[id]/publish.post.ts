@@ -13,6 +13,8 @@ function mapPublishErrorMessage(error: Error): { status: number, message: string
     return { status: 400, message: '仅已通过二审的版本允许发布。', code: 40078 }
   if (error.message === 'RELEASE_PUBLISH_CHECK_FAILED')
     return { status: 400, message: '当前版本仍存在发布阻断项，请先补齐后再发布。', code: 40080 }
+  if (error.message === 'POLICY_RELEASE_ITEM_INVALID')
+    return { status: 400, message: '政策库版本存在缺少政策编号或会议名称的记录，请驳回后补齐再发布。', code: 40085 }
   return null
 }
 
