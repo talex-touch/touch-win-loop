@@ -746,6 +746,7 @@ if (import.meta.client) {
 <style scoped>
 .admin-shell {
   position: relative;
+  max-width: 100vw;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
@@ -769,6 +770,7 @@ if (import.meta.client) {
 
 .admin-layout {
   height: 100%;
+  width: 100%;
   min-width: 0;
 }
 
@@ -1066,6 +1068,7 @@ if (import.meta.client) {
 
 .admin-header-left {
   min-width: 0;
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1097,6 +1100,7 @@ if (import.meta.client) {
 }
 
 .admin-header-actions {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1564,6 +1568,8 @@ if (import.meta.client) {
 
   .admin-main-layout {
     width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
   .admin-header {
@@ -1614,6 +1620,7 @@ if (import.meta.client) {
 
   .admin-route-tabs-inner {
     min-height: 34px;
+    min-width: max-content;
     padding-inline: 4px;
   }
 
@@ -1656,6 +1663,7 @@ if (import.meta.client) {
 
   .admin-content {
     padding: 10px;
+    max-width: 100vw;
   }
 
   :deep(.arco-card),

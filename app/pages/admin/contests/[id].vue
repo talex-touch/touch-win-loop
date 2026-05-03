@@ -60,73 +60,14 @@ const contestId = computed(() => {
 
 const workspaceRootPath = computed(() => `/admin/contests/${contestId.value}`)
 const normalizedRoutePath = computed(() => route.path.replace(/\/+$/, ''))
-
-type WorkspaceModuleKey = 'overview' | 'faq' | 'tracks' | 'trackTimelines' | 'timelines' | 'rubrics' | 'resources' | 'releases' | 'knowledge' | 'prompts' | 'audit'
-
-const workspaceModules = computed(() => {
-  const id = contestId.value
-  return [
-    { key: 'overview' as const, label: '基础信息', path: `/admin/contests/${id}/overview/edit` },
-    { key: 'faq' as const, label: 'FAQ', path: `/admin/contests/${id}/faq` },
-    { key: 'tracks' as const, label: '赛道管理', path: `/admin/contests/${id}/tracks` },
-    { key: 'trackTimelines' as const, label: '赛道时间线', path: `/admin/contests/${id}/track-timelines` },
-    { key: 'timelines' as const, label: '时间节点', path: `/admin/contests/${id}/timelines` },
-    { key: 'rubrics' as const, label: '评委细则', path: `/admin/contests/${id}/rubrics` },
-    { key: 'resources' as const, label: '资料中心', path: `/admin/contests/${id}/resources` },
-    { key: 'releases' as const, label: '版本发布', path: `/admin/contests/${id}/releases` },
-    { key: 'knowledge' as const, label: '知识库治理', path: `/admin/contests/${id}/knowledge` },
-    { key: 'prompts' as const, label: 'AI 提示词', path: `/admin/contests/${id}/ai-prompts` },
-    { key: 'audit' as const, label: '审计历史', path: `/admin/contests/${id}/audit` },
-  ]
-})
-
-function resolveModuleFromPath(path: string): WorkspaceModuleKey {
-  const id = contestId.value
-  const normalizedPath = path.replace(/\/+$/, '')
-  const prefix = `/admin/contests/${id}/`
-  if (!normalizedPath.startsWith(prefix))
-    return 'overview'
-
-  const tail = normalizedPath.slice(prefix.length)
-  if (tail.startsWith('overview'))
-    return 'overview'
-  if (tail.startsWith('faq'))
-    return 'faq'
-  if (tail.startsWith('tracks'))
-    return 'tracks'
-  if (tail.startsWith('track-timelines'))
-    return 'trackTimelines'
-  if (tail.startsWith('timelines'))
-    return 'timelines'
-  if (tail.startsWith('rubrics'))
-    return 'rubrics'
-  if (tail.startsWith('resources'))
-    return 'resources'
-  if (tail.startsWith('releases'))
-    return 'releases'
-  if (tail.startsWith('knowledge'))
-    return 'knowledge'
-  if (tail.startsWith('ai-prompts'))
-    return 'prompts'
-  if (tail.startsWith('audit'))
-    return 'audit'
-  return 'overview'
-}
-
-const activeModule = computed<WorkspaceModuleKey>(() => resolveModuleFromPath(normalizedRoutePath.value))
+const workspacePageKey = computed(() => normalizedRoutePath.value)
 
 const defaultModulePath = computed(() => {
-  return workspaceModules.value[0]?.path
-    || workspaceRootPath.value
+  return contestId.value
+    ? `/admin/contests/${contestId.value}/overview/edit`
+    : workspaceRootPath.value
 })
 const releaseWorkbenchPath = computed(() => `/admin/contests/${contestId.value}/releases`)
-
-async function switchModule(moduleKey: WorkspaceModuleKey) {
-  const targetPath = workspaceModules.value.find(item => item.key === moduleKey)?.path
-  if (!targetPath || normalizedRoutePath.value === targetPath)
-    return
-  await navigateTo(targetPath)
-}
 
 const loading = ref(false)
 const errorText = ref('')
@@ -176,21 +117,21 @@ watch(contestId, async (value, oldValue) => {
 </script>
 
 <template>
-  <div class="space-y-4">
-    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+  <div class="admin-contest-workspace space-y-4">
+    <section class="admin-contest-workspace__hero p-4 border border-slate-200 rounded-lg bg-white">
       <div class="flex flex-wrap gap-2 items-center justify-between">
-        <div>
+        <div class="min-w-0">
           <h1 class="text-lg text-slate-900 font-semibold">
             竞赛工作区
           </h1>
-          <p class="text-xs text-slate-500 mt-1">
+          <p class="text-xs text-slate-500 mt-1 break-all">
             赛事 ID：{{ contestId }}，统一通过 Tabs 进入各模块。
           </p>
           <p class="text-xs text-amber-600 mt-2">
             当前工作区以版本流为准。手工修改或飞书同步都会先生成待审核版本，审核通过并发布后前台才更新。
           </p>
         </div>
-        <div class="flex gap-2 items-center">
+        <div class="admin-contest-workspace__actions flex gap-2 items-center">
           <NuxtLink class="dense-btn" to="/admin/contests">
             返回赛事列表
           </NuxtLink>
@@ -200,19 +141,7 @@ watch(contestId, async (value, oldValue) => {
         </div>
       </div>
 
-      <div class="mt-3 flex flex-wrap gap-2">
-        <button
-          v-for="item in workspaceModules"
-          :key="item.key"
-          class="text-xs font-medium px-3 py-1.5 rounded transition-colors"
-          :class="activeModule === item.key
-            ? 'bg-slate-900 text-white'
-            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
-          @click="switchModule(item.key)"
-        >
-          {{ item.label }}
-        </button>
-      </div>
+      <ContestWorkspaceTabs class="mt-3" :contest-id="contestId" />
 
       <div v-if="loading" class="mt-3 p-3 border border-slate-200 rounded bg-slate-50">
         <a-skeleton :animation="true">
@@ -245,7 +174,7 @@ watch(contestId, async (value, oldValue) => {
       </div>
     </section>
 
-    <NuxtPage />
+    <NuxtPage :key="workspacePageKey" />
 
     <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
@@ -256,3 +185,27 @@ watch(contestId, async (value, oldValue) => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.admin-contest-workspace,
+.admin-contest-workspace__hero {
+  min-width: 0;
+}
+
+.admin-contest-workspace__actions {
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+@media (max-width: 640px) {
+  .admin-contest-workspace__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .admin-contest-workspace__actions .dense-btn {
+    flex: 1 1 140px;
+  }
+}
+</style>
