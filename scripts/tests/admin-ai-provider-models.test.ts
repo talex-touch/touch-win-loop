@@ -316,7 +316,7 @@ describe('admin-ai provider models', () => {
     expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.capabilities).toEqual(['embedding'])
     expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.sourceEndpoint).toBe('https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding')
     expect(items.find(item => item.model === 'text-embedding-v4')?.rawText).toContain('Text Embedding V4')
-    expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.pricingText).toBe('默认未计费')
+    expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.pricingText).toBe('默认价格：输入 USD 0.0000/1M · 输出 USD 0.0000/1M（Provider 未返回报价）')
   })
 
   it('缺少 provider 或 baseURL 时会直接报配置错误', async () => {
@@ -345,6 +345,10 @@ describe('admin-ai provider models', () => {
     expect(pageSource).toMatch(/allowedProviderCapabilities: ProviderCapability\[\]/)
     expect(pageSource).toMatch(/sceneDefinitionMap/)
     expect(pageSource).toMatch(/sceneDefinitionForKey/)
+    expect(pageSource).toMatch(/sceneBuiltinPromptPreview/)
+    expect(pageSource).toMatch(/openSceneBuiltinPrompt/)
+    expect(pageSource).toMatch(/查看内置提示词/)
+    expect(pageSource).toMatch(/resolveSceneModelCatalog\(providerIds, normalized, capability, embeddingApiStyle\)/)
     expect(pageSource).toMatch(/meeting_asr/)
     expect(pageSource).toMatch(/speech_tts/)
     expect(pageSource).toMatch(/value: 'embedding'/)
@@ -407,5 +411,18 @@ describe('admin-ai provider models', () => {
     expect(pageSource).toMatch(/sceneTestProfileOptions/)
     expect(pageSource).toMatch(/日志链路/)
     expect(pageSource).toMatch(/回退链路/)
+  })
+
+  it('缺失报价时前后端统一展示明确默认价格', async () => {
+    const [pageSource, providerModelsSource, channelsSource] = await Promise.all([
+      readFile(AI_PROMPTS_PAGE_FILE, 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/provider-models.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'server/utils/platform-ai-channels.ts'), 'utf8'),
+    ])
+
+    for (const source of [pageSource, providerModelsSource, channelsSource]) {
+      expect(source).toMatch(/默认价格：输入 USD 0\.0000\/1M · 输出 USD 0\.0000\/1M（Provider 未返回报价）/)
+      expect(source).not.toMatch(/默认未计费/)
+    }
   })
 })

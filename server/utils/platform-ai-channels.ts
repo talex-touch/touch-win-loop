@@ -597,6 +597,8 @@ function resolvePricingSource(value: unknown): PlatformAiPricingSource {
   return 'none'
 }
 
+const defaultModelPricingText = '默认价格：输入 USD 0.0000/1M · 输出 USD 0.0000/1M（Provider 未返回报价）'
+
 function resolveEffectivePricing(input: {
   providerInputPricePer1M: number | null
   providerOutputPricePer1M: number | null
@@ -1594,7 +1596,7 @@ function buildModelCatalogJson(providers: PlatformAiProviderConfig[]): string {
         .filter(item => item.enabled)
         .map((item) => {
           const priceText = item.inputPricePer1M === null && item.outputPricePer1M === null
-            ? '默认未计费'
+            ? defaultModelPricingText
             : `输入 ${item.inputPricePer1M === null ? '-' : `${item.currency} ${item.inputPricePer1M.toFixed(4)}/1M`} · 输出 ${item.outputPricePer1M === null ? '-' : `${item.currency} ${item.outputPricePer1M.toFixed(4)}/1M`}`
           return {
             id: `${provider.id}:${item.model}`,

@@ -45,6 +45,8 @@ interface PricingTableItem {
   currency: string
 }
 
+const defaultModelPricingText = '默认价格：输入 USD 0.0000/1M · 输出 USD 0.0000/1M（Provider 未返回报价）'
+
 function toNonEmptyString(value: unknown): string {
   return String(value || '').trim()
 }
@@ -87,7 +89,7 @@ function formatPricingText(
   currency: string,
 ): string {
   if (inputPricePer1M === null && outputPricePer1M === null)
-    return '默认未计费'
+    return defaultModelPricingText
 
   if (inputPricePer1M !== null && outputPricePer1M !== null)
     return `输入 ${formatPriceValue(inputPricePer1M, currency)} · 输出 ${formatPriceValue(outputPricePer1M, currency)}`
@@ -271,7 +273,7 @@ function buildSuggestedProviderModels(input: {
     outputPricePer1M: null,
     currency: 'USD',
     pricingSource: 'none',
-    pricingText: '默认未计费',
+    pricingText: defaultModelPricingText,
   }]
 }
 

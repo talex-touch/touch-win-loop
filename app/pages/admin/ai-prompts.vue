@@ -340,6 +340,7 @@ interface ProviderTypeGuide {
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
+const defaultModelPricingText = '默认价格：输入 USD 0.0000/1M · 输出 USD 0.0000/1M（Provider 未返回报价）'
 
 const providerTypeOptions: Array<{ value: ProviderType, label: string, capability: ProviderCapability }> = [
   { value: 'newapi', label: 'NewAPI', capability: 'llm' },
@@ -612,6 +613,8 @@ const sceneTestForm = reactive({
   message: '',
 })
 const sceneEditorVisible = ref(false)
+const sceneBuiltinPromptVisible = ref(false)
+const sceneBuiltinPromptTarget = ref<SceneItem | null>(null)
 const sceneEditorForm = reactive({
   key: 'project_chat' as PlatformAiChannelKey,
   label: '',
@@ -1064,7 +1067,7 @@ function normalizeModelItem(item: ProviderModelItem, providerType: ProviderType 
 
 function buildPriceText(item: Pick<ProviderModelItem, 'inputPricePer1M' | 'outputPricePer1M' | 'currency'>): string {
   if (item.inputPricePer1M === null && item.outputPricePer1M === null)
-    return '默认未计费'
+    return defaultModelPricingText
   const input = item.inputPricePer1M === null ? '-' : `${item.currency} ${Number(item.inputPricePer1M).toFixed(4)}/1M`
   const output = item.outputPricePer1M === null ? '-' : `${item.currency} ${Number(item.outputPricePer1M).toFixed(4)}/1M`
   return `输入 ${input} · 输出 ${output}`
@@ -1072,7 +1075,7 @@ function buildPriceText(item: Pick<ProviderModelItem, 'inputPricePer1M' | 'outpu
 
 function buildImportedPriceText(item: Pick<ProviderModelItem, 'providerInputPricePer1M' | 'providerOutputPricePer1M' | 'currency'>): string {
   if (item.providerInputPricePer1M === null && item.providerOutputPricePer1M === null)
-    return '默认未计费'
+    return defaultModelPricingText
   const input = item.providerInputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerInputPricePer1M).toFixed(4)}/1M`
   const output = item.providerOutputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerOutputPricePer1M).toFixed(4)}/1M`
   return `输入 ${input} · 输出 ${output}`
@@ -1493,18 +1496,18 @@ function resolveSceneBatchModelCatalog(providerIds: string[], currentModels: str
 }
 
 function normalizeSceneModels(models: string[], providerIds: string[], capability: ModelCapability = 'chat', embeddingApiStyle: EmbeddingApiStyle | null = null): string[] {
-  const catalog = new Set(resolveSceneModelCatalog(providerIds, [], capability, embeddingApiStyle).map(item => item.model))
   const normalized = dedupeStrings(models)
+  const catalog = new Set(resolveSceneModelCatalog(providerIds, normalized, capability, embeddingApiStyle).map(item => item.model))
   if (catalog.size === 0)
-    return []
+    return normalized
   return normalized.filter(item => catalog.has(item))
 }
 
 function normalizeSceneBatchModels(models: string[], providerIds: string[]): string[] {
-  const catalog = new Set(resolveSceneBatchModelCatalog(providerIds, []).map(item => item.model))
   const normalized = dedupeStrings(models)
+  const catalog = new Set(resolveSceneBatchModelCatalog(providerIds, normalized).map(item => item.model))
   if (catalog.size === 0)
-    return []
+    return normalized
   return normalized.filter(item => catalog.has(item))
 }
 
@@ -1654,6 +1657,20 @@ function promptPreview(prompt: string): string {
   if (!text)
     return '-'
   return text.length > 90 ? `${text.slice(0, 90)}...` : text
+}
+
+function sceneBuiltinPromptPreview(key: PlatformAiChannelKey): string {
+  return promptPreview(sceneDefinitionForKey(key)?.builtinPrompt || '')
+}
+
+function openSceneBuiltinPrompt(scene: SceneItem) {
+  sceneBuiltinPromptTarget.value = scene
+  sceneBuiltinPromptVisible.value = true
+}
+
+function closeSceneBuiltinPrompt() {
+  sceneBuiltinPromptVisible.value = false
+  sceneBuiltinPromptTarget.value = null
 }
 
 function applyConsolePayload(payload: ProvidersPayload): void {
@@ -2784,7 +2801,17 @@ onMounted(async () => {
             </a-table-column>
             <a-table-column title="提示词" data-index="prompt">
               <template #cell="scope">
-                {{ promptPreview(scope.record.prompt) }}
+                <div class="space-y-1.5">
+                  <div class="text-xs text-slate-500">
+                    内置：{{ sceneBuiltinPromptPreview(scope.record.key) }}
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    自定义：{{ promptPreview(scope.record.prompt) }}
+                  </div>
+                  <a-button size="mini" @click="openSceneBuiltinPrompt(scope.record)">
+                    查看内置提示词
+                  </a-button>
+                </div>
               </template>
             </a-table-column>
             <a-table-column title="状态" data-index="enabled" :width="100">
@@ -4066,6 +4093,22 @@ onMounted(async () => {
         </div>
       </template>
     </a-drawer>
+
+    <a-modal
+      v-model:visible="sceneBuiltinPromptVisible"
+      :title="sceneBuiltinPromptTarget ? `内置提示词 · ${sceneBuiltinPromptTarget.label}` : '内置提示词'"
+      :width="760"
+      :footer="false"
+      unmount-on-close
+      @cancel="closeSceneBuiltinPrompt"
+    >
+      <div v-if="sceneBuiltinPromptTarget" class="space-y-3">
+        <div class="text-xs text-slate-500">
+          {{ sceneBuiltinPromptTarget.key }} · {{ modelCapabilityLabel(sceneRequiredCapability(sceneBuiltinPromptTarget.key)) }}
+        </div>
+        <pre class="text-xs text-slate-100 leading-relaxed p-4 rounded-2xl bg-slate-950 whitespace-pre-wrap overflow-x-auto">{{ sceneDefinitionForKey(sceneBuiltinPromptTarget.key)?.builtinPrompt || '未配置内置提示词。' }}</pre>
+      </div>
+    </a-modal>
 
     <a-drawer
       v-model:visible="sceneBatchEditorVisible"
