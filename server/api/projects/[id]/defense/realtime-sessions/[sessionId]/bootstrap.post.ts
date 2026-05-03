@@ -1,5 +1,5 @@
 import type { RuntimeSettings } from '~~/server/utils/env'
-import type { DefenseRealtimeBootstrapPayload } from '~~/shared/types/domain'
+import type { DefenseRealtimeBootstrapPayload, DefenseVoiceRuntimeSelection } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { setResponseStatus } from 'h3'
 import { assertCozeRealtimeConfig, resolveCozeVoiceRuntimeConfig } from '~~/server/services/admin-ai/coze-voice'
@@ -14,7 +14,7 @@ import {
   normalizeDefenseRealtimeSessionMeta,
   resolveDefenseRealtimeQwenApiKey,
 } from '~~/server/utils/defense-realtime'
-import { resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
+import { resolveAiRuntimeForChannel, resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
   getProjectDefenseSessionState,
@@ -35,6 +35,42 @@ function resolveDefenseCozeVoiceProvider(runtime: RuntimeSettings) {
   return (defenseChannel?.providerIds || [])
     .map(providerId => providerMap.get(providerId) || null)
     .find(provider => provider?.enabled && provider.type === 'coze-voice') || null
+}
+
+function resolveDefenseQwenVoiceProvider(runtime: RuntimeSettings) {
+  const registry = resolvePlatformAiRegistry(runtime)
+  const providerMap = new Map(registry.providers.map(provider => [provider.id, provider]))
+  const defenseChannel = registry.channels.find(item => item.key === 'defense')
+  return (defenseChannel?.providerIds || [])
+    .map(providerId => providerMap.get(providerId) || null)
+    .find(provider => provider?.enabled && provider.type === 'dashscope-bailian' && (provider.capability === 'realtime' || provider.capability === 'voice')) || null
+}
+
+function normalizeSelectionArray(value: unknown): DefenseVoiceRuntimeSelection[] {
+  if (!Array.isArray(value))
+    return []
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item))
+        return null
+      const record = item as Record<string, unknown>
+      const personaId = normalizeString(record.personaId || record.persona_id)
+      if (!personaId)
+        return null
+      return {
+        personaId,
+        agentId: normalizeString(record.agentId || record.agent_id) || undefined,
+        voiceId: normalizeString(record.voiceId || record.voice_id) || undefined,
+      }
+    })
+    .filter((item): item is DefenseVoiceRuntimeSelection => Boolean(item))
+}
+
+function resolveSelectionForPersona(
+  selections: DefenseVoiceRuntimeSelection[],
+  personaId: string,
+): DefenseVoiceRuntimeSelection | null {
+  return selections.find(item => item.personaId === personaId) || null
 }
 
 async function createQwenTemporaryToken(apiKey: string): Promise<{ token: string, expiresAt: string | null }> {
@@ -142,16 +178,38 @@ export default defineEventHandler(async (event) => {
         if (!qwenApiKey)
           throw new Error('QWEN_CONFIG_MISSING')
 
+        const defenseQwenProvider = resolveDefenseQwenVoiceProvider(runtime)
+        const qwenVoice = defenseQwenProvider?.voice?.qwen
+        const metadata = nextRealtime.metadata || {}
+        const requestedRealtimeProfileId = normalizeString(metadata.voiceRuntimeProfileId)
+        const requestedAsrProfileId = normalizeString(metadata.asrProfileId)
+        const requestedTtsProfileId = normalizeString(metadata.ttsProfileId)
+        const realtimeProfile = qwenVoice?.realtimeProfiles.find(item => item.enabled && item.id === requestedRealtimeProfileId)
+          || qwenVoice?.realtimeProfiles.find(item => item.enabled)
+          || null
+        const asrProfile = qwenVoice?.asrProfiles.find(item => item.enabled && item.id === (requestedAsrProfileId || realtimeProfile?.asrProfileId))
+          || qwenVoice?.asrProfiles.find(item => item.enabled)
+          || null
+        const ttsProfile = qwenVoice?.ttsProfiles.find(item => item.enabled && item.id === (requestedTtsProfileId || realtimeProfile?.ttsProfileId))
+          || qwenVoice?.ttsProfiles.find(item => item.enabled)
+          || null
         const tokenResult = await createQwenTemporaryToken(qwenApiKey)
         payload = {
           ...payload,
           expiresAt: tokenResult.expiresAt,
           qwen: {
-            baseWsUrl: runtime.defenseRealtime.qwen.baseWsUrl,
-            workspaceId: runtime.defenseRealtime.qwen.workspaceId,
-            appId: runtime.defenseRealtime.qwen.appId,
-            voice: runtime.defenseRealtime.qwen.voice,
-            frameIntervalMs: runtime.defenseRealtime.qwen.frameIntervalMs,
+            baseWsUrl: realtimeProfile?.baseWsUrl || runtime.defenseRealtime.qwen.baseWsUrl,
+            realtimeProfileId: realtimeProfile?.id,
+            realtimeModel: realtimeProfile?.model,
+            asrProfileId: asrProfile?.id,
+            asrModel: asrProfile?.model,
+            ttsProfileId: ttsProfile?.id,
+            ttsModel: ttsProfile?.model,
+            vadMode: realtimeProfile?.vadMode || (metadata.vadMode === 'manual' || metadata.vadMode === 'semantic_vad' ? metadata.vadMode : 'server_vad'),
+            workspaceId: realtimeProfile?.workspaceId || runtime.defenseRealtime.qwen.workspaceId,
+            appId: realtimeProfile?.appId || runtime.defenseRealtime.qwen.appId,
+            voice: ttsProfile?.voiceId || realtimeProfile?.defaultVoiceId || runtime.defenseRealtime.qwen.voice,
+            frameIntervalMs: realtimeProfile?.frameIntervalMs || runtime.defenseRealtime.qwen.frameIntervalMs,
             accessToken: tokenResult.token,
             connectionUrl: `${runtime.apiBaseUrl.replace(/\/$/, '')}/projects/${projectId}/defense/realtime-sessions/${sessionId}/qwen-relay`,
           },
@@ -168,16 +226,37 @@ export default defineEventHandler(async (event) => {
           throw new Error('COZE_CONFIG_MISSING')
         assertCozeRealtimeConfig(config)
 
+        const metadata = nextRealtime.metadata || {}
+        const requestedSelections = normalizeSelectionArray(metadata.voiceRuntimeSelections)
+        const cozeVoice = defenseCozeProvider?.voice?.coze
+        const enabledAgents = cozeVoice?.agents.filter(item => item.enabled) || []
+        const enabledVoices = cozeVoice?.voices.filter(item => item.enabled) || []
+        const agentSelections = personaPack.judges.map((persona) => {
+          const requested = resolveSelectionForPersona(requestedSelections, persona.id)
+          const agent = enabledAgents.find(item => item.id === requested?.agentId)
+            || enabledAgents.find(item => item.judgeType === persona.judgeType)
+            || enabledAgents[0]
+          return {
+            personaId: persona.id,
+            agentId: agent?.id || requested?.agentId || 'coze_agent_default',
+            voiceId: requested?.voiceId || agent?.defaultVoiceId || enabledVoices[0]?.voiceId || config.voiceId || undefined,
+          }
+        })
+        const primarySelection = agentSelections.find(item => item.agentId)
+        const primaryAgent = enabledAgents.find(item => item.id === primarySelection?.agentId) || enabledAgents[0]
+        const primaryVoiceId = normalizeString(primarySelection?.voiceId) || primaryAgent?.defaultVoiceId || config.voiceId
         const conversationId = normalizeString(nextRealtime.conversationId) || randomUUID()
         payload = {
           ...payload,
           coze: {
             baseUrl: config.baseURL,
             accessToken: config.apiKey,
-            botId: config.botId,
-            connectorId: config.connectorId,
-            voiceId: config.voiceId,
+            botId: primaryAgent?.botId || config.botId,
+            connectorId: primaryAgent?.connectorId || config.connectorId,
+            voiceId: primaryVoiceId,
             conversationId,
+            agentSelections,
+            voiceSelections: agentSelections,
             roomInfo: null,
           },
         }

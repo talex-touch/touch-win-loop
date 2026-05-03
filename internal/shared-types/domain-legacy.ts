@@ -3826,6 +3826,12 @@ export type DefenseRealtimeProvider = 'qwen' | 'coze'
 export type DefenseRealtimeMediaMode = 'audio' | 'audio_video'
 export type DefenseRealtimeConnectionState = 'idle' | 'bootstrapping' | 'connecting' | 'connected' | 'interrupted' | 'error' | 'closed'
 
+export interface DefenseVoiceRuntimeSelection {
+  personaId: string
+  agentId?: string
+  voiceId?: string
+}
+
 export interface DefenseRealtimePersonaPack {
   sessionId: string
   projectId: string
@@ -3874,6 +3880,13 @@ export interface DefenseRealtimeBootstrapPayload {
   personaPack: DefenseRealtimePersonaPack
   qwen?: {
     baseWsUrl: string
+    realtimeProfileId?: string
+    realtimeModel?: string
+    asrProfileId?: string
+    asrModel?: string
+    ttsProfileId?: string
+    ttsModel?: string
+    vadMode?: 'server_vad' | 'semantic_vad' | 'manual'
     workspaceId?: string
     appId?: string
     voice?: string
@@ -3888,6 +3901,8 @@ export interface DefenseRealtimeBootstrapPayload {
     connectorId?: string
     voiceId?: string
     conversationId?: string
+    agentSelections?: DefenseVoiceRuntimeSelection[]
+    voiceSelections?: DefenseVoiceRuntimeSelection[]
     roomInfo?: Record<string, unknown> | null
   } | null
 }

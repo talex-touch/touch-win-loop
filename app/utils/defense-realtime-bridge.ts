@@ -542,7 +542,7 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
         task_group: 'aigc',
         task: 'multimodal-generation',
         function: 'generation',
-        model: 'multimodal-dialog',
+        model: normalizeString(this.payload.qwen?.realtimeModel) || 'multimodal-dialog',
         input: {
           directive: 'Start',
           ...(workspaceId ? { workspace_id: workspaceId } : {}),
@@ -559,6 +559,7 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
             voice: normalizeString(this.payload.qwen?.voice) || undefined,
             sample_rate: 24000,
           },
+          ...(this.payload.qwen?.vadMode ? { turn_detection: { type: this.payload.qwen.vadMode } } : {}),
           client_info: {
             user_id: normalizeString(personaPack.sessionId || this.payload.sessionId),
             device: {

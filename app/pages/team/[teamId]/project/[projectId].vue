@@ -619,6 +619,12 @@ interface DefenseRealtimeBootstrapResponse {
   session: AiChatSession | null
 }
 
+interface DefenseVoiceRuntimeSelectionPayload {
+  personaId: string
+  agentId?: string
+  voiceId?: string
+}
+
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
 type WorkspaceMainTabId = WorkspaceOpenTabState
 type WorkspaceWorkbenchMode = ProjectWorkbenchMode
@@ -9413,6 +9419,11 @@ async function startDefenseRealtime() {
       .map(item => item.id)
     const provider = defenseRealtimeProviderDraft.value
     const mediaMode = defenseRealtimeMediaModeDraft.value
+    const voiceRuntimeSelections: DefenseVoiceRuntimeSelectionPayload[] = defensePersonas.value
+      .filter(item => item.enabled)
+      .map(item => ({
+        personaId: item.id,
+      }))
     const response = await unsafeFetch<ApiResponse<DefenseRealtimeSessionPayload>>(
       endpoint(`/projects/${projectId}/defense/realtime-sessions`),
       {
@@ -9422,6 +9433,8 @@ async function startDefenseRealtime() {
           personaIds: enabledPersonaIds,
           provider,
           mediaMode,
+          vadMode: 'server_vad',
+          voiceRuntimeSelections,
         },
       },
     )

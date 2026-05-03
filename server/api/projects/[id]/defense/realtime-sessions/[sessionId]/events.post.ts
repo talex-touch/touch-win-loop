@@ -11,6 +11,8 @@ import {
   resolveDefenseRealtimeStage,
 } from '~~/server/utils/defense-realtime'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+import { resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import {
   createProjectDefenseTurns,
   getProjectDefenseSessionState,
@@ -22,6 +24,7 @@ import {
   upsertProjectMeetingParticipant,
 } from '~~/server/utils/project-meeting-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
+import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 
 interface DefenseRealtimeEventsBody {
   event?: DefenseRealtimeNormalizedEvent
@@ -37,9 +40,27 @@ function normalizeEvents(body: DefenseRealtimeEventsBody): DefenseRealtimeNormal
   return events.filter(item => item && typeof item === 'object')
 }
 
+function resolveRealtimeBillingConfig(runtime: ReturnType<typeof readRuntimeSettings>, provider: ReturnType<typeof normalizeDefenseRealtimeProvider>) {
+  const registry = resolvePlatformAiRegistry(runtime)
+  const voiceProvider = registry.providers.find(item => item.enabled && (
+    provider === 'coze'
+      ? item.type === 'coze-voice'
+      : item.type === 'dashscope-bailian' && (item.capability === 'realtime' || item.capability === 'voice')
+  ))
+  return voiceProvider?.voice?.billing || null
+}
+
+function resolveElapsedBillingMinutes(startedAt: unknown): number {
+  const timestamp = Date.parse(normalizeString(startedAt))
+  if (!Number.isFinite(timestamp))
+    return 0
+  return Math.max(0, Math.ceil((Date.now() - timestamp) / 60000))
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
+  const { runtime: aiRuntime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
   const sessionId = normalizeString(getRouterParam(event, 'sessionId'))
@@ -230,6 +251,53 @@ export default defineEventHandler(async (event) => {
         realtime: nextRealtime as DefenseRealtimeSessionMeta,
       })
 
+      const billingConfig = resolveRealtimeBillingConfig(aiRuntime, nextRealtime.provider)
+      const startedAtForBilling = normalizeString(nextRealtime.metadata?.billingStartedAt)
+      const billedMinutes = Math.max(0, Number(nextRealtime.metadata?.billedMinutes || 0))
+      const elapsedMinutes = resolveElapsedBillingMinutes(startedAtForBilling)
+      const unbilledMinutes = Math.max(0, elapsedMinutes - billedMinutes)
+      if (billingConfig && unbilledMinutes > 0) {
+        const activeJudgeCount = Math.max(1, currentState.selectedPersonaIds.length || 1)
+        const judgeMultiplier = billingConfig.judgeMultiplierEnabled ? activeJudgeCount : 1
+        const videoMultiplier = nextRealtime.mediaMode === 'audio_video' ? Math.max(1, Number(billingConfig.videoFrameMultiplier || 1)) : 1
+        const units = Math.max(1, Math.ceil(
+          unbilledMinutes
+          * Math.max(0, Number(billingConfig.realtimeUnitsPerMinute || 1))
+          * judgeMultiplier
+          * videoMultiplier
+          * Math.max(1, Number(billingConfig.providerMarkupMultiplier || 1)),
+        ))
+        const quota = await teamConsumeAiQuota(db, {
+          workspaceId: access.workspaceId,
+          userId: user.id,
+          route: `/api/projects/${projectId}/defense/realtime/${nextRealtime.provider}/minute`,
+          units,
+        })
+        if (!quota.allowed)
+          throw new Error('QUOTA_EXCEEDED')
+        nextRealtime = mergeDefenseRealtimeSessionMeta(nextRealtime, {
+          metadata: {
+            billedMinutes: billedMinutes + unbilledMinutes,
+            billingUnits: Math.max(0, Number(nextRealtime.metadata?.billingUnits || 0)) + units,
+          },
+        })
+        await upsertProjectDefenseSessionState(db, {
+          sessionId,
+          projectId,
+          workspaceId: access.workspaceId,
+          currentStage: updatedState.currentStage,
+          turnCount: updatedState.turnCount,
+          selectedPersonaIds: updatedState.selectedPersonaIds,
+          summaryStatus: updatedState.summaryStatus,
+          summaryResourceId: updatedState.summaryResourceId || null,
+          linkedMeetingId: updatedState.linkedMeetingId || null,
+          lastInputMode: updatedState.lastInputMode,
+          lastContextPack: updatedState.lastContextPack || {},
+          lastScorecard: updatedState.lastScorecard || null,
+          realtime: nextRealtime as DefenseRealtimeSessionMeta,
+        })
+      }
+
       return {
         eventCount: events.length,
         utteranceIds: persistedUtterances,
@@ -266,6 +334,16 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40507)
+    }
+    if (error instanceof Error && error.message === 'QUOTA_EXCEEDED') {
+      setResponseStatus(event, 429)
+      return fail('当前工作空间 AI 配额不足，实时答辩已停止补扣。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 42995)
     }
     throw error
   }
