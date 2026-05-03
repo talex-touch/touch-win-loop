@@ -40,6 +40,7 @@ import type {
   DefenseRealtimeMediaMode,
   DefenseRealtimeNormalizedEvent,
   DefenseRealtimeProvider,
+  DefenseRealtimeRuntimeOptions,
   DefenseRealtimeSessionMeta,
   Project,
   ProjectExportJob,
@@ -386,12 +387,13 @@ interface ProjectWorkspaceAiRuntimeStatus {
   canvasComplete: AiRuntimeFeatureStatus
   canvasRefine: AiRuntimeFeatureStatus
   defense: AiRuntimeFeatureStatus
+  defenseRealtime?: DefenseRealtimeRuntimeOptions
   contestFilter: AiRuntimeFeatureStatus
   topicProposal: AiRuntimeFeatureStatus
   projectChat: AiRuntimeFeatureStatus
 }
 
-type ProjectWorkspaceAiFeatureKey = keyof ProjectWorkspaceAiRuntimeStatus
+type ProjectWorkspaceAiFeatureKey = Exclude<keyof ProjectWorkspaceAiRuntimeStatus, 'defenseRealtime'>
 type DocumentAssistFeatureKey
   = 'documentSummarize'
     | 'documentRewrite'
@@ -1237,6 +1239,7 @@ const aiRuntimeStatusError = ref('')
 const defenseRealtimeStarting = ref(false)
 const defenseRealtimeProviderDraft = ref<DefenseRealtimeProvider>('qwen')
 const defenseRealtimeMediaModeDraft = ref<DefenseRealtimeMediaMode>('audio_video')
+const defenseRealtimeVoiceSelectionDraft = ref<Record<string, { agentId: string, voiceId: string }>>({})
 const defenseRealtimeAudioEnabled = ref(true)
 const defenseRealtimeVideoEnabled = ref(true)
 const defenseRealtimeBootstrapState = ref<'idle' | 'bootstrapping' | 'ready' | 'error'>('idle')
@@ -2707,6 +2710,9 @@ const defenseSessionStateSnapshot = computed<AiDefenseSessionState | null>(() =>
 const defenseRealtimeSessionMetaSnapshot = computed<DefenseRealtimeSessionMeta | null>(() => {
   return defenseSessionStateSnapshot.value?.realtime || null
 })
+const defenseRealtimeRuntimeOptions = computed<DefenseRealtimeRuntimeOptions | null>(() => {
+  return aiRuntimeStatus.value?.defenseRealtime || null
+})
 const defenseLinkedMeeting = computed(() => {
   const linkedMeetingId = normalizeString(defenseSessionStateSnapshot.value?.linkedMeetingId)
   if (!linkedMeetingId)
@@ -2715,6 +2721,44 @@ const defenseLinkedMeeting = computed(() => {
     return activeMeetingDetail.value
   return projectMeetings.value.find(item => normalizeString(item.id) === linkedMeetingId) || null
 })
+
+function resolveDefenseRealtimeAgentForPersona(persona: AiDefensePersona): string {
+  const draftAgentId = normalizeString(defenseRealtimeVoiceSelectionDraft.value[persona.id]?.agentId)
+  const agents = defenseRealtimeRuntimeOptions.value?.coze.agents.filter(item => item.enabled) || []
+  if (draftAgentId && agents.some(item => item.id === draftAgentId))
+    return draftAgentId
+  return agents.find(item => item.judgeType === persona.judgeType)?.id
+    || agents[0]?.id
+    || ''
+}
+
+function resolveDefenseRealtimeVoiceForPersona(persona: AiDefensePersona, agentId: string): string {
+  const draftVoiceId = normalizeString(defenseRealtimeVoiceSelectionDraft.value[persona.id]?.voiceId)
+  const options = defenseRealtimeRuntimeOptions.value?.coze
+  const voices = options?.voices.filter(item => item.enabled) || []
+  if (draftVoiceId && voices.some(item => item.id === draftVoiceId || item.voiceId === draftVoiceId))
+    return draftVoiceId
+  const agent = options?.agents.find(item => item.id === agentId)
+  const defaultVoiceId = normalizeString(agent?.defaultVoiceId)
+  if (defaultVoiceId && voices.some(item => item.id === defaultVoiceId || item.voiceId === defaultVoiceId))
+    return defaultVoiceId
+  return voices[0]?.id || defaultVoiceId || ''
+}
+
+function buildDefenseRealtimeVoiceRuntimeSelections(personas: AiDefensePersona[]): DefenseVoiceRuntimeSelectionPayload[] {
+  if (defenseRealtimeProviderDraft.value !== 'coze')
+    return personas.map(item => ({ personaId: item.id }))
+
+  return personas.map((persona) => {
+    const agentId = resolveDefenseRealtimeAgentForPersona(persona)
+    const voiceId = resolveDefenseRealtimeVoiceForPersona(persona, agentId)
+    return {
+      personaId: persona.id,
+      agentId: agentId || undefined,
+      voiceId: voiceId || undefined,
+    }
+  })
+}
 
 function appendDefenseRealtimeLog(
   message: string,
@@ -5971,6 +6015,8 @@ async function loadAiRuntimeStatus(): Promise<void> {
     const response = await unsafeFetch<ApiResponse<ProjectWorkspaceAiRuntimeStatus>>(endpoint('/user/ai/runtime'))
     aiRuntimeStatus.value = response.data
     aiRuntimeStatusLoaded.value = true
+    if (response.data.defenseRealtime?.defaultProvider && !defenseSessionState.value?.realtime)
+      defenseRealtimeProviderDraft.value = response.data.defenseRealtime.defaultProvider
   }
   catch (error) {
     aiRuntimeStatus.value = null
@@ -9419,11 +9465,8 @@ async function startDefenseRealtime() {
       .map(item => item.id)
     const provider = defenseRealtimeProviderDraft.value
     const mediaMode = defenseRealtimeMediaModeDraft.value
-    const voiceRuntimeSelections: DefenseVoiceRuntimeSelectionPayload[] = defensePersonas.value
-      .filter(item => item.enabled)
-      .map(item => ({
-        personaId: item.id,
-      }))
+    const enabledPersonas = defensePersonas.value.filter(item => item.enabled)
+    const voiceRuntimeSelections = buildDefenseRealtimeVoiceRuntimeSelections(enabledPersonas)
     const response = await unsafeFetch<ApiResponse<DefenseRealtimeSessionPayload>>(
       endpoint(`/projects/${projectId}/defense/realtime-sessions`),
       {
@@ -12513,6 +12556,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
               :meeting-plan-tier="currentWorkspaceMeetingPlanTier"
               :meeting-runtime-health="meetingRuntimeHealth"
               :defense-realtime-state="defenseRealtimeSessionMetaSnapshot"
+              :defense-realtime-options="defenseRealtimeRuntimeOptions"
               :defense-realtime-logs="defenseRealtimeLogs"
               :tone-meta="toneMeta"
               @update:form-state="Object.assign(formState, $event)"
@@ -12611,6 +12655,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                   :session-state="defenseSessionStateSnapshot"
                   :personas="defensePersonas"
                   :realtime-state="defenseRealtimeSessionMetaSnapshot"
+                  :realtime-options="defenseRealtimeRuntimeOptions"
                   :realtime-logs="defenseRealtimeLogs"
                   :scorecard="defenseScorecard"
                   :summary="defenseSummary"
@@ -12698,6 +12743,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 :defense-session-meta="defenseSessionMetaSnapshot"
                 :defense-session-state="defenseSessionStateSnapshot"
                 :defense-realtime-state="defenseRealtimeSessionMetaSnapshot"
+                :defense-realtime-options="defenseRealtimeRuntimeOptions"
                 :defense-realtime-logs="defenseRealtimeLogs"
                 :defense-stage="defenseStage"
                 :defense-turn-count="defenseTurnCount"

@@ -18,6 +18,7 @@ import type {
   Contest,
   DefenseRealtimeMediaMode,
   DefenseRealtimeProvider,
+  DefenseRealtimeRuntimeOptions,
   DefenseRealtimeSessionMeta,
   ProjectExportJob,
   ProjectExportJobDiagnostics,
@@ -97,6 +98,7 @@ const props = withDefaults(defineProps<{
   defenseSessionMeta?: AiChatSession | null
   defenseSessionState?: AiDefenseSessionState | null
   defenseRealtimeState?: DefenseRealtimeSessionMeta | null
+  defenseRealtimeOptions?: DefenseRealtimeRuntimeOptions | null
   defenseRealtimeLogs?: Array<{
     id: string
     level: 'info' | 'warning' | 'error'
@@ -197,6 +199,7 @@ const props = withDefaults(defineProps<{
   defenseSessionMeta: null,
   defenseSessionState: null,
   defenseRealtimeState: null,
+  defenseRealtimeOptions: null,
   defenseRealtimeLogs: () => [],
   defenseStage: undefined,
   defenseTurnCount: 0,
@@ -1773,6 +1776,8 @@ function defenseRealtimeConnectionLabel(state?: DefenseRealtimeSessionMeta['conn
 
 function handleDefenseRealtimeProviderChange(event: Event): void {
   const value = String((event.target as HTMLSelectElement | null)?.value || 'qwen').trim()
+  if (value === 'coze' && props.defenseRealtimeOptions?.coze.configured === false)
+    return
   emit('updateDefenseRealtimeProvider', value === 'coze' ? 'coze' : 'qwen')
 }
 
@@ -2814,7 +2819,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
                 <div class="gap-2 grid grid-cols-2">
                   <label class="space-y-1">
-                    <span class="text-[11px] text-slate-500">Provider</span>
+                    <span class="text-[11px] text-slate-500">实时链路</span>
                     <select
                       class="text-[11px] text-slate-700 px-2 border border-slate-200 rounded bg-white h-8 w-full"
                       :value="props.defenseRealtimeState?.provider || 'qwen'"
@@ -2824,7 +2829,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                       <option value="qwen">
                         千问
                       </option>
-                      <option value="coze">
+                      <option
+                        value="coze"
+                        :disabled="props.defenseRealtimeOptions?.coze.configured === false"
+                      >
                         Coze
                       </option>
                     </select>

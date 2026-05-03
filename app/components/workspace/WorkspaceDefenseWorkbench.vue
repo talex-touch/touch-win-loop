@@ -11,6 +11,7 @@ import type {
   ContestTimeline,
   DefenseRealtimeMediaMode,
   DefenseRealtimeProvider,
+  DefenseRealtimeRuntimeOptions,
   DefenseRealtimeSessionMeta,
   ProjectMeeting,
   ProjectMeetingDetail,
@@ -33,6 +34,7 @@ const props = withDefaults(defineProps<{
   meetingRuntimeHealth?: ProjectMeetingRuntimeHealth | null
   selectedResourceCount?: number
   realtimeState?: DefenseRealtimeSessionMeta | null
+  realtimeOptions?: DefenseRealtimeRuntimeOptions | null
   realtimeLogs?: Array<{
     id: string
     level: 'info' | 'warning' | 'error'
@@ -55,6 +57,7 @@ const props = withDefaults(defineProps<{
   meetingRuntimeHealth: null,
   selectedResourceCount: 0,
   realtimeState: null,
+  realtimeOptions: null,
   realtimeLogs: () => [],
 })
 
@@ -163,6 +166,23 @@ function realtimeProviderLabel(provider?: DefenseRealtimeProvider): string {
   return provider === 'coze' ? 'Coze' : '千问'
 }
 
+const realtimeProviderOptions = computed(() => {
+  return [
+    { value: 'qwen' as const, label: '千问', disabled: false },
+    { value: 'coze' as const, label: 'Coze', disabled: props.realtimeOptions?.coze.configured === false },
+  ]
+})
+
+const cozeRuntimeSummary = computed(() => {
+  const options = props.realtimeOptions?.coze
+  if (!options?.configured)
+    return 'Coze 未绑定到 defense 渠道'
+  const agentCount = options.agents.filter(item => item.enabled).length
+  const voiceCount = options.voices.filter(item => item.enabled).length
+  const roomMode = options.roomConfig?.createRoomOnServer === false ? '客户端取房间' : '服务端 create_room'
+  return `${agentCount} 个智能体 · ${voiceCount} 个音色 · ${roomMode}`
+})
+
 function contestTimelineNodeLabel(nodeType?: ContestTimeline['nodeType']): string {
   if (nodeType === 'registration')
     return '报名'
@@ -187,6 +207,8 @@ function judgeTypeLabel(judgeType?: AiDefensePersona['judgeType']): string {
 
 function handleRealtimeProviderChange(event: Event): void {
   const value = String((event.target as HTMLSelectElement | null)?.value || 'qwen').trim()
+  if (value === 'coze' && props.realtimeOptions?.coze.configured === false)
+    return
   emit('updateRealtimeProvider', value === 'coze' ? 'coze' : 'qwen')
 }
 
@@ -671,7 +693,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
             实时答辩控制台
           </p>
           <h2 class="workspace-defense-workbench__panel-title wl-workbench-title-panel">
-            Provider / 音视频 / 诊断
+            实时链路 / 音视频 / 诊断
           </h2>
         </div>
         <div class="workspace-defense-workbench__realtime-header-actions">
@@ -697,21 +719,30 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
       <div class="workspace-defense-workbench__realtime-shell">
         <section class="workspace-defense-workbench__realtime-controls">
           <label class="workspace-defense-workbench__field">
-            <span class="workspace-defense-workbench__field-label">Provider</span>
+            <span class="workspace-defense-workbench__field-label">实时链路</span>
             <select
               class="workspace-defense-workbench__field-control"
               :value="realtimeState?.provider || 'qwen'"
               :disabled="realtimeSessionLocked"
               @change="handleRealtimeProviderChange"
             >
-              <option value="qwen">
-                千问
-              </option>
-              <option value="coze">
-                Coze
+              <option
+                v-for="option in realtimeProviderOptions"
+                :key="option.value"
+                :value="option.value"
+                :disabled="option.disabled"
+              >
+                {{ option.label }}
               </option>
             </select>
           </label>
+
+          <p
+            v-if="(realtimeState?.provider || 'qwen') === 'coze'"
+            class="workspace-defense-workbench__hint"
+          >
+            {{ cozeRuntimeSummary }}
+          </p>
 
           <label class="workspace-defense-workbench__field">
             <span class="workspace-defense-workbench__field-label">媒体模式</span>
@@ -1106,6 +1137,13 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
   line-height: 1.4;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.workspace-defense-workbench__hint {
+  margin: -6px 0 0;
+  color: var(--wl-workbench-text-muted);
+  font-size: var(--wl-workbench-caption-size);
+  line-height: 1.5;
 }
 
 .workspace-defense-workbench__field-control {

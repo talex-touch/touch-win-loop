@@ -811,7 +811,9 @@ class CozeBridge extends BaseDefenseRealtimeBridge {
           renderDom: 'workspace-defense-realtime-preview',
           videoInputDeviceId: normalizeString(mediaController.getVideoInputDeviceId()) || undefined,
         },
-        getRoomInfo: async () => this.payload.coze?.roomInfo || undefined,
+        getRoomInfo: this.payload.coze?.roomConfig?.createRoomOnServer === false
+          ? undefined
+          : async () => this.payload.coze?.roomInfo || undefined,
       })
 
       const register = (eventName: string | undefined, handler: (event: unknown) => void) => {

@@ -2,6 +2,7 @@
 import type {
   DefenseRealtimeMediaMode,
   DefenseRealtimeProvider,
+  DefenseRealtimeRuntimeOptions,
   DefenseRealtimeSessionMeta,
   ProjectMeetingDetail,
   ProjectMeetingGuestShare,
@@ -51,6 +52,7 @@ const props = withDefaults(defineProps<{
   workspaceType?: WorkspaceType | ''
   meetingPlanTier?: 'personal_team' | 'business_team' | null
   defenseRealtimeState?: DefenseRealtimeSessionMeta | null
+  defenseRealtimeOptions?: DefenseRealtimeRuntimeOptions | null
   defenseRealtimeLogs?: Array<{
     id: string
     level: 'info' | 'warning' | 'error'
@@ -74,6 +76,7 @@ const props = withDefaults(defineProps<{
   workspaceType: '',
   meetingPlanTier: null,
   defenseRealtimeState: null,
+  defenseRealtimeOptions: null,
   defenseRealtimeLogs: () => [],
 })
 
@@ -593,6 +596,7 @@ onBeforeUnmount(() => {
           :participants="participantItems"
           :captions="mergedCaptions"
           :defense-realtime-state="defenseRealtimeState"
+          :defense-realtime-options="defenseRealtimeOptions"
           :defense-realtime-logs="defenseRealtimeLogs"
           @start-defense-realtime-sidecar="emit('startDefenseRealtimeSidecar')"
           @update-defense-realtime-provider="emit('updateDefenseRealtimeProvider', $event)"

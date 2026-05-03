@@ -10,6 +10,7 @@ import type {
   Contest,
   DefenseRealtimeMediaMode,
   DefenseRealtimeProvider,
+  DefenseRealtimeRuntimeOptions,
   DefenseRealtimeSessionMeta,
   Project,
   ProjectInvitationSummary,
@@ -248,6 +249,7 @@ const props = withDefaults(defineProps<{
   meetingPlanTier?: 'personal_team' | 'business_team' | null
   meetingRuntimeHealth?: ProjectMeetingRuntimeHealth | null
   defenseRealtimeState?: DefenseRealtimeSessionMeta | null
+  defenseRealtimeOptions?: DefenseRealtimeRuntimeOptions | null
   defenseRealtimeLogs?: Array<{
     id: string
     level: 'info' | 'warning' | 'error'
@@ -410,6 +412,7 @@ const props = withDefaults(defineProps<{
   meetingPlanTier: null,
   meetingRuntimeHealth: null,
   defenseRealtimeState: null,
+  defenseRealtimeOptions: null,
   defenseRealtimeLogs: () => [],
 })
 
@@ -2577,6 +2580,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :workspace-type="props.workspaceType"
         :meeting-plan-tier="props.meetingPlanTier"
         :defense-realtime-state="props.defenseRealtimeState"
+        :defense-realtime-options="props.defenseRealtimeOptions"
         :defense-realtime-logs="props.defenseRealtimeLogs"
         @join-meeting="emit('joinMeeting', $event)"
         @start-meeting="emit('startMeeting', $event)"

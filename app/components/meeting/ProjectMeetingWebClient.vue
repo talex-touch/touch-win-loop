@@ -3,6 +3,7 @@ import type { ComponentPublicInstance } from 'vue'
 import type {
   DefenseRealtimeMediaMode,
   DefenseRealtimeProvider,
+  DefenseRealtimeRuntimeOptions,
   DefenseRealtimeSessionMeta,
   ProjectMeetingMode,
   ProjectMeetingTrackState,
@@ -56,6 +57,7 @@ const props = withDefaults(defineProps<{
   meetingGuestToken?: string
   guest?: boolean
   defenseRealtimeState?: DefenseRealtimeSessionMeta | null
+  defenseRealtimeOptions?: DefenseRealtimeRuntimeOptions | null
   defenseRealtimeLogs?: Array<{
     id: string
     level: 'info' | 'warning' | 'error'
@@ -76,6 +78,7 @@ const props = withDefaults(defineProps<{
   meetingGuestToken: '',
   guest: false,
   defenseRealtimeState: null,
+  defenseRealtimeOptions: null,
   defenseRealtimeLogs: () => [],
 })
 
@@ -935,6 +938,7 @@ const showDefenseRealtimeSidecar = computed(() => {
 const canManageDefenseRealtimeSidecar = computed(() => !props.guest && isLivekit.value && hasJoinSession.value)
 const defenseRealtimeProvider = computed<DefenseRealtimeProvider>(() => props.defenseRealtimeState?.provider === 'coze' ? 'coze' : 'qwen')
 const defenseRealtimeMediaMode = computed<DefenseRealtimeMediaMode>(() => props.defenseRealtimeState?.mediaMode === 'audio' ? 'audio' : 'audio_video')
+const cozeRealtimeSelectable = computed(() => props.defenseRealtimeOptions?.coze.configured !== false)
 const defenseRealtimeLocked = computed(() => {
   const state = normalizeString(props.defenseRealtimeState?.connectionState)
   return props.defenseRealtimeState?.bootstrapState === 'bootstrapping'
@@ -1243,14 +1247,14 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="canManageDefenseRealtimeSidecar && !showDefenseRealtimeSidecar" class="meeting-web-client__sidecar-selects">
             <label>
-              <span>Provider</span>
+              <span>实时链路</span>
               <select
                 :value="defenseRealtimeProvider"
                 :disabled="defenseRealtimeLocked"
-                @change="emit('updateDefenseRealtimeProvider', (($event.target as HTMLSelectElement).value === 'coze' ? 'coze' : 'qwen'))"
+                @change="emit('updateDefenseRealtimeProvider', (($event.target as HTMLSelectElement).value === 'coze' && cozeRealtimeSelectable ? 'coze' : 'qwen'))"
               >
                 <option value="qwen">百炼</option>
-                <option value="coze">Coze</option>
+                <option value="coze" :disabled="!cozeRealtimeSelectable">Coze</option>
               </select>
             </label>
             <label>
