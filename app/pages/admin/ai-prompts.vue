@@ -15,7 +15,7 @@ type SecretMode = 'keep' | 'replace' | 'clear'
 type ModelFormat = 'openai-compatible' | 'response'
 type PricingSource = 'provider' | 'manual' | 'none'
 type ProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'coze-voice' | 'searchxng' | 'tavily'
-type ProviderCapability = 'llm' | 'search' | 'embedding' | 'asr' | 'tts' | 'voice'
+type ProviderCapability = 'llm' | 'search' | 'embedding' | 'asr' | 'tts' | 'realtime' | 'voice'
 type ModelCapability = 'chat' | 'vision' | 'embedding' | 'asr' | 'tts' | 'image-gen' | 'video-gen'
 type LoadBalanceStrategy = 'round_robin'
 type FailoverStrategy = 'model_then_provider'
@@ -91,6 +91,73 @@ interface ProviderVoiceConfig {
   connectorId: string
   voiceId: string
   authMode: 'pat' | 'oauth'
+  qwen?: {
+    realtimeProfiles: Array<{
+      id: string
+      name: string
+      model: string
+      baseWsUrl: string
+      workspaceId: string
+      appId: string
+      defaultVoiceId: string
+      asrProfileId: string
+      ttsProfileId: string
+      vadMode: 'server_vad' | 'semantic_vad' | 'manual'
+      frameIntervalMs: number
+      enabled: boolean
+      sortOrder: number
+    }>
+    asrProfiles: Array<{
+      id: string
+      name: string
+      model: string
+      language: string
+      enabled: boolean
+      sortOrder: number
+    }>
+    ttsProfiles: Array<{
+      id: string
+      name: string
+      model: string
+      voiceId: string
+      sampleRate: number
+      enabled: boolean
+      sortOrder: number
+    }>
+  }
+  coze?: {
+    agents: Array<{
+      id: string
+      name: string
+      judgeType: string
+      botId: string
+      connectorId: string
+      defaultVoiceId: string
+      enabled: boolean
+      sortOrder: number
+    }>
+    voices: Array<{
+      id: string
+      name: string
+      voiceId: string
+      style: string
+      enabled: boolean
+      sortOrder: number
+    }>
+    roomConfig: {
+      createRoomOnServer: boolean
+      roomNamePrefix: string
+    }
+  }
+  billing?: {
+    realtimeStartupUnits: number
+    realtimeUnitsPerMinute: number
+    asrUnitsPerMinute: number
+    ttsUnitsPer1KChars: number
+    videoFrameMultiplier: number
+    judgeMultiplierEnabled: boolean
+    providerMarkupMultiplier: number
+  }
 }
 
 interface ProviderDraftItem extends ProviderItem {
@@ -261,7 +328,8 @@ const providerCapabilityOptions: Array<{ value: ProviderCapability, label: strin
   { value: 'embedding', label: 'Embedding only', hint: '只参与知识库文本或视觉 Embedding 场景，适合 DashScope Embeddings 独立接入。' },
   { value: 'asr', label: 'ASR only', hint: '只参与会议 ASR、录音转写等语音识别场景。' },
   { value: 'tts', label: 'TTS only', hint: '只参与文本转语音、朗读和语音播报场景。' },
-  { value: 'voice', label: 'Voice realtime', hint: 'Coze 语音 Provider，服务实时答辩、ASR 和 TTS，不进入普通聊天模型池。' },
+  { value: 'realtime', label: 'Voice realtime', hint: '千问或 Coze 实时语音视频 Provider，服务实时答辩、ASR 和 TTS，不进入普通聊天模型池。' },
+  { value: 'voice', label: 'Voice legacy', hint: '兼容旧 Coze 语音 Provider；新配置建议使用 realtime 能力。' },
   { value: 'search', label: 'Search only', hint: '搜索型 Provider 固定为 search，不参与模型场景路由。' },
 ]
 
@@ -311,18 +379,18 @@ const providerTypeGuides: Record<ProviderType, ProviderTypeGuide> = {
   },
   'dashscope-bailian': {
     title: '百炼 DashScope',
-    summary: 'Provider 只填百炼服务根地址；聊天、模型列表与多模态 Embedding 路径由系统自动补齐。',
+    summary: 'Provider 只填百炼服务根地址；聊天、模型列表、多模态 Embedding、Qwen 实时音视频、ASR 与 TTS 配置统一维护。',
     providerPlaceholder: 'dashscope',
     baseURLPlaceholder: 'https://dashscope.aliyuncs.com',
     baseURLHint: 'Base URL 填服务根地址即可；系统会为聊天补 compatible-mode/v1/chat/completions，为模型列表补 compatible-mode/v1/models，为百炼多模态 Embedding 补原生 /api/v1/services/embeddings/multimodal-embedding/multimodal-embedding。',
     apiKeyPlaceholder: 'DASHSCOPE_API_KEY',
     apiKeyHint: '填写 DashScope API Key，不需要 Bearer 前缀；留空保持已保存密钥不变。',
-    clientTypeHint: '当前不是 @langchain/community 的 AlibabaTongyi 包；聊天使用 @langchain/openai + 百炼 compatible-mode。',
+    clientTypeHint: '聊天使用 @langchain/openai + 百炼 compatible-mode；实时音视频/ASR/TTS 走 DashScope WebSocket 或语音原生接口。',
     embeddingHint: '纯文本选 OpenAI 兼容文本；图片、视频或融合向量选百炼原生多模态，运行时使用 https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding。',
   },
   'coze-voice': {
     title: 'Coze 语音 / Realtime',
-    summary: '用于 Coze 实时语音、ASR 和 TTS；token 作为 Provider API Key 保存，botId、connectorId 与 voiceId 单独维护。',
+    summary: '用于 Coze 实时语音、ASR 和 TTS；token 作为 Provider API Key 保存，多智能体、多音色和房间配置单独维护。',
     providerPlaceholder: 'coze',
     baseURLPlaceholder: 'https://api.coze.cn',
     baseURLHint: 'Base URL 填 Coze Open API 根地址，例如 https://api.coze.cn；实时答辩会复用同一组语音身份。',
@@ -437,6 +505,28 @@ const providerEditorForm = reactive<ProviderDraftItem>({
     connectorId: '',
     voiceId: '',
     authMode: 'pat',
+    qwen: {
+      realtimeProfiles: [],
+      asrProfiles: [],
+      ttsProfiles: [],
+    },
+    coze: {
+      agents: [],
+      voices: [],
+      roomConfig: {
+        createRoomOnServer: true,
+        roomNamePrefix: 'WinLoop 答辩',
+      },
+    },
+    billing: {
+      realtimeStartupUnits: 2,
+      realtimeUnitsPerMinute: 1,
+      asrUnitsPerMinute: 1,
+      ttsUnitsPer1KChars: 1,
+      videoFrameMultiplier: 1,
+      judgeMultiplierEnabled: true,
+      providerMarkupMultiplier: 1,
+    },
   },
   models: [],
   apiKeyMode: 'keep',
@@ -600,7 +690,7 @@ function dedupeStrings(items: string[]): string[] {
 
 function normalizeProviderCapability(value: unknown): ProviderCapability | null {
   const normalized = String(value || '').trim().toLowerCase()
-  if (normalized === 'llm' || normalized === 'search' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'voice')
+  if (normalized === 'llm' || normalized === 'search' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'realtime' || normalized === 'voice')
     return normalized
   if (normalized === 'embeddings' || normalized === 'embedding-only' || normalized === 'embedding_only' || normalized === 'vector')
     return 'embedding'
@@ -608,8 +698,8 @@ function normalizeProviderCapability(value: unknown): ProviderCapability | null 
     return 'asr'
   if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis')
     return 'tts'
-  if (normalized === 'realtime-voice' || normalized === 'voice-realtime' || normalized === 'voice_realtime' || normalized === 'coze-voice')
-    return 'voice'
+  if (normalized === 'realtime' || normalized === 'realtime-voice' || normalized === 'voice-realtime' || normalized === 'voice_realtime' || normalized === 'qwen-realtime' || normalized === 'coze-voice')
+    return 'realtime'
   return null
 }
 
@@ -735,8 +825,96 @@ function cloneModelItem(item: ProviderModelItem): ProviderModelItem {
 function cloneProviderItem(item: ProviderDraftItem): ProviderDraftItem {
   return {
     ...item,
-    voice: { ...(item.voice || createEmptyProviderDraft().voice) },
+    voice: normalizeProviderVoiceDraft(item.voice || createEmptyProviderDraft().voice),
     models: item.models.map(model => cloneModelItem(model)),
+  }
+}
+
+function normalizeProviderVoiceDraft(raw?: Partial<ProviderVoiceConfig>): ProviderVoiceConfig {
+  const source = raw || {}
+  const qwen = source.qwen || { realtimeProfiles: [], asrProfiles: [], ttsProfiles: [] }
+  const coze = source.coze || { agents: [], voices: [], roomConfig: { createRoomOnServer: true, roomNamePrefix: 'WinLoop 答辩' } }
+  const billing = source.billing || {
+    realtimeStartupUnits: 2,
+    realtimeUnitsPerMinute: 1,
+    asrUnitsPerMinute: 1,
+    ttsUnitsPer1KChars: 1,
+    videoFrameMultiplier: 1,
+    judgeMultiplierEnabled: true,
+    providerMarkupMultiplier: 1,
+  }
+  return {
+    botId: String(source.botId || '').trim(),
+    connectorId: String(source.connectorId || '').trim(),
+    voiceId: String(source.voiceId || '').trim(),
+    authMode: source.authMode === 'oauth' ? 'oauth' : 'pat',
+    qwen: {
+      realtimeProfiles: (qwen.realtimeProfiles || []).map((item, index) => ({
+        id: String(item.id || `qwen_realtime_${index + 1}`).trim(),
+        name: String(item.name || `千问实时 ${index + 1}`).trim(),
+        model: String(item.model || 'qwen3.5-omni-plus-realtime').trim(),
+        baseWsUrl: String(item.baseWsUrl || '').trim(),
+        workspaceId: String(item.workspaceId || '').trim(),
+        appId: String(item.appId || '').trim(),
+        defaultVoiceId: String(item.defaultVoiceId || '').trim(),
+        asrProfileId: String(item.asrProfileId || '').trim(),
+        ttsProfileId: String(item.ttsProfileId || '').trim(),
+        vadMode: item.vadMode === 'manual' ? 'manual' : (item.vadMode === 'semantic_vad' ? 'semantic_vad' : 'server_vad'),
+        frameIntervalMs: Math.max(250, Math.min(5000, Math.trunc(Number(item.frameIntervalMs || 1000)))),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+      asrProfiles: (qwen.asrProfiles || []).map((item, index) => ({
+        id: String(item.id || `qwen_asr_${index + 1}`).trim(),
+        name: String(item.name || `千问 ASR ${index + 1}`).trim(),
+        model: String(item.model || 'qwen3-asr-flash-realtime').trim(),
+        language: String(item.language || 'zh-CN').trim(),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+      ttsProfiles: (qwen.ttsProfiles || []).map((item, index) => ({
+        id: String(item.id || `qwen_tts_${index + 1}`).trim(),
+        name: String(item.name || `千问 TTS ${index + 1}`).trim(),
+        model: String(item.model || 'qwen-tts-realtime').trim(),
+        voiceId: String(item.voiceId || '').trim(),
+        sampleRate: Math.max(8000, Math.min(48000, Math.trunc(Number(item.sampleRate || 24000)))),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+    },
+    coze: {
+      agents: (coze.agents || []).map((item, index) => ({
+        id: String(item.id || `coze_agent_${index + 1}`).trim(),
+        name: String(item.name || `Coze 智能体 ${index + 1}`).trim(),
+        judgeType: String(item.judgeType || 'custom').trim(),
+        botId: String(item.botId || '').trim(),
+        connectorId: String(item.connectorId || '').trim(),
+        defaultVoiceId: String(item.defaultVoiceId || '').trim(),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+      voices: (coze.voices || []).map((item, index) => ({
+        id: String(item.id || `coze_voice_${index + 1}`).trim(),
+        name: String(item.name || `Coze 音色 ${index + 1}`).trim(),
+        voiceId: String(item.voiceId || '').trim(),
+        style: String(item.style || '').trim(),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+      roomConfig: {
+        createRoomOnServer: coze.roomConfig?.createRoomOnServer !== false,
+        roomNamePrefix: String(coze.roomConfig?.roomNamePrefix || 'WinLoop 答辩').trim(),
+      },
+    },
+    billing: {
+      realtimeStartupUnits: Math.max(0, Math.trunc(Number(billing.realtimeStartupUnits || 2))),
+      realtimeUnitsPerMinute: Math.max(0, Math.trunc(Number(billing.realtimeUnitsPerMinute || 1))),
+      asrUnitsPerMinute: Math.max(0, Math.trunc(Number(billing.asrUnitsPerMinute || 1))),
+      ttsUnitsPer1KChars: Math.max(0, Math.trunc(Number(billing.ttsUnitsPer1KChars || 1))),
+      videoFrameMultiplier: Math.max(1, Number(billing.videoFrameMultiplier || 1)),
+      judgeMultiplierEnabled: billing.judgeMultiplierEnabled !== false,
+      providerMarkupMultiplier: Math.max(1, Number(billing.providerMarkupMultiplier || 1)),
+    },
   }
 }
 
@@ -762,6 +940,28 @@ function createEmptyProviderDraft(): ProviderDraftItem {
       connectorId: '',
       voiceId: '',
       authMode: 'pat',
+      qwen: {
+        realtimeProfiles: [],
+        asrProfiles: [],
+        ttsProfiles: [],
+      },
+      coze: {
+        agents: [],
+        voices: [],
+        roomConfig: {
+          createRoomOnServer: true,
+          roomNamePrefix: 'WinLoop 答辩',
+        },
+      },
+      billing: {
+        realtimeStartupUnits: 2,
+        realtimeUnitsPerMinute: 1,
+        asrUnitsPerMinute: 1,
+        ttsUnitsPer1KChars: 1,
+        videoFrameMultiplier: 1,
+        judgeMultiplierEnabled: true,
+        providerMarkupMultiplier: 1,
+      },
     },
     models: [],
     apiKeyMode: 'keep',
@@ -868,7 +1068,7 @@ function normalizePullItem(item: ProviderPullItem): ProviderPullItem {
 }
 
 function providerCapabilitySupportsModels(capability: ProviderCapability): boolean {
-  return capability !== 'search' && capability !== 'voice'
+  return capability !== 'search' && capability !== 'voice' && capability !== 'realtime'
 }
 
 function normalizeProviderDraft(provider: ProviderDraftItem): ProviderDraftItem {
@@ -886,12 +1086,7 @@ function normalizeProviderDraft(provider: ProviderDraftItem): ProviderDraftItem 
     name: String(provider.name || normalizeProviderTypeLabel(provider.type)).trim() || normalizeProviderTypeLabel(provider.type),
     baseURL: String(provider.baseURL || '').trim(),
     apiKeyConfigured: hasApiKey,
-    voice: {
-      botId: String(provider.voice?.botId || '').trim(),
-      connectorId: String(provider.voice?.connectorId || '').trim(),
-      voiceId: String(provider.voice?.voiceId || '').trim(),
-      authMode: provider.voice?.authMode === 'oauth' ? 'oauth' : 'pat',
-    },
+    voice: normalizeProviderVoiceDraft(provider.voice),
     models,
   }
 }
@@ -999,14 +1194,14 @@ const routableProviderOptions = computed(() => {
 
 const providerEditorSupportsModels = computed(() => providerCapabilitySupportsModels(providerEditorForm.capability))
 const providerEditorCanRunChatTest = computed(() => providerEditorForm.capability === 'llm')
-const providerEditorCanRunVoiceTest = computed(() => providerEditorForm.capability === 'voice')
+const providerEditorCanRunVoiceTest = computed(() => providerEditorForm.capability === 'voice' || providerEditorForm.capability === 'realtime')
 const providerEditorCanRunTtsTest = computed(() => providerEditorForm.capability === 'tts')
 const providerEditorCanRunProviderTest = computed(() => providerEditorCanRunChatTest.value || providerEditorCanRunVoiceTest.value || providerEditorCanRunTtsTest.value)
 const providerEditorCapabilityLocked = computed(() => providerTypeDefaultCapability(providerEditorForm.type) === 'search' || providerTypeDefaultCapability(providerEditorForm.type) === 'voice')
 const providerEditorCapabilityOptions = computed(() => {
   const values: ProviderCapability[] = providerEditorCapabilityLocked.value
     ? [providerTypeDefaultCapability(providerEditorForm.type)]
-    : ['llm', 'embedding', 'asr', 'tts']
+    : ['llm', 'embedding', 'asr', 'tts', 'realtime']
   return providerCapabilityOptions.filter(item => values.includes(item.value))
 })
 const providerEditorTypeGuide = computed(() => providerTypeGuides[providerEditorForm.type] || providerTypeGuides['openai-compatible'])
@@ -1102,7 +1297,7 @@ function sceneCanRunChatTest(scene: Pick<SceneItem, 'key' | 'providerIds'>): boo
   if (capability === 'tts') {
     return scene.providerIds.some((id) => {
       const provider = providerIdMap.value.get(id)
-      return provider?.capability === 'tts' || provider?.capability === 'voice' || provider?.capability === 'llm'
+      return provider?.capability === 'tts' || provider?.capability === 'voice' || provider?.capability === 'realtime' || provider?.capability === 'llm'
     })
   }
   if (capability !== 'chat')
@@ -1251,8 +1446,8 @@ function providerSummary(provider: ProviderDraftItem): string {
     return '语音识别 Provider，只参与 ASR 场景模型路由'
   if (provider.capability === 'tts')
     return '语音合成 Provider，只参与 TTS 场景模型路由'
-  if (provider.capability === 'voice')
-    return 'Coze 语音 Provider，参与实时答辩、ASR 和 TTS 场景'
+  if (provider.capability === 'voice' || provider.capability === 'realtime')
+    return '实时语音视频 Provider，参与答辩、ASR 和 TTS 场景'
   const enabledCount = provider.models.filter(item => item.enabled).length
   const capabilityText = modelCapabilityOptions
     .map(option => `${option.label} ${provider.models.filter(item => modelHasCapability(item, option.value)).length}`)
@@ -1275,12 +1470,12 @@ function sceneProvidersPreview(scene: SceneItem): string {
 function sceneUsesModelLessVoice(scene: Pick<SceneItem, 'key' | 'providerIds'>): boolean {
   const capability = sceneRequiredCapability(scene.key)
   return (capability === 'asr' || capability === 'tts' || scene.key === 'defense')
-    && scene.providerIds.some(id => providerIdMap.value.get(id)?.capability === 'voice')
+    && scene.providerIds.some(id => ['voice', 'realtime'].includes(providerIdMap.value.get(id)?.capability || ''))
 }
 
 function sceneModelPoolPreview(scene: SceneItem): string {
   if (scene.models.length === 0 && sceneUsesModelLessVoice(scene))
-    return 'Coze 语音原生接口，无需模型池'
+    return '实时语音原生接口，无需模型池'
   if (scene.models.length === 0)
     return '未配置'
   return scene.models.join(' / ')
@@ -1289,7 +1484,7 @@ function sceneModelPoolPreview(scene: SceneItem): string {
 function sceneFallbackPreview(scene: SceneItem): string {
   if (scene.modelFallback.length === 0) {
     if (sceneUsesModelLessVoice(scene))
-      return 'Coze 语音原生接口，无需回退模型'
+      return '实时语音原生接口，无需回退模型'
     if (scene.models.length === 0)
       return '未配置'
     return `未单独配置，将按模型池顺序：${scene.models.join(' -> ')}`
@@ -1425,6 +1620,121 @@ function buildProviderPayload(provider: ProviderDraftItem) {
   if (apiKey)
     payload.apiKey = apiKey
   return payload
+}
+
+function addQwenRealtimeProfile(): void {
+  const items = providerEditorForm.voice.qwen?.realtimeProfiles || []
+  items.push({
+    id: `qwen_realtime_${items.length + 1}`,
+    name: `千问实时 ${items.length + 1}`,
+    model: 'qwen3.5-omni-plus-realtime',
+    baseWsUrl: '',
+    workspaceId: '',
+    appId: '',
+    defaultVoiceId: '',
+    asrProfileId: '',
+    ttsProfileId: '',
+    vadMode: 'server_vad',
+    frameIntervalMs: 1000,
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.qwen = {
+    realtimeProfiles: items,
+    asrProfiles: providerEditorForm.voice.qwen?.asrProfiles || [],
+    ttsProfiles: providerEditorForm.voice.qwen?.ttsProfiles || [],
+  }
+}
+
+function addQwenAsrProfile(): void {
+  const items = providerEditorForm.voice.qwen?.asrProfiles || []
+  items.push({
+    id: `qwen_asr_${items.length + 1}`,
+    name: `千问 ASR ${items.length + 1}`,
+    model: 'qwen3-asr-flash-realtime',
+    language: 'zh-CN',
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.qwen = {
+    realtimeProfiles: providerEditorForm.voice.qwen?.realtimeProfiles || [],
+    asrProfiles: items,
+    ttsProfiles: providerEditorForm.voice.qwen?.ttsProfiles || [],
+  }
+}
+
+function addQwenTtsProfile(): void {
+  const items = providerEditorForm.voice.qwen?.ttsProfiles || []
+  items.push({
+    id: `qwen_tts_${items.length + 1}`,
+    name: `千问 TTS ${items.length + 1}`,
+    model: 'qwen-tts-realtime',
+    voiceId: '',
+    sampleRate: 24000,
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.qwen = {
+    realtimeProfiles: providerEditorForm.voice.qwen?.realtimeProfiles || [],
+    asrProfiles: providerEditorForm.voice.qwen?.asrProfiles || [],
+    ttsProfiles: items,
+  }
+}
+
+function addCozeAgent(): void {
+  const items = providerEditorForm.voice.coze?.agents || []
+  items.push({
+    id: `coze_agent_${items.length + 1}`,
+    name: `Coze 智能体 ${items.length + 1}`,
+    judgeType: 'custom',
+    botId: providerEditorForm.voice.botId,
+    connectorId: providerEditorForm.voice.connectorId,
+    defaultVoiceId: providerEditorForm.voice.voiceId,
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.coze = {
+    agents: items,
+    voices: providerEditorForm.voice.coze?.voices || [],
+    roomConfig: providerEditorForm.voice.coze?.roomConfig || { createRoomOnServer: true, roomNamePrefix: 'WinLoop 答辩' },
+  }
+}
+
+function addCozeVoice(): void {
+  const items = providerEditorForm.voice.coze?.voices || []
+  items.push({
+    id: `coze_voice_${items.length + 1}`,
+    name: `Coze 音色 ${items.length + 1}`,
+    voiceId: providerEditorForm.voice.voiceId,
+    style: '',
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.coze = {
+    agents: providerEditorForm.voice.coze?.agents || [],
+    voices: items,
+    roomConfig: providerEditorForm.voice.coze?.roomConfig || { createRoomOnServer: true, roomNamePrefix: 'WinLoop 答辩' },
+  }
+}
+
+function removeQwenRealtimeProfile(index: number): void {
+  providerEditorForm.voice.qwen?.realtimeProfiles.splice(index, 1)
+}
+
+function removeQwenAsrProfile(index: number): void {
+  providerEditorForm.voice.qwen?.asrProfiles.splice(index, 1)
+}
+
+function removeQwenTtsProfile(index: number): void {
+  providerEditorForm.voice.qwen?.ttsProfiles.splice(index, 1)
+}
+
+function removeCozeAgent(index: number): void {
+  providerEditorForm.voice.coze?.agents.splice(index, 1)
+}
+
+function removeCozeVoice(index: number): void {
+  providerEditorForm.voice.coze?.voices.splice(index, 1)
 }
 
 async function saveConsole() {
@@ -2606,13 +2916,13 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div v-if="providerEditorForm.capability === 'voice'" class="px-4 py-4 border border-slate-200 rounded-lg bg-white space-y-3">
+          <div v-if="providerEditorForm.capability === 'voice' || providerEditorForm.capability === 'realtime'" class="px-4 py-4 border border-slate-200 rounded-lg bg-white space-y-4">
             <div>
               <div class="text-sm text-slate-900 font-medium">
-                Coze 语音参数
+                实时语音视频能力
               </div>
               <div class="text-xs text-slate-500">
-                botId 与 connectorId 用于实时答辩房间；voiceId 用于 TTS。ASR 使用同一个 Provider token。
+                同一 Provider 可配置 Qwen 实时音视频、ASR、TTS，也可配置 Coze 多智能体和音色。旧 botId / connectorId / voiceId 仍作为兼容默认值。
               </div>
             </div>
             <div class="gap-4 grid md:grid-cols-2">
@@ -2635,6 +2945,185 @@ onMounted(async () => {
                   </a-option>
                 </a-select>
               </a-form-item>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+              <div class="flex flex-wrap gap-3 items-center justify-between">
+                <div>
+                  <div class="text-sm text-slate-900 font-medium">
+                    Qwen Realtime / ASR / TTS
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    用于千问实时音视频、实时语音识别和语音合成。Base URL 仍使用百炼根地址，实时 WebSocket 可按 profile 覆盖。
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <a-button size="small" @click="addQwenRealtimeProfile">
+                    新增 Realtime
+                  </a-button>
+                  <a-button size="small" @click="addQwenAsrProfile">
+                    新增 ASR
+                  </a-button>
+                  <a-button size="small" @click="addQwenTtsProfile">
+                    新增 TTS
+                  </a-button>
+                </div>
+              </div>
+
+              <div v-for="(profile, index) in providerEditorForm.voice.qwen?.realtimeProfiles || []" :key="profile.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex items-center justify-between gap-3">
+                  <strong class="text-sm text-slate-900">Realtime Profile</strong>
+                  <a-button size="mini" status="danger" @click="removeQwenRealtimeProfile(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-3">
+                  <a-input v-model="profile.name" placeholder="名称" />
+                  <a-input v-model="profile.model" placeholder="qwen3.5-omni-plus-realtime" />
+                  <a-input v-model="profile.baseWsUrl" placeholder="Realtime WebSocket URL" />
+                  <a-input v-model="profile.workspaceId" placeholder="Workspace ID" />
+                  <a-input v-model="profile.appId" placeholder="App ID" />
+                  <a-input v-model="profile.defaultVoiceId" placeholder="默认音色 ID" />
+                  <a-input v-model="profile.asrProfileId" placeholder="ASR Profile ID" />
+                  <a-input v-model="profile.ttsProfileId" placeholder="TTS Profile ID" />
+                  <a-select v-model="profile.vadMode">
+                    <a-option value="server_vad">server_vad</a-option>
+                    <a-option value="semantic_vad">semantic_vad</a-option>
+                    <a-option value="manual">manual</a-option>
+                  </a-select>
+                  <a-input-number v-model="profile.frameIntervalMs" :min="250" :max="5000" :step="250" class="w-full" placeholder="视频帧间隔 ms" />
+                  <a-switch v-model="profile.enabled" />
+                </div>
+              </div>
+
+              <div v-for="(profile, index) in providerEditorForm.voice.qwen?.asrProfiles || []" :key="profile.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex items-center justify-between gap-3">
+                  <strong class="text-sm text-slate-900">ASR Profile</strong>
+                  <a-button size="mini" status="danger" @click="removeQwenAsrProfile(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-4">
+                  <a-input v-model="profile.name" placeholder="名称" />
+                  <a-input v-model="profile.model" placeholder="qwen3-asr-flash-realtime" />
+                  <a-input v-model="profile.language" placeholder="zh-CN" />
+                  <a-switch v-model="profile.enabled" />
+                </div>
+              </div>
+
+              <div v-for="(profile, index) in providerEditorForm.voice.qwen?.ttsProfiles || []" :key="profile.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex items-center justify-between gap-3">
+                  <strong class="text-sm text-slate-900">TTS Profile</strong>
+                  <a-button size="mini" status="danger" @click="removeQwenTtsProfile(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-5">
+                  <a-input v-model="profile.name" placeholder="名称" />
+                  <a-input v-model="profile.model" placeholder="qwen-tts-realtime" />
+                  <a-input v-model="profile.voiceId" placeholder="音色 ID" />
+                  <a-input-number v-model="profile.sampleRate" :min="8000" :max="48000" :step="1000" class="w-full" />
+                  <a-switch v-model="profile.enabled" />
+                </div>
+              </div>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+              <div class="flex flex-wrap gap-3 items-center justify-between">
+                <div>
+                  <div class="text-sm text-slate-900 font-medium">
+                    Coze 智能体 / 音色 / 房间
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    按评委角色配置多个 Bot，发起答辩时用户可调整每个评委的智能体和音色。
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <a-button size="small" @click="addCozeAgent">
+                    新增智能体
+                  </a-button>
+                  <a-button size="small" @click="addCozeVoice">
+                    新增音色
+                  </a-button>
+                </div>
+              </div>
+              <div class="gap-3 grid md:grid-cols-2">
+                <a-form-item label="服务端创建房间">
+                  <a-switch v-model="providerEditorForm.voice.coze.roomConfig.createRoomOnServer" />
+                </a-form-item>
+                <a-form-item label="房间名前缀">
+                  <a-input v-model="providerEditorForm.voice.coze.roomConfig.roomNamePrefix" placeholder="WinLoop 答辩" />
+                </a-form-item>
+              </div>
+              <div v-for="(agent, index) in providerEditorForm.voice.coze?.agents || []" :key="agent.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex items-center justify-between gap-3">
+                  <strong class="text-sm text-slate-900">Coze 智能体</strong>
+                  <a-button size="mini" status="danger" @click="removeCozeAgent(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-4">
+                  <a-input v-model="agent.name" placeholder="名称" />
+                  <a-select v-model="agent.judgeType">
+                    <a-option value="technical">技术评委</a-option>
+                    <a-option value="business">业务评委</a-option>
+                    <a-option value="expression">表达评委</a-option>
+                    <a-option value="custom">自定义评委</a-option>
+                  </a-select>
+                  <a-input v-model="agent.botId" placeholder="Bot ID" />
+                  <a-input v-model="agent.connectorId" placeholder="Connector ID" />
+                  <a-input v-model="agent.defaultVoiceId" placeholder="默认音色 ID" />
+                  <a-switch v-model="agent.enabled" />
+                </div>
+              </div>
+              <div v-for="(voice, index) in providerEditorForm.voice.coze?.voices || []" :key="voice.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex items-center justify-between gap-3">
+                  <strong class="text-sm text-slate-900">Coze 音色</strong>
+                  <a-button size="mini" status="danger" @click="removeCozeVoice(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-4">
+                  <a-input v-model="voice.name" placeholder="名称" />
+                  <a-input v-model="voice.voiceId" placeholder="Voice ID" />
+                  <a-input v-model="voice.style" placeholder="风格" />
+                  <a-switch v-model="voice.enabled" />
+                </div>
+              </div>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+              <div>
+                <div class="text-sm text-slate-900 font-medium">
+                  扣点策略
+                </div>
+                <div class="text-xs text-slate-500">
+                  按 Provider 维护倍率，不把官方价格写死到业务逻辑。
+                </div>
+              </div>
+              <div class="gap-3 grid md:grid-cols-4">
+                <a-form-item label="启动扣点">
+                  <a-input-number v-model="providerEditorForm.voice.billing.realtimeStartupUnits" :min="0" class="w-full" />
+                </a-form-item>
+                <a-form-item label="实时每分钟">
+                  <a-input-number v-model="providerEditorForm.voice.billing.realtimeUnitsPerMinute" :min="0" class="w-full" />
+                </a-form-item>
+                <a-form-item label="ASR 每分钟">
+                  <a-input-number v-model="providerEditorForm.voice.billing.asrUnitsPerMinute" :min="0" class="w-full" />
+                </a-form-item>
+                <a-form-item label="TTS 每千字">
+                  <a-input-number v-model="providerEditorForm.voice.billing.ttsUnitsPer1KChars" :min="0" class="w-full" />
+                </a-form-item>
+                <a-form-item label="视频倍率">
+                  <a-input-number v-model="providerEditorForm.voice.billing.videoFrameMultiplier" :min="1" :step="0.1" class="w-full" />
+                </a-form-item>
+                <a-form-item label="Provider 加价">
+                  <a-input-number v-model="providerEditorForm.voice.billing.providerMarkupMultiplier" :min="1" :step="0.1" class="w-full" />
+                </a-form-item>
+                <a-form-item label="按评委数倍率">
+                  <a-switch v-model="providerEditorForm.voice.billing.judgeMultiplierEnabled" />
+                </a-form-item>
+              </div>
             </div>
           </div>
 

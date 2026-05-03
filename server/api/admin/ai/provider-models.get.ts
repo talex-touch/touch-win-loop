@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const providerId = String(query.providerId || '').trim()
   const provider = (providerId ? registry.providers.find(item => item.id === providerId) : null)
-    || registry.providers.find(item => item.capability !== 'search' && item.capability !== 'voice')
+    || registry.providers.find(item => item.capability !== 'search' && item.capability !== 'voice' && item.capability !== 'realtime')
     || null
   if (!provider) {
     setResponseStatus(event, 400)
@@ -42,7 +42,7 @@ export default defineEventHandler(async (event) => {
     }, 40096)
   }
 
-  if (provider.capability === 'search' || provider.capability === 'voice') {
+  if (provider.capability === 'search' || provider.capability === 'voice' || provider.capability === 'realtime') {
     setResponseStatus(event, 400)
     return fail('当前 Provider 不支持模型池拉取。', {
       startedAt,

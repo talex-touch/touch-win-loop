@@ -102,7 +102,7 @@ export default defineEventHandler(async (event) => {
       })()
     : currentProvider
 
-  if (!resolvedProvider || resolvedProvider.capability === 'search' || resolvedProvider.capability === 'voice') {
+  if (!resolvedProvider || resolvedProvider.capability === 'search' || resolvedProvider.capability === 'voice' || resolvedProvider.capability === 'realtime') {
     setResponseStatus(event, 400)
     return fail('当前 Provider 不支持模型池拉取。', {
       startedAt,

@@ -8,7 +8,7 @@ import { normalizePlatformAiBaseURL } from '~~/server/utils/platform-ai-base-url
 import { normalizePlatformAiClientType, normalizeProjectKnowledgeEmbeddingApiStyle } from '~~/server/utils/platform-ai-client'
 
 export type PlatformAiProviderAdapter = 'openai-compatible' | 'response'
-export type PlatformAiProviderCapability = 'llm' | 'search' | 'embedding' | 'asr' | 'tts' | 'voice'
+export type PlatformAiProviderCapability = 'llm' | 'search' | 'embedding' | 'asr' | 'tts' | 'realtime' | 'voice'
 export type PlatformAiProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'coze-voice' | 'searchxng' | 'tavily'
 export type PlatformAiModelFormat = 'openai-compatible' | 'response'
 export type PlatformAiModelCapability = 'chat' | 'vision' | 'embedding' | 'asr' | 'tts' | 'image-gen' | 'video-gen'
@@ -68,6 +68,73 @@ export interface PlatformAiProviderVoiceConfig {
   connectorId: string
   voiceId: string
   authMode: 'pat' | 'oauth'
+  qwen?: {
+    realtimeProfiles: Array<{
+      id: string
+      name: string
+      model: string
+      baseWsUrl: string
+      workspaceId: string
+      appId: string
+      defaultVoiceId: string
+      asrProfileId: string
+      ttsProfileId: string
+      vadMode: 'server_vad' | 'semantic_vad' | 'manual'
+      frameIntervalMs: number
+      enabled: boolean
+      sortOrder: number
+    }>
+    asrProfiles: Array<{
+      id: string
+      name: string
+      model: string
+      language: string
+      enabled: boolean
+      sortOrder: number
+    }>
+    ttsProfiles: Array<{
+      id: string
+      name: string
+      model: string
+      voiceId: string
+      sampleRate: number
+      enabled: boolean
+      sortOrder: number
+    }>
+  }
+  coze?: {
+    agents: Array<{
+      id: string
+      name: string
+      judgeType: string
+      botId: string
+      connectorId: string
+      defaultVoiceId: string
+      enabled: boolean
+      sortOrder: number
+    }>
+    voices: Array<{
+      id: string
+      name: string
+      voiceId: string
+      style: string
+      enabled: boolean
+      sortOrder: number
+    }>
+    roomConfig: {
+      createRoomOnServer: boolean
+      roomNamePrefix: string
+    }
+  }
+  billing?: {
+    realtimeStartupUnits: number
+    realtimeUnitsPerMinute: number
+    asrUnitsPerMinute: number
+    ttsUnitsPer1KChars: number
+    videoFrameMultiplier: number
+    judgeMultiplierEnabled: boolean
+    providerMarkupMultiplier: number
+  }
 }
 
 export interface PlatformAiProviderConfig {
@@ -204,7 +271,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
     label: '答辩模拟',
     description: '评委问答与评分反馈',
     builtinPrompt: '模拟评委追问项目价值、技术可行性、创新点、风险和答辩表达，并给出改进建议。',
-    allowedProviderCapabilities: ['llm', 'voice'],
+    allowedProviderCapabilities: ['llm', 'voice', 'realtime'],
   }),
   defineChannel({ key: 'workspace_dialog_ask', label: '工作台-对话询问', description: '工作台只读问答', builtinPrompt: '以只读方式回答工作台问题，基于当前项目上下文给出明确结论。' }),
   defineChannel({ key: 'workspace_auto_optimize', label: '工作台-自动优化', description: '工作台提案优化', builtinPrompt: '识别当前项目草案的表达、结构和证据问题，并给出可落地优化建议。' }),
@@ -253,7 +320,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
     description: '会议字幕、录音转写与语音识别',
     builtinPrompt: '将会议音频转写为准确字幕，保留关键术语和发言内容。',
     requiredModelCapability: 'asr',
-    allowedProviderCapabilities: ['llm', 'asr', 'voice'],
+    allowedProviderCapabilities: ['llm', 'asr', 'voice', 'realtime'],
   }),
   defineChannel({
     key: 'speech_tts',
@@ -261,7 +328,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
     description: '文本转语音、朗读与语音播报',
     builtinPrompt: '将文本合成为清晰可听的语音，用于朗读和语音播报。',
     requiredModelCapability: 'tts',
-    allowedProviderCapabilities: ['llm', 'tts', 'voice'],
+    allowedProviderCapabilities: ['llm', 'tts', 'voice', 'realtime'],
   }),
 ]
 
@@ -441,7 +508,7 @@ function resolvePlatformAiProviderType(value: unknown, providerValue?: unknown):
 
 function normalizeProviderCapability(value: unknown): PlatformAiProviderCapability | null {
   const normalized = toText(value).toLowerCase()
-  if (normalized === 'llm' || normalized === 'search' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'voice')
+  if (normalized === 'llm' || normalized === 'search' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'realtime' || normalized === 'voice')
     return normalized
   if (normalized === 'embeddings' || normalized === 'embedding-only' || normalized === 'embedding_only' || normalized === 'vector')
     return 'embedding'
@@ -449,7 +516,7 @@ function normalizeProviderCapability(value: unknown): PlatformAiProviderCapabili
     return 'asr'
   if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis')
     return 'tts'
-  if (normalized === 'realtime-voice' || normalized === 'voice-realtime' || normalized === 'voice_realtime' || normalized === 'coze-voice')
+  if (normalized === 'realtime' || normalized === 'realtime-voice' || normalized === 'voice-realtime' || normalized === 'voice_realtime' || normalized === 'qwen-realtime' || normalized === 'coze-voice')
     return 'voice'
   return null
 }
@@ -684,12 +751,155 @@ function serializeProviderModel(item: PlatformAiProviderModelConfig): PlatformAi
   }
 }
 
+function sortVoiceItems<T extends { sortOrder: number, id: string }>(items: T[]): T[] {
+  return [...items].sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id, 'en'))
+}
+
+function normalizeVoiceId(value: unknown, fallback: string): string {
+  return toText(value) || fallback
+}
+
+function normalizeVoiceBillingConfig(raw: unknown): NonNullable<PlatformAiProviderVoiceConfig['billing']> {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+  return {
+    realtimeStartupUnits: Math.max(0, clampInt(source.realtimeStartupUnits, 2, 0, 100000)),
+    realtimeUnitsPerMinute: Math.max(0, clampInt(source.realtimeUnitsPerMinute, 1, 0, 100000)),
+    asrUnitsPerMinute: Math.max(0, clampInt(source.asrUnitsPerMinute, 1, 0, 100000)),
+    ttsUnitsPer1KChars: Math.max(0, clampInt(source.ttsUnitsPer1KChars, 1, 0, 100000)),
+    videoFrameMultiplier: Math.max(1, Number.isFinite(Number(source.videoFrameMultiplier)) ? Number(source.videoFrameMultiplier) : 1),
+    judgeMultiplierEnabled: toBoolean(source.judgeMultiplierEnabled, true),
+    providerMarkupMultiplier: Math.max(1, Number.isFinite(Number(source.providerMarkupMultiplier)) ? Number(source.providerMarkupMultiplier) : 1),
+  }
+}
+
+function normalizeQwenRealtimeProfiles(raw: unknown): NonNullable<NonNullable<PlatformAiProviderVoiceConfig['qwen']>['realtimeProfiles']> {
+  const items = Array.isArray(raw) ? raw : []
+  return sortVoiceItems(items.map((item, index) => {
+    const source = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {}
+    const model = toText(source.model) || 'qwen3.5-omni-plus-realtime'
+    return {
+      id: normalizeVoiceId(source.id, `qwen_realtime_${index + 1}`),
+      name: toText(source.name || source.label) || `千问实时 ${index + 1}`,
+      model,
+      baseWsUrl: toText(source.baseWsUrl || source.baseURL || source.url),
+      workspaceId: toText(source.workspaceId || source.workspace_id),
+      appId: toText(source.appId || source.app_id),
+      defaultVoiceId: toText(source.defaultVoiceId || source.voiceId || source.voice_id),
+      asrProfileId: toText(source.asrProfileId || source.asr_profile_id),
+      ttsProfileId: toText(source.ttsProfileId || source.tts_profile_id),
+      vadMode: toText(source.vadMode || source.vad_mode) === 'manual'
+        ? 'manual'
+        : (toText(source.vadMode || source.vad_mode) === 'semantic_vad' ? 'semantic_vad' : 'server_vad'),
+      frameIntervalMs: clampInt(source.frameIntervalMs, 1000, 250, 5000),
+      enabled: toBoolean(source.enabled, true),
+      sortOrder: clampInt(source.sortOrder, index, -100000, 100000),
+    }
+  }))
+}
+
+function normalizeQwenAsrProfiles(raw: unknown): NonNullable<NonNullable<PlatformAiProviderVoiceConfig['qwen']>['asrProfiles']> {
+  const items = Array.isArray(raw) ? raw : []
+  return sortVoiceItems(items.map((item, index) => {
+    const source = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {}
+    return {
+      id: normalizeVoiceId(source.id, `qwen_asr_${index + 1}`),
+      name: toText(source.name || source.label) || `千问 ASR ${index + 1}`,
+      model: toText(source.model) || 'qwen3-asr-flash-realtime',
+      language: toText(source.language || source.lang) || 'zh-CN',
+      enabled: toBoolean(source.enabled, true),
+      sortOrder: clampInt(source.sortOrder, index, -100000, 100000),
+    }
+  }))
+}
+
+function normalizeQwenTtsProfiles(raw: unknown): NonNullable<NonNullable<PlatformAiProviderVoiceConfig['qwen']>['ttsProfiles']> {
+  const items = Array.isArray(raw) ? raw : []
+  return sortVoiceItems(items.map((item, index) => {
+    const source = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {}
+    return {
+      id: normalizeVoiceId(source.id, `qwen_tts_${index + 1}`),
+      name: toText(source.name || source.label) || `千问 TTS ${index + 1}`,
+      model: toText(source.model) || 'qwen-tts-realtime',
+      voiceId: toText(source.voiceId || source.voice_id),
+      sampleRate: clampInt(source.sampleRate, 24000, 8000, 48000),
+      enabled: toBoolean(source.enabled, true),
+      sortOrder: clampInt(source.sortOrder, index, -100000, 100000),
+    }
+  }))
+}
+
+function normalizeCozeAgents(raw: unknown, legacy: { botId: string, connectorId: string, voiceId: string }): NonNullable<NonNullable<PlatformAiProviderVoiceConfig['coze']>['agents']> {
+  const items = Array.isArray(raw) ? raw : []
+  const normalized = items.map((item, index) => {
+    const source = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {}
+    return {
+      id: normalizeVoiceId(source.id, `coze_agent_${index + 1}`),
+      name: toText(source.name || source.label) || `Coze 智能体 ${index + 1}`,
+      judgeType: toText(source.judgeType || source.judge_type || 'custom') || 'custom',
+      botId: toText(source.botId || source.bot_id),
+      connectorId: toText(source.connectorId || source.connector_id),
+      defaultVoiceId: toText(source.defaultVoiceId || source.voiceId || source.voice_id),
+      enabled: toBoolean(source.enabled, true),
+      sortOrder: clampInt(source.sortOrder, index, -100000, 100000),
+    }
+  }).filter(item => item.botId || item.connectorId || item.defaultVoiceId)
+
+  if (normalized.length === 0 && (legacy.botId || legacy.connectorId || legacy.voiceId)) {
+    normalized.push({
+      id: 'coze_agent_default',
+      name: 'Coze 默认智能体',
+      judgeType: 'custom',
+      botId: legacy.botId,
+      connectorId: legacy.connectorId,
+      defaultVoiceId: legacy.voiceId,
+      enabled: true,
+      sortOrder: 0,
+    })
+  }
+
+  return sortVoiceItems(normalized)
+}
+
+function normalizeCozeVoices(raw: unknown, legacyVoiceId: string): NonNullable<NonNullable<PlatformAiProviderVoiceConfig['coze']>['voices']> {
+  const items = Array.isArray(raw) ? raw : []
+  const normalized = items.map((item, index) => {
+    const source = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {}
+    return {
+      id: normalizeVoiceId(source.id, `coze_voice_${index + 1}`),
+      name: toText(source.name || source.label) || `Coze 音色 ${index + 1}`,
+      voiceId: toText(source.voiceId || source.voice_id),
+      style: toText(source.style),
+      enabled: toBoolean(source.enabled, true),
+      sortOrder: clampInt(source.sortOrder, index, -100000, 100000),
+    }
+  }).filter(item => item.voiceId)
+
+  if (normalized.length === 0 && legacyVoiceId) {
+    normalized.push({
+      id: 'coze_voice_default',
+      name: 'Coze 默认音色',
+      voiceId: legacyVoiceId,
+      style: '',
+      enabled: true,
+      sortOrder: 0,
+    })
+  }
+
+  return sortVoiceItems(normalized)
+}
+
 function normalizeProviderVoiceConfig(raw: unknown): PlatformAiProviderVoiceConfig | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     return undefined
 
   const source = raw as Record<string, unknown>
   const authMode = toText(source.authMode).toLowerCase() === 'oauth' ? 'oauth' : 'pat'
+  const qwenSource = source.qwen && typeof source.qwen === 'object' && !Array.isArray(source.qwen)
+    ? source.qwen as Record<string, unknown>
+    : {}
+  const cozeSource = source.coze && typeof source.coze === 'object' && !Array.isArray(source.coze)
+    ? source.coze as Record<string, unknown>
+    : {}
   const voice: PlatformAiProviderVoiceConfig = {
     botId: toText(source.botId || source.bot_id),
     connectorId: toText(source.connectorId || source.connector_id),
@@ -697,7 +907,35 @@ function normalizeProviderVoiceConfig(raw: unknown): PlatformAiProviderVoiceConf
     authMode,
   }
 
-  return Object.values(voice).some(Boolean) ? voice : undefined
+  const qwen = {
+    realtimeProfiles: normalizeQwenRealtimeProfiles(qwenSource.realtimeProfiles || qwenSource.realtime_profiles),
+    asrProfiles: normalizeQwenAsrProfiles(qwenSource.asrProfiles || qwenSource.asr_profiles),
+    ttsProfiles: normalizeQwenTtsProfiles(qwenSource.ttsProfiles || qwenSource.tts_profiles),
+  }
+  const coze = {
+    agents: normalizeCozeAgents(cozeSource.agents, voice),
+    voices: normalizeCozeVoices(cozeSource.voices, voice.voiceId),
+    roomConfig: {
+      createRoomOnServer: toBoolean((cozeSource.roomConfig as Record<string, unknown> | undefined)?.createRoomOnServer, true),
+      roomNamePrefix: toText((cozeSource.roomConfig as Record<string, unknown> | undefined)?.roomNamePrefix) || 'WinLoop 答辩',
+    },
+  }
+  voice.qwen = qwen.realtimeProfiles.length || qwen.asrProfiles.length || qwen.ttsProfiles.length ? qwen : undefined
+  voice.coze = coze.agents.length || coze.voices.length ? coze : undefined
+  voice.billing = normalizeVoiceBillingConfig(source.billing)
+
+  return Object.values(voice).some((value) => {
+    if (typeof value === 'string')
+      return Boolean(value)
+    if (!value || typeof value !== 'object')
+      return false
+    if (Array.isArray(value))
+      return value.length > 0
+    const record = value as Record<string, unknown>
+    return Object.values(record).some(item => Array.isArray(item) ? item.length > 0 : Boolean(item))
+  })
+    ? voice
+    : undefined
 }
 
 function resolveProviderVoiceConfig(source: Record<string, unknown>, type: PlatformAiProviderType): PlatformAiProviderVoiceConfig | undefined {
@@ -854,7 +1092,7 @@ function providerCanServeModelCapability(provider: PlatformAiProviderConfig, cap
     return false
   if (provider.capability === 'llm')
     return true
-  if (provider.capability === 'voice')
+  if (provider.capability === 'voice' || provider.capability === 'realtime')
     return capability === 'asr' || capability === 'tts'
   return provider.capability === capability
 }
@@ -1135,8 +1373,8 @@ function buildAiRuntimeFromModel(
 
 function providerCanServeModelLessChannel(provider: PlatformAiProviderConfig, key: PlatformAiChannelKey): boolean {
   const capability = resolvePlatformAiChannelModelCapability(key)
-  return provider.capability === 'voice'
-    && provider.type === 'coze-voice'
+  return (provider.capability === 'voice' || provider.capability === 'realtime')
+    && (provider.type === 'coze-voice' || provider.type === 'dashscope-bailian')
     && (capability === 'asr' || capability === 'tts')
 }
 
