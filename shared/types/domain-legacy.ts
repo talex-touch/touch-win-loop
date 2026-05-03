@@ -61,6 +61,7 @@ export const BILLING_USAGE_EVENT_CODES = [
   'review.submit',
   'review.report.export',
   'ai.defense.start',
+  'ai.meeting.asr',
 ] as const
 export type BillingUsageEventCode = typeof BILLING_USAGE_EVENT_CODES[number]
 export type BillingUsageEventResult = 'success' | 'failed'

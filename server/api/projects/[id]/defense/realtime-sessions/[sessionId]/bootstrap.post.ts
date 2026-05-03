@@ -14,7 +14,7 @@ import {
   normalizeDefenseRealtimeSessionMeta,
   resolveDefenseRealtimeQwenApiKey,
 } from '~~/server/utils/defense-realtime'
-import { resolveAiRuntimeForChannel, resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
+import { resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
   getProjectDefenseSessionState,
@@ -50,20 +50,19 @@ function normalizeSelectionArray(value: unknown): DefenseVoiceRuntimeSelection[]
   if (!Array.isArray(value))
     return []
   return value
-    .map((item) => {
+    .flatMap((item): DefenseVoiceRuntimeSelection[] => {
       if (!item || typeof item !== 'object' || Array.isArray(item))
-        return null
+        return []
       const record = item as Record<string, unknown>
       const personaId = normalizeString(record.personaId || record.persona_id)
       if (!personaId)
-        return null
-      return {
+        return []
+      return [{
         personaId,
         agentId: normalizeString(record.agentId || record.agent_id) || undefined,
         voiceId: normalizeString(record.voiceId || record.voice_id) || undefined,
-      }
+      }]
     })
-    .filter((item): item is DefenseVoiceRuntimeSelection => Boolean(item))
 }
 
 function resolveSelectionForPersona(

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type {
+  DefenseRealtimeMediaMode,
+  DefenseRealtimeProvider,
   DefenseRealtimeSessionMeta,
   ProjectMeetingDetail,
   ProjectMeetingGuestShare,
@@ -83,6 +85,13 @@ const emit = defineEmits<{
   createGuestShare: [meetingId: string]
   regenerateGuestShare: [meetingId: string]
   revokeGuestShare: [meetingId: string]
+  startDefenseRealtimeSidecar: []
+  updateDefenseRealtimeProvider: [provider: DefenseRealtimeProvider]
+  updateDefenseRealtimeMediaMode: [mode: DefenseRealtimeMediaMode]
+  toggleDefenseRealtimeAudio: [enabled: boolean]
+  toggleDefenseRealtimeVideo: [enabled: boolean]
+  interruptDefenseRealtime: []
+  reconnectDefenseRealtime: []
 }>()
 
 const browserOnline = ref(true)
@@ -585,6 +594,13 @@ onBeforeUnmount(() => {
           :captions="mergedCaptions"
           :defense-realtime-state="defenseRealtimeState"
           :defense-realtime-logs="defenseRealtimeLogs"
+          @start-defense-realtime-sidecar="emit('startDefenseRealtimeSidecar')"
+          @update-defense-realtime-provider="emit('updateDefenseRealtimeProvider', $event)"
+          @update-defense-realtime-media-mode="emit('updateDefenseRealtimeMediaMode', $event)"
+          @toggle-defense-realtime-audio="emit('toggleDefenseRealtimeAudio', $event)"
+          @toggle-defense-realtime-video="emit('toggleDefenseRealtimeVideo', $event)"
+          @interrupt-defense-realtime="emit('interruptDefenseRealtime')"
+          @reconnect-defense-realtime="emit('reconnectDefenseRealtime')"
         />
       </template>
 

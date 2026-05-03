@@ -12,6 +12,8 @@ const PROVIDER_EVENTS_FILE = resolve(process.cwd(), 'server/api/internal/meeting
 const DEV_BRIDGE_FILE = resolve(process.cwd(), 'scripts/meeting-asr-dev-bridge.mjs')
 const MEETING_SETUP_DOC_FILE = resolve(process.cwd(), 'docs/meeting-runtime-setup.md')
 const MEETING_DEPLOY_DOC_FILE = resolve(process.cwd(), 'deploy/meeting/README.zh-CN.md')
+const ASR_GATEWAY_FILE = resolve(process.cwd(), 'server/services/meeting/asr-gateway.ts')
+const ASR_EVENTS_FILE = resolve(process.cwd(), 'server/api/internal/meetings/asr-events.post.ts')
 
 it('会议 Web 客户端已接入字幕音频上行链路', async () => {
   const [webClientSource, sharePageSource] = await Promise.all([
@@ -24,6 +26,23 @@ it('会议 Web 客户端已接入字幕音频上行链路', async () => {
   assert.match(webClientSource, /fetch\(endpoint\(`\/meetings\/\$\{meetingId\}\/captions\/frame`\)/, 'Web 客户端未调用字幕音频帧上传接口')
   assert.match(webClientSource, /audio\/pcm;rate=\$\{captionSampleRate\};channels=1;encoding=s16le/, 'Web 客户端未声明 PCM 音频格式')
   assert.match(sharePageSource, /:meeting-guest-token="guestJoinSession\.meetingGuestToken"/, 'guest 分享页未向 Web 客户端透传 meetingGuestToken')
+})
+
+it('内置 ASR 会先广播 partial，final 才落库并计量', async () => {
+  const [asrGatewaySource, asrEventsSource, setupDocSource, deployDocSource] = await Promise.all([
+    readFile(ASR_GATEWAY_FILE, 'utf8'),
+    readFile(ASR_EVENTS_FILE, 'utf8'),
+    readFile(MEETING_SETUP_DOC_FILE, 'utf8'),
+    readFile(MEETING_DEPLOY_DOC_FILE, 'utf8'),
+  ])
+
+  assert.match(asrGatewaySource, /eventType\?: 'partial' \| 'final'/, '内置 ASR 回调未支持 partial/final 事件类型')
+  assert.match(asrGatewaySource, /text: '正在识别\.\.\.'/, '内置 ASR 未在转写前广播 pending partial')
+  assert.match(asrEventsSource, /isFinal: eventType !== 'partial'/, 'ASR events 未保持 partial 不落库')
+  assert.match(asrEventsSource, /teamConsumeAiQuota/, 'ASR final 未执行配额计量')
+  assert.match(asrEventsSource, /eventCode: 'ai\.meeting\.asr'/, 'ASR final 未记录 billing usage 事件')
+  assert.match(setupDocSource, /pending partial/, '会议运行说明未描述内置 ASR partial')
+  assert.match(deployDocSource, /pending partial/, '本地部署说明未描述内置 ASR partial')
 })
 
 it('服务端已接入字幕音频帧鉴权与 ASR session 结束链路', async () => {

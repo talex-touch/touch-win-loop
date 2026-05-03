@@ -1,5 +1,6 @@
 import type { RuntimeSettings } from '~~/server/utils/env'
 import type { ProjectMeetingRuntimeHealth } from '~~/shared/types/domain'
+import { isDashScopeAsrProvider } from '~~/server/services/admin-ai/dashscope-asr'
 import { getMeetingAsrGateway } from '~~/server/services/meeting/asr-gateway'
 import { getRtcProviderGateway } from '~~/server/services/meeting/rtc-provider'
 import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
@@ -41,6 +42,7 @@ export function listMeetingAsrConfigIssues(runtime: RuntimeSettings): string[] {
     const channelRuntime = resolveAiRuntimeForChannel(runtime, 'meeting_asr')
     const asrRuntime = channelRuntime.ai
     const modelRequired = channelRuntime.provider?.capability !== 'voice'
+      && !isDashScopeAsrProvider(channelRuntime.provider, asrRuntime)
     if (!normalizeString(asrRuntime.provider) || !normalizeString(asrRuntime.baseURL) || (modelRequired && !normalizeString(asrRuntime.model)))
       issues.push('meeting_asr 场景未绑定可用 ASR Provider/模型')
   }

@@ -110,7 +110,7 @@ const rtcProviderOptions = [
 
 const asrProviderOptions = [
   { value: 'http', label: 'http' },
-  { value: 'openai-compatible', label: 'openai-compatible' },
+  { value: 'openai-compatible', label: 'openai-compatible / Coze / 百炼' },
 ] as const
 
 function formatTime(raw: string): string {
@@ -330,7 +330,7 @@ onMounted(async () => {
           <ul class="text-[11px] text-slate-700 mb-0 mt-2 pl-4 list-disc space-y-1">
             <li>会议运行时配置以后台为唯一来源，不再默认回退 `mock`。</li>
             <li>站内 Web 客户端 v1 正式只支持 `livekit` 真媒体链路。</li>
-            <li>ASR 当前支持 `http` 与 `openai-compatible` 两条接法。</li>
+            <li>ASR 当前支持 `http` 与 `openai-compatible` 两条接法，Coze / 百炼通过 AI 场景 `meeting_asr` 绑定进入。</li>
             <li>会后固定通过 `transcript_finalize / meeting_summary / recording_finalize` 生成纪要与录制资源。</li>
           </ul>
         </article>
@@ -349,7 +349,7 @@ onMounted(async () => {
         </article>
       </div>
       <p class="text-[11px] text-slate-500 m-0">
-        当前已在本地 sandbox 验证：会议可稳定加入站内 Web 客户端，结束后能自动完成纪要与录制资源沉淀。若你使用的是纯 `http` bridge 协议模式，仍可能只有音频帧上行而没有真实字幕，这时需要再接真实转写后端，或切换到 `openai-compatible`。
+        当前已在本地 sandbox 验证：会议可稳定加入站内 Web 客户端，结束后能自动完成纪要与录制资源沉淀。若你使用的是纯 `http` bridge 协议模式，仍可能只有音频帧上行而没有真实字幕，这时需要再接真实转写后端，或切换到 `openai-compatible` 并在 `meeting_asr` 绑定 OpenAI 兼容、Coze 语音或百炼 ASR Provider。
       </p>
     </section>
 
@@ -566,7 +566,7 @@ onMounted(async () => {
           </label>
         </div>
         <p class="text-[10px] text-slate-500 m-0">
-          `http` 表示外部 ASR 网关；`openai-compatible` 表示应用内调用 AI 场景 `meeting_asr` 绑定的 Provider/模型，不再从会议配置读取转写 URL、API Key 或默认模型。
+          `http` 表示外部 ASR 网关；`openai-compatible` 表示应用内调用 AI 场景 `meeting_asr` 绑定的 Provider/模型，支持 OpenAI 兼容、Coze 语音与百炼 DashScope ASR，不再从会议配置读取转写 URL、API Key 或默认模型。
         </p>
         <div class="gap-3 grid md:grid-cols-2">
           <label class="block space-y-1">

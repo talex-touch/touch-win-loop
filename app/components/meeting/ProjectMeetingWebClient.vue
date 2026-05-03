@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue'
-import type { DefenseRealtimeSessionMeta, ProjectMeetingMode, ProjectMeetingTrackState } from '~~/shared/types/domain'
+import type {
+  DefenseRealtimeMediaMode,
+  DefenseRealtimeProvider,
+  DefenseRealtimeSessionMeta,
+  ProjectMeetingMode,
+  ProjectMeetingTrackState,
+} from '~~/shared/types/domain'
 import { Message } from '@arco-design/web-vue'
 
 interface MeetingCaptionItem {
@@ -72,6 +78,16 @@ const props = withDefaults(defineProps<{
   defenseRealtimeState: null,
   defenseRealtimeLogs: () => [],
 })
+
+const emit = defineEmits<{
+  startDefenseRealtimeSidecar: []
+  updateDefenseRealtimeProvider: [provider: DefenseRealtimeProvider]
+  updateDefenseRealtimeMediaMode: [mode: DefenseRealtimeMediaMode]
+  toggleDefenseRealtimeAudio: [enabled: boolean]
+  toggleDefenseRealtimeVideo: [enabled: boolean]
+  interruptDefenseRealtime: []
+  reconnectDefenseRealtime: []
+}>()
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
@@ -916,6 +932,26 @@ const showDefenseRealtimeSidecar = computed(() => {
     && normalizeString(props.defenseRealtimeState?.linkedMeetingId) === normalizeString(props.meetingId),
   )
 })
+const canManageDefenseRealtimeSidecar = computed(() => !props.guest && isLivekit.value && hasJoinSession.value)
+const defenseRealtimeProvider = computed<DefenseRealtimeProvider>(() => props.defenseRealtimeState?.provider === 'coze' ? 'coze' : 'qwen')
+const defenseRealtimeMediaMode = computed<DefenseRealtimeMediaMode>(() => props.defenseRealtimeState?.mediaMode === 'audio' ? 'audio' : 'audio_video')
+const defenseRealtimeLocked = computed(() => {
+  const state = normalizeString(props.defenseRealtimeState?.connectionState)
+  return props.defenseRealtimeState?.bootstrapState === 'bootstrapping'
+    || state === 'connecting'
+    || state === 'connected'
+    || state === 'ready'
+})
+const canStartDefenseRealtimeSidecar = computed(() => {
+  return canManageDefenseRealtimeSidecar.value
+    && !showDefenseRealtimeSidecar.value
+    && connectionState.value === 'connected'
+})
+const canInterruptDefenseRealtimeSidecar = computed(() => {
+  const state = normalizeString(props.defenseRealtimeState?.connectionState)
+  return showDefenseRealtimeSidecar.value && (state === 'connected' || state === 'ready' || state === 'speaking')
+})
+const defenseRealtimeVideoToggleDisabled = computed(() => defenseRealtimeMediaMode.value === 'audio')
 
 watch(
   () => [props.provider, props.meetingId, props.rtcJoinToken, props.rtcServerUrl].join('::'),
@@ -1156,10 +1192,78 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-if="showDefenseRealtimeSidecar" class="meeting-web-client__panel">
+        <section v-if="canManageDefenseRealtimeSidecar || showDefenseRealtimeSidecar" class="meeting-web-client__panel">
           <div class="meeting-web-client__panel-head">
-            <h4>Defense Sidecar</h4>
-            <span>{{ defenseRealtimeState?.provider === 'coze' ? 'Coze' : '千问' }}</span>
+            <h4>AI Sidecar</h4>
+            <span>{{ defenseRealtimeProvider === 'coze' ? 'Coze' : '百炼' }}</span>
+          </div>
+          <div v-if="canManageDefenseRealtimeSidecar" class="meeting-web-client__sidecar-actions">
+            <button
+              v-if="!showDefenseRealtimeSidecar"
+              class="meeting-web-client__button meeting-web-client__button--compact"
+              type="button"
+              :disabled="!canStartDefenseRealtimeSidecar"
+              @click="emit('startDefenseRealtimeSidecar')"
+            >
+              启动 Sidecar
+            </button>
+            <template v-else>
+              <button
+                class="meeting-web-client__button meeting-web-client__button--compact"
+                type="button"
+                :disabled="!canInterruptDefenseRealtimeSidecar"
+                @click="emit('interruptDefenseRealtime')"
+              >
+                打断
+              </button>
+              <button
+                class="meeting-web-client__button meeting-web-client__button--compact meeting-web-client__button--ghost"
+                type="button"
+                @click="emit('toggleDefenseRealtimeAudio', !(defenseRealtimeState?.audioEnabled !== false))"
+              >
+                麦克风 {{ defenseRealtimeState?.audioEnabled !== false ? '开' : '关' }}
+              </button>
+              <button
+                class="meeting-web-client__button meeting-web-client__button--compact meeting-web-client__button--ghost"
+                type="button"
+                :disabled="defenseRealtimeVideoToggleDisabled"
+                @click="emit('toggleDefenseRealtimeVideo', !(defenseRealtimeState?.videoEnabled === true))"
+              >
+                摄像头 {{ defenseRealtimeState?.videoEnabled === true ? '开' : '关' }}
+              </button>
+              <button
+                class="meeting-web-client__button meeting-web-client__button--compact meeting-web-client__button--ghost"
+                type="button"
+                :disabled="defenseRealtimeState?.bootstrapState === 'bootstrapping'"
+                @click="emit('reconnectDefenseRealtime')"
+              >
+                重连
+              </button>
+            </template>
+          </div>
+          <div v-if="canManageDefenseRealtimeSidecar && !showDefenseRealtimeSidecar" class="meeting-web-client__sidecar-selects">
+            <label>
+              <span>Provider</span>
+              <select
+                :value="defenseRealtimeProvider"
+                :disabled="defenseRealtimeLocked"
+                @change="emit('updateDefenseRealtimeProvider', (($event.target as HTMLSelectElement).value === 'coze' ? 'coze' : 'qwen'))"
+              >
+                <option value="qwen">百炼</option>
+                <option value="coze">Coze</option>
+              </select>
+            </label>
+            <label>
+              <span>媒体</span>
+              <select
+                :value="defenseRealtimeMediaMode"
+                :disabled="defenseRealtimeLocked"
+                @change="emit('updateDefenseRealtimeMediaMode', (($event.target as HTMLSelectElement).value === 'audio' ? 'audio' : 'audio_video'))"
+              >
+                <option value="audio_video">音视频理解</option>
+                <option value="audio">仅音频</option>
+              </select>
+            </label>
           </div>
           <div class="meeting-web-client__status-list">
             <div class="meeting-web-client__status-item">
@@ -1282,6 +1386,11 @@ onBeforeUnmount(() => {
   font-size: 0.85rem;
   font-weight: 600;
   text-decoration: none;
+}
+
+.meeting-web-client__button--compact {
+  padding: 0.45rem 0.7rem;
+  font-size: 0.78rem;
 }
 
 .meeting-web-client__button:disabled {
@@ -1453,6 +1562,38 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.meeting-web-client__sidecar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.meeting-web-client__sidecar-selects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.meeting-web-client__sidecar-selects label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.74rem;
+  color: #475569;
+}
+
+.meeting-web-client__sidecar-selects select {
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.65rem;
+  background: #fff;
+  color: #0f172a;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.78rem;
 }
 
 .meeting-web-client__participant-item,

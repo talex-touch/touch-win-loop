@@ -3,6 +3,7 @@ import type { PlatformAiResolvedChannelRuntime } from '~~/server/utils/platform-
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { isCozeVoiceProvider, resolveCozeVoiceRuntimeConfig, transcribeCozeVoiceAudio } from '~~/server/services/admin-ai/coze-voice'
+import { isDashScopeAsrProvider, resolveDashScopeAsrEndpoint, resolveDashScopeAsrRuntimeConfig, transcribeDashScopeAsrAudio } from '~~/server/services/admin-ai/dashscope-asr'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { normalizePlatformAiApiKey, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
 import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
@@ -193,13 +194,17 @@ function buildAsrProviderEndpoint(serviceUrl: string, suffix: '/healthz' | '/mod
 function resolveOpenAiCompatibleAsrRuntime(runtime: RuntimeSettings): ReturnType<typeof resolveAiRuntimeForChannel> {
   const resolved = resolveAiRuntimeForChannel(runtime, 'meeting_asr')
   const ai = resolved.ai
-  const modelRequired = !isCozeVoiceProvider(resolved.provider)
+  const modelRequired = !isCozeVoiceProvider(resolved.provider) && !isDashScopeAsrProvider(resolved.provider, ai)
   if (!normalizeString(ai.provider) || !normalizeString(ai.baseURL) || (modelRequired && !normalizeString(ai.model)))
     throw new Error('MEETING_ASR_CHANNEL_NOT_CONFIGURED')
   return resolved
 }
 
 function buildOpenAiCompatibleAsrEndpoint(ai: Pick<PlatformAiResolvedChannelRuntime, 'ai' | 'provider'>): string {
+  const dashScopeConfig = resolveDashScopeAsrRuntimeConfig({ provider: ai.provider, ai: ai.ai })
+  if (dashScopeConfig)
+    return resolveDashScopeAsrEndpoint(dashScopeConfig)
+
   const runtime = ai.ai
   const baseURL = isCozeVoiceProvider(ai.provider)
     ? runtime.baseURL
@@ -324,6 +329,20 @@ async function transcribeOpenAiCompatibleChunk(input: {
       }
     }
 
+    const dashScopeConfig = resolveDashScopeAsrRuntimeConfig({ provider, ai, runtime: input.runtime })
+    if (dashScopeConfig) {
+      const transcription = await transcribeDashScopeAsrAudio({
+        config: dashScopeConfig,
+        audioBuffer: input.wavBuffer,
+        mimeType: 'audio/wav',
+      })
+      return {
+        text: transcription.text,
+        language: transcription.language,
+        model: transcription.model,
+      }
+    }
+
     const endpoint = buildOpenAiCompatibleAsrEndpoint({ ai, provider })
     const sceneModel = normalizeString(ai.model)
     const apiKey = normalizePlatformAiApiKey(ai.apiKey)
@@ -380,9 +399,12 @@ async function emitEmbeddedCaptionEvent(input: {
   startedAtMs: number
   endedAtMs: number
   eventId: string
+  eventType?: 'partial' | 'final'
+  confidence?: number
 }): Promise<void> {
   const callbackUrl = buildMeetingAsrCallbackUrl(input.runtime)
   const callbackSecret = normalizeString(input.runtime.meeting.asr.webhookSecret)
+  const eventType = input.eventType === 'partial' ? 'partial' : 'final'
   const response = await fetchWithTimeout({
     url: callbackUrl,
     init: {
@@ -398,13 +420,13 @@ async function emitEmbeddedCaptionEvent(input: {
       },
       body: JSON.stringify({
         meetingId: input.meetingId,
-        eventType: 'final',
+        eventType,
         participantIdentity: input.participantIdentity,
         displayName: input.participantIdentity,
         speakerLabel: input.participantIdentity,
         text: input.text,
         language: input.language,
-        confidence: 0.9,
+        confidence: Number.isFinite(Number(input.confidence)) ? Number(input.confidence) : (eventType === 'partial' ? 0.1 : 0.9),
         startedAtMs: input.startedAtMs,
         endedAtMs: input.endedAtMs,
         eventId: input.eventId,
@@ -445,11 +467,28 @@ async function flushEmbeddedParticipantChunks(
 
     const startAtMs = participant.transcribedMs
     const endAtMs = participant.transcribedMs + durationMs
+    const nextEventSeq = participant.eventSeq + 1
+    await emitEmbeddedCaptionEvent({
+      runtime,
+      meetingId: session.meetingId,
+      participantIdentity: participant.participantIdentity,
+      text: '正在识别...',
+      language: '',
+      startedAtMs: startAtMs,
+      endedAtMs: endAtMs,
+      eventId: `${session.sessionId}:${participant.participantIdentity}:${nextEventSeq}:partial`,
+      eventType: 'partial',
+      confidence: 0.1,
+    }).catch((error) => {
+      console.warn(
+        `[meeting-asr] embedded partial caption failed session=${session.sessionId} participant=${participant.participantIdentity} error=${error instanceof Error ? normalizeString(error.message) : 'unknown'}`,
+      )
+    })
     const transcript = await transcribeOpenAiCompatibleChunk({
       runtime,
       sessionId: session.sessionId,
       participantIdentity: participant.participantIdentity,
-      eventSeq: participant.eventSeq + 1,
+      eventSeq: nextEventSeq,
       wavBuffer: buildWavBuffer(merged, participant.sampleRate, participant.channels),
     })
 

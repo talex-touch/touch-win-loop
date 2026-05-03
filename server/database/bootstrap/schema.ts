@@ -2686,13 +2686,29 @@ CREATE TABLE IF NOT EXISTS billing_usage_events (
     'ai.topic_proposal.generate',
     'review.submit',
     'review.report.export',
-    'ai.defense.start'
+    'ai.defense.start',
+    'ai.meeting.asr'
   )),
   result TEXT NOT NULL CHECK (result IN ('success', 'failed')),
   source_route TEXT NOT NULL DEFAULT '',
   meta JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE billing_usage_events
+  DROP CONSTRAINT IF EXISTS billing_usage_events_event_code_check;
+
+ALTER TABLE billing_usage_events
+  ADD CONSTRAINT billing_usage_events_event_code_check
+  CHECK (event_code IN (
+    'resource.download',
+    'resource.favorite.create',
+    'ai.topic_proposal.generate',
+    'review.submit',
+    'review.report.export',
+    'ai.defense.start',
+    'ai.meeting.asr'
+  ));
 
 CREATE TABLE IF NOT EXISTS billing_plans (
   id TEXT PRIMARY KEY,

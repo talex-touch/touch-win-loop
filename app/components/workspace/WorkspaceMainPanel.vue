@@ -8,6 +8,8 @@ import type {
   AiWorkspaceInlineCompletionResult,
   CollabPurpose,
   Contest,
+  DefenseRealtimeMediaMode,
+  DefenseRealtimeProvider,
   DefenseRealtimeSessionMeta,
   Project,
   ProjectInvitationSummary,
@@ -35,7 +37,6 @@ import type {
   WorkspaceTabSpacingPreset,
   WorkspaceType,
 } from '~~/shared/types/domain'
-import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
 import type {
   NullableWorkspaceFontSizePreset,
@@ -47,6 +48,7 @@ import type {
 } from '~/composables/useWorkspaceMainTabs'
 import type { WorkspacePreviewMode } from '~/composables/useWorkspaceProjectResources'
 import type { WorkspaceMainTabId } from '~/composables/useWorkspaceProjectShell'
+import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -85,8 +87,8 @@ import {
   resolveCollabResourceLabel,
 } from '~/utils/workspace-left-sidebar-helpers'
 import {
-  formatEtaSeconds,
   formatWorkspaceDateTime as formatDateTime,
+  formatEtaSeconds,
   getShareStatus,
   previewErrorMessage,
   previewStatusLabel,
@@ -455,6 +457,13 @@ const emit = defineEmits<{
   'revokeMeetingGuestShare': [meetingId: string]
   'selectMeeting': [meetingId: string]
   'openMeetingResource': [resourceId: string]
+  'startDefenseRealtimeSidecar': []
+  'updateDefenseRealtimeProvider': [provider: DefenseRealtimeProvider]
+  'updateDefenseRealtimeMediaMode': [mode: DefenseRealtimeMediaMode]
+  'toggleDefenseRealtimeAudio': [enabled: boolean]
+  'toggleDefenseRealtimeVideo': [enabled: boolean]
+  'interruptDefenseRealtime': []
+  'reconnectDefenseRealtime': []
   'openResource': [resourceId: string]
   'loadContests': []
   'reconvertPreview': []
@@ -2576,6 +2585,13 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         @create-guest-share="emit('createMeetingGuestShare', $event)"
         @regenerate-guest-share="emit('regenerateMeetingGuestShare', $event)"
         @revoke-guest-share="emit('revokeMeetingGuestShare', $event)"
+        @start-defense-realtime-sidecar="emit('startDefenseRealtimeSidecar')"
+        @update-defense-realtime-provider="emit('updateDefenseRealtimeProvider', $event)"
+        @update-defense-realtime-media-mode="emit('updateDefenseRealtimeMediaMode', $event)"
+        @toggle-defense-realtime-audio="emit('toggleDefenseRealtimeAudio', $event)"
+        @toggle-defense-realtime-video="emit('toggleDefenseRealtimeVideo', $event)"
+        @interrupt-defense-realtime="emit('interruptDefenseRealtime')"
+        @reconnect-defense-realtime="emit('reconnectDefenseRealtime')"
       />
 
       <WorkspaceFlowTab
