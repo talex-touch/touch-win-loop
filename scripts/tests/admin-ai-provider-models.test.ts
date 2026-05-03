@@ -95,10 +95,29 @@ describe('admin-ai provider models', () => {
     const source = await readFile(PROVIDER_MODELS_GET_FILE, 'utf8')
 
     expect(source).toMatch(/const providerId = String\(query\.providerId \|\| ''\)\.trim\(\)/)
-    expect(source).toMatch(/registry\.providers\.find\(item => item\.capability !== 'search' && item\.capability !== 'voice'\)/)
-    expect(source).toMatch(/provider\.capability === 'search' \|\| provider\.capability === 'voice'/)
+    expect(source).toMatch(/registry\.providers\.find\(item => item\.capability !== 'search' && item\.capability !== 'voice' && item\.capability !== 'realtime'\)/)
+    expect(source).toMatch(/provider\.capability === 'search' \|\| provider\.capability === 'voice' \|\| provider\.capability === 'realtime'/)
     expect(source).toMatch(/Provider API Key 未配置/)
     expect(source).not.toMatch(/共享上游/)
+  })
+
+  it('语音实时 Provider 配置支持 Qwen 和 Coze profiles 与扣点策略', async () => {
+    const [channelsSource, pageSource, patchSource] = await Promise.all([
+      readFile(resolve(process.cwd(), 'server/utils/platform-ai-channels.ts'), 'utf8'),
+      readFile(AI_PROMPTS_PAGE_FILE, 'utf8'),
+      readFile(PROVIDERS_PATCH_FILE, 'utf8'),
+    ])
+
+    expect(channelsSource).toMatch(/realtimeProfiles: Array<\{/)
+    expect(channelsSource).toMatch(/asrProfiles: Array<\{/)
+    expect(channelsSource).toMatch(/ttsProfiles: Array<\{/)
+    expect(channelsSource).toMatch(/agents: Array<\{/)
+    expect(channelsSource).toMatch(/providerMarkupMultiplier/)
+    expect(channelsSource).toMatch(/allowedProviderCapabilities: \['llm', 'voice', 'realtime'\]/)
+    expect(pageSource).toMatch(/Qwen Realtime \/ ASR \/ TTS/)
+    expect(pageSource).toMatch(/Coze 智能体 \/ 音色 \/ 房间/)
+    expect(pageSource).toMatch(/扣点策略/)
+    expect(patchSource).toMatch(/voice: hasOwn\(source as Record<string, unknown>, 'voice'\)/)
   })
 
   it('模型池拉取接口不会用旧全局模型填充响应 meta', async () => {
