@@ -5,6 +5,8 @@ import { Buffer } from 'node:buffer'
 import { normalizePlatformAiApiKey } from '~~/server/utils/platform-ai-base-url'
 
 type CozeAudioFormat = 'wav' | 'pcm' | 'ogg' | 'opus' | 'mp3'
+type CozeRoomMode = 'default' | 's2s' | 'podcast' | 'translate'
+type CozeTurnDetectionType = 'server_vad' | 'client_vad' | 'client_interrupt'
 
 export interface CozeVoiceRuntimeConfig {
   baseURL: string
@@ -23,6 +25,13 @@ export interface CozeVoiceTranscriptionResult {
 export interface CozeVoiceSpeechResult {
   audioBuffer: Buffer
   format: CozeAudioFormat
+}
+
+export interface CozeRealtimeRoomInfo {
+  token: string
+  uid: string
+  room_id: string
+  app_id: string
 }
 
 function normalizeString(value: unknown): string {
@@ -147,6 +156,72 @@ export async function synthesizeCozeVoiceSpeech(input: {
   return {
     audioBuffer: Buffer.from(arrayBuffer),
     format,
+  }
+}
+
+function normalizeCozeRoomMode(value: unknown): CozeRoomMode | undefined {
+  const normalized = normalizeString(value)
+  if (normalized === 's2s' || normalized === 'podcast' || normalized === 'translate')
+    return normalized
+  if (normalized === 'default')
+    return 'default'
+  return undefined
+}
+
+function normalizeCozeTurnDetectionType(value: unknown): CozeTurnDetectionType | undefined {
+  const normalized = normalizeString(value)
+  if (normalized === 'client_vad' || normalized === 'client_interrupt')
+    return normalized
+  if (normalized === 'server_vad')
+    return 'server_vad'
+  return undefined
+}
+
+export async function createCozeRealtimeRoom(input: {
+  config: CozeVoiceRuntimeConfig
+  botId?: string
+  connectorId?: string
+  voiceId?: string
+  conversationId?: string
+  uid?: string
+  roomMode?: string
+  prologueContent?: string
+  turnDetectionType?: string
+  videoStreamType?: 'main' | 'screen'
+}): Promise<CozeRealtimeRoomInfo> {
+  const client = await createCozeApiClient(input.config)
+  const botId = normalizeString(input.botId) || input.config.botId
+  const connectorId = normalizeString(input.connectorId) || input.config.connectorId
+  if (!botId || !connectorId)
+    throw new Error('COZE_REALTIME_CONFIG_MISSING')
+
+  const config: Record<string, unknown> = {}
+  const roomMode = normalizeCozeRoomMode(input.roomMode)
+  const turnDetectionType = normalizeCozeTurnDetectionType(input.turnDetectionType)
+  const prologueContent = normalizeString(input.prologueContent)
+  if (roomMode)
+    config.room_mode = roomMode
+  if (turnDetectionType)
+    config.turn_detection = { type: turnDetectionType }
+  if (prologueContent)
+    config.prologue_content = prologueContent
+  if (input.videoStreamType === 'screen' || input.videoStreamType === 'main')
+    config.video_config = { stream_video_type: input.videoStreamType }
+
+  const roomInfo = await client.audio.rooms.create({
+    bot_id: botId,
+    connector_id: connectorId,
+    conversation_id: normalizeString(input.conversationId) || undefined,
+    voice_id: normalizeString(input.voiceId) || input.config.voiceId || undefined,
+    uid: normalizeString(input.uid) || undefined,
+    config: Object.keys(config).length ? config as never : undefined,
+  })
+
+  return {
+    token: normalizeString(roomInfo?.token),
+    uid: normalizeString(roomInfo?.uid),
+    room_id: normalizeString(roomInfo?.room_id),
+    app_id: normalizeString(roomInfo?.app_id),
   }
 }
 

@@ -3833,6 +3833,35 @@ export interface DefenseVoiceRuntimeSelection {
   voiceId?: string
 }
 
+export interface DefenseRealtimeCozeAgentOption {
+  id: string
+  name: string
+  judgeType: AiDefensePersonaJudgeType | 'custom'
+  defaultVoiceId?: string
+  enabled: boolean
+}
+
+export interface DefenseRealtimeCozeVoiceOption {
+  id: string
+  name: string
+  voiceId: string
+  style?: string
+  enabled: boolean
+}
+
+export interface DefenseRealtimeRuntimeOptions {
+  defaultProvider: DefenseRealtimeProvider
+  coze: {
+    configured: boolean
+    agents: DefenseRealtimeCozeAgentOption[]
+    voices: DefenseRealtimeCozeVoiceOption[]
+    roomConfig: {
+      createRoomOnServer: boolean
+      roomNamePrefix: string
+    } | null
+  }
+}
+
 export interface DefenseRealtimePersonaPack {
   sessionId: string
   projectId: string
@@ -3905,6 +3934,10 @@ export interface DefenseRealtimeBootstrapPayload {
     agentSelections?: DefenseVoiceRuntimeSelection[]
     voiceSelections?: DefenseVoiceRuntimeSelection[]
     roomInfo?: Record<string, unknown> | null
+    roomConfig?: {
+      createRoomOnServer: boolean
+      roomNamePrefix: string
+    } | null
   } | null
 }
 

@@ -2,7 +2,7 @@ import type { RuntimeSettings } from '~~/server/utils/env'
 import type { DefenseRealtimeBootstrapPayload, DefenseVoiceRuntimeSelection } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { setResponseStatus } from 'h3'
-import { assertCozeRealtimeConfig, resolveCozeVoiceRuntimeConfig } from '~~/server/services/admin-ai/coze-voice'
+import { assertCozeRealtimeConfig, createCozeRealtimeRoom, resolveCozeVoiceRuntimeConfig } from '~~/server/services/admin-ai/coze-voice'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { getAiChatSessionById } from '~~/server/utils/chat-store'
@@ -70,6 +70,21 @@ function resolveSelectionForPersona(
   personaId: string,
 ): DefenseVoiceRuntimeSelection | null {
   return selections.find(item => item.personaId === personaId) || null
+}
+
+function resolveCozeVoiceId(input: {
+  requestedVoiceId?: string
+  defaultVoiceId?: string
+  voices: Array<{ id: string, voiceId: string }>
+  fallbackVoiceId: string
+}): string {
+  const requestedVoiceId = normalizeString(input.requestedVoiceId)
+  const requestedVoice = input.voices.find(item => item.id === requestedVoiceId || item.voiceId === requestedVoiceId)
+  return normalizeString(requestedVoice?.voiceId)
+    || requestedVoiceId
+    || normalizeString(input.defaultVoiceId)
+    || normalizeString(input.voices[0]?.voiceId)
+    || normalizeString(input.fallbackVoiceId)
 }
 
 async function createQwenTemporaryToken(apiKey: string): Promise<{ token: string, expiresAt: string | null }> {
@@ -235,16 +250,46 @@ export default defineEventHandler(async (event) => {
           const agent = enabledAgents.find(item => item.id === requested?.agentId)
             || enabledAgents.find(item => item.judgeType === persona.judgeType)
             || enabledAgents[0]
+          const voiceId = resolveCozeVoiceId({
+            requestedVoiceId: requested?.voiceId,
+            defaultVoiceId: agent?.defaultVoiceId,
+            voices: enabledVoices,
+            fallbackVoiceId: config.voiceId,
+          })
           return {
             personaId: persona.id,
             agentId: agent?.id || requested?.agentId || 'coze_agent_default',
-            voiceId: requested?.voiceId || agent?.defaultVoiceId || enabledVoices[0]?.voiceId || config.voiceId || undefined,
+            voiceId: voiceId || undefined,
           }
         })
         const primarySelection = agentSelections.find(item => item.agentId)
         const primaryAgent = enabledAgents.find(item => item.id === primarySelection?.agentId) || enabledAgents[0]
-        const primaryVoiceId = normalizeString(primarySelection?.voiceId) || primaryAgent?.defaultVoiceId || config.voiceId
+        const primaryVoiceId = resolveCozeVoiceId({
+          requestedVoiceId: primarySelection?.voiceId,
+          defaultVoiceId: primaryAgent?.defaultVoiceId,
+          voices: enabledVoices,
+          fallbackVoiceId: config.voiceId,
+        })
         const conversationId = normalizeString(nextRealtime.conversationId) || randomUUID()
+        const roomConfig = cozeVoice?.roomConfig
+          ? {
+              createRoomOnServer: cozeVoice.roomConfig.createRoomOnServer,
+              roomNamePrefix: cozeVoice.roomConfig.roomNamePrefix,
+            }
+          : null
+        const shouldCreateRoomOnServer = roomConfig?.createRoomOnServer !== false
+        const roomInfo = shouldCreateRoomOnServer
+          ? await createCozeRealtimeRoom({
+              config,
+              botId: primaryAgent?.botId || config.botId,
+              connectorId: primaryAgent?.connectorId || config.connectorId,
+              voiceId: primaryVoiceId,
+              conversationId,
+              uid: `${user.id}-${sessionId}`.replace(/[^\w-]/g, '').slice(0, 64),
+              turnDetectionType: 'server_vad',
+              videoStreamType: mediaMode === 'audio_video' ? 'main' : undefined,
+            })
+          : null
         payload = {
           ...payload,
           coze: {
@@ -256,10 +301,19 @@ export default defineEventHandler(async (event) => {
             conversationId,
             agentSelections,
             voiceSelections: agentSelections,
-            roomInfo: null,
+            roomInfo: roomInfo
+              ? {
+                  token: roomInfo.token,
+                  uid: roomInfo.uid,
+                  room_id: roomInfo.room_id,
+                  app_id: roomInfo.app_id,
+                }
+              : null,
+            roomConfig,
           },
         }
         nextRealtime.conversationId = conversationId
+        nextRealtime.providerSessionId = roomInfo?.room_id || nextRealtime.providerSessionId || null
       }
 
       const updatedState = await upsertProjectDefenseSessionState(db, {
