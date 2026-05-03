@@ -24,6 +24,10 @@ interface AdminNavItem {
 const route = useRoute()
 const authApiFetch = useAuthApiFetch()
 
+const ADMIN_MOBILE_MEDIA_QUERY = '(max-width: 960px)'
+const ADMIN_SIDER_EXPANDED_WIDTH = 236
+const ADMIN_SIDER_COLLAPSED_WIDTH = 78
+
 const userName = ref('平台管理员')
 const userId = ref('')
 const userEmail = ref('')
@@ -43,6 +47,8 @@ const routeTabContextMenuTabId = ref('')
 const routeTabContextMenuAnchorPoint = ref<ContextMenuAnchorPoint | null>(null)
 const routeTabContextMenuAnchorEl = ref<HTMLElement | null>(null)
 const routeTabContextMenuRestoreFocusEl = ref<HTMLElement | null>(null)
+const desktopSidebarCollapsed = ref(false)
+const mobileSidebarOpen = ref(false)
 
 const navItems: AdminNavItem[] = [
   { key: 'admin-home', to: '/admin', label: '管理首页', icon: 'i-heroicons-outline-home', section: 'core' },
@@ -96,6 +102,7 @@ const visibleNavItems = computed(() => navItems.filter(canAccess))
 const coreItems = computed(() => visibleNavItems.value.filter(item => item.section === 'core'))
 const systemItems = computed(() => visibleNavItems.value.filter(item => item.section === 'system'))
 const notificationTarget = computed(() => visibleNavItems.value.find(item => item.key === 'admin-notifications')?.to || '')
+const adminSiderWidth = computed(() => desktopSidebarCollapsed.value ? ADMIN_SIDER_COLLAPSED_WIDTH : ADMIN_SIDER_EXPANDED_WIDTH)
 const searchMatch = computed(() => resolveSearchMatch(adminSearchQuery.value))
 const searchIndicatorText = computed(() => {
   const keyword = normalizeKeyword(adminSearchQuery.value)
@@ -215,6 +222,7 @@ function onMenuItemClick(key: string | number): void {
   const target = visibleNavItems.value.find(item => item.key === String(key))
   if (!target)
     return
+  closeMobileSidebarIfNeeded()
   if (route.path === target.to) {
     appendRouteTab(route.path, route.fullPath)
     return
@@ -227,6 +235,7 @@ async function submitAdminSearch() {
   if (!target)
     return
   adminSearchQuery.value = ''
+  closeMobileSidebarIfNeeded()
   if (route.path === target.to)
     return
   await navigateTo(target.to)
@@ -235,6 +244,27 @@ async function submitAdminSearch() {
 function focusAdminSearch() {
   searchInputRef.value?.focus()
   searchInputRef.value?.select()
+}
+
+function isAdminMobileViewport(): boolean {
+  return import.meta.client && window.matchMedia(ADMIN_MOBILE_MEDIA_QUERY).matches
+}
+
+function toggleDesktopSidebar() {
+  desktopSidebarCollapsed.value = !desktopSidebarCollapsed.value
+}
+
+function toggleMobileSidebar() {
+  mobileSidebarOpen.value = !mobileSidebarOpen.value
+}
+
+function closeMobileSidebar() {
+  mobileSidebarOpen.value = false
+}
+
+function closeMobileSidebarIfNeeded() {
+  if (isAdminMobileViewport())
+    closeMobileSidebar()
 }
 
 function isRouteTabKeyboardContextMenuEvent(event: KeyboardEvent): boolean {
@@ -329,6 +359,10 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   if ((event.metaKey || event.ctrlKey) && key === 'k') {
     event.preventDefault()
     focusAdminSearch()
+    return
+  }
+  if (key === 'escape' && mobileSidebarOpen.value) {
+    closeMobileSidebar()
     return
   }
   if (key === 'escape' && document.activeElement === searchInputRef.value) {
@@ -446,6 +480,7 @@ if (import.meta.client) {
     if (isEmbedMode.value)
       return
     closeRouteTabContextMenu()
+    closeMobileSidebarIfNeeded()
     appendRouteTab(route.path, fullPath)
   })
 }
@@ -455,9 +490,20 @@ if (import.meta.client) {
   <div v-if="isEmbedMode" class="admin-embed-shell">
     <slot />
   </div>
-  <div v-else class="admin-shell">
+  <div
+    v-else
+    class="admin-shell"
+    :class="{
+      'is-sidebar-collapsed': desktopSidebarCollapsed,
+      'is-mobile-sidebar-open': mobileSidebarOpen,
+    }"
+  >
     <a-layout class="admin-layout">
-      <a-layout-sider :width="236" class="admin-sider">
+      <a-layout-sider
+        :width="adminSiderWidth"
+        class="admin-sider"
+        :class="{ 'is-collapsed': desktopSidebarCollapsed, 'is-mobile-open': mobileSidebarOpen }"
+      >
         <div class="admin-brand">
           <div class="admin-brand-mark">
             <BrandLogo variant="mark" />
@@ -470,6 +516,26 @@ if (import.meta.client) {
               平台控制台
             </p>
           </div>
+          <button
+            type="button"
+            class="admin-sider-toggle admin-sider-toggle--desktop"
+            :aria-label="desktopSidebarCollapsed ? '展开侧栏' : '收起侧栏'"
+            :aria-pressed="desktopSidebarCollapsed ? 'true' : 'false'"
+            @click="toggleDesktopSidebar"
+          >
+            <span
+              class="admin-inline-icon"
+              :class="desktopSidebarCollapsed ? 'i-heroicons-outline-chevron-right' : 'i-heroicons-outline-chevron-left'"
+            />
+          </button>
+          <button
+            type="button"
+            class="admin-sider-toggle admin-sider-toggle--mobile"
+            aria-label="关闭侧栏"
+            @click="closeMobileSidebar"
+          >
+            <span class="admin-inline-icon i-heroicons-outline-x-mark" />
+          </button>
         </div>
 
         <nav class="admin-scrollbar admin-menu-wrap">
@@ -486,7 +552,7 @@ if (import.meta.client) {
               <template #icon>
                 <span class="admin-menu-icon" :class="item.icon" />
               </template>
-              {{ item.label }}
+              <span class="admin-menu-label">{{ item.label }}</span>
             </a-menu-item>
           </a-menu>
 
@@ -503,7 +569,7 @@ if (import.meta.client) {
               <template #icon>
                 <span class="admin-menu-icon" :class="item.icon" />
               </template>
-              {{ item.label }}
+              <span class="admin-menu-label">{{ item.label }}</span>
             </a-menu-item>
           </a-menu>
         </nav>
@@ -549,10 +615,26 @@ if (import.meta.client) {
           </div>
         </div>
       </a-layout-sider>
+      <button
+        type="button"
+        class="admin-mobile-sider-mask"
+        aria-label="关闭侧栏"
+        :tabindex="mobileSidebarOpen ? 0 : -1"
+        @click="closeMobileSidebar"
+      />
 
       <a-layout class="admin-main-layout">
         <a-layout-header class="admin-header">
           <div class="admin-header-left">
+            <button
+              type="button"
+              class="admin-mobile-menu-btn"
+              aria-label="打开侧栏"
+              :aria-expanded="mobileSidebarOpen ? 'true' : 'false'"
+              @click="toggleMobileSidebar"
+            >
+              <span class="admin-inline-icon i-heroicons-outline-bars-3" />
+            </button>
             <span class="admin-header-chevron i-heroicons-outline-chevron-left" />
             <div class="admin-header-copy">
               <p class="admin-header-title">
@@ -665,6 +747,7 @@ if (import.meta.client) {
 .admin-shell {
   position: relative;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background:
     radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 30%),
@@ -686,21 +769,31 @@ if (import.meta.client) {
 
 .admin-layout {
   height: 100%;
+  min-width: 0;
 }
 
 .admin-sider {
   display: flex;
   flex-direction: column;
+  z-index: 30;
   border-right: 1px solid var(--wl-admin-border);
   background: rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(20px);
+  transition:
+    width 0.2s ease,
+    min-width 0.2s ease,
+    max-width 0.2s ease,
+    flex-basis 0.2s ease,
+    transform 0.2s ease;
 }
 
 .admin-brand {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px 13px;
+  min-height: 58px;
+  padding: 13px 12px 12px 16px;
   border-bottom: 1px solid var(--wl-admin-border);
 }
 
@@ -721,6 +814,7 @@ if (import.meta.client) {
 
 .admin-brand-copy {
   min-width: 0;
+  flex: 1;
 }
 
 .admin-brand-title {
@@ -736,6 +830,41 @@ if (import.meta.client) {
   color: var(--wl-admin-muted);
   font-size: 11px;
   line-height: 1;
+}
+
+.admin-sider-toggle,
+.admin-mobile-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(213, 223, 237, 0.92);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #52657f;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.admin-sider-toggle:hover,
+.admin-mobile-menu-btn:hover {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: #edf4ff;
+  color: var(--wl-admin-primary);
+}
+
+.admin-sider-toggle--mobile,
+.admin-mobile-menu-btn {
+  display: none;
+}
+
+.admin-mobile-sider-mask {
+  display: none;
 }
 
 .admin-menu-wrap {
@@ -772,6 +901,12 @@ if (import.meta.client) {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
+}
+
+.admin-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .admin-inline-icon {
@@ -1032,6 +1167,12 @@ if (import.meta.client) {
   box-shadow: 0 6px 14px rgba(15, 23, 42, 0.04);
 }
 
+.admin-header-action:hover {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: #edf4ff;
+  color: var(--wl-admin-primary);
+}
+
 .admin-header-action--alert::after {
   content: '';
   position: absolute;
@@ -1160,7 +1301,8 @@ if (import.meta.client) {
 
 .admin-content {
   min-height: 0;
-  overflow-y: auto;
+  min-width: 0;
+  overflow: auto;
   padding: 18px 20px 20px;
 }
 
@@ -1215,7 +1357,7 @@ if (import.meta.client) {
 
 :deep(.arco-table-container),
 :deep(.arco-card) {
-  border-radius: 18px !important;
+  border-radius: 14px !important;
   overflow: hidden;
 }
 
@@ -1226,6 +1368,72 @@ if (import.meta.client) {
 
 :deep(.arco-table-th) {
   background: #f7faff;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-brand {
+  justify-content: center;
+  padding-inline: 12px;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-brand-copy,
+.admin-shell.is-sidebar-collapsed .admin-section-title,
+.admin-shell.is-sidebar-collapsed .admin-menu-label,
+.admin-shell.is-sidebar-collapsed .admin-user-meta,
+.admin-shell.is-sidebar-collapsed .admin-setting-btn,
+.admin-shell.is-sidebar-collapsed .admin-user-skeleton-meta,
+.admin-shell.is-sidebar-collapsed .admin-user-skeleton-setting {
+  display: none;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-sider-toggle--desktop {
+  position: absolute;
+  top: 12px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-brand-mark {
+  margin-right: 18px;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-menu-wrap {
+  padding-top: 10px;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-section-title-system {
+  margin-top: 8px;
+}
+
+.admin-shell.is-sidebar-collapsed :deep(.admin-menu .arco-menu-item) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 42px;
+  margin-inline: 12px;
+  padding-inline: 0 !important;
+}
+
+.admin-shell.is-sidebar-collapsed :deep(.admin-menu .arco-menu-icon) {
+  margin-right: 0;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-user-panel {
+  padding-inline: 10px;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-back-btn {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.admin-shell.is-sidebar-collapsed :deep(.admin-back-btn .arco-btn-content) {
+  display: none;
+}
+
+.admin-shell.is-sidebar-collapsed .admin-user-card {
+  justify-content: center;
+  padding: 9px;
 }
 
 @media (max-width: 1280px) {
@@ -1244,24 +1452,215 @@ if (import.meta.client) {
 }
 
 @media (max-width: 960px) {
+  .admin-layout {
+    position: relative;
+  }
+
+  .admin-sider {
+    position: fixed !important;
+    inset: 0 auto 0 0;
+    width: min(82vw, 300px) !important;
+    min-width: min(82vw, 300px) !important;
+    max-width: min(82vw, 300px) !important;
+    flex: 0 0 min(82vw, 300px) !important;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 24px 0 48px rgba(15, 23, 42, 0.18);
+    transform: translateX(-104%);
+  }
+
+  .admin-sider.is-mobile-open {
+    transform: translateX(0);
+  }
+
+  .admin-shell.is-sidebar-collapsed .admin-brand {
+    justify-content: flex-start;
+    padding: 13px 12px 12px 16px;
+  }
+
+  .admin-shell.is-sidebar-collapsed .admin-brand-copy,
+  .admin-shell.is-sidebar-collapsed .admin-section-title,
+  .admin-shell.is-sidebar-collapsed .admin-menu-label,
+  .admin-shell.is-sidebar-collapsed .admin-user-meta,
+  .admin-shell.is-sidebar-collapsed .admin-setting-btn,
+  .admin-shell.is-sidebar-collapsed .admin-user-skeleton-meta,
+  .admin-shell.is-sidebar-collapsed .admin-user-skeleton-setting {
+    display: block;
+  }
+
+  .admin-shell.is-sidebar-collapsed .admin-menu-label {
+    display: inline-block;
+  }
+
+  .admin-shell.is-sidebar-collapsed .admin-setting-btn,
+  .admin-shell.is-sidebar-collapsed .admin-user-skeleton-setting {
+    display: inline-flex;
+  }
+
+  .admin-shell.is-sidebar-collapsed .admin-brand-mark {
+    margin-right: 0;
+  }
+
+  .admin-shell.is-sidebar-collapsed .admin-sider-toggle--desktop {
+    position: static;
+    width: 34px;
+    height: 34px;
+  }
+
+  .admin-shell.is-sidebar-collapsed :deep(.admin-menu .arco-menu-item) {
+    display: flex;
+    justify-content: flex-start;
+    height: 38px;
+    margin: 3px 10px;
+    padding-inline: 12px !important;
+  }
+
+  .admin-shell.is-sidebar-collapsed :deep(.admin-menu .arco-menu-icon) {
+    margin-right: 8px;
+  }
+
+  .admin-shell.is-sidebar-collapsed .admin-user-panel {
+    padding: 12px 12px 14px;
+  }
+
+  .admin-shell.is-sidebar-collapsed .admin-back-btn {
+    justify-content: flex-start;
+    padding-inline: 10px;
+  }
+
+  .admin-shell.is-sidebar-collapsed :deep(.admin-back-btn .arco-btn-content) {
+    display: inline-flex;
+  }
+
+  .admin-shell.is-sidebar-collapsed .admin-user-card {
+    justify-content: flex-start;
+    padding: 10px;
+  }
+
+  .admin-sider-toggle--desktop {
+    display: none;
+  }
+
+  .admin-sider-toggle--mobile,
+  .admin-mobile-menu-btn {
+    display: inline-flex;
+  }
+
+  .admin-mobile-sider-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: block;
+    border: none;
+    background: rgba(15, 23, 42, 0.34);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  .admin-shell.is-mobile-sidebar-open .admin-mobile-sider-mask {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .admin-main-layout {
+    width: 100%;
+  }
+
   .admin-header {
     height: auto;
-    padding-block: 14px;
+    padding: 12px;
     align-items: flex-start;
     flex-direction: column;
+    gap: 10px;
+  }
+
+  .admin-header-left {
+    width: 100%;
+  }
+
+  .admin-header-chevron {
+    display: none;
+  }
+
+  .admin-header-copy {
+    flex: 1;
+  }
+
+  .admin-header-title {
+    font-size: 17px;
   }
 
   .admin-header-actions {
     width: 100%;
+    gap: 6px;
   }
 
   .admin-search {
     flex: 1;
     width: auto;
+    min-width: 0;
+    height: 38px;
+    padding-inline: 10px;
+  }
+
+  .admin-header-action {
+    width: 38px;
+    height: 38px;
   }
 
   .admin-search-indicator {
     display: none;
+  }
+
+  .admin-route-tabs-inner {
+    min-height: 34px;
+    padding-inline: 4px;
+  }
+
+  .admin-route-tab {
+    min-width: 104px;
+    max-width: 168px;
+    padding-inline: 8px;
+  }
+
+  .admin-route-tab-close {
+    width: 22px;
+    margin-right: 4px;
+  }
+
+  .admin-content {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-brand {
+    min-height: 56px;
+  }
+
+  .admin-header-title {
+    font-size: 16px;
+  }
+
+  .admin-header-subtitle {
+    display: none;
+  }
+
+  .admin-search-input {
+    font-size: 12px;
+  }
+
+  .admin-search-input::placeholder {
+    color: transparent;
+  }
+
+  .admin-content {
+    padding: 10px;
+  }
+
+  :deep(.arco-card),
+  :deep(.arco-table-container) {
+    border-radius: 10px !important;
   }
 }
 </style>
