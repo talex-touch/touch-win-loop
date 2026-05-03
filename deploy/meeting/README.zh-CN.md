@@ -25,14 +25,15 @@
 
 当前还没有完整打通的是：
 
-- 云存储型录制 artifact 拉取编排
+- 云存储型录制 artifact 拉取、重试与应用侧对象存储沉淀
 
 原因很明确：
 
 - 站内 Web 客户端现在已经会把本地麦克风 PCM 音频帧推到应用服务，服务端也会在会议结束时调用 `finishSession()`
 - 但如果你仍然使用本目录里的 `ASR dev bridge` 纯桥接模式，它不会自动回调真实字幕
 - `RtcProviderGateway.startRecording()` 现在已经会调用 `LiveKit Egress`
-- 录制 worker 也已经支持从 `egress_ended` webhook 里的本地文件路径或 URL 导入 artifact
+- 录制 worker 也已经支持从 `egress_ended` webhook 里的本地文件路径或 URL 导入 artifact，URL 导入带超时与重试
+- 应用侧对象存储可在 `/admin/runtime-settings` 切换为 `local`、`s3` 或 `minio`
 
 所以这个目录当前能做到的是：
 
@@ -42,8 +43,8 @@
 
 还没有完全做满的是：
 
-- 真 partial 字幕流
-- 生产级远端对象存储编排
+- 模型级 incremental partial 字幕流
+- 对象存储生命周期、跨区容灾与超大录制文件搬运压测
 - 自定义录制布局
 
 ## 和后台管理页的配合方式
@@ -168,7 +169,7 @@ pnpm meeting:asr:dev
 - `MEETING_ASR_DEV_CALLBACK_SECRET` 要与后台 ASR 配置里的 `webhookSecret` 一致
 - bridge 默认转写模型已切到 `whisper-large-v3-turbo`
 - 若未显式指定 fallback，且上游是 Groq，则会自动按 `whisper-large-v3-turbo -> whisper-large-v3` 回退
-- 当前按“分片 final utterance”回调，不生成真正的 partial 字幕
+- bridge 默认按“分片 final utterance”回调，partial 需要外部 ASR 服务主动回调 `eventType=partial`
 - 共享音频不会走这条链路，仍然只转写本地麦克风
 
 ## 3. 可选：完全不启 bridge，直接走内置 OpenAI Compatible ASR
@@ -179,19 +180,25 @@ pnpm meeting:asr:dev
 - 在 AI Provider 中维护转写服务的 `baseURL` / `apiKey`
 - 在 AI 场景 `meeting_asr` 绑定对应 ASR Provider 与模型
 
+这里的 `openai-compatible` 是会议 ASR 内置模式名，不限制上游只能是 OpenAI。`meeting_asr` 可以绑定：
+
+- OpenAI 兼容 `audio/transcriptions` Provider
+- Coze 语音 Provider，复用 Coze audio transcriptions
+- 百炼 DashScope Provider，按 `qwen3-asr-flash` 兼容 `chat/completions` 做 3-5 秒分片 final 字幕
+
 这条路线下：
 
 - 会议 Web 客户端仍然上传 PCM 音频帧到应用服务
 - 应用内按参与者缓存分片
-- 达到阈值后按 `meeting_asr` 场景解析到的 Provider/模型调用 `audio/transcriptions`
-- 再由应用自己回写 `/api/internal/meetings/asr-events`
+- 达到阈值后按 `meeting_asr` 场景解析到的 Provider/模型/profile 调用对应 ASR 适配器
+- 应用先广播 pending partial，再由应用自己回写 `/api/internal/meetings/asr-events` 生成 final
 
 这样可以做到：
 
 - 不额外依赖 `MEETING_ASR_DEV_TRANSCRIBE_*` 环境变量
 - ASR Provider、密钥和模型完全跟随 AI 场景配置
 - 本地只需起 `LiveKit + 应用服务`
-- 管理页“测试连通性”会直接发一段最小 `wav` 到 `meeting_asr` 绑定 Provider 的 `audio/transcriptions`，能更早发现 key / model / endpoint 问题
+- 管理页“测试连通性”会直接发一段最小 `wav` 到 `meeting_asr` 绑定 Provider，能更早发现 key / model / endpoint 问题
 
 ## 4. 在后台填写会议配置
 
@@ -215,7 +222,7 @@ pnpm meeting:asr:dev
 
 - ASR
   - `provider = openai-compatible`
-  - 在 AI 场景 `meeting_asr` 绑定 ASR Provider 与模型
+  - 在 AI 场景 `meeting_asr` 绑定 ASR Provider 与模型/profile
 - Worker
   - 默认值即可
 
@@ -265,5 +272,5 @@ pnpm meeting:asr:dev
 下一步真正要补的是：
 
 1. 给 bridge 接一个生产级或本地可跑的真实转写后端
-2. 远端对象存储型 provider 录制 / artifact 拉取编排
+2. 对象存储生命周期、跨区容灾与超大录制文件搬运压测
 3. 录制布局与 egress 编排

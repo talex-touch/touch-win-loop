@@ -1,6 +1,6 @@
 # 项目会议研发状态
 
-更新时间：2026-04-17
+更新时间：2026-05-03
 
 ## 目标范围
 
@@ -76,6 +76,9 @@
 - 已落地会中字幕上行链路：
   - Web 客户端上传 PCM 音频帧
   - 应用服务转发给 ASR gateway
+- 已落地内置 ASR 分片 partial 广播：
+  - 转写前先广播 `meeting.caption.partial`
+  - 转写完成后再广播并落库 `meeting.caption.final`
 - 已落地两条 ASR 路线：
   - `provider = http`
   - `provider = openai-compatible`
@@ -85,6 +88,8 @@
   - `recording_finalize`
 - 已落地纪要资源沉淀。
 - 已落地录制资源沉淀。
+- 录制资源导入支持远端 URL 超时与重试，并可直接落到后台配置的 S3 / MinIO / local storage。
+- 会议详情页已接入 Coze / 百炼实时语音 sidecar 控制，复用答辩 realtime session，不替代 LiveKit RTC。
 
 ### 后台管理
 
@@ -93,6 +98,12 @@
   - RTC 配置
   - ASR 配置
   - worker 配置
+- 已支持 `/admin/runtime-settings` 配置全局 Storage：
+  - `local`
+  - `s3`
+  - `minio`
+  - accessKey / secretKey 加密保存
+  - 写入 / 读取 / 删除探针
 - 已支持后台“测试连通性”：
   - LiveKit API 探测
   - `http` ASR 健康探测
@@ -124,14 +135,14 @@
 - 若要得到真实字幕，仍需：
   - 给 `http` bridge 接真实识别服务
   - 或直接使用 `openai-compatible`
-- 当前更偏向“分片 final 结果”回写，持续稳定的真 partial 字幕体验仍需继续打磨。
+- 内置 ASR 已提供 pending partial；真实模型级 incremental partial 仍取决于外部 ASR / realtime Provider 是否回调 partial。
 
 ### RTC / 录制边界
 
 - 目前站内真媒体前端只正式支持 `livekit`。
 - `Agora / TRTC` 等 provider 的站内 Web SDK 适配尚未实现。
 - 自定义录制布局、录制转场、主持人治理能力尚未实现。
-- 云对象存储型 artifact 的大规模编排能力尚未系统化补齐。
+- 远端 URL artifact 已支持重试导入并可落 S3 / MinIO；超大文件分片搬运、生命周期策略仍建议在对象存储侧继续治理。
 
 ### 会议产品边界
 
@@ -155,7 +166,7 @@
 
 1. 把真实 ASR 能力接上，优先验证“开口即出字幕”。
 2. 补一轮 guest 分享页的真实端到端自动化验证。
-3. 把录制 artifact 的对象存储 / 远端下载链路补齐到生产级。
+3. 对生产对象存储补生命周期、跨区容灾和大文件分片搬运压测。
 4. 视产品优先级决定是否继续做：
    - 其他 RTC provider 适配
    - 共享治理

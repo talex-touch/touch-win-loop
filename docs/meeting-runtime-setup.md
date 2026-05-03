@@ -56,11 +56,14 @@
 - 当前正式支持的录制 artifact 形态是：
   - `egress webhook` 直接携带可下载 URL
   - 或本地自建 egress 写入 `/tmp/winloop-meeting-egress` 后由应用读取本地文件
+- 远端录制 URL 导入已经带超时与重试，最终资源会写入全局 Storage。
+- 全局 Storage 可在 `/admin/runtime-settings` 配置为 `local`、`s3` 或 `minio`，后台会用 `WINLOOP_CONFIG_MASTER_KEY` 加密 accessKey / secretKey。
 - 当前是否能看到真实字幕，取决于你采用哪种 ASR 路线：
   - `http`
     - 由外部 ASR 服务消费 `/sessions/frame` 并回调 `/api/internal/meetings/asr-events`
   - `openai-compatible`
     - 由应用内置缓冲器直接把 PCM 分片转成 `wav`，再调用兼容 `audio/transcriptions` 的服务
+    - 内置链路会先广播 pending partial，再把稳定 final 写入逐句稿
 - 仓库内置的 `ASR dev bridge` 现在既能做纯协议桥接，也能在额外配置真实转写后端后充当开发适配器。
 
 ## 本地 Bring-up
@@ -184,13 +187,15 @@ pnpm meeting:asr:dev
 - 不需要额外起 ASR bridge。
 - 应用内会按参与者缓存 PCM 分片，达到阈值后直接请求：
   - `POST <meeting_asr Provider baseURL>/audio/transcriptions`
-- Provider、API Key 与模型只来自 AI 场景 `meeting_asr` 的绑定，不再从会议 ASR 配置读取默认模型或转写密钥。
-- 适合直接接 OpenAI 或兼容其音频转写接口的服务。
+- 若 `meeting_asr` 绑定的是 Coze 语音 Provider，则复用 Coze audio transcriptions，不要求传统模型池。
+- 若 `meeting_asr` 绑定的是百炼 DashScope Provider，则按 `qwen3-asr-flash` 兼容 `chat/completions` 分片转写；`qwen3-asr-flash-realtime` profile 继续用于实时 sidecar。
+- Provider、API Key 与模型/profile 只来自 AI 场景 `meeting_asr` 的绑定，不再从会议 ASR 配置读取默认模型或转写密钥。
+- 适合直接接 OpenAI 兼容音频转写、Coze 语音或百炼 ASR。
 
 公共最小要求：
 
 - `http` provider 需要 `serviceUrl`
-- `openai-compatible` provider 需要 AI 场景 `meeting_asr` 已绑定可用 ASR Provider/模型
+- `openai-compatible` provider 需要 AI 场景 `meeting_asr` 已绑定可用 ASR Provider/模型或 Coze/百炼语音 Provider
 - 可选 `webhookSecret`
 
 ## 后台配置入口
@@ -218,7 +223,7 @@ pnpm meeting:asr:dev
 - ASR
   - `provider = http` 或 `openai-compatible`
   - `provider = http` 时填写 `serviceUrl`，`apiKey` 可选
-  - `provider = openai-compatible` 时在 AI 场景 `meeting_asr` 维护 Provider、API Key 与模型
+  - `provider = openai-compatible` 时在 AI 场景 `meeting_asr` 维护 Provider、API Key 与模型/profile，可绑定 OpenAI 兼容、Coze 语音或百炼 DashScope
   - `webhookSecret` 可选
 
 说明：
@@ -226,7 +231,7 @@ pnpm meeting:asr:dev
 - 会议配置会保存在后台。
 - 没有后台配置时，项目页不会回退到 env 或 `mock`。
 - `WINLOOP_CONFIG_MASTER_KEY` 只负责 secret 加密，不参与 provider 参数决策。
-- 管理页“测试连通性”对 `openai-compatible` 不再只测端口，而是会发一段最小 `wav` 到 `audio/transcriptions` 做真实转写探针。
+- 管理页“测试连通性”对 `openai-compatible` 不再只测端口，而是会发一段最小 `wav` 到 `meeting_asr` 绑定 Provider 做真实转写探针。
 
 ## 管理员落地顺序
 
@@ -237,7 +242,7 @@ pnpm meeting:asr:dev
    - 线上可使用自建或托管 LiveKit
 2. 选择 ASR 路线。
    - `http`：对接独立 ASR bridge / worker
-   - `openai-compatible`：应用内按 `meeting_asr` 场景绑定直接调用 `audio/transcriptions`
+   - `openai-compatible`：应用内按 `meeting_asr` 场景绑定直接调用 OpenAI 兼容、Coze 或百炼 ASR
 3. 进入后台管理页 `/admin/meeting-providers` 保存 RTC / ASR / worker 配置。
 4. 点击“测试连通性”。
    - RTC 通过只代表房间/录制控制链路可达
@@ -321,5 +326,5 @@ pnpm meeting:asr:dev
    - 结束会议后能自动看到“会议录制”资源。
 7. 如果要继续打通完整会后链路，再补：
    - 生产级 ASR 服务对 `/sessions/frame` 的真实识别与 webhook 回调
-   - 远端对象存储型录制 artifact 编排
+   - 对象存储生命周期 / 大文件导入压测
    - 录制版式与 egress 编排
