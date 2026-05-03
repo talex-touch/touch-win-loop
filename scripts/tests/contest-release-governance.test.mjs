@@ -129,7 +129,10 @@ describe('赛事版本流与前台可见性收口', () => {
   })
 
   it('版本审批工作台收口为审核入口、二级时间线和赛道确认表单', async () => {
-    const workbenchSource = await readSource('app/components/admin/AdminReleaseWorkbench.vue')
+    const [workbenchSource, releaseStoreSource] = await Promise.all([
+      readSource('app/components/admin/AdminReleaseWorkbench.vue'),
+      readSource('server/utils/release-store.ts'),
+    ])
     const tableActionSource = workbenchSource.slice(
       workbenchSource.indexOf('<a-table-column title="操作"'),
       workbenchSource.indexOf('<a-drawer'),
@@ -181,6 +184,8 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /function trackTimelineReviewSections\(/, '赛道确认表单应把时间节点拆成自动识别与待人工确认')
     assert.match(workbenchSource, /自动识别/, '赛道确认表单缺少自动识别时间节点分段')
     assert.match(workbenchSource, /待人工确认/, '赛道确认表单缺少待人工确认时间节点分段')
+    assert.match(workbenchSource, /uniqueTimelineReviewTexts/, '赛道时间节点分段应去重，避免自动识别和待确认重复展示')
+    assert.match(workbenchSource, /item\.recognitionStatus !== 'needs_confirmation'/, '待人工确认节点不应同时进入自动识别分组')
     assert.match(workbenchSource, /businessNodeLabel/, '赛道确认表单缺少可扩展业务节点字段')
     assert.match(workbenchSource, /保存时间节点/, '赛道确认表单缺少结构化时间节点保存动作')
     assert.match(workbenchSource, /建议同步修正飞书/, '赛道确认表单缺少重新导入修正提示')
@@ -188,6 +193,7 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /formatTimelineSnapshotItem/, '审核工作台应把时间节点格式化为中文可读文本')
     assert.match(workbenchSource, /isTrackTimelineForTrack/, '赛道确认表单应按多口径关联时间节点')
     assert.match(workbenchSource, /item\.timelineText/, '赛道时间节点为空时应回退展示赛道库原始 timelineText')
+    assert.match(releaseStoreSource, /if \(normalizedTimelines\.length === 0\)\s+track\.timelineText = ''/, '清空结构化时间节点时应同时清掉当前版本的 timelineText 回退文本')
     assert.match(workbenchSource, /isCoverPreviewUrl/, '赛道确认表单应支持封面图片预览')
     assert.match(workbenchSource, /resolveCoverPreviewSource/, '赛道确认表单应从封面字段解析可预览地址')
     assert.match(workbenchSource, /coverPreviewFrames/, '封面预览应覆盖常用裁切比例')
@@ -200,6 +206,32 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(workbenchSource, /openReviewLogDetail\(record\)/, '审批日志列表应点击打开详情 drawer')
     assert.match(workbenchSource, /<a-drawer[\s\S]*v-model:visible="reviewLogDrawerVisible"[\s\S]*title="审批日志详情"/, '审批日志详情应放入独立 drawer')
     assert.doesNotMatch(workbenchSource, /<pre v-if="Object\.keys\(item\.payload \|\| \{\}\)\.length"[\s\S]*JSON\.stringify\(item\.payload/, '审批日志列表不应直接展开 payload')
+  })
+
+  it('政策库审批快照按平台字段分组展示', async () => {
+    const [workbenchSource, policyPageSource] = await Promise.all([
+      readSource('app/components/admin/AdminReleaseWorkbench.vue'),
+      readSource('app/pages/admin/policies/index.vue'),
+    ])
+
+    assert.match(workbenchSource, /function policyPlatformRows/, '政策审批快照缺少平台字段分组 helper')
+    for (const field of ['官网', '微信公众号', '微博', '抖音', '小红书'])
+      assert.match(workbenchSource, new RegExp(`label: '${field}'`), `政策审批快照缺少平台分组：${field}`)
+    assert.doesNotMatch(workbenchSource, /function policySummary/, '政策审批快照不应再把所有字段拼成一行')
+    assert.match(workbenchSource, /v-for="platform in policyPlatformRows\(item\)"/, '政策审批快照未按平台循环展示')
+    assert.match(policyPageSource, /function policyPlatformRows/, '已发布政策页缺少平台字段分组 helper')
+    assert.match(policyPageSource, /v-for="platform in policyPlatformRows\(item\)"/, '已发布政策页未按平台循环展示')
+  })
+
+  it('政策库发布失败会返回可读错误', async () => {
+    const [releaseStoreSource, publishApiSource] = await Promise.all([
+      readSource('server/utils/release-store.ts'),
+      readSource('server/api/admin/releases/[id]/publish.post.ts'),
+    ])
+
+    assert.match(releaseStoreSource, /POLICY_RELEASE_ITEM_INVALID/, '政策库发布前未校验必要字段')
+    assert.match(publishApiSource, /POLICY_RELEASE_ITEM_INVALID/, '政策库发布错误未映射为 API 错误')
+    assert.match(publishApiSource, /缺少政策编号或会议名称/, '政策库发布失败缺少可读提示')
   })
 
   it('发布审批队列统计使用全量口径，不受当前列表 limit 截断', async () => {

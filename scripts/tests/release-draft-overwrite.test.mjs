@@ -15,6 +15,7 @@ const canRunDbSmoke = parsedPgUrl.password.length > 0
 let adminPool = null
 let tempPool = null
 let getContestReleasePublishCheck = null
+let prunePolicyLibraryReleaseDraftForSyncRun = null
 let searchFeishuSyncedData = null
 let upsertContestReleaseDraft = null
 let upsertPolicyLibraryReleaseDraft = null
@@ -267,6 +268,7 @@ beforeAll(async () => {
 
   ;({
     getContestReleasePublishCheck,
+    prunePolicyLibraryReleaseDraftForSyncRun,
     upsertContestReleaseDraft,
     upsertPolicyLibraryReleaseDraft,
   } = await import('../../server/utils/release-store.ts'))
@@ -346,6 +348,19 @@ describe('release draft 覆盖与审批边界', () => {
     assert.match(releaseStoreSource, /mergeContestManualPreservedFields/, 'release-store 未调用竞赛人工字段保留工具')
     assert.match(releaseStoreSource, /preservedFields: preservedContestFields/, '竞赛同步未把保留字段写入 syncSource')
     assert.match(releaseStoreSource, /input\.contest,[\s\S]*current\.contest \|\| base\.contest/, '竞赛同步未用当前或基线竞赛快照作为人工字段保留来源')
+  })
+
+  it('政策库 full sync 使用当前 run 的保留集合生成删除草稿', async () => {
+    const [releaseStoreSource, serviceSource] = await Promise.all([
+      readFile(resolve(process.cwd(), 'server/utils/release-store.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/feishu/bitable-sync.ts'), 'utf8'),
+    ])
+
+    assert.match(releaseStoreSource, /export async function prunePolicyLibraryReleaseDraftForSyncRun\(/, 'release-store 缺少政策库权威裁剪函数')
+    assert.match(releaseStoreSource, /computePolicyDiffSummary\(base, current\)/, '政策库权威裁剪未生成 removed diff')
+    assert.match(serviceSource, /prunePolicyLibraryReleaseDraftForSyncRun/, '飞书同步未把政策库 full sync 接到权威裁剪')
+    assert.match(serviceSource, /input\.entityType === 'policy' && input\.runId/, '政策库权威裁剪必须绑定当前 sync run')
+    assert.match(serviceSource, /preserveExternalIds: \[\.\.\.successfulBusinessExternalIds\]/, '政策库权威裁剪未使用本轮成功记录作为保留集合')
   })
 
   databaseTest('pending_first_review 草稿在新一轮有 diff 的同步下会生成新版本并替换旧未发布版本', async () => {
@@ -434,6 +449,69 @@ describe('release draft 覆盖与审批边界', () => {
     const versions = await listPolicyReleaseVersions(tempPool)
     assert.equal(versions.length, 1, '无 diff 时应保留单一已发布版本')
     assert.equal(versions[0]?.status, 'published')
+  })
+
+  databaseTest('政策库完整同步会把本轮缺失的政策项记录成 removed diff', async () => {
+    const first = await createPolicyDraft(tempPool, {
+      syncItemId: 'sync_policy_prune',
+      runId: 'run_policy_prune_1',
+      externalId: 'policy_ext_prune_keep',
+      meetingName: '保留政策会议',
+      summary: '保留摘要',
+    })
+    assert.ok(first.version, '首次同步第一条应生成政策草稿')
+
+    const second = await createPolicyDraft(tempPool, {
+      syncItemId: 'sync_policy_prune',
+      runId: 'run_policy_prune_1',
+      externalId: 'policy_ext_prune_remove',
+      meetingName: '删除政策会议',
+      summary: '待删除摘要',
+    })
+    assert.ok(second.version, '同一轮第二条应聚合进政策草稿')
+
+    await tempPool.query(
+      `UPDATE release_versions
+       SET status = 'published',
+           live_entity_id = 'policy_library',
+           published_by_user_id = $2,
+           published_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [second.version.id, ACTOR_USER_ID],
+    )
+
+    const next = await createPolicyDraft(tempPool, {
+      syncItemId: 'sync_policy_prune',
+      runId: 'run_policy_prune_2',
+      externalId: 'policy_ext_prune_keep',
+      meetingName: '保留政策会议',
+      summary: '保留摘要',
+    })
+    assert.equal(next.version, null, '单条 upsert 与已发布基线无 diff，不应提前创建版本')
+
+    const pruned = await prunePolicyLibraryReleaseDraftForSyncRun(tempPool, {
+      actorUserId: ACTOR_USER_ID,
+      syncItemId: 'sync_policy_prune',
+      syncRunId: 'run_policy_prune_2',
+      preserveExternalIds: ['policy_ext_prune_keep'],
+      scopeTitle: '政策库',
+    })
+    assert.ok(pruned.version, '权威裁剪应为删除项生成新草稿版本')
+    assert.equal(pruned.removedCount, 1)
+
+    const versions = await listPolicyReleaseVersions(tempPool)
+    assert.equal(versions.length, 2, '删除项应生成一版待审草稿')
+    assert.equal(versions[0]?.status, 'published')
+    assert.equal(versions[1]?.status, 'pending_first_review')
+    assert.equal(versions[1]?.sync_run_id, 'run_policy_prune_2')
+    assert.deepEqual(
+      versions[1]?.snapshot_json?.items?.map(item => item.externalId),
+      ['policy_ext_prune_keep'],
+      '新草稿不应把本轮已删除政策项带回',
+    )
+    assert.equal(versions[1]?.diff_summary_json?.removedCount, 1)
+    assert.equal(versions[1]?.diff_summary_json?.changedExternalIds?.includes('policy_ext_prune_remove'), true)
   })
 
   databaseTest('pending_second_review 与 approved 版本不会被原地覆盖，而是生成新草稿', async () => {

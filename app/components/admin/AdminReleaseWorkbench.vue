@@ -692,15 +692,43 @@ function isTimelineSnapshotAutoRecognized(item: ContestReleaseTimelineSnapshot |
   return Boolean(formatDate(item.startAt) || formatDate(item.endAt))
 }
 
+function timelineReviewKey(item: ContestReleaseTrackTimelineSnapshot): string {
+  return [
+    metadataText(item.externalId),
+    metadataText(item.businessNodeLabel),
+    metadataText(item.nodeType),
+    formatDate(item.startAt),
+    formatDate(item.endAt),
+    metadataText(item.note),
+  ].filter(Boolean).join('|')
+}
+
+function uniqueTimelineReviewTexts(items: ContestReleaseTrackTimelineSnapshot[], mapper: (item: ContestReleaseTrackTimelineSnapshot) => string): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const item of items) {
+    const text = metadataText(mapper(item))
+    const key = timelineReviewKey(item) || text
+    if (!text || text === '-' || seen.has(key) || seen.has(text))
+      continue
+    seen.add(key)
+    seen.add(text)
+    result.push(text)
+  }
+  return result
+}
+
 function trackTimelineReviewSections(items: ContestReleaseTrackTimelineSnapshot[], fallbackText?: string) {
-  const autoRecognized = items
-    .filter(isTimelineSnapshotAutoRecognized)
-    .map(formatTimelineSnapshotItem)
-    .filter(item => item && item !== '-')
-  const pendingConfirmation = items
-    .filter(item => item.recognitionStatus === 'needs_confirmation' || !isTimelineSnapshotAutoRecognized(item))
-    .map(item => metadataText(item.note) || formatTimelineSnapshotItem(item))
-    .filter(item => item && item !== '-')
+  const pendingItems = items.filter(item => item.recognitionStatus === 'needs_confirmation' || !isTimelineSnapshotAutoRecognized(item))
+  const pendingKeys = new Set(pendingItems.map(timelineReviewKey).filter(Boolean))
+  const autoRecognized = uniqueTimelineReviewTexts(
+    items.filter(item => isTimelineSnapshotAutoRecognized(item) && item.recognitionStatus !== 'needs_confirmation' && !pendingKeys.has(timelineReviewKey(item))),
+    formatTimelineSnapshotItem,
+  )
+  const pendingConfirmation = uniqueTimelineReviewTexts(
+    pendingItems,
+    item => metadataText(item.note) || formatTimelineSnapshotItem(item),
+  )
   const fallback = metadataText(fallbackText)
   if (!items.length && fallback)
     pendingConfirmation.push(fallback)
@@ -713,6 +741,10 @@ function trackTimelineReviewSections(items: ContestReleaseTrackTimelineSnapshot[
 
 function trackTimelineReviewText(items: ContestReleaseTrackTimelineSnapshot[], fallbackText?: string) {
   return trackTimelineReviewSections(items, fallbackText).join('\n\n') || '-'
+}
+
+function trackTimelineText(items: ContestReleaseTrackTimelineSnapshot[], fallbackText?: string) {
+  return trackTimelineReviewText(items, fallbackText)
 }
 
 function identityTokens(value: unknown): string[] {
@@ -793,7 +825,7 @@ function trackFormRows(item: ContestReleaseTrackSnapshot | null, snapshot: Conte
     { label: '赛道简介', value: item.summary || '-' },
     { label: '参赛对象', value: item.participantRequirements || '-' },
     { label: '组队规则', value: item.teamRule || '-' },
-    { label: '时间节点', value: trackTimelineReviewText(trackTimelines, item.timelineText) },
+    { label: '时间节点', value: trackTimelineText(trackTimelines, item.timelineText) },
     { label: '相关专业', value: arrayText(item.suitableMajors) },
     { label: '获奖比例', value: item.awardRatio || '-' },
     { label: '必备项', value: arrayText(item.evidenceRequirements) },
@@ -1220,23 +1252,21 @@ function resourceSummary(item: ContestReleaseResourceSnapshot): string {
   ].filter(Boolean).join(' / ')
 }
 
-function policySummary(item: PolicyLibraryItemSnapshot): string {
+interface PolicyPlatformRow {
+  key: string
+  label: string
+  material: string
+  link: string
+}
+
+function policyPlatformRows(item: PolicyLibraryItemSnapshot): PolicyPlatformRow[] {
   return [
-    item.externalId,
-    item.meetingName,
-    item.conferenceDate || '',
-    item.importance || '',
-    item.officialMaterial || '',
-    item.officialMaterialLink || '',
-    item.wechatMaterial || '',
-    item.wechatMaterialLink || '',
-    item.weiboMaterial || '',
-    item.weiboMaterialLink || '',
-    item.douyinMaterial || '',
-    item.douyinMaterialLink || '',
-    item.xiaohongshuMaterial || '',
-    item.xiaohongshuMaterialLink || '',
-  ].filter(Boolean).join(' / ')
+    { key: 'official', label: '官网', material: metadataText(item.officialMaterial) || '-', link: metadataText(item.officialMaterialLink) || '-' },
+    { key: 'wechat', label: '微信公众号', material: metadataText(item.wechatMaterial) || '-', link: metadataText(item.wechatMaterialLink) || '-' },
+    { key: 'weibo', label: '微博', material: metadataText(item.weiboMaterial) || '-', link: metadataText(item.weiboMaterialLink) || '-' },
+    { key: 'douyin', label: '抖音', material: metadataText(item.douyinMaterial) || '-', link: metadataText(item.douyinMaterialLink) || '-' },
+    { key: 'xiaohongshu', label: '小红书', material: metadataText(item.xiaohongshuMaterial) || '-', link: metadataText(item.xiaohongshuMaterialLink) || '-' },
+  ]
 }
 
 watch(statusFilter, (nextStatus) => {
@@ -1871,8 +1901,36 @@ onMounted(() => {
             政策库快照
           </h3>
           <div v-if="detailPolicySnapshot.items.length" class="mt-3 space-y-2">
-            <div v-for="item in detailPolicySnapshot.items" :key="item.externalId" class="p-2 border border-slate-200 rounded bg-slate-50">
-              {{ policySummary(item) }}
+            <div v-for="item in detailPolicySnapshot.items" :key="item.externalId" class="p-3 border border-slate-200 rounded bg-slate-50">
+              <div class="flex flex-wrap gap-2 items-start justify-between">
+                <div>
+                  <p class="text-xs text-slate-900 font-semibold">
+                    {{ item.meetingName || '未命名政策' }}
+                  </p>
+                  <p class="text-[11px] text-slate-500 mt-1">
+                    编号：{{ item.externalId || '-' }} ｜ 日期：{{ item.conferenceDate || '-' }} ｜ 重要程度：{{ item.importance || '-' }}
+                  </p>
+                </div>
+                <a-tag size="small" :color="item.status === 'active' ? 'green' : item.status === 'archived' ? 'gray' : 'gold'">
+                  {{ item.status || 'active' }}
+                </a-tag>
+              </div>
+              <p class="text-xs text-slate-600 mt-2 whitespace-pre-wrap">
+                {{ item.summary || '暂无简介' }}
+              </p>
+              <div class="mt-3 gap-2 grid md:grid-cols-2">
+                <div v-for="platform in policyPlatformRows(item)" :key="platform.key" class="p-2 border border-slate-200 rounded bg-white">
+                  <p class="text-[11px] text-slate-900 font-semibold">
+                    {{ platform.label }}
+                  </p>
+                  <p class="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">
+                    资料：{{ platform.material }}
+                  </p>
+                  <p class="text-[11px] text-slate-500 mt-1 break-all">
+                    链接：{{ platform.link }}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
           <a-empty v-else description="当前版本没有政策项" />
@@ -2203,7 +2261,7 @@ onMounted(() => {
       unmount-on-close
     >
       <a-form v-if="selectedTrack" :model="selectedTrack" layout="vertical" class="text-xs">
-        <div class="mb-3 px-3 py-2 border border-amber-200 rounded bg-amber-50 text-[11px] text-amber-800">
+        <div class="text-[11px] text-amber-800 mb-3 px-3 py-2 border border-amber-200 rounded bg-amber-50">
           平台侧修改只保存到当前待审版本；后续重新导入会以飞书赛道库为准。建议同步修正飞书“时间节点”原字段后重新导入。
         </div>
         <div class="gap-3 grid md:grid-cols-2">
@@ -2238,8 +2296,8 @@ onMounted(() => {
             />
           </a-form-item>
         </div>
-        <div class="mt-4 border border-slate-200 rounded bg-slate-50 p-3">
-          <div class="mb-3 flex items-center justify-between gap-3">
+        <div class="mt-4 p-3 border border-slate-200 rounded bg-slate-50">
+          <div class="mb-3 flex gap-3 items-center justify-between">
             <div>
               <p class="text-xs text-slate-900 font-semibold">
                 结构化时间节点
@@ -2257,9 +2315,9 @@ onMounted(() => {
             <div
               v-for="(timeline, index) in trackTimelineDrafts"
               :key="timeline.externalId || index"
-              class="border border-slate-200 rounded bg-white p-3"
+              class="p-3 border border-slate-200 rounded bg-white"
             >
-              <div class="mb-2 flex items-center justify-between gap-2">
+              <div class="mb-2 flex gap-2 items-center justify-between">
                 <a-tag size="small" :color="timeline.recognitionStatus === 'manual_adjusted' ? 'green' : timeline.recognitionStatus === 'needs_confirmation' ? 'orange' : 'arcoblue'">
                   {{ timelineRecognitionStatusLabel(timeline) }}
                 </a-tag>
@@ -2284,7 +2342,7 @@ onMounted(() => {
           <a-empty v-else description="暂无结构化时间节点，可新增后保存到待审版本。" />
         </div>
 
-        <div class="pt-3 flex justify-end gap-2">
+        <div class="pt-3 flex gap-2 justify-end">
           <button class="dense-btn" type="button" :disabled="!canEditSelectedTrackTimelines() || trackTimelineSaving" @click="saveTrackTimelineDrafts">
             {{ trackTimelineSaving ? '保存中...' : '保存时间节点' }}
           </button>

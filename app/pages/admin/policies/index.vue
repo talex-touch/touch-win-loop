@@ -34,6 +34,20 @@ const loading = ref(false)
 const errorText = ref('')
 const items = ref<PolicyLibraryItem[]>([])
 
+function textOrDash(value: unknown): string {
+  return String(value || '').trim() || '-'
+}
+
+function policyPlatformRows(item: PolicyLibraryItem) {
+  return [
+    { key: 'official', label: '官网', material: textOrDash(item.officialMaterial), link: textOrDash(item.officialMaterialLink) },
+    { key: 'wechat', label: '微信公众号', material: textOrDash(item.wechatMaterial), link: textOrDash(item.wechatMaterialLink) },
+    { key: 'weibo', label: '微博', material: textOrDash(item.weiboMaterial), link: textOrDash(item.weiboMaterialLink) },
+    { key: 'douyin', label: '抖音', material: textOrDash(item.douyinMaterial), link: textOrDash(item.douyinMaterialLink) },
+    { key: 'xiaohongshu', label: '小红书', material: textOrDash(item.xiaohongshuMaterial), link: textOrDash(item.xiaohongshuMaterialLink) },
+  ]
+}
+
 async function loadData() {
   loading.value = true
   errorText.value = ''
@@ -117,16 +131,17 @@ onMounted(loadData)
             {{ item.summary || '暂无简介' }}
           </p>
           <div class="text-[11px] text-slate-500 mt-3 gap-2 grid md:grid-cols-2">
-            <p>官网资料：{{ item.officialMaterial || '-' }}</p>
-            <p>官网链接：{{ item.officialMaterialLink || '-' }}</p>
-            <p>微信公众号：{{ item.wechatMaterial || '-' }}</p>
-            <p>公众号链接：{{ item.wechatMaterialLink || '-' }}</p>
-            <p>微博资料：{{ item.weiboMaterial || '-' }}</p>
-            <p>微博链接：{{ item.weiboMaterialLink || '-' }}</p>
-            <p>抖音资料：{{ item.douyinMaterial || '-' }}</p>
-            <p>抖音链接：{{ item.douyinMaterialLink || '-' }}</p>
-            <p>小红书资料：{{ item.xiaohongshuMaterial || '-' }}</p>
-            <p>小红书链接：{{ item.xiaohongshuMaterialLink || '-' }}</p>
+            <div v-for="platform in policyPlatformRows(item)" :key="platform.key" class="p-2 border border-slate-200 rounded bg-slate-50">
+              <p class="text-slate-900 font-semibold">
+                {{ platform.label }}
+              </p>
+              <p class="mt-1 whitespace-pre-wrap">
+                资料：{{ platform.material }}
+              </p>
+              <p class="mt-1 break-all">
+                链接：{{ platform.link }}
+              </p>
+            </div>
           </div>
         </div>
       </div>
