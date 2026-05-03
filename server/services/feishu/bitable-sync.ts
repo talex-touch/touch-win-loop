@@ -2563,7 +2563,7 @@ async function applyPolicyRecord(
   }
 
   const policyItem: PolicyLibraryItemSnapshot = {
-    externalId: input.externalId,
+    externalId: explicitExternalId,
     meetingName,
     summary,
     conferenceDate,
@@ -2592,14 +2592,14 @@ async function applyPolicyRecord(
     })
     return {
       status: draft.existed ? 'updated' : 'created',
-      externalId: input.externalId,
+      externalId: explicitExternalId,
       entityId: draft.version?.id || '',
     }
   }
 
   return {
     status: 'created',
-    externalId: input.externalId,
+    externalId: explicitExternalId,
   }
 }
 
