@@ -999,8 +999,7 @@ CREATE TABLE IF NOT EXISTS contest_tracks (
   sort_order INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(contest_id, name)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS project_contest_bindings (
@@ -3922,6 +3921,9 @@ ALTER TABLE contest_tracks
 
 ALTER TABLE contest_tracks
   ADD COLUMN IF NOT EXISTS award_ratio TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE contest_tracks
+  DROP CONSTRAINT IF EXISTS contest_tracks_contest_id_name_key;
 
 ALTER TABLE contest_rubrics
   ADD COLUMN IF NOT EXISTS scoring_mode TEXT NOT NULL DEFAULT 'weighted';

@@ -100,8 +100,8 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(typeSource, /export interface ContestWorkflowTimelineResult \{[\s\S]*items: ContestWorkflowTimelineItem\[\][\s\S]*aggregates: ContestAuditAggregates/, '共享类型未声明流程时间线聚合结果')
     assert.match(typeSource, /export interface ReleaseVersionDetail \{[\s\S]*publishCheck\?: PublishCheckResult \| null[\s\S]*workflowTimeline\?: ContestWorkflowTimelineItem\[\]/, '版本详情未挂载发布校验与流程时间线')
     assert.match(releaseStoreSource, /export async function getContestReleasePublishCheck\(/, 'release-store 未提供版本级发布校验')
-    assert.match(releaseStoreSource, /CONTEST_TRACK_NAMES_DUPLICATED/, '发布校验未阻断同一版本内重复赛道名')
-    assert.match(releaseStoreSource, /collectDuplicatedTrackNames/, '发布校验未收口重复赛道名检测')
+    assert.doesNotMatch(releaseStoreSource, /CONTEST_TRACK_NAMES_DUPLICATED/, '发布校验不能按赛道名称阻断合法的同名赛道')
+    assert.doesNotMatch(releaseStoreSource, /collectDuplicatedTrackNames/, '发布校验不能按赛道名称收口赛道身份')
     assert.match(releaseStoreSource, /export async function listContestWorkflowTimeline\(/, 'release-store 未提供统一流程时间线聚合')
     assert.match(releaseStoreSource, /export async function listContestAuditAggregates\(/, 'release-store 未提供赛事审核统计聚合')
     assert.match(releaseStoreSource, /JOIN release_versions rv ON rv\.id = l\.release_version_id[\s\S]*LEFT JOIN users u ON u\.id = l\.actor_user_id/, '赛事审核统计未从 review logs 联表用户信息')
@@ -241,11 +241,18 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(publishApiSource, /缺少政策编号或会议名称/, '政策库发布失败缺少可读提示')
     assert.match(publishApiSource, /RELEASE_TRACK_TIMELINE_TRACK_NOT_FOUND/, '赛事时间节点发布失败未映射为可读错误')
     assert.match(publishApiSource, /无法关联赛道的时间节点/, '赛事时间节点发布失败缺少可读提示')
-    assert.match(publishApiSource, /contest_tracks_contest_id_name_key/, '重复赛道名数据库约束错误未映射为可读错误')
-    assert.match(publishApiSource, /重复赛道名称/, '重复赛道名发布失败缺少可读提示')
+    assert.doesNotMatch(publishApiSource, /contest_tracks_contest_id_name_key/, '发布接口不能把同名赛道视为错误')
+    assert.doesNotMatch(publishApiSource, /重复赛道名称/, '发布接口不能提示合法同名赛道为错误')
     assert.match(releaseStoreSource, /extractTrackExternalIdFromTimelineExternalId/, '发布链路未从派生时间节点编号解析赛道编号')
     assert.match(bitableSyncSource, /const policyItem: PolicyLibraryItemSnapshot = \{\s*externalId: explicitExternalId,/, '政策库发布草稿应使用显式政策编号，不能用 recordId 兜底 externalId')
     assert.match(bitableSyncSource, /status: draft\.existed \? 'updated' : 'created',\s*externalId: explicitExternalId,/, '政策库同步结果应回传显式政策编号')
+  })
+
+  it('赛道 schema 允许同一赛事下不同外部编号的同名赛道', async () => {
+    const schemaSource = await readSource('server/database/bootstrap/schema.ts')
+
+    assert.match(schemaSource, /DROP CONSTRAINT IF EXISTS contest_tracks_contest_id_name_key/, '启动迁移未移除旧赛道名称唯一约束')
+    assert.doesNotMatch(schemaSource, /UNIQUE\s*\(\s*contest_id\s*,\s*name\s*\)/, 'contest_tracks 不应继续限制同一赛事下赛道名称唯一')
   })
 
   it('发布审批队列统计使用全量口径，不受当前列表 limit 截断', async () => {

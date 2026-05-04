@@ -1946,22 +1946,6 @@ function normalizeSnapshotFaqItems(value: unknown): Array<{ question: string, an
     .filter(item => item.question || item.answer)
 }
 
-function collectDuplicatedTrackNames(tracks: ContestReleaseTrackSnapshot[]): string[] {
-  const namesByKey = new Map<string, string>()
-  const countsByKey = new Map<string, number>()
-  for (const track of tracks) {
-    const name = normalizeText(track.name)
-    const key = normalizeCompareValue(name)
-    if (!key)
-      continue
-    namesByKey.set(key, name)
-    countsByKey.set(key, (countsByKey.get(key) || 0) + 1)
-  }
-  return [...countsByKey.entries()]
-    .filter(([, count]) => count > 1)
-    .map(([key, count]) => `${namesByKey.get(key) || key}（${count} 条）`)
-}
-
 export async function getContestReleasePublishCheck(
   db: Queryable,
   input: {
@@ -2040,15 +2024,6 @@ export async function getContestReleasePublishCheck(
   checks.push(hasTracks)
   if (!hasTracks)
     pushBlocker('CONTEST_TRACKS_REQUIRED', '至少需要 1 个赛道。', 'tracks')
-
-  const duplicatedTrackNames = collectDuplicatedTrackNames(snapshot.tracks)
-  if (duplicatedTrackNames.length > 0) {
-    pushBlocker(
-      'CONTEST_TRACK_NAMES_DUPLICATED',
-      `同一赛事下存在重复赛道名称：${duplicatedTrackNames.join('、')}。请驳回后调整赛道名称或合并重复赛道。`,
-      'tracks',
-    )
-  }
 
   const hasTimelines = snapshot.timelines.length > 0 || snapshot.trackTimelines.length > 0
   checks.push(hasTimelines)
