@@ -3,12 +3,10 @@ const props = withDefaults(defineProps<{
   label?: string
   brand?: string
   progress?: number
-  visual?: 'brand-lockup' | 'text-progress'
 }>(), {
   label: 'WinLoop 工作区加载中',
   brand: 'WinLoop',
   progress: 0,
-  visual: 'brand-lockup',
 })
 
 const WORDMARK_VIEWBOX_WIDTH = 1480
@@ -23,7 +21,6 @@ const wordmarkBounds = ref({
 
 const progressLabel = computed(() => `${Math.round(displayProgress.value)}%`)
 const statusLabel = computed(() => `${props.label} ${progressLabel.value}`)
-const progressFillHeight = computed(() => `${displayProgress.value}%`)
 const progressClipHeight = computed(() => (wordmarkBounds.value.height * displayProgress.value) / 100)
 const progressClipY = computed(() => (wordmarkBounds.value.y + wordmarkBounds.value.height) - progressClipHeight.value)
 
@@ -81,13 +78,11 @@ function animateProgress(nextProgress: number): void {
 
 watch(() => props.progress, nextProgress => animateProgress(nextProgress), { immediate: true })
 watch(() => props.brand, () => {
-  if (props.visual !== 'text-progress')
-    return
   void syncWordmarkBounds()
 })
 
 async function syncWordmarkBounds(): Promise<void> {
-  if (!import.meta.client || props.visual !== 'text-progress')
+  if (!import.meta.client)
     return
   await nextTick()
   const textEl = wordmarkBaseTextRef.value
@@ -111,8 +106,6 @@ async function syncWordmarkBounds(): Promise<void> {
 }
 
 onMounted(() => {
-  if (props.visual !== 'text-progress')
-    return
   void syncWordmarkBounds()
   if (!import.meta.client || !('fonts' in document) || !document.fonts?.ready)
     return
@@ -135,7 +128,6 @@ onBeforeUnmount(() => {
   >
     <div class="workspace-shell-loading-overlay__content" aria-hidden="true">
       <svg
-        v-if="props.visual === 'text-progress'"
         class="workspace-shell-loading-overlay__text-wordmark"
         :viewBox="`0 0 ${WORDMARK_VIEWBOX_WIDTH} ${WORDMARK_VIEWBOX_HEIGHT}`"
         xmlns="http://www.w3.org/2000/svg"
@@ -171,13 +163,6 @@ onBeforeUnmount(() => {
           {{ props.brand }}
         </text>
       </svg>
-
-      <div v-else class="workspace-shell-loading-overlay__wordmark">
-        <BrandLogo variant="lockup" class="workspace-shell-loading-overlay__brand workspace-shell-loading-overlay__brand--base" />
-        <div class="workspace-shell-loading-overlay__fill" :style="{ height: progressFillHeight }">
-          <BrandLogo variant="lockup" class="workspace-shell-loading-overlay__brand workspace-shell-loading-overlay__brand--fill" />
-        </div>
-      </div>
       <span class="workspace-shell-loading-overlay__percent">{{ progressLabel }}</span>
     </div>
     <span class="workspace-shell-loading-overlay__sr-only">{{ statusLabel }}</span>
@@ -228,37 +213,6 @@ onBeforeUnmount(() => {
   fill: var(--wl-primary-600);
 }
 
-.workspace-shell-loading-overlay__wordmark {
-  position: relative;
-  width: min(56vw, 280px);
-  line-height: 0;
-}
-
-.workspace-shell-loading-overlay__brand {
-  --winloop-brand-lockup-width: 100%;
-  display: block;
-  width: 100%;
-  user-select: none;
-}
-
-.workspace-shell-loading-overlay__brand--base {
-  opacity: 0.18;
-  filter: grayscale(1);
-}
-
-.workspace-shell-loading-overlay__brand--fill {
-  opacity: 1;
-}
-
-.workspace-shell-loading-overlay__fill {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  overflow: hidden;
-  transition: height 0.22s ease;
-}
-
 .workspace-shell-loading-overlay__percent {
   min-width: 5ch;
   color: var(--wl-text-tertiary);
@@ -285,10 +239,6 @@ onBeforeUnmount(() => {
 @media (max-width: 640px) {
   .workspace-shell-loading-overlay__text {
     letter-spacing: 0.05em;
-  }
-
-  .workspace-shell-loading-overlay__wordmark {
-    width: min(68vw, 220px);
   }
 }
 </style>

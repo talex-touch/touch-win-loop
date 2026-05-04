@@ -7,10 +7,12 @@ const props = withDefaults(defineProps<{
   mode?: 'orb'
   glowFrom?: string
   glowTo?: string
+  borderless?: boolean
 }>(), {
   mode: 'orb',
   glowFrom: '#ee4f27',
   glowTo: '#6b21ef',
+  borderless: false,
 })
 
 const pointerX = ref('50%')
@@ -54,7 +56,10 @@ function handlePointerLeave() {
 <template>
   <section
     class="magic-card"
-    :class="props.mode === 'orb' ? 'magic-card--orb' : ''"
+    :class="[
+      props.mode === 'orb' ? 'magic-card--orb' : '',
+      props.borderless ? 'magic-card--borderless' : '',
+    ]"
     :style="cardStyle"
     v-bind="$attrs"
     @pointermove="handlePointerMove"
@@ -198,6 +203,28 @@ function handlePointerLeave() {
   box-shadow:
     0 34px 120px rgba(15, 23, 42, 0.24),
     inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.magic-card--borderless {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.magic-card--borderless:hover {
+  box-shadow: none;
+}
+
+.magic-card--borderless .magic-card__backdrop,
+.magic-card--borderless .magic-card__border-glow {
+  display: none;
+}
+
+.magic-card--borderless .magic-card__spotlight,
+.magic-card--borderless .magic-card__glow,
+.magic-card--borderless .magic-card__noise {
+  display: none;
 }
 
 @keyframes magic-card-float {
