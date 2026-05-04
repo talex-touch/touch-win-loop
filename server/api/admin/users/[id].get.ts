@@ -12,8 +12,8 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const userId = String(getRouterParam(event, 'id') || '').trim()
 
-  const canAssign = await checkPlatformPermission(event, user, 'role.assign')
-  if (!canAssign) {
+  const canReadUsers = await checkPlatformPermission(event, user, 'user.read')
+  if (!canReadUsers) {
     setResponseStatus(event, 403)
     return fail('当前用户无权查看用户详情。', {
       startedAt,

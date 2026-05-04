@@ -11,8 +11,8 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
 
-  const canAssign = await checkPlatformPermission(event, user, 'role.assign')
-  if (!canAssign) {
+  const canReadUsers = await checkPlatformPermission(event, user, 'user.read')
+  if (!canReadUsers) {
     setResponseStatus(event, 403)
     return fail('当前用户无权访问用户管理。', {
       startedAt,

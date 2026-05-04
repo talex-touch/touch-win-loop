@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
 
   const access = await getPlatformAccess(event, user)
   const hasOrgPermission = access.permissions.some(item =>
-    ['contest.read_internal', 'pricing.write', 'role.assign'].includes(item),
+    ['contest.read_internal', 'pricing.write', 'user.read', 'role.assign'].includes(item),
   )
 
   if (!hasOrgPermission) {

@@ -88,12 +88,13 @@ const canManageContest = computed(() => {
 })
 const canManagePricing = computed(() => isPlatformAdminUser.value || permissions.value.includes('pricing.write'))
 const canManageRoles = computed(() => isPlatformAdminUser.value || permissions.value.includes('role.assign'))
+const canManageUsers = computed(() => isPlatformAdminUser.value || permissions.value.includes('user.read'))
 const canManageIntegrations = computed(() => canManageRoles.value || canManageContest.value)
 const canManageRuntimeSettings = computed(() => isPlatformAdminUser.value || permissions.value.includes('contest.write'))
 const canPublishNotifications = computed(() => isPlatformAdminUser.value || permissions.value.includes('contest.write'))
 const canViewOperations = computed(() => canManageContest.value)
 const hasAnyAdminAccess = computed(() => {
-  return canManageContest.value || canManagePricing.value || canManageRoles.value || canManageRuntimeSettings.value
+  return canManageContest.value || canManagePricing.value || canManageRoles.value || canManageUsers.value || canManageRuntimeSettings.value
 })
 
 function buildValueSourceLabel(source: BuildValueSource): string {
@@ -298,7 +299,7 @@ const homeEntries = computed<HomeEntryCard[]>(() => {
       icon: 'i-heroicons-outline-users',
       tone: 'blue',
       action: '进入管理',
-      visible: canManageRoles.value,
+      visible: canManageUsers.value,
     },
     {
       key: 'contests',

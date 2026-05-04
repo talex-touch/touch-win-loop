@@ -52,7 +52,7 @@ const mobileSidebarOpen = ref(false)
 
 const navItems: AdminNavItem[] = [
   { key: 'admin-home', to: '/admin', label: '管理首页', icon: 'i-heroicons-outline-home', section: 'core' },
-  { key: 'admin-users', to: '/admin/users', label: '用户管理', icon: 'i-heroicons-outline-users', section: 'core', requiredAny: ['role.assign'] },
+  { key: 'admin-users', to: '/admin/users', label: '用户管理', icon: 'i-heroicons-outline-users', section: 'core', requiredAny: ['user.read'] },
   { key: 'admin-contests', to: '/admin/contests', label: '赛事管理', icon: 'i-heroicons-outline-academic-cap', section: 'core', requiredAny: ['contest.read_internal'] },
   { key: 'admin-resources', to: '/admin/resources', label: '资料中心', icon: 'i-heroicons-outline-folder-open', section: 'core', requiredAny: ['contest.read_internal'] },
   { key: 'admin-ai-prompts', to: '/admin/ai-prompts', label: 'AI配置', icon: 'i-heroicons-outline-sparkles', section: 'core', requiredAny: ['contest.read_internal'] },

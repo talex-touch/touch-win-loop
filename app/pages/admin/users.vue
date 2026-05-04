@@ -84,7 +84,12 @@ const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 
 const loading = ref(true)
-const canAssign = ref(false)
+const canReadUsers = ref(false)
+const canWriteUsers = ref(false)
+const canWriteUserStatus = ref(false)
+const canWriteUserSecurity = ref(false)
+const canAssignRoles = ref(false)
+const canAssignSuperRole = ref(false)
 const errorText = ref('')
 const successText = ref('')
 const rows = ref<UserAdminRow[]>([])
@@ -101,6 +106,9 @@ const drawerMode = ref<DrawerMode>('edit')
 const activeTab = ref<DrawerTab>('profile')
 const page = ref(1)
 const pageSize = ref(10)
+const searchKeyword = ref('')
+const roleFilter = ref<'all' | PlatformRole | 'member'>('all')
+const statusFilter = ref<'all' | UserStatus>('all')
 const generatedMagicLink = ref<MagicLinkResult | null>(null)
 const magicLinkLoading = ref(false)
 const magicLinkCopied = ref(false)
@@ -111,6 +119,7 @@ const form = reactive<{
   username: string
   initialPassword: string
   platformSuperAdmin: boolean
+  userAdmin: boolean
   contestAdmin: boolean
   pricingAdmin: boolean
   status: 'active' | 'disabled'
@@ -119,6 +128,7 @@ const form = reactive<{
   username: '',
   initialPassword: '',
   platformSuperAdmin: false,
+  userAdmin: false,
   contestAdmin: false,
   pricingAdmin: false,
   status: 'active',
@@ -138,9 +148,22 @@ const selectedUser = computed(() => {
   return rows.value.find(item => item.userId === form.targetUserId) || detail.value
 })
 
+const filteredRows = computed(() => {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  return rows.value.filter((item) => {
+    const matchesKeyword = !keyword
+      || item.username.toLowerCase().includes(keyword)
+      || item.userId.toLowerCase().includes(keyword)
+    const matchesRole = roleFilter.value === 'all'
+      || (roleFilter.value === 'member' ? item.roles.length === 0 : item.roles.includes(roleFilter.value))
+    const matchesStatus = statusFilter.value === 'all' || item.status === statusFilter.value
+    return matchesKeyword && matchesRole && matchesStatus
+  })
+})
+
 const pagedRows = computed(() => {
   const start = (page.value - 1) * pageSize.value
-  return rows.value.slice(start, start + pageSize.value)
+  return filteredRows.value.slice(start, start + pageSize.value)
 })
 
 const activeUsers = computed(() => rows.value.filter(item => item.status === 'active').length)
@@ -153,10 +176,14 @@ const drawerTitle = computed(() => {
   return selectedUser.value ? `用户详情：${selectedUser.value.username}` : '用户详情'
 })
 
-watch([rows, pageSize], () => {
-  const maxPage = Math.max(1, Math.ceil(rows.value.length / pageSize.value))
+watch([filteredRows, pageSize], () => {
+  const maxPage = Math.max(1, Math.ceil(filteredRows.value.length / pageSize.value))
   if (page.value > maxPage)
     page.value = maxPage
+})
+
+watch([searchKeyword, roleFilter, statusFilter], () => {
+  page.value = 1
 })
 
 function formatDate(value: string): string {
@@ -197,6 +224,8 @@ function selectedRoles(): PlatformRole[] {
   const roles: PlatformRole[] = []
   if (form.platformSuperAdmin)
     roles.push('platform_super_admin')
+  if (form.userAdmin)
+    roles.push('user_admin')
   if (form.contestAdmin)
     roles.push('contest_admin')
   if (form.pricingAdmin)
@@ -209,6 +238,7 @@ function fillForm(row: UserAdminRow) {
   form.username = row.username
   form.initialPassword = ''
   form.platformSuperAdmin = row.roles.includes('platform_super_admin')
+  form.userAdmin = row.roles.includes('user_admin')
   form.contestAdmin = row.roles.includes('contest_admin')
   form.pricingAdmin = row.roles.includes('pricing_admin')
   form.status = row.status === 'disabled' ? 'disabled' : 'active'
@@ -219,6 +249,7 @@ function clearForm() {
   form.username = ''
   form.initialPassword = ''
   form.platformSuperAdmin = false
+  form.userAdmin = false
   form.contestAdmin = false
   form.pricingAdmin = false
   form.status = 'active'
@@ -255,7 +286,13 @@ async function requestApi<T>(path: string, options: RequestInit = {}, fallbackMe
 
 async function loadPermission() {
   const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
-  canAssign.value = (response.data.user.platformPermissions || []).includes('role.assign')
+  const permissions = response.data.user.platformPermissions || []
+  canReadUsers.value = permissions.includes('user.read')
+  canWriteUsers.value = permissions.includes('user.write')
+  canWriteUserStatus.value = permissions.includes('user.status.write')
+  canWriteUserSecurity.value = permissions.includes('user.security.write')
+  canAssignRoles.value = permissions.includes('role.assign')
+  canAssignSuperRole.value = permissions.includes('role.super.assign')
 }
 
 async function loadUsers(preferredUserId?: string) {
@@ -308,6 +345,8 @@ async function openEditDrawer(row: UserAdminRow) {
 }
 
 async function createUser() {
+  if (!canWriteUsers.value)
+    return
   creatingUser.value = true
   try {
     const created = await requestApi<UserAdminRow>('/admin/users', {
@@ -333,7 +372,7 @@ async function createUser() {
 }
 
 async function saveProfile() {
-  if (!selectedUser.value)
+  if (!selectedUser.value || !canWriteUsers.value)
     return
   savingProfile.value = true
   try {
@@ -356,8 +395,12 @@ async function saveProfile() {
 }
 
 async function saveRoles() {
-  if (!selectedUser.value)
+  if (!selectedUser.value || !canAssignRoles.value)
     return
+  if (form.platformSuperAdmin && !canAssignSuperRole.value) {
+    setError('当前用户无权转移唯一平台超管角色。')
+    return
+  }
   savingRole.value = true
   try {
     await requestApi<unknown>('/admin/platform-roles', {
@@ -380,7 +423,7 @@ async function saveRoles() {
 }
 
 async function saveStatus() {
-  if (!selectedUser.value)
+  if (!selectedUser.value || !canWriteUserStatus.value)
     return
   savingStatus.value = true
   try {
@@ -403,7 +446,7 @@ async function saveStatus() {
 }
 
 function triggerAvatarUpload() {
-  if (avatarUploading.value || drawerMode.value !== 'edit')
+  if (avatarUploading.value || drawerMode.value !== 'edit' || !canWriteUsers.value)
     return
   avatarFileInputRef.value?.click()
 }
@@ -452,7 +495,7 @@ async function handleAvatarFileChange(event: Event) {
 }
 
 async function clearAvatar() {
-  if (!selectedUser.value)
+  if (!selectedUser.value || !canWriteUsers.value)
     return
   avatarUploading.value = true
   try {
@@ -472,7 +515,7 @@ async function clearAvatar() {
 }
 
 async function generateMagicLink() {
-  if (!selectedUser.value)
+  if (!selectedUser.value || !canWriteUserSecurity.value || !canAssignSuperRole.value)
     return
   magicLinkLoading.value = true
   generatedMagicLink.value = null
@@ -548,7 +591,7 @@ onMounted(async () => {
   successText.value = ''
   try {
     await loadPermission()
-    if (canAssign.value)
+    if (canReadUsers.value)
       await loadUsers()
   }
   catch (error: any) {
@@ -576,8 +619,8 @@ onMounted(async () => {
       </a-skeleton>
     </section>
 
-    <section v-else-if="!canAssign" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
-      403：当前账号没有 `role.assign` 权限，无法访问用户管理。
+    <section v-else-if="!canReadUsers" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
+      403：当前账号没有 `user.read` 权限，无法访问用户管理。
     </section>
 
     <template v-else>
@@ -598,7 +641,7 @@ onMounted(async () => {
               </template>
               刷新
             </a-button>
-            <a-button size="small" type="primary" @click="openCreateDrawer">
+            <a-button size="small" type="primary" :disabled="!canWriteUsers" @click="openCreateDrawer">
               <template #icon>
                 <span class="i-heroicons-outline-user-plus" />
               </template>
@@ -640,6 +683,44 @@ onMounted(async () => {
               {{ oauthUsers }}
             </p>
           </div>
+        </div>
+
+        <div class="mt-3 gap-2 grid md:grid-cols-[minmax(220px,1fr)_180px_160px]">
+          <a-input v-model="searchKeyword" size="small" allow-clear placeholder="搜索用户名或用户 ID" />
+          <a-select v-model="roleFilter" size="small">
+            <a-option value="all">
+              全部角色
+            </a-option>
+            <a-option value="platform_super_admin">
+              platform_super_admin
+            </a-option>
+            <a-option value="user_admin">
+              user_admin
+            </a-option>
+            <a-option value="contest_admin">
+              contest_admin
+            </a-option>
+            <a-option value="pricing_admin">
+              pricing_admin
+            </a-option>
+            <a-option value="member">
+              member
+            </a-option>
+          </a-select>
+          <a-select v-model="statusFilter" size="small">
+            <a-option value="all">
+              全部状态
+            </a-option>
+            <a-option value="active">
+              active
+            </a-option>
+            <a-option value="inactive">
+              inactive
+            </a-option>
+            <a-option value="disabled">
+              disabled
+            </a-option>
+          </a-select>
         </div>
       </section>
 
@@ -726,7 +807,7 @@ onMounted(async () => {
               :page-size="pageSize"
               :page-size-options="[10, 20, 50]"
               :show-total="true"
-              :total="rows.length"
+              :total="filteredRows.length"
               size="small"
               @change="(value: number) => page = value"
               @page-size-change="(value: number) => { pageSize = value; page = 1 }"
@@ -792,13 +873,13 @@ onMounted(async () => {
                     placeholder="初始密码，至少 6 位"
                   />
                   <div v-if="drawerMode === 'edit'" class="flex flex-wrap gap-2">
-                    <a-button size="small" :loading="savingProfile" type="primary" @click="saveProfile">
+                    <a-button size="small" :loading="savingProfile" type="primary" :disabled="!canWriteUsers" @click="saveProfile">
                       保存资料
                     </a-button>
-                    <a-button size="small" :loading="avatarUploading" @click="triggerAvatarUpload">
+                    <a-button size="small" :loading="avatarUploading" :disabled="!canWriteUsers" @click="triggerAvatarUpload">
                       更换头像
                     </a-button>
-                    <a-button size="small" :disabled="avatarUploading" status="danger" @click="clearAvatar">
+                    <a-button size="small" :disabled="avatarUploading || !canWriteUsers" status="danger" @click="clearAvatar">
                       清除头像
                     </a-button>
                   </div>
@@ -808,9 +889,16 @@ onMounted(async () => {
                   <p class="text-[10px] text-slate-500 tracking-wider font-bold m-0 uppercase">
                     平台角色
                   </p>
+                  <p v-if="form.platformSuperAdmin" class="text-[10px] text-rose-600 leading-5 m-0">
+                    唯一平台超管转移会移除其它用户的 platform_super_admin，请确认目标用户身份无误。
+                  </p>
                   <label class="text-[11px] text-slate-700 flex gap-2 items-center">
-                    <a-checkbox v-model="form.platformSuperAdmin" />
-                    platform_super_admin
+                    <a-checkbox v-model="form.platformSuperAdmin" :disabled="!canAssignSuperRole" />
+                    platform_super_admin（唯一超管）
+                  </label>
+                  <label class="text-[11px] text-slate-700 flex gap-2 items-center">
+                    <a-checkbox v-model="form.userAdmin" />
+                    user_admin（用户管理）
                   </label>
                   <label class="text-[11px] text-slate-700 flex gap-2 items-center">
                     <a-checkbox v-model="form.contestAdmin" />
@@ -825,6 +913,7 @@ onMounted(async () => {
                     size="small"
                     :loading="savingRole"
                     type="primary"
+                    :disabled="!canAssignRoles"
                     @click="saveRoles"
                   >
                     保存角色
@@ -835,7 +924,7 @@ onMounted(async () => {
                   <p class="text-[10px] text-slate-500 tracking-wider font-bold m-0 uppercase">
                     用户状态
                   </p>
-                  <a-select v-model="form.status" size="small">
+                  <a-select v-model="form.status" size="small" :disabled="!canWriteUserStatus">
                     <a-option value="active">
                       active（启用）
                     </a-option>
@@ -848,6 +937,7 @@ onMounted(async () => {
                     size="small"
                     :loading="savingStatus"
                     status="danger"
+                    :disabled="!canWriteUserStatus"
                     @click="saveStatus"
                   >
                     保存状态
@@ -860,6 +950,7 @@ onMounted(async () => {
                   size="small"
                   :loading="creatingUser"
                   type="primary"
+                  :disabled="!canWriteUsers"
                   @click="createUser"
                 >
                   创建用户
@@ -877,7 +968,7 @@ onMounted(async () => {
                     链接 15 分钟内有效，首次访问后立即换发正常会话并撤销该票据。
                   </p>
                   <div class="flex flex-wrap gap-2">
-                    <a-button size="small" :loading="magicLinkLoading" type="primary" @click="generateMagicLink">
+                    <a-button size="small" :loading="magicLinkLoading" type="primary" :disabled="!canWriteUserSecurity || !canAssignSuperRole" @click="generateMagicLink">
                       生成 magic link
                     </a-button>
                     <a-button size="small" :disabled="!generatedMagicLink?.url" @click="copyMagicLink">

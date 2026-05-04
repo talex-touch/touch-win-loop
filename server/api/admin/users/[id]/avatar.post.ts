@@ -22,8 +22,8 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const userId = String(getRouterParam(event, 'id') || '').trim()
 
-  const canAssign = await checkPlatformPermission(event, user, 'role.assign')
-  if (!canAssign) {
+  const canWriteUser = await checkPlatformPermission(event, user, 'user.write')
+  if (!canWriteUser) {
     setResponseStatus(event, 403)
     return fail('当前用户无权修改用户头像。', {
       startedAt,

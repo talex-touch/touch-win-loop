@@ -27,8 +27,9 @@ export default defineEventHandler(async (event) => {
   const userId = String(getRouterParam(event, 'id') || '').trim()
   const body = await readBody<CreateMagicLinkBody>(event)
 
-  const canAssign = await checkPlatformPermission(event, user, 'role.assign')
-  if (!canAssign) {
+  const canWriteSecurity = await checkPlatformPermission(event, user, 'user.security.write')
+  const canAssignSuper = await checkPlatformPermission(event, user, 'role.super.assign')
+  if (!canWriteSecurity || !canAssignSuper) {
     setResponseStatus(event, 403)
     return fail('当前用户无权生成用户登录链接。', {
       startedAt,
@@ -48,6 +49,17 @@ export default defineEventHandler(async (event) => {
       fallbackUsed: false,
       attempts: 1,
     }, 400108)
+  }
+
+  if (userId === user.id) {
+    setResponseStatus(event, 400)
+    return fail('不能为当前登录账号生成一次性登录链接。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 400110)
   }
 
   try {

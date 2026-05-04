@@ -29,7 +29,7 @@ const canEnterAdmin = computed(() => {
   if (isPlatformAdmin.value)
     return true
   return platformPermissions.value.some(item =>
-    ['contest.read_internal', 'contest.write', 'contest.publish', 'contest.archive', 'pricing.write', 'role.assign'].includes(item),
+    ['contest.read_internal', 'contest.write', 'contest.publish', 'contest.archive', 'pricing.write', 'user.read', 'role.assign'].includes(item),
   )
 })
 

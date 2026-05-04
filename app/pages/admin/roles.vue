@@ -18,6 +18,11 @@ interface RoleApiResult {
     permissions: PlatformPermission[]
   }
   assignments: PlatformRoleAssignment[]
+  users?: Array<{
+    userId: string
+    username: string
+    roles: PlatformRole[]
+  }>
 }
 
 const runtime = useRuntimeConfig()
@@ -35,6 +40,7 @@ const pageSize = ref(10)
 const form = reactive({
   targetUserId: '',
   platformSuperAdmin: false,
+  userAdmin: false,
   contestAdmin: false,
   pricingAdmin: false,
 })
@@ -47,6 +53,22 @@ const columns = [
 
 const canAssign = computed(() => {
   return data.value?.current.permissions.includes('role.assign') || false
+})
+const canAssignSuper = computed(() => {
+  return data.value?.current.permissions.includes('role.super.assign') || false
+})
+const userOptions = computed(() => {
+  return (data.value?.users || []).map(user => ({
+    label: `${user.username}（${user.userId}）`,
+    value: user.userId,
+  }))
+})
+const currentSuperAdmin = computed(() => {
+  return (data.value?.assignments || []).find(item => item.roles.includes('platform_super_admin')) || null
+})
+const targetUser = computed(() => {
+  const targetUserId = form.targetUserId.trim()
+  return (data.value?.users || []).find(user => user.userId === targetUserId) || null
 })
 
 const pagedAssignments = computed(() => {
@@ -66,6 +88,8 @@ function selectedRoles(): PlatformRole[] {
   const roles: PlatformRole[] = []
   if (form.platformSuperAdmin)
     roles.push('platform_super_admin')
+  if (form.userAdmin)
+    roles.push('user_admin')
   if (form.contestAdmin)
     roles.push('contest_admin')
   if (form.pricingAdmin)
@@ -76,6 +100,7 @@ function selectedRoles(): PlatformRole[] {
 function fillForm(assignment: PlatformRoleAssignment) {
   form.targetUserId = assignment.userId
   form.platformSuperAdmin = assignment.roles.includes('platform_super_admin')
+  form.userAdmin = assignment.roles.includes('user_admin')
   form.contestAdmin = assignment.roles.includes('contest_admin')
   form.pricingAdmin = assignment.roles.includes('pricing_admin')
 }
@@ -83,6 +108,7 @@ function fillForm(assignment: PlatformRoleAssignment) {
 function resetForm() {
   form.targetUserId = ''
   form.platformSuperAdmin = false
+  form.userAdmin = false
   form.contestAdmin = false
   form.pricingAdmin = false
 }
@@ -124,6 +150,10 @@ async function submitAssignment() {
   const targetUserId = form.targetUserId.trim()
   if (!targetUserId) {
     errorText.value = 'targetUserId 不能为空。'
+    return
+  }
+  if (form.platformSuperAdmin && !canAssignSuper.value) {
+    errorText.value = '当前账号无权转移唯一平台超管角色。'
     return
   }
   saving.value = true
@@ -266,10 +296,23 @@ onMounted(loadData)
       width="460px"
     >
       <div class="text-[11px] space-y-2">
-        <a-input v-model="form.targetUserId" size="small" placeholder="目标用户 ID（targetUserId）" />
+        <a-select
+          v-model="form.targetUserId"
+          :options="userOptions"
+          allow-search
+          size="small"
+          placeholder="选择目标用户"
+        />
         <label class="text-[11px] text-slate-700 flex gap-2 items-center">
-          <a-checkbox v-model="form.platformSuperAdmin" />
-          platform_super_admin
+          <a-checkbox v-model="form.platformSuperAdmin" :disabled="!canAssignSuper" />
+          platform_super_admin（唯一超管）
+        </label>
+        <p v-if="form.platformSuperAdmin" class="text-[10px] text-rose-600 m-0">
+          超管转移预览：{{ currentSuperAdmin?.username || '当前超管' }} -> {{ targetUser?.username || form.targetUserId || '未选择目标用户' }}
+        </p>
+        <label class="text-[11px] text-slate-700 flex gap-2 items-center">
+          <a-checkbox v-model="form.userAdmin" />
+          user_admin（用户管理）
         </label>
         <label class="text-[11px] text-slate-700 flex gap-2 items-center">
           <a-checkbox v-model="form.contestAdmin" />

@@ -17,7 +17,7 @@ interface CreateAdminUserBody {
   disabled?: boolean
 }
 
-const ALLOWED_ROLES: PlatformRole[] = ['platform_super_admin', 'contest_admin', 'pricing_admin']
+const ALLOWED_ROLES: PlatformRole[] = ['user_admin', 'contest_admin', 'pricing_admin']
 
 function normalizeRoles(value: unknown): PlatformRole[] {
   if (!Array.isArray(value))
@@ -31,8 +31,8 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const body = await readBody<CreateAdminUserBody>(event)
 
-  const canAssign = await checkPlatformPermission(event, user, 'role.assign')
-  if (!canAssign) {
+  const canWriteUser = await checkPlatformPermission(event, user, 'user.write')
+  if (!canWriteUser) {
     setResponseStatus(event, 403)
     return fail('当前用户无权创建用户。', {
       startedAt,
