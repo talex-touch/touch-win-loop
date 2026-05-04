@@ -1,5 +1,5 @@
-import type { RuntimeSettings, RuntimeStorageChannel, RuntimeStorageProvider } from '~~/server/utils/env'
 import type { Queryable } from '~~/server/utils/db'
+import type { RuntimeSettings, RuntimeStorageChannel, RuntimeStorageProvider } from '~~/server/utils/env'
 import { normalizeRuntimeStorageSettings } from '~~/server/utils/env'
 
 export const STORAGE_WATERMARK_DEFAULT_PERCENT = 90
@@ -199,12 +199,16 @@ function normalizeChannelDraft(raw: unknown, existing?: RuntimeStorageChannel | 
     endpoint: resolvedProvider === 'local' ? '' : normalizeString(source.endpoint ?? existing?.endpoint).replace(/\/+$/g, ''),
     region: resolvedProvider === 'local' ? '' : normalizeString(source.region ?? existing?.region),
     bucket: resolvedProvider === 'local' ? '' : normalizeString(source.bucket ?? existing?.bucket),
-    accessKey: resolvedProvider === 'local' ? '' : Object.prototype.hasOwnProperty.call(source, 'accessKey')
-      ? String(source.accessKey || '')
-      : (existing?.accessKey || ''),
-    secretKey: resolvedProvider === 'local' ? '' : Object.prototype.hasOwnProperty.call(source, 'secretKey')
-      ? String(source.secretKey || '')
-      : (existing?.secretKey || ''),
+    accessKey: resolvedProvider === 'local'
+      ? ''
+      : Object.prototype.hasOwnProperty.call(source, 'accessKey')
+        ? String(source.accessKey || '')
+        : (existing?.accessKey || ''),
+    secretKey: resolvedProvider === 'local'
+      ? ''
+      : Object.prototype.hasOwnProperty.call(source, 'secretKey')
+        ? String(source.secretKey || '')
+        : (existing?.secretKey || ''),
     forcePathStyle: resolvedProvider === 'local' ? true : typeof source.forcePathStyle === 'boolean' ? source.forcePathStyle : (existing?.forcePathStyle ?? true),
   }
 }

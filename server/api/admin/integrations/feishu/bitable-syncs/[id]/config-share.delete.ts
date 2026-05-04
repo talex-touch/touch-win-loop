@@ -1,9 +1,9 @@
 import { setResponseStatus } from 'h3'
-import { revokeFeishuBitableSyncConfigShare } from '~~/server/utils/feishu-bitable-sync-config-share-store'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { revokeFeishuBitableSyncConfigShare } from '~~/server/utils/feishu-bitable-sync-config-share-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 interface RevokeConfigShareBody {

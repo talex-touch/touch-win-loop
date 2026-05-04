@@ -15,7 +15,7 @@ function normalizeString(value: unknown): string {
 export default defineEventHandler(async (event): Promise<ApiResponse<{
   resource: Resource
   arrangement: DeviceArrangementPersistedPayload
-}>> => {
+} | null>> => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)

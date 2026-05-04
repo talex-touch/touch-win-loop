@@ -162,7 +162,7 @@ it('provider 删除和缺失价格展示提供安全兜底', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
   assert.match(source, /a-popconfirm[\s\S]*确认删除该 Provider 吗[\s\S]*@ok="removeProvider\(scope\.record\.id\)"/, 'Provider 删除缺少二次确认')
-  assert.match(source, /return '默认未计费'/, '缺失价格应显示统一兜底文案')
+  assert.match(source, /return defaultModelPricingText/, '缺失价格应显示统一兜底文案')
   assert.doesNotMatch(source, /return 'none'/, '缺失价格不应继续显示 none')
 })
 

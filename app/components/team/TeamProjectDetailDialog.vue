@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Project } from '~~/shared/types/domain'
 import type { TeamProjectCardItem } from '~/composables/team-ui'
+import { PROJECT_DISPLAY_ACCENT_OPTIONS } from '~~/shared/constants/project-display'
 
 const props = withDefaults(defineProps<{
   visible?: boolean
@@ -17,6 +18,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   close: []
 }>()
+
+const fallbackAccent = PROJECT_DISPLAY_ACCENT_OPTIONS[0]!
 
 const modelVisible = computed({
   get: () => props.visible,
@@ -45,10 +48,10 @@ const modelVisible = computed({
         :icon="projectCard?.displayIcon || 'folder'"
         :monogram="projectCard?.displayMonogram || 'P'"
         :accent="{
-          solid: projectCard?.accentSolid || '#5b82f6',
-          soft: projectCard?.accentSoft || '#f5f9ff',
-          border: projectCard?.accentBorder || '#dce8ff',
-          text: projectCard?.accentText || '#365fd6',
+          solid: projectCard?.accentSolid || fallbackAccent.solid,
+          soft: projectCard?.accentSoft || fallbackAccent.soft,
+          border: projectCard?.accentBorder || fallbackAccent.border,
+          text: projectCard?.accentText || fallbackAccent.text,
         }"
         compact
       />

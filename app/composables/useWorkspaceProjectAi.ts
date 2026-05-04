@@ -14,17 +14,16 @@ import type {
   ProjectIssueReport,
   ProjectPayload,
   ProjectTopicBoard,
-  ProjectWorkbenchMode,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
-import type {
-  WorkspaceFormState,
-  WorkspaceTopicBoardDraft,
-} from '~/types/workspace'
 import type {
   WorkspacePrimaryAiMode,
   WorkspaceWorkbenchMode,
 } from '~/composables/useWorkspaceProjectShell'
+import type {
+  WorkspaceFormState,
+  WorkspaceTopicBoardDraft,
+} from '~/types/workspace'
 import { reactive, ref } from 'vue'
 
 export type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'

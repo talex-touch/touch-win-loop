@@ -16,33 +16,33 @@
 
 ## 主链路说明
 
-| 模块 | 作用 | 对应技术点 | 讲解重点 |
-| --- | --- | --- | --- |
-| ProjectResource | 项目资料统一入口 | 资源对象建模 | 所有文件、协作文档、画布和会议沉淀先收敛为项目资源 |
-| knowledge_sources | 索引状态真相源 | source lifecycle | 记录 ready、stale、failed 等状态，避免前端自行拼接状态 |
-| knowledge_chunks | 检索真相源 | chunking / projection | 正文、OCR、图片摘要、会议转写统一切成可引用片段 |
-| Embedding Space | 语义向量空间 | text embedding / pgvector | V1 使用文本投影优先，降低多模态系统复杂度 |
-| Query Planner | 查询规划 | query variants / relations | 把用户问题扩成更稳定的检索意图和候选路径 |
-| Candidate Recall | 双通道召回 | lexical + vector preselect | 词法召回补精确命中，向量预选补语义近邻 |
-| Evidence Normalizer | 证据归一 | permission / ready gate | 权限、状态、模态、fallback 在进入模型前统一处理 |
-| Rerank / Fusion | 重排融合 | semantic rerank | 结合相似度、鲜度、来源可信度选择 topK 证据 |
-| Context Assembler | 上下文装配 | summaryText + citations | 模型拿到的是结构化证据，不是散乱片段 |
-| Answer Payload | 产品协议输出 | citations / warning | 回答、引用、warning、usedFallback 一起回流 UI |
+| 模块                | 作用             | 对应技术点                 | 讲解重点                                               |
+| ------------------- | ---------------- | -------------------------- | ------------------------------------------------------ |
+| ProjectResource     | 项目资料统一入口 | 资源对象建模               | 所有文件、协作文档、画布和会议沉淀先收敛为项目资源     |
+| knowledge_sources   | 索引状态真相源   | source lifecycle           | 记录 ready、stale、failed 等状态，避免前端自行拼接状态 |
+| knowledge_chunks    | 检索真相源       | chunking / projection      | 正文、OCR、图片摘要、会议转写统一切成可引用片段        |
+| Embedding Space     | 语义向量空间     | text embedding / pgvector  | V1 使用文本投影优先，降低多模态系统复杂度              |
+| Query Planner       | 查询规划         | query variants / relations | 把用户问题扩成更稳定的检索意图和候选路径               |
+| Candidate Recall    | 双通道召回       | lexical + vector preselect | 词法召回补精确命中，向量预选补语义近邻                 |
+| Evidence Normalizer | 证据归一         | permission / ready gate    | 权限、状态、模态、fallback 在进入模型前统一处理        |
+| Rerank / Fusion     | 重排融合         | semantic rerank            | 结合相似度、鲜度、来源可信度选择 topK 证据             |
+| Context Assembler   | 上下文装配       | summaryText + citations    | 模型拿到的是结构化证据，不是散乱片段                   |
+| Answer Payload      | 产品协议输出     | citations / warning        | 回答、引用、warning、usedFallback 一起回流 UI          |
 
 ## 为什么用 Okabe-Ito
 
 Okabe-Ito 配色适合科研图和答辩屏幕，因为它对常见色觉差异更友好，也能在打印材料里保持较好的区分度。本图的颜色语义如下：
 
-| 颜色 | 色值 | 图中语义 |
-| --- | --- | --- |
-| Black | `#000000` | 用户输入、原始问题 |
-| Orange | `#E69F00` | 查询规划、意图扩展 |
-| Sky Blue | `#56B4E9` | 词法召回、关键词匹配 |
-| Bluish Green | `#009E73` | 向量预选、语义近邻 |
-| Yellow | `#F0E442` | 证据归一、状态解释 |
-| Vermillion | `#D55E00` | 重排融合、风险门控 |
-| Reddish Purple | `#CC79A7` | 上下文装配 |
-| Blue | `#0072B2` | 输出协议、引用回流 |
+| 颜色           | 色值      | 图中语义             |
+| -------------- | --------- | -------------------- |
+| Black          | `#000000` | 用户输入、原始问题   |
+| Orange         | `#E69F00` | 查询规划、意图扩展   |
+| Sky Blue       | `#56B4E9` | 词法召回、关键词匹配 |
+| Bluish Green   | `#009E73` | 向量预选、语义近邻   |
+| Yellow         | `#F0E442` | 证据归一、状态解释   |
+| Vermillion     | `#D55E00` | 重排融合、风险门控   |
+| Reddish Purple | `#CC79A7` | 上下文装配           |
+| Blue           | `#0072B2` | 输出协议、引用回流   |
 
 ## 90 秒讲稿
 

@@ -1,3 +1,4 @@
+import type { Queryable } from '~~/server/utils/db'
 import type {
   AiChatSessionContextSnapshot,
   AiChatSessionRunState,
@@ -6,7 +7,6 @@ import type {
   WorkspaceAiMode,
   WorkspaceContextualAssistantKey,
 } from '~~/shared/types/domain'
-import type { Queryable } from '~~/server/utils/db'
 
 interface AiChatSessionContextRow {
   session_id: string
@@ -119,7 +119,7 @@ export function normalizeAiChatSessionContextSnapshot(value: unknown): AiChatSes
     updatedAt: toText(source.updatedAt) || undefined,
   }
 
-  return Object.values(snapshot).some(value => {
+  return Object.values(snapshot).some((value) => {
     if (typeof value === 'string')
       return Boolean(value)
     return value != null

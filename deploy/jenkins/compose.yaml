@@ -35,7 +35,7 @@ services:
     command:
       - redis-server
       - --appendonly
-      - "yes"
+      - yes
     volumes:
       - ${MEETING_DATA_HOST_DIR:-./meeting-data}/redis:/data
     networks:

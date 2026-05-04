@@ -1,5 +1,4 @@
 import type { Queryable } from '~~/server/utils/db'
-import type { ProjectCompetitionLoopDigest } from '~~/shared/types/project-competition-loop'
 import type {
   AnalyticsAwardFeatureAnalysisPayload,
   AnalyticsAwardFeatureSample,
@@ -29,6 +28,7 @@ import type {
   AnalyticsTrendContestItem,
 } from '~~/shared/types/analytics'
 import type { AuthUser, Contest, Project, RubricDimension, TopicProposalCompareMatrixRow, TopicProposalItem } from '~~/shared/types/domain'
+import type { ProjectCompetitionLoopDigest } from '~~/shared/types/project-competition-loop'
 import { randomUUID } from 'node:crypto'
 import { listContestLibrary } from '~~/server/utils/contest-store'
 import { getVisibleProjectById, listVisibleProjects } from '~~/server/utils/platform-store'

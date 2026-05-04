@@ -1,10 +1,10 @@
 import { setResponseStatus } from 'h3'
+import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
+import { listIntelligenceWorkflowRuns } from '~~/server/services/ai/intelligence-workflow-engine'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { listIntelligenceWorkflowRuns } from '~~/server/services/ai/intelligence-workflow-engine'
-import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()

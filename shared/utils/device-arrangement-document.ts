@@ -402,11 +402,14 @@ export function layoutDeviceArrangementItems(
 function normalizeShell(value: unknown, fallbackPresetKey: string): DeviceArrangementShellV1 {
   const source = normalizeRecord(value)
   const mode = normalizeString(source.mode)
+  const viewportRect = normalizeRecord(source.viewportRect)
   return {
     mode: mode === 'external' || mode === 'none' ? mode : 'builtin',
     assetId: normalizeString(source.assetId) || undefined,
     imageSrc: normalizeString(source.imageSrc || source.src) || undefined,
-    viewportRect: normalizeRecord(source.viewportRect) as DesignAssetDeviceShellViewportRect || null,
+    viewportRect: Object.keys(viewportRect).length > 0
+      ? viewportRect as unknown as DesignAssetDeviceShellViewportRect
+      : null,
     cornerRadius: Math.max(0, toFiniteNumber(source.cornerRadius, 0)) || undefined,
     presetKey: normalizeString(source.presetKey) || fallbackPresetKey,
   }
@@ -421,7 +424,7 @@ export function createDeviceArrangementItem(input: Partial<DeviceArrangementItem
   const payload = input.shellAssetPayload || null
   const shell = input.shell || {
     mode: payload || input.shellAssetUrl ? 'external' : 'builtin',
-    imageSrc: normalizeString(input.shellAssetUrl || payload?.src) || undefined,
+    imageSrc: normalizeString(input.shellAssetUrl) || undefined,
     viewportRect: payload?.viewportRect || null,
     cornerRadius: payload?.cornerRadius,
     presetKey: devicePresetKey,
@@ -641,7 +644,9 @@ export function migrateSceneDocumentToDeviceArrangementDocument(sceneDocument: u
         mode: shellAssetId ? 'external' : normalizeString(settingsItem.shellMode) === 'none' ? 'none' : 'builtin',
         assetId: shellAssetId || undefined,
         imageSrc: normalizeString(shellAsset?.src) || undefined,
-        viewportRect: normalizeRecord(shellMetadata.viewportRect) as DesignAssetDeviceShellViewportRect || null,
+        viewportRect: Object.keys(normalizeRecord(shellMetadata.viewportRect)).length > 0
+          ? normalizeRecord(shellMetadata.viewportRect) as unknown as DesignAssetDeviceShellViewportRect
+          : null,
         cornerRadius: Math.max(0, toFiniteNumber(shellMetadata.cornerRadius, 0)) || undefined,
         presetKey: normalizeString(frame.deviceFramePresetKey || settingsItem.deviceFramePresetKey) || 'iphone-16-pro',
       },

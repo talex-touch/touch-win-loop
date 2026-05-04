@@ -2,9 +2,9 @@ import type { RunnableConfig } from '@langchain/core/runnables'
 import type {
   BaseStore,
   Checkpoint,
-  CheckpointPendingWrite,
   CheckpointListOptions,
   CheckpointMetadata,
+  CheckpointPendingWrite,
   CheckpointTuple,
   Item,
   Operation,
@@ -13,8 +13,8 @@ import type {
   SearchItem,
 } from '@langchain/langgraph-checkpoint'
 import type { RuntimeSettings } from '~~/server/utils/env'
-import { createDeepAgent } from 'deepagents'
 import { BaseCheckpointSaver, BaseStore as BaseStoreClass } from '@langchain/langgraph-checkpoint'
+import { createDeepAgent } from 'deepagents'
 import { getPool } from '~~/server/utils/db'
 
 const NAMESPACE_SEPARATOR = '\u001F'
@@ -181,7 +181,7 @@ class PostgresCheckpointSaver extends BaseCheckpointSaver {
     }
   }
 
-  override async *list(config: RunnableConfig, options?: CheckpointListOptions): AsyncGenerator<CheckpointTuple> {
+  override async* list(config: RunnableConfig, options?: CheckpointListOptions): AsyncGenerator<CheckpointTuple> {
     const { threadId, checkpointNs } = parseThreadConfig(config)
     if (!threadId)
       return

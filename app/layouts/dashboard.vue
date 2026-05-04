@@ -76,7 +76,7 @@ const showLoopyFloating = computed(() => {
   if (/^\/team\/[^/]+\/project\/[^/]+$/.test(normalizedPath))
     return false
   if (normalizedPath === '/contests' || normalizedPath.startsWith('/contests/'))
-    return false
+    return true
   if (/^\/team\/[^/]+$/.test(normalizedPath))
     return true
   if (normalizedPath === '/resources' || normalizedPath.startsWith('/resources/'))

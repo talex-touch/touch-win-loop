@@ -17,7 +17,7 @@ export default defineEventHandler(async (event): Promise<ApiResponse<{
   resource: Resource
   arrangement: DeviceArrangementPersistedPayload
   migratedFromResourceId: string
-}>> => {
+} | null>> => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)

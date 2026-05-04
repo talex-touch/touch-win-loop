@@ -1,14 +1,14 @@
 import type { FeishuBitableSyncConfigImportResult, FeishuBitableSyncConfigPackage } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
+import { fail, ok } from '~~/server/utils/api'
+import { requireAuth } from '~~/server/utils/auth'
+import { withTransaction } from '~~/server/utils/db'
+import { readRuntimeSettings } from '~~/server/utils/env'
 import {
   fetchFeishuBitableSyncConfigPackageFromUrl,
   importFeishuBitableSyncConfigPackage,
   normalizeFeishuBitableSyncConfigPackage,
 } from '~~/server/utils/feishu-bitable-sync-config-package'
-import { fail, ok } from '~~/server/utils/api'
-import { requireAuth } from '~~/server/utils/auth'
-import { withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 interface ImportConfigBody {

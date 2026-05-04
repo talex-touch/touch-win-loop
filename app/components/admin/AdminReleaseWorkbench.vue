@@ -387,13 +387,14 @@ function rejectedSummaryText(version: ReleaseVersion): string {
   return String(version.rejectReason || '').trim() || '未填写驳回原因'
 }
 
-function truncateRejectReason(version: ReleaseVersion): string {
-  const text = rejectedSummaryText(version)
-  return text.length > 20 ? `${text.slice(0, 20)}...` : text
-}
-
 function rejectedByName(version: ReleaseVersion): string {
   return String(version.rejectedByName || normalizeUserId(version.rejectedByUserId) || '未知管理员').trim()
+}
+
+function rejectedMetaText(version: ReleaseVersion): string {
+  if (version.status !== 'rejected')
+    return '-'
+  return `${rejectedByName(version)} · ${formatDateTime(version.rejectedAt)}`
 }
 
 function reviewLogActorName(item: ReleaseReviewLog): string {
@@ -1676,9 +1677,13 @@ onMounted(() => {
                         </a-avatar>
                         <span class="text-slate-900 font-medium truncate">{{ rejectedByName(record) }}</span>
                         <span>驳回</span>
+                        <span class="sr-only">{{ rejectedMetaText(record) }}</span>
                       </div>
                       <p class="text-xs text-rose-700 truncate">
-                        {{ truncateRejectReason(record) }}
+                        {{ rejectedSummaryText(record) }}
+                      </p>
+                      <p class="text-[11px] text-slate-500 truncate">
+                        {{ rejectedMetaText(record) }}
                       </p>
                     </div>
                   </a-tooltip>
@@ -2371,7 +2376,7 @@ onMounted(() => {
                 新增节点
               </button>
               <button class="dense-btn" type="button" :disabled="!canEditSelectedTrackTimelines() || trackTimelineSaving" @click="saveTrackTimelineDrafts">
-                {{ trackTimelineSaving ? '保存中...' : '保存节点' }}
+                {{ trackTimelineSaving ? '保存中...' : '保存时间节点' }}
               </button>
             </div>
           </div>

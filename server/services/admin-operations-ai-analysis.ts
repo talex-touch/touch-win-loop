@@ -1,5 +1,6 @@
 import type { H3Event } from 'h3'
 import type { Queryable } from '~~/server/utils/db'
+import type { RuntimeSettings } from '~~/server/utils/env'
 import type {
   AdminOperationsAiAnalysisResult,
   AdminOperationsAiAnalysisRunResult,
@@ -7,18 +8,17 @@ import type {
   AdminOperationsAiAnalysisStatus,
   AdminOperationsTone,
 } from '~~/shared/types/admin-operations'
-import type { RuntimeSettings } from '~~/server/utils/env'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { buildAdminMeetingRuntimeSnapshot } from '~~/server/services/meeting/runtime-monitoring'
 import {
   getAdminOperationsEfficiency,
   getAdminOperationsOverview,
   getAdminOperationsRisks,
 } from '~~/server/utils/admin-operations-store'
-import { buildAdminMeetingRuntimeSnapshot } from '~~/server/services/meeting/runtime-monitoring'
-import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import { runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 
 export const ADMIN_OPERATIONS_AI_ANALYSIS_CHANNEL = 'admin_operations_analysis'
 export const ADMIN_OPERATIONS_AI_ANALYSIS_STALE_MS = 8 * 60 * 60 * 1000

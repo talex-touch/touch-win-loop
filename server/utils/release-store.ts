@@ -2979,9 +2979,10 @@ export async function upsertContestReleaseDraft(
   }
 
   if (input.entityType === 'resource' && input.resource) {
+    const resource = sanitizeContestReleaseResourceSnapshot(input.resource)
     const resourceResult = upsertSnapshotItem(
       current.resources,
-      sanitizeContestReleaseResourceSnapshot(attachReleaseSyncSource(input.resource, syncSource)),
+      attachReleaseSyncSource(resource, syncSource),
     )
     current.resources = resourceResult.items
     existed = resourceResult.existed

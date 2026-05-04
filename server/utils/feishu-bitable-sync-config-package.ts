@@ -1,3 +1,4 @@
+import type { Queryable } from '~~/server/utils/db'
 import type {
   FeishuBitableAutoSyncConfig,
   FeishuBitableSourceConfig,
@@ -10,7 +11,6 @@ import type {
   FeishuBitableWritebackConfig,
   FeishuTaskScheduleConfig,
 } from '~~/shared/types/domain'
-import type { Queryable } from '~~/server/utils/db'
 import {
   createFeishuBitableSync,
   createFeishuBitableSyncItem,

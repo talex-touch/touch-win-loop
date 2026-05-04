@@ -1,5 +1,4 @@
 import { setResponseStatus } from 'h3'
-import { buildStorageServiceOverview } from '~~/server/utils/storage-service-store'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
@@ -9,6 +8,7 @@ import {
   getPlatformRuntimeOverrideState,
   readEffectivePlatformRuntimeSettings,
 } from '~~/server/utils/platform-runtime-config-store'
+import { buildStorageServiceOverview } from '~~/server/utils/storage-service-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()

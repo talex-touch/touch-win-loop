@@ -136,7 +136,7 @@ function parseTimelineMonthDayRange(value: string, fallbackYear: number): { star
   const text = toText(value)
   const yearMatch = text.match(/(20\d{2}|21\d{2})\s*年/)
   const year = Number(yearMatch?.[1] || fallbackYear || new Date().getFullYear())
-  let match = text.match(/(?:20\d{2}|21\d{2})?\s*年?\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*[-~至到]\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/)
+  let match = text.match(/(?:20\d{2}|21\d{2})?\s*(?:年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日\s*)?[-~至到]\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/)
   if (match) {
     return {
       year,
@@ -144,7 +144,7 @@ function parseTimelineMonthDayRange(value: string, fallbackYear: number): { star
       endAt: formatTimelineDateToIso(`${year}-${match[3]}-${match[4]}`, 'end'),
     }
   }
-  match = text.match(/(?:20\d{2}|21\d{2})?\s*年?\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[-~至到]\s*(\d{1,2})\s*日/)
+  match = text.match(/(?:20\d{2}|21\d{2})?\s*(?:年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[-~至到]\s*(\d{1,2})\s*日/)
   if (match) {
     return {
       year,
@@ -152,7 +152,7 @@ function parseTimelineMonthDayRange(value: string, fallbackYear: number): { star
       endAt: formatTimelineDateToIso(`${year}-${match[1]}-${match[3]}`, 'end'),
     }
   }
-  match = text.match(/(?:20\d{2}|21\d{2})?\s*年?\s*(\d{1,2})\s*[-~至到]\s*(\d{1,2})\s*月/)
+  match = text.match(/(?:20\d{2}|21\d{2})?\s*(?:年\s*)?(\d{1,2})\s*[-~至到]\s*(\d{1,2})\s*月/)
   if (match) {
     return {
       year,

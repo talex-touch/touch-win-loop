@@ -382,7 +382,7 @@ defineExpose({
           </div>
 
           <div v-else class="workspace-resource-preview-tab__markdown bg-white flex h-full min-h-0 w-full">
-            <div class="workspace-resource-preview-tab__markdown-editor flex flex-1 min-h-0 min-w-0">
+            <div class="workspace-resource-preview-tab__markdown-editor flex min-w-0 flex-1 min-h-0">
               <RichTextEditor
                 ref="richTextEditorRef"
                 :doc="props.collabMarkdownDoc"
@@ -686,7 +686,7 @@ defineExpose({
   gap: 12px;
   padding: 8px 12px;
   border-bottom: 1px solid rgb(226 232 240 / 0.92);
-  background: #fff;
+  background: rgb(255 255 255);
 }
 
 .workspace-resource-preview-tab__review-toolbar div:first-child {
@@ -697,13 +697,13 @@ defineExpose({
 }
 
 .workspace-resource-preview-tab__review-toolbar strong {
-  color: #0f172a;
+  color: rgb(15 23 42);
   font-size: 13px;
 }
 
 .workspace-resource-preview-tab__review-toolbar span {
-  color: #64748b;
-  font-size: 11px;
+  color: rgb(100 116 139);
+  font-size: 12px;
 }
 
 .workspace-resource-preview-tab__review-actions {
@@ -714,10 +714,10 @@ defineExpose({
 
 .workspace-resource-preview-tab__review-actions button {
   padding: 5px 10px;
-  border: 1px solid #dbeafe;
+  border: 1px solid rgb(219 234 254);
   border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: rgb(239 246 255);
+  color: rgb(29 78 216);
   font-size: 12px;
   font-weight: 700;
 }
@@ -740,8 +740,8 @@ defineExpose({
   width: 340px;
   min-height: 0;
   padding: 12px;
-  border-left: 1px solid #e2e8f0;
-  background: #f8fafc;
+  border-left: 1px solid rgb(226 232 240);
+  background: rgb(248 250 252);
   overflow-y: auto;
 }
 
@@ -751,7 +751,7 @@ defineExpose({
 }
 
 .workspace-resource-preview-tab__review-prompt span {
-  color: #475569;
+  color: rgb(71 85 105);
   font-size: 12px;
   font-weight: 700;
 }
@@ -760,10 +760,10 @@ defineExpose({
   resize: vertical;
   min-height: 72px;
   padding: 8px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid rgb(203 213 225);
   border-radius: 8px;
-  background: #fff;
-  color: #0f172a;
+  background: rgb(255 255 255);
+  color: rgb(15 23 42);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -778,16 +778,16 @@ defineExpose({
 }
 
 .workspace-resource-preview-tab__review-error {
-  color: #dc2626;
+  color: rgb(220 38 38);
 }
 
 .workspace-resource-preview-tab__review-summary,
 .workspace-resource-preview-tab__review-empty {
-  color: #64748b;
+  color: rgb(100 116 139);
 }
 
 .workspace-resource-preview-tab__review-warning {
-  color: #b45309;
+  color: rgb(180 83 9);
 }
 
 .workspace-resource-preview-tab__review-pages {
@@ -803,10 +803,10 @@ defineExpose({
 .workspace-resource-preview-tab__review-pages section > button {
   justify-self: start;
   padding: 4px 8px;
-  border: 1px solid #bfdbfe;
+  border: 1px solid rgb(191 219 254);
   border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: rgb(239 246 255);
+  color: rgb(29 78 216);
   font-size: 12px;
   font-weight: 700;
 }
@@ -815,9 +815,9 @@ defineExpose({
   display: grid;
   gap: 6px;
   padding: 10px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid rgb(226 232 240);
   border-radius: 8px;
-  background: #fff;
+  background: rgb(255 255 255);
 }
 
 .workspace-resource-preview-tab__review-pages article div {
@@ -828,26 +828,26 @@ defineExpose({
 }
 
 .workspace-resource-preview-tab__review-pages article strong {
-  color: #0f172a;
+  color: rgb(15 23 42);
   font-size: 12px;
 }
 
 .workspace-resource-preview-tab__review-pages article span {
-  color: #64748b;
-  font-size: 11px;
+  color: rgb(100 116 139);
+  font-size: 12px;
 }
 
 .workspace-resource-preview-tab__review-pages article p,
 .workspace-resource-preview-tab__review-pages article blockquote {
   margin: 0;
-  color: #334155;
+  color: rgb(51 65 85);
   font-size: 12px;
   line-height: 1.6;
 }
 
 .workspace-resource-preview-tab__review-pages article blockquote {
   padding-left: 8px;
-  border-left: 2px solid #bfdbfe;
-  color: #64748b;
+  border-left: 2px solid rgb(191 219 254);
+  color: rgb(100 116 139);
 }
 </style>

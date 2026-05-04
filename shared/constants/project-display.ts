@@ -14,7 +14,7 @@ export interface ProjectDisplayIconOption {
   kind: ProjectDisplayIconKind
 }
 
-export const PROJECT_DISPLAY_SYMBOL_ICON_OPTIONS: Array<{ value: ProjectDisplaySymbolIcon, label: string, kind: 'symbol' }> = [
+export const PROJECT_DISPLAY_SYMBOL_ICON_OPTIONS: Array<{ value: ProjectDisplaySymbolIcon, label: string, kind: 'symbol' }> = ([
   { value: 'rocket_launch', label: '火箭' },
   { value: 'shield', label: '盾牌' },
   { value: 'lightbulb', label: '灵感' },
@@ -47,7 +47,8 @@ export const PROJECT_DISPLAY_SYMBOL_ICON_OPTIONS: Array<{ value: ProjectDisplayS
   { value: 'biotech', label: '生物' },
   { value: 'travel_explore', label: '探索' },
   { value: 'workspace_premium', label: '奖项' },
-].map(item => ({ ...item, kind: 'symbol' as const }))
+] satisfies Array<{ value: ProjectDisplaySymbolIcon, label: string }>)
+  .map(item => ({ ...item, kind: 'symbol' as const }))
 
 export const PROJECT_DISPLAY_ICON_OPTIONS: ProjectDisplayIconOption[] = [
   ...PROJECT_DISPLAY_SYMBOL_ICON_OPTIONS,

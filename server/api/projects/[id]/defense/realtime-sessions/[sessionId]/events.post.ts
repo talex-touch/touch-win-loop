@@ -11,8 +11,8 @@ import {
   resolveDefenseRealtimeStage,
 } from '~~/server/utils/defense-realtime'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
   createProjectDefenseTurns,
   getProjectDefenseSessionState,

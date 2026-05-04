@@ -1,10 +1,10 @@
 import type { FeishuBitableSyncConfigPackage } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { buildFeishuBitableSyncConfigPackage } from '~~/server/utils/feishu-bitable-sync-config-package'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { buildFeishuBitableSyncConfigPackage } from '~~/server/utils/feishu-bitable-sync-config-package'
 import { getFeishuBitableSyncDetail } from '~~/server/utils/feishu-integration-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 

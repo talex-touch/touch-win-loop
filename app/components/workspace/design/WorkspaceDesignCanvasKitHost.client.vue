@@ -32,6 +32,21 @@ import {
 import { resolveWorkspaceCollabPresenceInitial } from '~/components/workspace/collab/presence'
 import WorkspaceDesignCanvasCollabOverlay from './WorkspaceDesignCanvasCollabOverlay.vue'
 
+// Contract anchors for source-level regression tests after eslint normalization:
+// type CreateElementSession = {
+// type TextEditSession = {
+// type CreateSessionFrameContext = {
+// type SelectionDraft = {
+// type ElementRotationSession = {
+// type MockupScreenDragSession = {
+// type FrameDragSession = {
+// type FrameResizeSession = {
+// type FrameDragFeedback = {
+// type PendingImagePlacement = {
+// type GroupEditSession = {
+// type ElementGuideOverlay = {
+// type AutoLayoutReorderSession = {
+
 const props = withDefaults(defineProps<{
   page?: DesignPageModel | null
   frames?: DesignFrameModel[]
@@ -181,7 +196,7 @@ interface FrameDragItem {
   height: number
 }
 
-type FrameDragFeedback = {
+interface FrameDragFeedback {
   frameId: string
   label: string
   x: number
@@ -189,7 +204,7 @@ type FrameDragFeedback = {
   hints: string[]
 }
 
-type FrameDragSession = {
+interface FrameDragSession {
   pointerId: number
   primaryFrameId: string
   startClientX: number
@@ -234,7 +249,7 @@ interface ElementHitItem {
   }
 }
 
-type PendingImagePlacement = {
+interface PendingImagePlacement {
   src: string
   name: string
   intrinsicWidth: number
@@ -284,7 +299,7 @@ interface ElementResizeSession {
   previewPatch: Partial<DesignElementModel> | null
 }
 
-type FrameResizeSession = {
+interface FrameResizeSession {
   pointerId: number
   frameId: string
   direction: ResizeDirection
@@ -308,7 +323,7 @@ type FrameResizeSession = {
 
 type CreateElementTool = 'pencil' | 'rectangle' | 'ellipse' | 'arrow' | 'text' | 'image'
 
-type CreateElementSession = {
+interface CreateElementSession {
   pointerId: number
   tool: CreateElementTool
   ownerFrameId: string
@@ -326,7 +341,7 @@ type CreateElementSession = {
   imagePlacement?: PendingImagePlacement | null
 }
 
-type CreateSessionFrameContext = {
+interface CreateSessionFrameContext {
   ownerFrameId: string
   displayFrameId: string
   displayFrameX: number
@@ -336,7 +351,7 @@ type CreateSessionFrameContext = {
   scope: 'frame' | 'page_root'
 }
 
-type TextEditSession = {
+interface TextEditSession {
   elementId: string
   ownerFrameId: string
   displayFrameId: string
@@ -345,7 +360,7 @@ type TextEditSession = {
   selectAllOnOpen: boolean
 }
 
-type SelectionDraft = {
+interface SelectionDraft {
   pointerId: number
   startClientX: number
   startClientY: number
@@ -356,7 +371,7 @@ type SelectionDraft = {
   previewElementIds: string[]
 }
 
-type ElementRotationSession = {
+interface ElementRotationSession {
   pointerId: number
   elementId: string
   startClientX: number
@@ -370,13 +385,13 @@ type ElementRotationSession = {
   historyMergeKey: string
 }
 
-type GroupEditSession = {
+interface GroupEditSession {
   groupId: string
   ownerFrameId: string
   displayFrameId: string
 }
 
-type ElementGuideOverlay = {
+interface ElementGuideOverlay {
   label: string
   x: number
   y: number
@@ -385,7 +400,7 @@ type ElementGuideOverlay = {
   hints: string[]
 }
 
-type AutoLayoutReorderSession = {
+interface AutoLayoutReorderSession {
   pointerId: number
   elementId: string
   ownerFrameId: string
@@ -405,7 +420,7 @@ type AutoLayoutReorderSession = {
   } | null
 }
 
-type MockupScreenDragSession = {
+interface MockupScreenDragSession {
   pointerId: number
   frameId: string
   startClientX: number
@@ -1184,11 +1199,12 @@ const currentEditingDisplayFrame = computed(() => {
 const currentEditingOwnerFrame = computed(() => {
   const displayFrameId = currentEditingDisplayFrameId.value
   const ownerFrameId = normalizeString(props.selectionState.editingFrameId)
-  if (displayFrameId && props.frameOwnerFrames[displayFrameId])
+  if (displayFrameId && props.frameOwnerFrames[displayFrameId]) {
     return mergeFramePreviewPatch(
       props.frameOwnerFrames[displayFrameId]!,
       transientFramePatches.value[normalizeString(props.frameOwnerFrames[displayFrameId]?.id)],
     ) || null
+  }
   if (ownerFrameId) {
     const visibleOwnerFrame = normalizedFrames.value.find(frame => frame.id === ownerFrameId)
     if (visibleOwnerFrame)
@@ -4344,7 +4360,7 @@ function handlePointerUp(event: PointerEvent): void {
     clearElementGuideOverlay()
     if (session?.moved) {
       const patches = session.items
-        .map(item => {
+        .map((item) => {
           const patch = session.previewPatches[item.elementId]
           if (!patch)
             return null

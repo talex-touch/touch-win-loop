@@ -7,11 +7,11 @@ import type {
 import type { DeviceArrangementDocumentV1, DeviceArrangementExportSizePresetKey, DeviceArrangementItemV1 } from '~~/shared/utils/device-arrangement-document'
 import { computed, ref, watch } from 'vue'
 import {
+  createDeviceArrangementItem,
   DEVICE_ARRANGEMENT_EXPORT_SIZE_PRESETS,
   DEVICE_ARRANGEMENT_LAYOUT_PRESETS,
   DEVICE_ARRANGEMENT_SHADOW_PRESETS,
   DEVICE_ARRANGEMENT_TEMPLATE_PRESETS,
-  createDeviceArrangementItem,
   layoutDeviceArrangementItems,
   normalizeDeviceArrangementDocument,
   renderDeviceArrangementDocumentToSvg,
@@ -628,7 +628,7 @@ watch(() => [props.projectId, props.resourceId], () => {
 .workspace-device-arrangement-panel__preview-card {
   min-height: 100%;
   border-radius: 24px;
-  background: radial-gradient(circle at top, rgba(255,255,255,0.96), rgba(226,232,240,0.9));
+  background: radial-gradient(circle at top, rgba(255, 255, 255, 0.96), rgba(226, 232, 240, 0.9));
   padding: 24px;
 }
 

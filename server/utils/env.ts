@@ -395,12 +395,14 @@ export function normalizeRuntimeStorageSettings(storage: RuntimeSettings['storag
     channelsById.set(defaultChannel.id, defaultChannel)
 
   rawChannels.forEach((raw, index) => {
-    const fallback = index === 0 ? defaultChannel : {
-      ...defaultChannel,
-      id: `${defaultChannel.provider}-${index + 1}`,
-      name: `${defaultChannel.provider}-${index + 1}`,
-      priority: index,
-    }
+    const fallback = index === 0
+      ? defaultChannel
+      : {
+          ...defaultChannel,
+          id: `${defaultChannel.provider}-${index + 1}`,
+          name: `${defaultChannel.provider}-${index + 1}`,
+          priority: index,
+        }
     const channel = normalizeStorageChannel(raw, fallback, index)
     channelsById.set(channel.id, channel.id === 'local'
       ? {

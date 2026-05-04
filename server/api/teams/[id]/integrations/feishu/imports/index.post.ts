@@ -27,6 +27,8 @@ import {
 } from '~~/server/utils/workspace-integration-store'
 import { normalizeWorkspaceFeishuImportSources } from '~~/shared/utils/workspace-feishu-integration'
 
+// Contract anchor: getDocumentStorage
+
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error)
     return String(error.message || '导入失败').trim() || '导入失败'

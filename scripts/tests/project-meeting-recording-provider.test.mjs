@@ -13,7 +13,6 @@ const RUNTIME_CONFIG_STORE_FILE = resolve(process.cwd(), 'server/utils/platform-
 const RUNTIME_SETTINGS_API_FILE = resolve(process.cwd(), 'server/api/admin/runtime-settings.patch.ts')
 const STORAGE_TEST_API_FILE = resolve(process.cwd(), 'server/api/admin/storage-service/test.post.ts')
 const STORAGE_SERVICE_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/storage-service.vue')
-const RUNTIME_SETTINGS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/runtime-settings.vue')
 const PLATFORM_RUNTIME_CACHE_PLUGIN_FILE = resolve(process.cwd(), 'server/plugins/platform-runtime-config-cache.ts')
 const COMPOSE_FILE = resolve(process.cwd(), 'deploy/meeting/compose.yaml')
 const LIVEKIT_CONFIG_FILE = resolve(process.cwd(), 'deploy/meeting/livekit.yaml.example')

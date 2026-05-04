@@ -3,8 +3,8 @@ import type {
 } from '~~/shared/types/domain'
 import type { WorkspacePreviewMode } from '~/composables/useWorkspaceProjectResources'
 import type { WorkspaceMainTabId } from '~/composables/useWorkspaceProjectShell'
-import { normalizeWorkspaceMainTabIds } from '~/composables/useWorkspaceProjectShell'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { normalizeWorkspaceMainTabIds } from '~/composables/useWorkspaceProjectShell'
 
 export interface WorkspaceMainTab {
   id: WorkspaceMainTabId
@@ -31,7 +31,7 @@ interface UseWorkspaceMainTabsOptions {
   emitUpdateActiveTabId: (tabId: WorkspaceMainTabId | '') => void
 }
 
-function areWorkspaceMainTabIdListsEqual(
+export function areWorkspaceMainTabIdListsEqual(
   left: readonly WorkspaceMainTabId[],
   right: readonly WorkspaceMainTabId[],
 ): boolean {

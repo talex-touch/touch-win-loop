@@ -44,8 +44,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'update:template': [value: AiCanvasAssistRequest['template']]
   'update:prompt': [value: string]
-  runAction: [action: 'generate' | 'complete' | 'refine']
-  openResource: [resourceId: string]
+  'runAction': [action: 'generate' | 'complete' | 'refine']
+  'openResource': [resourceId: string]
 }>()
 </script>
 

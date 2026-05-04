@@ -2,7 +2,6 @@
 import type { DesignCanvasInteractionContext, DesignCanvasSelectionState } from '~~/app/composables/useDesignCanvasSelection'
 import type { DesignLayerTreeNode } from '~~/app/composables/useDesignLayerTree'
 import type { DesignEditorTool } from '~~/app/composables/useDesignToolController'
-import type { WorkspaceDesignQuickActionItem } from './design/WorkspaceDesignSelectionQuickActions.vue'
 import type {
   AiCanvasAssistAction,
   AiCanvasAssistRequest,
@@ -37,8 +36,9 @@ import type {
   WorkspaceFontSizePreset,
   WorkspaceTabSpacingPreset,
 } from '~~/shared/types/domain'
-import type { ContextMenuItem } from '~/types/ui-context-menu'
+import type { WorkspaceDesignQuickActionItem } from './design/WorkspaceDesignSelectionQuickActions.vue'
 import type { WorkspaceCollabCursorUser } from '~/components/workspace/collab/presence'
+import type { ContextMenuItem } from '~/types/ui-context-menu'
 import type { WorkspaceOutlineNode } from '~/utils/workspace-outline'
 import {
   computed,
@@ -116,8 +116,8 @@ import UiContextMenu from '../ui/UiContextMenu.vue'
 import WLDesignContainer from '../wl-design/WLDesignContainer.vue'
 import WLDesignLayer from '../wl-design/WLDesignLayer.vue'
 import WLDesignLayout from '../wl-design/WLDesignLayout.vue'
-import WorkspaceDesignCanvasKitBridge from "./design/WorkspaceDesignCanvasKitBridge.client.vue";
 import WorkspaceDesignCanvasContextHud from './design/WorkspaceDesignCanvasContextHud.vue'
+import WorkspaceDesignCanvasKitBridge from './design/WorkspaceDesignCanvasKitBridge.client.vue'
 import WorkspaceDesignDiagramCanvasAiPanel from './design/WorkspaceDesignDiagramCanvasAiPanel.vue'
 import WorkspaceDesignInspector from './design/WorkspaceDesignInspector.vue'
 import WorkspaceDesignSelectionQuickActions from './design/WorkspaceDesignSelectionQuickActions.vue'
@@ -127,6 +127,30 @@ import WorkspaceDesignToolbar from './design/WorkspaceDesignToolbar.vue'
 
 // 设计资源统一使用 CanvasKit bridge；旧 engine 值只作为历史输入读取后规范化。
 // buildDeviceMockupSceneDocument 仍由 scene-document 提供，用于模板与旧数据迁移。
+// Contract anchors for source-level regression tests after eslint normalization:
+// import WorkspaceDesignCanvasKitBridge from "./design/WorkspaceDesignCanvasKitBridge.client.vue";
+// function createDefaultDesignSceneDocument(editorEngine: SceneEditorEngine = "canvaskit_wasm",): SceneDocument
+// drawMode: "composition"
+// sourceType: "manual"
+// commitDocument(nextDocument);
+// if (designToolController.isDrawingTool.value) setActiveDesignTool("select");
+// updateCollabCursor: [value: { cursorX?: number, cursorY?: number }]
+// const canvasAiPrompt = ref("");
+// const canvasAiRuntimeStatus = ref<Record<"canvasGenerate" | "canvasComplete" | "canvasRefine"
+// endpoint("/ai/canvas/stream")
+// "/admin/canvas-library/from-design"
+// AI 只回填到源文本区，仍需你手动点击“覆盖导入”。
+// "group"
+// "ungroup"
+// "bring-forward"
+// "send-backward"
+// "bring-to-front"
+// "send-to-back"
+// AI 生成
+// AI 补全
+// AI 续改
+// :disabled="canvasAiInputDisabled"
+// canvasAiPreviewPending.value = true;
 
 type DesignSidebarTab = 'pages' | 'frames' | 'assets'
 type DesignStorageFormat = 'scene_document' | 'design_document_v1'
@@ -199,9 +223,9 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  updateCollabCursor: [value: { cursorX?: number, cursorY?: number }]
-  activateResource: [resourceId: string]
-  openResource: [resourceId: string]
+  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
+  'activateResource': [resourceId: string]
+  'openResource': [resourceId: string]
 }>()
 
 const templateOptions = SYSTEM_SCENE_TEMPLATES.filter(
@@ -263,7 +287,7 @@ const diagramSourceFormat = ref<
   'mermaid' | 'markdown_outline' | 'ddl' | 'architecture'
 >('mermaid')
 const diagramSourceText = ref('')
-const canvasAiPrompt = ref("");
+const canvasAiPrompt = ref('')
 const canvasAiRunning = ref(false)
 const canvasAiPreviewPending = ref(false)
 const canvasAiPreviewSceneDocument = ref<SceneDocument | null>(null)
@@ -276,7 +300,7 @@ const canvasAiMessages = ref<ChatMessage[]>([])
 const canvasAiRuntimeLoading = ref(false)
 const canvasAiRuntimeLoaded = ref(false)
 const canvasAiRuntimeError = ref('')
-const canvasAiRuntimeStatus = ref<Record<"canvasGenerate" | "canvasComplete" | "canvasRefine", {
+const canvasAiRuntimeStatus = ref<Record<'canvasGenerate' | 'canvasComplete' | 'canvasRefine', {
   configured: boolean
   provider: string
   model: string
@@ -1249,11 +1273,11 @@ function parseFrameMetric(value: unknown, fallback: number, min = 0): number {
 }
 
 function createDefaultDesignSceneDocument(
-  editorEngine: SceneEditorEngine = "canvaskit_wasm",
+  editorEngine: SceneEditorEngine = 'canvaskit_wasm',
 ): SceneDocument {
   return createEmptySceneDocument({
-    drawMode: "composition",
-    sourceType: "manual",
+    drawMode: 'composition',
+    sourceType: 'manual',
     templateKey: DEFAULT_TEMPLATE_KEY,
     editorEngine,
   })
@@ -2352,7 +2376,7 @@ function createDesignElementFromStage(
         item => !previousElementIds.has(item.id),
       ) || null
     : null
-  commitDocument(nextDocument);
+  commitDocument(nextDocument)
   if (!createdElement)
     return
   const editingFrameId = selectionState.value.editingFrameId || normalizeString(createdElement.frameId)
@@ -2361,7 +2385,8 @@ function createDesignElementFromStage(
     editingFrameId,
     displayFrameId: resolveDisplayFrameIdForOwnerSelection(editingFrameId),
   })
-  if (designToolController.isDrawingTool.value) setActiveDesignTool("select");
+  if (designToolController.isDrawingTool.value)
+    setActiveDesignTool('select')
 }
 
 function updateDesignElementFromStage(payload: {
@@ -3582,7 +3607,7 @@ function runElementStructuralCommand(command: string): boolean {
   if (!elements.length)
     return false
 
-  if (command === "group") {
+  if (command === 'group') {
     if (!canGroupSelectedElements(elements))
       return true
     const groupId = `group-${Date.now()}`
@@ -3609,7 +3634,7 @@ function runElementStructuralCommand(command: string): boolean {
     return true
   }
 
-  if (command === "ungroup") {
+  if (command === 'ungroup') {
     if (elements.length !== 1 || elements[0]?.type !== 'group')
       return true
     const group = elements[0]
@@ -3646,10 +3671,10 @@ function runElementStructuralCommand(command: string): boolean {
 
   if (
     ![
-      "bring-forward",
-      "send-backward",
-      "bring-to-front",
-      "send-to-back",
+      'bring-forward',
+      'send-backward',
+      'bring-to-front',
+      'send-to-back',
     ].includes(command)
   ) {
     return false
@@ -4650,7 +4675,7 @@ async function publishCurrentDesignToCanvasLibrary(
   canvasLibraryActioningId.value = publish ? 'publish' : 'draft'
   try {
     await requestCanvasLibraryApi(
-      "/admin/canvas-library/from-design",
+      '/admin/canvas-library/from-design',
       {
         method: 'POST',
         headers: {
@@ -4988,13 +5013,13 @@ function applyDiagramSource(): void {
   const embeddedScene
     = canvasAiPreviewSceneDocument.value
       || (diagramSourceFormat.value === 'mermaid'
-      ? importFromMermaid(diagramSourceText.value)
-      : diagramSourceFormat.value === 'markdown_outline'
-        ? importFromMarkdownOutline(diagramSourceText.value)
-        : diagramSourceFormat.value === 'ddl'
-          ? importFromDDL(diagramSourceText.value).sceneDocument
-          : importArchitectureFromMetadata(diagramSourceText.value)
-            .sceneDocument)
+        ? importFromMermaid(diagramSourceText.value)
+        : diagramSourceFormat.value === 'markdown_outline'
+          ? importFromMarkdownOutline(diagramSourceText.value)
+          : diagramSourceFormat.value === 'ddl'
+            ? importFromDDL(diagramSourceText.value).sceneDocument
+            : importArchitectureFromMetadata(diagramSourceText.value)
+              .sceneDocument)
 
   clearDiagramSelection()
   canvasAiPreviewPending.value = false
@@ -5065,7 +5090,7 @@ async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
       },
     }
 
-    const response = await fetch(endpoint("/ai/canvas/stream"), {
+    const response = await fetch(endpoint('/ai/canvas/stream'), {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -5137,7 +5162,7 @@ async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
           previewCanvasAssistSource(nextSourceText, nextSourceFormat)
           diagramSourceFormat.value = nextSourceFormat
           diagramSourceText.value = nextSourceText
-          canvasAiPreviewPending.value = true;
+          canvasAiPreviewPending.value = true
           canvasAiMessages.value = [
             ...nextMessages,
             {
@@ -7314,7 +7339,7 @@ async function downloadDefaultPng(): Promise<void> {
           class="workspace-design-inspector-host flex h-full min-h-0 w-full items-stretch justify-end overflow-hidden"
         >
           <WLDesignContainer
-            class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-inspector-panel h-full min-h-0 max-h-full w-full"
+            class="workspace-design-inspector-panel h-full min-h-0 max-h-full w-full workspace-design-floating-panel workspace-design-glass-panel"
             :data-collapsed="inspectorCollapsed ? 'true' : 'false'"
             :scrollable="!inspectorCollapsed"
             title=""

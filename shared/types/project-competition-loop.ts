@@ -3,7 +3,6 @@ import type {
   ContestTimeline,
   Project,
   ProjectIssueSeverity,
-  ProjectIssueStatus,
   ProjectKnowledgeSourceStatus,
   Rubric,
   Track,

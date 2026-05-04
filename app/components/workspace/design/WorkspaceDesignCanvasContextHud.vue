@@ -24,13 +24,13 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="pointer-events-none left-5 right-5 top-5 absolute z-[190] flex items-start justify-between gap-3"
+    class="flex gap-3 pointer-events-none items-start left-5 right-5 top-5 justify-between absolute z-[190]"
     data-testid="workspace-design-canvas-context-hud"
   >
     <div
-      class="pointer-events-auto max-w-[min(70vw,720px)] rounded-[18px] border border-white/70 bg-white/86 px-4 py-3 shadow-[0_18px_48px_rgba(15,23,42,0.12)] backdrop-blur-xl"
+      class="px-4 py-3 border border-white/70 rounded-[18px] bg-white/86 max-w-[min(70vw,720px)] pointer-events-auto shadow-[0_18px_48px_rgba(15,23,42,0.12)] backdrop-blur-xl"
     >
-      <div class="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500">
+      <div class="text-[11px] text-slate-500 font-semibold flex flex-wrap gap-2 items-center">
         <template v-for="(item, index) in props.breadcrumbs" :key="`canvas-hud-breadcrumb-${index}-${item}`">
           <span :class="index === props.breadcrumbs.length - 1 ? 'text-slate-900' : ''">
             {{ item }}
@@ -45,30 +45,30 @@ const emit = defineEmits<{
       <div class="mt-2 flex flex-wrap gap-2">
         <span
           v-if="props.contextLabel"
-          class="inline-flex h-7 items-center rounded-full border border-sky-200 bg-sky-50 px-3 text-[11px] font-semibold text-sky-700"
+          class="text-[11px] text-sky-700 font-semibold px-3 border border-sky-200 rounded-full bg-sky-50 inline-flex h-7 items-center"
         >
           {{ props.contextLabel }}
         </span>
         <span
           v-if="props.activeToolLabel"
-          class="inline-flex h-7 items-center rounded-full border border-slate-200 bg-slate-50 px-3 text-[11px] font-semibold text-slate-700"
+          class="text-[11px] text-slate-700 font-semibold px-3 border border-slate-200 rounded-full bg-slate-50 inline-flex h-7 items-center"
         >
           当前工具 · {{ props.activeToolLabel }}
         </span>
       </div>
     </div>
 
-    <div class="pointer-events-auto flex flex-wrap items-center justify-end gap-2">
+    <div class="flex flex-wrap gap-2 pointer-events-auto items-center justify-end">
       <span
         v-if="props.canvasAiStatusLabel"
-        class="inline-flex h-8 items-center rounded-full border px-3 text-[11px] font-semibold shadow-[0_10px_24px_rgba(15,23,42,0.1)] backdrop-blur-xl"
+        class="text-[11px] font-semibold px-3 border rounded-full inline-flex h-8 shadow-[0_10px_24px_rgba(15,23,42,0.1)] items-center backdrop-blur-xl"
         :class="props.canvasAiStatusClass || 'border-slate-200 bg-white/86 text-slate-700'"
       >
         Diagram AI · {{ props.canvasAiStatusLabel }}
       </span>
       <button
         v-if="props.showDiagramEntry"
-        class="inline-flex h-8 items-center gap-1 rounded-full border border-slate-200 bg-white/88 px-3 text-[11px] font-semibold text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.1)] transition-colors hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700"
+        class="text-[11px] text-slate-700 font-semibold px-3 border border-slate-200 rounded-full bg-white/88 inline-flex gap-1 h-8 shadow-[0_10px_24px_rgba(15,23,42,0.1)] transition-colors items-center hover:text-sky-700 hover:border-sky-200 hover:bg-sky-50"
         type="button"
         @click="emit('openDiagramEditor')"
       >

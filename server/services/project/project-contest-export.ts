@@ -15,8 +15,8 @@ import { findContestById } from '~~/server/data/catalog'
 import { generateProjectExportPdfBuffer } from '~~/server/services/project/project-export-pdf'
 import { buildDocumentObjectKey, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
 import { buildServerApiEndpoint } from '~~/server/utils/api-url'
-import { listProjectMeetings } from '~~/server/utils/project-meeting-store'
 import { buildProjectKnowledgeIndexDashboard } from '~~/server/utils/project-knowledge-store'
+import { listProjectMeetings } from '~~/server/utils/project-meeting-store'
 import {
   createProjectUploadedResource,
   getProjectCollabSnapshot,

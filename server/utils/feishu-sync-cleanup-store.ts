@@ -1,9 +1,9 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
+  FeishuBitableSyncCleanupLegacySummary,
   FeishuBitableSyncCleanupManagedDataCounts,
   FeishuBitableSyncCleanupPreview,
   FeishuBitableSyncCleanupResult,
-  FeishuBitableSyncCleanupLegacySummary,
   FeishuBitableSyncItem,
 } from '~~/shared/types/domain'
 import {
@@ -35,17 +35,6 @@ function createEmptyManagedDataCounts(): FeishuBitableSyncCleanupManagedDataCoun
     issues: 0,
     personaPresets: 0,
     unpublishedReleaseDrafts: 0,
-  }
-}
-
-function createEmptyLegacyReleaseSummary(): FeishuBitableSyncCleanupLegacySummary {
-  return {
-    total: 0,
-    contest: 0,
-    track: 0,
-    trackTimeline: 0,
-    resource: 0,
-    policy: 0,
   }
 }
 

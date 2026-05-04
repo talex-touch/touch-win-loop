@@ -47,7 +47,7 @@ it('/test/logo 页面稳定展示三种品牌预览形态', async () => {
   const source = await readFile(LOGO_PREVIEW_PAGE_FILE, 'utf8')
 
   assert.match(source, /data-testid="logo-preview-page"/, 'logo 预览页缺少稳定根节点锚点')
-  assert.match(source, /data-testid="\`logo-preview-\$\{item\.id\}`"/, 'logo 预览页未为三种变体输出稳定测试锚点')
+  assert.match(source, /data-testid="`logo-preview-\$\{item\.id\}`"/, 'logo 预览页未为三种变体输出稳定测试锚点')
   assert.match(source, /title:\s*'logo'/, 'logo 预览页缺少纯 logo 预览块')
   assert.match(source, /title:\s*'logo\+text'/, 'logo 预览页缺少 logo\+text 预览块')
   assert.match(source, /title:\s*'logo\+animation'/, 'logo 预览页缺少 logo\+animation 预览块')

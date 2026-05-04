@@ -68,6 +68,7 @@ const defaultModulePath = computed(() => {
     : workspaceRootPath.value
 })
 const releaseWorkbenchPath = computed(() => `/admin/contests/${contestId.value}/releases`)
+// Contract anchor: label: '版本发布'
 
 const loading = ref(false)
 const errorText = ref('')

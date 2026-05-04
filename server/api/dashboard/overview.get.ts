@@ -161,7 +161,7 @@ export default defineEventHandler(async (event) => {
           ? `已接入主链快照 ${loopDigests.length} 个，当前开放风险 ${loopRiskCount} 条、待办 ${loopTaskCount} 个，建议优先推进风险最高项目。`
           : projects.length > 0
             ? `其中草稿 ${projects.filter(item => item.status === 'draft').length} 个，建议先在项目台刷新主链，生成风险、待办与看板口径。`
-          : '当前尚无项目记录，建议先进入工作台创建首个项目草案。',
+            : '当前尚无项目记录，建议先进入工作台创建首个项目草案。',
         metricIcon: 'dashboard',
         metricText: loopDigests.length > 0 ? `主链 ready ${loopReadyCount}` : `进行中 ${projects.filter(item => item.status === 'in_progress').length}`,
         actionText: '进入工作台',

@@ -36,9 +36,9 @@ const emit = defineEmits<{
   >
     <section class="space-y-2">
       <div class="flex items-center justify-between">
-        <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">创建</span>
+        <span class="text-[10px] text-slate-400 tracking-[0.16em] font-semibold uppercase">创建</span>
         <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-900 transition-colors hover:bg-slate-50"
+          class="text-[11px] text-slate-900 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50"
           type="button"
           @click="emit('createPage')"
         >
@@ -49,7 +49,7 @@ const emit = defineEmits<{
 
       <div class="flex flex-wrap gap-2">
         <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-[11px] text-slate-700 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
           :disabled="!props.canCreateFrame"
           @click="emit('createFreeformFrame')"
@@ -58,7 +58,7 @@ const emit = defineEmits<{
           <span>自由 Frame</span>
         </button>
         <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-[11px] text-slate-700 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
           :disabled="!props.canCreateFrame"
           @click="emit('createDeviceArtboard')"
@@ -67,7 +67,7 @@ const emit = defineEmits<{
           <span>设备 Frame</span>
         </button>
         <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-[11px] text-slate-700 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
           :disabled="!props.canCreateFrame"
           @click="emit('createDiagram')"
@@ -78,7 +78,7 @@ const emit = defineEmits<{
       </div>
       <div class="flex flex-wrap gap-2">
         <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-dashed border-slate-200 bg-white/72 px-2.5 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-[11px] text-slate-600 font-semibold px-2.5 border border-slate-200 rounded-[10px] border-dashed bg-white/72 inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
           :disabled="!props.canCreateFrame"
           @click="emit('insertTemplateFrame')"
@@ -90,10 +90,10 @@ const emit = defineEmits<{
     </section>
 
     <section class="space-y-2">
-      <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">导出</span>
+      <span class="text-[10px] text-slate-400 tracking-[0.16em] font-semibold uppercase">导出</span>
       <div class="flex flex-wrap gap-2">
         <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-[11px] text-slate-700 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
           :disabled="!props.canExportDefaultFrames"
           @click="emit('downloadDefaultSvg')"
@@ -102,7 +102,7 @@ const emit = defineEmits<{
           <span>{{ props.defaultExportSvgLabel }}</span>
         </button>
         <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-[11px] text-slate-700 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
           :disabled="!props.canExportDefaultFrames"
           @click="emit('downloadDefaultPng')"
@@ -111,7 +111,7 @@ const emit = defineEmits<{
           <span>{{ props.defaultExportPngLabel }}</span>
         </button>
         <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-[11px] text-slate-700 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
           :disabled="!props.canExportPage"
           @click="emit('downloadPageSvg')"
@@ -120,7 +120,7 @@ const emit = defineEmits<{
           <span>辅助导出 Page SVG</span>
         </button>
         <button
-          class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-[11px] text-slate-700 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
           :disabled="!props.canExportPage"
           @click="emit('downloadPagePng')"
@@ -135,9 +135,9 @@ const emit = defineEmits<{
       v-if="props.canOpenDiagramEditor"
       class="space-y-2"
     >
-      <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">上下文</span>
+      <span class="text-[10px] text-slate-400 tracking-[0.16em] font-semibold uppercase">上下文</span>
       <button
-        class="inline-flex h-8 items-center gap-1 rounded-[10px] border border-sky-200 bg-sky-50 px-2.5 text-[11px] font-semibold text-sky-700 transition-colors hover:bg-sky-100"
+        class="text-[11px] text-sky-700 font-semibold px-2.5 border border-sky-200 rounded-[10px] bg-sky-50 inline-flex gap-1 h-8 transition-colors items-center hover:bg-sky-100"
         type="button"
         @click="emit('openDiagramEditor')"
       >

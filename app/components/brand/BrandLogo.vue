@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import {
+  resolveWinLoopBrandColor,
   WINLOOP_BRAND_LOCKUP_VIEW_BOX,
   WINLOOP_BRAND_MARK_PATHS,
   WINLOOP_BRAND_MARK_VIEW_BOX,
   WINLOOP_BRAND_WORDMARK_PATHS,
-  resolveWinLoopBrandColor,
 } from '~/constants/brand-logo'
 
 const props = withDefaults(defineProps<{
@@ -81,16 +81,17 @@ function resolveWordmarkFillStyle(): Record<string, string> {
           :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
           :style="props.animated ? resolveMarkFillStyle(path.tone) : undefined"
         />
-        <path
-          v-if="props.animated"
-          v-for="(path, index) in WINLOOP_BRAND_MARK_PATHS"
-          :key="`mark-trace-${path.d}`"
-          :d="path.d"
-          class="winloop-brand__trace-path winloop-brand__trace-path--mark"
-          :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
-          :stroke="resolveWinLoopBrandColor(props.tone, path.tone)"
-          :style="resolveMarkTraceStyle(index, path.tone)"
-        />
+        <template v-if="props.animated">
+          <path
+            v-for="(path, index) in WINLOOP_BRAND_MARK_PATHS"
+            :key="`mark-trace-${path.d}`"
+            :d="path.d"
+            class="winloop-brand__trace-path winloop-brand__trace-path--mark"
+            :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
+            :stroke="resolveWinLoopBrandColor(props.tone, path.tone)"
+            :style="resolveMarkTraceStyle(index, path.tone)"
+          />
+        </template>
       </g>
     </svg>
 
@@ -111,16 +112,17 @@ function resolveWordmarkFillStyle(): Record<string, string> {
           :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
           :style="props.animated ? resolveMarkFillStyle(path.tone) : undefined"
         />
-        <path
-          v-if="props.animated"
-          v-for="(path, index) in WINLOOP_BRAND_MARK_PATHS"
-          :key="`lockup-mark-trace-${path.d}`"
-          :d="path.d"
-          class="winloop-brand__trace-path winloop-brand__trace-path--mark"
-          :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
-          :stroke="resolveWinLoopBrandColor(props.tone, path.tone)"
-          :style="resolveMarkTraceStyle(index, path.tone)"
-        />
+        <template v-if="props.animated">
+          <path
+            v-for="(path, index) in WINLOOP_BRAND_MARK_PATHS"
+            :key="`lockup-mark-trace-${path.d}`"
+            :d="path.d"
+            class="winloop-brand__trace-path winloop-brand__trace-path--mark"
+            :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
+            :stroke="resolveWinLoopBrandColor(props.tone, path.tone)"
+            :style="resolveMarkTraceStyle(index, path.tone)"
+          />
+        </template>
       </g>
       <g class="winloop-brand__wordmark-group">
         <path
@@ -131,16 +133,17 @@ function resolveWordmarkFillStyle(): Record<string, string> {
           :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
           :style="props.animated ? resolveWordmarkFillStyle() : undefined"
         />
-        <path
-          v-if="props.animated"
-          v-for="(path, index) in WINLOOP_BRAND_WORDMARK_PATHS"
-          :key="`lockup-wordmark-trace-${path.d}`"
-          :d="path.d"
-          class="winloop-brand__trace-path winloop-brand__trace-path--wordmark"
-          :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
-          :stroke="resolveWinLoopBrandColor(props.tone, path.tone)"
-          :style="resolveWordmarkTraceStyle(index)"
-        />
+        <template v-if="props.animated">
+          <path
+            v-for="(path, index) in WINLOOP_BRAND_WORDMARK_PATHS"
+            :key="`lockup-wordmark-trace-${path.d}`"
+            :d="path.d"
+            class="winloop-brand__trace-path winloop-brand__trace-path--wordmark"
+            :fill="resolveWinLoopBrandColor(props.tone, path.tone)"
+            :stroke="resolveWinLoopBrandColor(props.tone, path.tone)"
+            :style="resolveWordmarkTraceStyle(index)"
+          />
+        </template>
       </g>
     </svg>
   </span>

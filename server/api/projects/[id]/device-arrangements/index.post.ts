@@ -1,4 +1,4 @@
-import type { ApiResponse } from '~~/shared/types/domain'
+import type { ApiResponse, Resource } from '~~/shared/types/domain'
 import type { DeviceArrangementPersistedPayload } from '~~/shared/utils/device-arrangement-document'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
@@ -8,7 +8,6 @@ import { readRuntimeSettings } from '~~/server/utils/env'
 import { createProjectDeviceArrangement } from '~~/server/utils/project-resource-device-arrangement-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
-import type { Resource } from '~~/shared/types/domain'
 
 interface CreateDeviceArrangementBody {
   title?: string
@@ -22,7 +21,7 @@ function normalizeString(value: unknown): string {
 export default defineEventHandler(async (event): Promise<ApiResponse<{
   resource: Resource
   arrangement: DeviceArrangementPersistedPayload
-}>> => {
+} | null>> => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)

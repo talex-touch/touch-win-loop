@@ -2,6 +2,7 @@ import type { Queryable } from '~~/server/utils/db'
 import type {
   CasdoorAuthBindStatus,
   CasdoorIntegrationConfig,
+  ExternalAuthProvider,
   FeishuAdminCandidate,
   FeishuAdminGroupReconcileResult,
   FeishuAdminManualAddResult,
@@ -44,7 +45,6 @@ import type {
   FeishuTaskIssueStats,
   FeishuTaskLatestRunSummary,
   FeishuTaskScheduleConfig,
-  ExternalAuthProvider,
   PlatformRole,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'

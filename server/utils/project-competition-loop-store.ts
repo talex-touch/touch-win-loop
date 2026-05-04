@@ -1,5 +1,14 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
+  AuthUser,
+  ContestDetailPayload,
+  Project,
+  ProjectIssue,
+  ProjectKnowledgeIndexDashboard,
+  Rubric,
+  Track,
+} from '~~/shared/types/domain'
+import type {
   ProjectCompetitionLoopAnalysisSummary,
   ProjectCompetitionLoopDashboardSummary,
   ProjectCompetitionLoopDigest,
@@ -16,15 +25,6 @@ import type {
   ProjectCompetitionLoopTaskPriority,
   ProjectCompetitionLoopTaskStatus,
 } from '~~/shared/types/project-competition-loop'
-import type {
-  AuthUser,
-  ContestDetailPayload,
-  Project,
-  ProjectIssue,
-  ProjectKnowledgeIndexDashboard,
-  Rubric,
-  Track,
-} from '~~/shared/types/domain'
 import { createHash, randomUUID } from 'node:crypto'
 import { getContestDetail } from '~~/server/utils/contest-store'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
@@ -490,7 +490,7 @@ function storedKeyed<T extends Pick<ProjectCompetitionLoopRiskSignal, 'sourceTyp
 function buildTaskDraftsFromRisks(risks: ProjectCompetitionLoopRiskSignal[]): TaskDraft[] {
   return risks
     .filter(item => item.status !== 'resolved' && item.status !== 'ignored')
-    .map((risk) => ({
+    .map(risk => ({
       sourceType: risk.sourceType,
       sourceId: risk.sourceId,
       title: `处理：${risk.title}`,
@@ -624,13 +624,15 @@ function buildDashboardSummary(input: {
       : '赛事上下文不可见，趋势预测等待赛事发布后刷新。',
     personalizedRecommendation: input.analysis.recommendations[0] || '继续完善项目画像。',
     weeklySchedule: [
-      ...(deadline ? [{
-        id: `deadline-${input.detail?.contest.id || 'contest'}`,
-        title: `${input.detail?.contest.name || '赛事'} 提交截止`,
-        timeText: deadline,
-        source: 'deadline' as const,
-        sourceId: input.detail?.contest.id || '',
-      }] : []),
+      ...(deadline
+        ? [{
+            id: `deadline-${input.detail?.contest.id || 'contest'}`,
+            title: `${input.detail?.contest.name || '赛事'} 提交截止`,
+            timeText: deadline,
+            source: 'deadline' as const,
+            sourceId: input.detail?.contest.id || '',
+          }]
+        : []),
       ...timelineItems,
       ...openTasks.slice(0, 3).map(item => ({
         id: item.id,
@@ -948,9 +950,9 @@ export async function buildProjectCompetitionLoop(
   const trackId = normalizeText(project.trackId)
   const detail = contestId
     ? await getContestDetail(db, {
-      contestId,
-      includeInternal: Boolean(input.includeInternal),
-    })
+        contestId,
+        includeInternal: Boolean(input.includeInternal),
+      })
     : null
   const track = detail?.contest.tracks.find(item => item.id === trackId) || null
   const rubric = findSelectedRubric(detail, track)
@@ -982,33 +984,33 @@ export async function buildProjectCompetitionLoop(
 
   const risks = input.persist
     ? await upsertRisks(db, {
-      project,
-      contestId,
-      trackId,
-      drafts: riskDrafts,
-    })
+        project,
+        contestId,
+        trackId,
+        drafts: riskDrafts,
+      })
     : mergeRiskSignals({
-      project,
-      contestId,
-      trackId,
-      drafts: riskDrafts,
-      stored: storedRisks,
-    })
+        project,
+        contestId,
+        trackId,
+        drafts: riskDrafts,
+        stored: storedRisks,
+      })
   const taskDrafts = buildTaskDraftsFromRisks(risks)
   const tasks = input.persist
     ? await upsertTasks(db, {
-      project,
-      contestId,
-      trackId,
-      drafts: taskDrafts,
-    })
+        project,
+        contestId,
+        trackId,
+        drafts: taskDrafts,
+      })
     : mergeTasks({
-      project,
-      contestId,
-      trackId,
-      drafts: taskDrafts,
-      stored: storedTasks,
-    })
+        project,
+        contestId,
+        trackId,
+        drafts: taskDrafts,
+        stored: storedTasks,
+      })
   const analysis = buildAnalysisSummary({
     project,
     rubric,

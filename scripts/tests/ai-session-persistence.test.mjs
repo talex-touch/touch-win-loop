@@ -16,7 +16,7 @@ const WORKSPACE_ORCHESTRATOR_FILE = resolve(process.cwd(), 'server/services/ai/w
 const ADMIN_ORCHESTRATOR_FILE = resolve(process.cwd(), 'server/services/admin-ai/orchestrator.ts')
 
 describe('ai session persistence', () => {
-  it('Schema 已补齐 session context、checkpoint 与 deepagent store 三张表', async () => {
+  it('schema 已补齐 session context、checkpoint 与 deepagent store 三张表', async () => {
     const source = await readFile(DB_FILE, 'utf8')
 
     assert.match(source, /CREATE TABLE IF NOT EXISTS ai_chat_session_context \(/, '缺少 ai_chat_session_context 表')
@@ -75,7 +75,7 @@ describe('ai session persistence', () => {
     assert.match(source, /activeChatSessionRunState\.value = data\.runState \|\| null/, '项目页加载消息后未写入 runState')
   })
 
-  it('DeepAgent 已统一切到 Postgres 持久化工厂，并禁止写链路假恢复', async () => {
+  it('deepAgent 已统一切到 Postgres 持久化工厂，并禁止写链路假恢复', async () => {
     const [factorySource, workspaceSource, adminSource, adminRunSource, adminStreamSource] = await Promise.all([
       readFile(DEEPAGENT_FACTORY_FILE, 'utf8'),
       readFile(WORKSPACE_ORCHESTRATOR_FILE, 'utf8'),

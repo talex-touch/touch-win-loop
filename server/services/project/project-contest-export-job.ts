@@ -38,10 +38,10 @@ export async function runProjectContestExportJob(
     }>
   },
 ): Promise<{
-    job: ProjectExportJob
-    manifest: ProjectExportBundleManifest
-    artifacts: ProjectExportArtifact[]
-  }> {
+  job: ProjectExportJob
+  manifest: ProjectExportBundleManifest
+  artifacts: ProjectExportArtifact[]
+}> {
   const workspaceId = normalizeString(input.project.workspaceId)
   if (!workspaceId)
     throw new Error('PROJECT_WORKSPACE_ID_MISSING')

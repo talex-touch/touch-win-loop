@@ -693,7 +693,7 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
             实时答辩控制台
           </p>
           <h2 class="workspace-defense-workbench__panel-title wl-workbench-title-panel">
-            实时链路 / 音视频 / 诊断
+            Provider / 音视频 / 诊断
           </h2>
         </div>
         <div class="workspace-defense-workbench__realtime-header-actions">

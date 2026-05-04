@@ -7,7 +7,7 @@ async function readSource(relativePath) {
   return readFile(resolve(process.cwd(), relativePath), 'utf8')
 }
 
-describe('Project Competition Loop 主链合同', () => {
+describe('project Competition Loop 主链合同', () => {
   it('声明统一主链类型与兼容型数据结构', async () => {
     const [typeSource, schemaSource, migrationSource] = await Promise.all([
       readSource('shared/types/project-competition-loop.ts'),

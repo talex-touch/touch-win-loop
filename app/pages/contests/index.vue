@@ -102,7 +102,7 @@ async function loadContests() {
 }
 
 function resolveContestVisual(index: number): ContestVisual {
-  return contestVisuals[index % contestVisuals.length]
+  return contestVisuals[index % contestVisuals.length] || contestVisuals[0]!
 }
 
 function trimText(value: string | undefined, fallback = '待补充') {

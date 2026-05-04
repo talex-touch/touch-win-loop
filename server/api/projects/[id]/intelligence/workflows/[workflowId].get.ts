@@ -1,9 +1,9 @@
 import { setResponseStatus } from 'h3'
+import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { getManageableIntelligenceProject } from '~~/server/services/ai/intelligence-project-guard'
 import { getAiWorkflowDefinitionById } from '~~/server/utils/project-intelligence-workflow-store'
 
 export default defineEventHandler(async (event) => {

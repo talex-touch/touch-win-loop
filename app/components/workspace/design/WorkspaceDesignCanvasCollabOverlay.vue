@@ -32,7 +32,7 @@ const props = withDefaults(defineProps<{
         />
       </svg>
       <div
-        class="mt-1 inline-flex max-w-[160px] items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm"
+        class="text-[11px] text-white font-semibold mt-1 px-2.5 py-1 rounded-full inline-flex max-w-[160px] shadow-sm items-center"
         :style="{ backgroundColor: cursor.colorToken }"
       >
         {{ cursor.label }}

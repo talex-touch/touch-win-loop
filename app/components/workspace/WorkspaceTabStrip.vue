@@ -84,7 +84,7 @@ function requestTabContextMenuFromKeyboard(tabId: string, event: KeyboardEvent):
 </script>
 
 <template>
-  <div class="workspace-main-tab-strip border-b border-slate-200 bg-white flex shrink-0 min-w-0 w-full items-center relative">
+  <div class="workspace-main-tab-strip border-b border-slate-200 bg-white flex shrink-0 w-full min-w-0 items-center relative">
     <template v-if="props.openTabs.length > 0">
       <div class="flex flex-1 h-full min-w-0 overflow-hidden">
         <div class="workspace-main-tab-scroll flex flex-1 h-full min-w-0 overflow-x-auto overflow-y-hidden">

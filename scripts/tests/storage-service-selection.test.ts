@@ -1,5 +1,5 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { RuntimeSettings } from '~~/server/utils/env'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 vi.mock('#imports', () => ({
   useRuntimeConfig: () => ({
@@ -156,7 +156,7 @@ describe('storage service selection', () => {
 
     const selected = await selectStorageWriteChannel(createDb({ 's3-a': 700 }), runtime, 100)
     expect(selected.channel.id).toBe('s3-a')
-    await expect(selectStorageWriteChannel(createDb({ 's3-a': 750, local: 0 }), runtime, 100)).resolves.toMatchObject({ channel: { id: 'local' } })
+    await expect(selectStorageWriteChannel(createDb({ 's3-a': 750, 'local': 0 }), runtime, 100)).resolves.toMatchObject({ channel: { id: 'local' } })
   })
 
   it('容量不限的渠道不受水位拦截', async () => {
@@ -181,7 +181,7 @@ describe('storage service selection', () => {
       ],
     })
 
-    await expect(selectStorageWriteChannel(createDb({ 's3-a': 500, 'minio-a': 500, local: 500 }), runtime, 1)).rejects.toThrow('STORAGE_CAPACITY_EXCEEDED')
+    await expect(selectStorageWriteChannel(createDb({ 's3-a': 500, 'minio-a': 500, 'local': 500 }), runtime, 1)).rejects.toThrow('STORAGE_CAPACITY_EXCEEDED')
   })
 
   it('历史 provider 值会计入当前同 provider 渠道水位', async () => {

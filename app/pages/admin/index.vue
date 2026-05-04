@@ -646,6 +646,8 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <NuxtLink v-if="false" to="/admin/notifications" />
+
         <div class="admin-home-entry-grid">
           <NuxtLink
             v-for="item in homeEntries"

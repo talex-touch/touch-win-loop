@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
@@ -541,7 +542,7 @@ function pptHtml(fig) {
 }
 
 function docMarkdown(doc) {
-  const figureLinks = doc.figures.map(id => {
+  const figureLinks = doc.figures.map((id) => {
     const fig = FIGURES.find(item => item.id === id)
     return `![${fig.title}](./figures/paper/${fig.id}-${fig.slug}.png)\n\nPPT 版：![${fig.title} PPT](./figures/ppt/${fig.id}-${fig.slug}-ppt.png)`
   }).join('\n\n')
@@ -633,7 +634,7 @@ async function main() {
     await browser.close()
   }
 
-  console.log(`Generated ${FIGURES.length * 2} PNG figures and ${DOCS.length + 1} markdown docs in ${OUT_DIR}`)
+  console.warn(`Generated ${FIGURES.length * 2} PNG figures and ${DOCS.length + 1} markdown docs in ${OUT_DIR}`)
 }
 
 main().catch((error) => {

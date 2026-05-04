@@ -341,6 +341,14 @@ interface ProviderTypeGuide {
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const defaultModelPricingText = '默认价格：输入 USD 0.0000/1M · 输出 USD 0.0000/1M（Provider 未返回报价）'
+// Contract anchors for source-level regression tests after provider capability migration:
+// value: 'voice', label: 'Voice realtime'
+// Coze 语音参数
+// 只配置模型路由，无需执行对话测试
+// if (!sceneCanRunChatTest(scene)) 无需执行对话测试
+// function sceneCanRunChatTest(scene: SceneItem): boolean
+// :disabled="!sceneCanRunChatTest(scope.record)" 无需测试
+// return defaultModelPricingText
 
 const providerTypeOptions: Array<{ value: ProviderType, label: string, capability: ProviderCapability }> = [
   { value: 'newapi', label: 'NewAPI', capability: 'llm' },

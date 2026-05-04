@@ -11,6 +11,7 @@ import type {
 } from '~~/shared/types/domain'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import {
   sceneDocumentToDesignDocument,
   serializeDesignDocument,
@@ -21,7 +22,6 @@ import {
   importFromMarkdownOutline,
   importFromMermaid,
 } from '~~/shared/utils/scene-document'
-import { runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 
 const MAX_CANVAS_ASSIST_MESSAGES = 8
 

@@ -283,7 +283,7 @@ function extractSemanticTopicTokens(text: string): string[] {
     return []
 
   const tokens: string[] = []
-  const matches = source.match(/[A-Za-z][A-Za-z0-9_-]{2,}|[\u4E00-\u9FFF]{2,10}/g) || []
+  const matches = source.match(/[A-Z][\w-]{2,}|[\u4E00-\u9FFF]{2,10}/gi) || []
   for (const token of matches) {
     const normalized = token.trim()
     const lowered = normalized.toLowerCase()
@@ -316,7 +316,7 @@ function deriveSemanticTopicLabel(clusterLabel: string, clusterChunks: ChunkLike
     })[0]?.[0] || ''
 
   if (bestToken) {
-    if (/(文档|纪要|方案|说明|报告|清单|计划|设计|表格|视频|音频|图片)/.test(bestToken))
+    if (/文档|纪要|方案|说明|报告|清单|计划|设计|表格|视频|音频|图片/.test(bestToken))
       return bestToken
     if (resourceKindLabel)
       return `${bestToken}${resourceKindLabel}`

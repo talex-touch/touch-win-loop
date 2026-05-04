@@ -27,29 +27,29 @@
 
 ## 图像索引
 
-| ID | 主题 | 论文/文章图 | PPT 图 | 关联文档 |
-| --- | --- | --- | --- | --- |
-| F01 | WinLoop 总体技术架构 | [paper](./figures/paper/F01-overall-architecture.png) | [ppt](./figures/ppt/F01-overall-architecture-ppt.png) | 01-technical-overview.md |
-| F02 | 竞赛业务闭环 | [paper](./figures/paper/F02-competition-loop.png) | [ppt](./figures/ppt/F02-competition-loop-ppt.png) | 01-technical-overview.md |
-| F03 | 团队优先协作与权限 | [paper](./figures/paper/F03-team-first-permission.png) | [ppt](./figures/ppt/F03-team-first-permission-ppt.png) | 05-workspace-resource-collaboration.md |
-| F04 | 项目资源统一模型 | [paper](./figures/paper/F04-project-resource-model.png) | [ppt](./figures/ppt/F04-project-resource-model-ppt.png) | 05-workspace-resource-collaboration.md |
-| F05 | 智能运行时与场景路由 | [paper](./figures/paper/F05-ai-runtime-routing.png) | [ppt](./figures/ppt/F05-ai-runtime-routing-ppt.png) | 02-ai-intelligence-core.md |
-| F06 | 多模态知识索引机制 | [paper](./figures/paper/F06-multimodal-knowledge-index.png) | [ppt](./figures/ppt/F06-multimodal-knowledge-index-ppt.png) | 03-multimodal-knowledge-index.md |
-| F07 | 混合检索与可溯源引用 | [paper](./figures/paper/F07-hybrid-retrieval-citation.png) | [ppt](./figures/ppt/F07-hybrid-retrieval-citation-ppt.png) | 03-multimodal-knowledge-index.md |
-| F08 | 智能会话持久化 | [paper](./figures/paper/F08-ai-session-persistence.png) | [ppt](./figures/ppt/F08-ai-session-persistence-ppt.png) | 02-ai-intelligence-core.md |
-| F09 | 智能工作流第一版 | [paper](./figures/paper/F09-intelligence-workflow-v1.png) | [ppt](./figures/ppt/F09-intelligence-workflow-v1-ppt.png) | 04-agent-workflow-runtime.md |
-| F10 | 数据语义空间 | [paper](./figures/paper/F10-loopy-data-semantic-space.png) | [ppt](./figures/ppt/F10-loopy-data-semantic-space-ppt.png) | 03-multimodal-knowledge-index.md |
-| F11 | 流程/设计画布智能协作 | [paper](./figures/paper/F11-canvas-ai-collaboration.png) | [ppt](./figures/ppt/F11-canvas-ai-collaboration-ppt.png) | 05-workspace-resource-collaboration.md |
-| F12 | 答辩实时智能体 | [paper](./figures/paper/F12-defense-realtime-agent.png) | [ppt](./figures/ppt/F12-defense-realtime-agent-ppt.png) | 06-defense-meeting-realtime-ai.md |
-| F13 | 飞书数据同步闭环 | [paper](./figures/paper/F13-feishu-sync-loop.png) | [ppt](./figures/ppt/F13-feishu-sync-loop-ppt.png) | 07-data-integration-admin-ops.md |
-| F14 | 部署与可观测闭环 | [paper](./figures/paper/F14-deployment-observability.png) | [ppt](./figures/ppt/F14-deployment-observability-ppt.png) | 08-deployment-security-observability.md |
-| F15 | AI 提供商治理与多模型路由 | [paper](./figures/paper/F15-ai-provider-routing-governance.png) | [ppt](./figures/ppt/F15-ai-provider-routing-governance-ppt.png) | 09-ai-advanced-architecture.md |
-| F16 | 项目知识上下文与可信引用链路 | [paper](./figures/paper/F16-knowledge-context-citation-chain.png) | [ppt](./figures/ppt/F16-knowledge-context-citation-chain-ppt.png) | 09-ai-advanced-architecture.md |
-| F17 | DeepAgent 长任务恢复与检查点 | [paper](./figures/paper/F17-deepagent-checkpoint-recovery.png) | [ppt](./figures/ppt/F17-deepagent-checkpoint-recovery-ppt.png) | 09-ai-advanced-architecture.md |
-| F18 | 多模态视觉投影与统一语义空间 | [paper](./figures/paper/F18-multimodal-semantic-projection.png) | [ppt](./figures/ppt/F18-multimodal-semantic-projection-ppt.png) | 09-ai-advanced-architecture.md |
-| F19 | 答辩智能体实时音视频推理链路 | [paper](./figures/paper/F19-defense-realtime-inference-chain.png) | [ppt](./figures/ppt/F19-defense-realtime-inference-chain-ppt.png) | 09-ai-advanced-architecture.md |
-| F20 | 上下文感知工作台助手融合架构 | [paper](./figures/paper/F20-contextual-assistant-fusion.png) | [ppt](./figures/ppt/F20-contextual-assistant-fusion-ppt.png) | 09-ai-advanced-architecture.md |
-| F21 | AI 观测与治理闭环 | [paper](./figures/paper/F21-ai-observability-governance.png) | [ppt](./figures/ppt/F21-ai-observability-governance-ppt.png) | 09-ai-advanced-architecture.md |
+| ID  | 主题                         | 论文/文章图                                                       | PPT 图                                                            | 关联文档                                |
+| --- | ---------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------- |
+| F01 | WinLoop 总体技术架构         | [paper](./figures/paper/F01-overall-architecture.png)             | [ppt](./figures/ppt/F01-overall-architecture-ppt.png)             | 01-technical-overview.md                |
+| F02 | 竞赛业务闭环                 | [paper](./figures/paper/F02-competition-loop.png)                 | [ppt](./figures/ppt/F02-competition-loop-ppt.png)                 | 01-technical-overview.md                |
+| F03 | 团队优先协作与权限           | [paper](./figures/paper/F03-team-first-permission.png)            | [ppt](./figures/ppt/F03-team-first-permission-ppt.png)            | 05-workspace-resource-collaboration.md  |
+| F04 | 项目资源统一模型             | [paper](./figures/paper/F04-project-resource-model.png)           | [ppt](./figures/ppt/F04-project-resource-model-ppt.png)           | 05-workspace-resource-collaboration.md  |
+| F05 | 智能运行时与场景路由         | [paper](./figures/paper/F05-ai-runtime-routing.png)               | [ppt](./figures/ppt/F05-ai-runtime-routing-ppt.png)               | 02-ai-intelligence-core.md              |
+| F06 | 多模态知识索引机制           | [paper](./figures/paper/F06-multimodal-knowledge-index.png)       | [ppt](./figures/ppt/F06-multimodal-knowledge-index-ppt.png)       | 03-multimodal-knowledge-index.md        |
+| F07 | 混合检索与可溯源引用         | [paper](./figures/paper/F07-hybrid-retrieval-citation.png)        | [ppt](./figures/ppt/F07-hybrid-retrieval-citation-ppt.png)        | 03-multimodal-knowledge-index.md        |
+| F08 | 智能会话持久化               | [paper](./figures/paper/F08-ai-session-persistence.png)           | [ppt](./figures/ppt/F08-ai-session-persistence-ppt.png)           | 02-ai-intelligence-core.md              |
+| F09 | 智能工作流第一版             | [paper](./figures/paper/F09-intelligence-workflow-v1.png)         | [ppt](./figures/ppt/F09-intelligence-workflow-v1-ppt.png)         | 04-agent-workflow-runtime.md            |
+| F10 | 数据语义空间                 | [paper](./figures/paper/F10-loopy-data-semantic-space.png)        | [ppt](./figures/ppt/F10-loopy-data-semantic-space-ppt.png)        | 03-multimodal-knowledge-index.md        |
+| F11 | 流程/设计画布智能协作        | [paper](./figures/paper/F11-canvas-ai-collaboration.png)          | [ppt](./figures/ppt/F11-canvas-ai-collaboration-ppt.png)          | 05-workspace-resource-collaboration.md  |
+| F12 | 答辩实时智能体               | [paper](./figures/paper/F12-defense-realtime-agent.png)           | [ppt](./figures/ppt/F12-defense-realtime-agent-ppt.png)           | 06-defense-meeting-realtime-ai.md       |
+| F13 | 飞书数据同步闭环             | [paper](./figures/paper/F13-feishu-sync-loop.png)                 | [ppt](./figures/ppt/F13-feishu-sync-loop-ppt.png)                 | 07-data-integration-admin-ops.md        |
+| F14 | 部署与可观测闭环             | [paper](./figures/paper/F14-deployment-observability.png)         | [ppt](./figures/ppt/F14-deployment-observability-ppt.png)         | 08-deployment-security-observability.md |
+| F15 | AI 提供商治理与多模型路由    | [paper](./figures/paper/F15-ai-provider-routing-governance.png)   | [ppt](./figures/ppt/F15-ai-provider-routing-governance-ppt.png)   | 09-ai-advanced-architecture.md          |
+| F16 | 项目知识上下文与可信引用链路 | [paper](./figures/paper/F16-knowledge-context-citation-chain.png) | [ppt](./figures/ppt/F16-knowledge-context-citation-chain-ppt.png) | 09-ai-advanced-architecture.md          |
+| F17 | DeepAgent 长任务恢复与检查点 | [paper](./figures/paper/F17-deepagent-checkpoint-recovery.png)    | [ppt](./figures/ppt/F17-deepagent-checkpoint-recovery-ppt.png)    | 09-ai-advanced-architecture.md          |
+| F18 | 多模态视觉投影与统一语义空间 | [paper](./figures/paper/F18-multimodal-semantic-projection.png)   | [ppt](./figures/ppt/F18-multimodal-semantic-projection-ppt.png)   | 09-ai-advanced-architecture.md          |
+| F19 | 答辩智能体实时音视频推理链路 | [paper](./figures/paper/F19-defense-realtime-inference-chain.png) | [ppt](./figures/ppt/F19-defense-realtime-inference-chain-ppt.png) | 09-ai-advanced-architecture.md          |
+| F20 | 上下文感知工作台助手融合架构 | [paper](./figures/paper/F20-contextual-assistant-fusion.png)      | [ppt](./figures/ppt/F20-contextual-assistant-fusion-ppt.png)      | 09-ai-advanced-architecture.md          |
+| F21 | AI 观测与治理闭环            | [paper](./figures/paper/F21-ai-observability-governance.png)      | [ppt](./figures/ppt/F21-ai-observability-governance-ppt.png)      | 09-ai-advanced-architecture.md          |
 
 ## 目录说明
 

@@ -95,7 +95,6 @@ function applyPayload(nextPayload: RuntimeSettingsPayload): void {
   form.resourceRecycle.batchSize = Number(nextPayload.resourceRecycle.batchSize || 200)
 
   form.contest.autoSeed = Boolean(nextPayload.contest.autoSeed)
-
 }
 
 function displayConfigSource(section: RuntimeConfigSection, value?: RuntimeSettingsPayload['configSource'][RuntimeConfigSection]): string {

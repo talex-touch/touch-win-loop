@@ -38,11 +38,11 @@ import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { getProjectSettingsSnapshot } from '~~/server/utils/platform-store'
-import { getVisibleProjectCompetitionLoop } from '~~/server/utils/project-competition-loop-store'
 import {
   createAiProjectChangeRequests,
   createProjectIssueReportWithIssues,
 } from '~~/server/utils/project-ai-store'
+import { getVisibleProjectCompetitionLoop } from '~~/server/utils/project-competition-loop-store'
 import { getProjectOutlineSnapshot } from '~~/server/utils/project-outline-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'

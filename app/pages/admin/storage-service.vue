@@ -504,7 +504,7 @@ onMounted(async () => {
         {{ errorText }}
       </section>
 
-      <section class="grid gap-2 md:grid-cols-4">
+      <section class="gap-2 grid md:grid-cols-4">
         <div v-for="card in overviewCards" :key="card.key" class="storage-kpi">
           <span>{{ card.label }}</span>
           <strong>{{ card.value }}</strong>
@@ -512,9 +512,9 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section class="grid gap-3 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <section class="gap-3 grid lg:grid-cols-[360px_minmax(0,1fr)]">
         <div class="storage-panel">
-          <div class="flex items-center justify-between mb-3">
+          <div class="mb-3 flex items-center justify-between">
             <h2>渠道占比</h2>
             <span>{{ formatBytes(distributionTotal) }}</span>
           </div>
@@ -531,7 +531,7 @@ onMounted(async () => {
         </div>
 
         <div class="storage-panel">
-          <div class="flex items-center justify-between mb-3">
+          <div class="mb-3 flex items-center justify-between">
             <h2>上传 / 下载趋势</h2>
             <span>近 30 天</span>
           </div>
@@ -551,7 +551,7 @@ onMounted(async () => {
       </section>
 
       <section class="storage-panel">
-        <div class="flex flex-wrap gap-3 items-center justify-between mb-3">
+        <div class="mb-3 flex flex-wrap gap-3 items-center justify-between">
           <div>
             <h2>渠道配置</h2>
             <p>local 默认存在；容量为 0 表示不限额，水位默认 90%。</p>
@@ -570,9 +570,15 @@ onMounted(async () => {
                 新增渠道
               </a-button>
               <template #content>
-                <a-doption @click="addChannel('s3')">S3</a-doption>
-                <a-doption @click="addChannel('minio')">MinIO</a-doption>
-                <a-doption @click="addChannel('local')">本机存储</a-doption>
+                <a-doption @click="addChannel('s3')">
+                  S3
+                </a-doption>
+                <a-doption @click="addChannel('minio')">
+                  MinIO
+                </a-doption>
+                <a-doption @click="addChannel('local')">
+                  本机存储
+                </a-doption>
               </template>
             </a-dropdown>
           </div>
@@ -590,9 +596,11 @@ onMounted(async () => {
                   <a-tag size="small" :color="providerTone(channel.provider)">
                     {{ providerLabel(channel.provider) }}
                   </a-tag>
-                  <span class="font-semibold text-slate-900">{{ channel.name }}</span>
+                  <span class="text-slate-900 font-semibold">{{ channel.name }}</span>
                   <span class="text-slate-400">{{ channel.id }}</span>
-                  <a-tag v-if="channel.id === primaryChannelId" size="small" color="blue">写入</a-tag>
+                  <a-tag v-if="channel.id === primaryChannelId" size="small" color="blue">
+                    写入
+                  </a-tag>
                 </div>
                 <div class="storage-channel-usage">
                   <div class="storage-usage-bar">
@@ -685,7 +693,7 @@ onMounted(async () => {
               </div>
 
               <div class="storage-channel-actions">
-                <label class="inline-flex gap-2 items-center text-slate-600">
+                <label class="text-slate-600 inline-flex gap-2 items-center">
                   <a-switch v-model="channel.forcePathStyle" size="small" :disabled="channel.provider === 'local'" />
                   <span>Force Path Style</span>
                 </label>
@@ -703,9 +711,9 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section class="grid gap-3 lg:grid-cols-2">
+      <section class="gap-3 grid lg:grid-cols-2">
         <div class="storage-panel">
-          <div class="flex items-center justify-between mb-3">
+          <div class="mb-3 flex items-center justify-between">
             <h2>用户下载排行</h2>
             <span>近 30 天</span>
           </div>
@@ -719,7 +727,7 @@ onMounted(async () => {
         </div>
 
         <div class="storage-panel">
-          <div class="flex items-center justify-between mb-3">
+          <div class="mb-3 flex items-center justify-between">
             <h2>工作空间消耗</h2>
             <span>存储量优先</span>
           </div>
@@ -848,7 +856,7 @@ onMounted(async () => {
 }
 
 .storage-area {
-  opacity: .14;
+  opacity: 0.14;
 }
 
 .storage-area--upload {
@@ -940,7 +948,7 @@ onMounted(async () => {
   font-size: 18px;
   line-height: 1;
   transform: rotate(0deg);
-  transition: transform .16s ease;
+  transition: transform 0.16s ease;
 }
 
 .storage-chevron--open {

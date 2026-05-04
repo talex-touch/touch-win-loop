@@ -1,15 +1,15 @@
-import type { Resource } from '~~/shared/types/domain'
 import type { Queryable } from '~~/server/utils/db'
+import type { Resource } from '~~/shared/types/domain'
 import type { DeviceArrangementDocumentV1, DeviceArrangementPersistedPayload } from '~~/shared/utils/device-arrangement-document'
 import { randomUUID } from 'node:crypto'
 import * as Y from 'yjs'
+import { getProjectCollabSnapshot } from '~~/server/utils/project-resource-store'
 import {
   DEVICE_ARRANGEMENT_MIME_TYPE,
   migrateSceneDocumentToDeviceArrangementDocument,
   normalizeDeviceArrangementDocument,
   renderDeviceArrangementDocumentToSvg,
 } from '~~/shared/utils/device-arrangement-document'
-import { getProjectCollabSnapshot } from '~~/server/utils/project-resource-store'
 
 interface ProjectWorkspaceRow {
   id: string
