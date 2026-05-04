@@ -1,4 +1,4 @@
-export type AdminOperationsTab = 'overview' | 'users' | 'content' | 'revenue' | 'efficiency' | 'risks' | 'reports'
+export type AdminOperationsTab = 'overview' | 'users' | 'content' | 'revenue' | 'efficiency' | 'meeting' | 'risks' | 'reports'
 export type AdminOperationsTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 export type AdminOperationsHealth = 'healthy' | 'warning' | 'critical' | 'idle'
 export type AdminRiskSeverity = 'critical' | 'high' | 'medium' | 'low'
@@ -244,6 +244,90 @@ export interface AdminEfficiencySnapshot {
   }
   systems: AdminEfficiencySystemSnapshot[]
   recentFailures: AdminEfficiencyFailureItem[]
+}
+
+export interface AdminMeetingRuntimeServiceHealth {
+  key: string
+  label: string
+  health: AdminOperationsHealth
+  status: 'up' | 'down' | 'idle' | 'unknown'
+  detail: string
+  lastScrapeAt: string | null
+}
+
+export interface AdminMeetingRuntimeHostSnapshot {
+  cpuUsagePercent: number
+  memoryTotalBytes: number
+  memoryUsedBytes: number
+  memoryUsagePercent: number
+  diskTotalBytes: number
+  diskUsedBytes: number
+  diskUsagePercent: number
+  networkRxBytesPerSecond: number
+  networkTxBytesPerSecond: number
+  networkRxTotalBytes: number
+  networkTxTotalBytes: number
+}
+
+export interface AdminMeetingRuntimeContainerRow {
+  key: string
+  label: string
+  service: string
+  health: AdminOperationsHealth
+  cpuUsagePercent: number
+  memoryUsageBytes: number
+  networkRxBytesPerSecond: number
+  networkTxBytesPerSecond: number
+  networkRxTotalBytes: number
+  networkTxTotalBytes: number
+}
+
+export interface AdminMeetingRuntimeLiveKitSnapshot {
+  roomCount: number
+  participantCount: number
+  publishedTrackCount: number
+  subscribedTrackCount: number
+  inboundBytesPerSecond: number
+  outboundBytesPerSecond: number
+  packetLossPercent: number
+  rttMs: number
+}
+
+export interface AdminMeetingRuntimeEgressSnapshot {
+  activeTaskCount: number
+  failedTaskCount: number
+  cpuUsagePercent: number
+  memoryUsageBytes: number
+  outboundBytesPerSecond: number
+}
+
+export interface AdminMeetingRuntimeCapacitySnapshot {
+  health: AdminOperationsHealth
+  maxExpectedParticipants: number
+  estimatedSafeParticipantCount: number
+  bottleneck: string
+  recommendation: string
+}
+
+export interface AdminMeetingRuntimeTrendPoint {
+  time: string
+  hostTxBytesPerSecond: number
+  hostRxBytesPerSecond: number
+  livekitTxBytesPerSecond: number
+  livekitRxBytesPerSecond: number
+}
+
+export interface AdminMeetingRuntimeSnapshot {
+  generatedAt: string
+  prometheusBaseUrlConfigured: boolean
+  health: AdminMeetingRuntimeServiceHealth[]
+  host: AdminMeetingRuntimeHostSnapshot
+  containers: AdminMeetingRuntimeContainerRow[]
+  livekit: AdminMeetingRuntimeLiveKitSnapshot
+  egress: AdminMeetingRuntimeEgressSnapshot
+  capacity: AdminMeetingRuntimeCapacitySnapshot
+  trend: AdminMeetingRuntimeTrendPoint[]
+  issues: string[]
 }
 
 export interface AdminRiskAlert {

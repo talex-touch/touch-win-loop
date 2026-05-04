@@ -290,22 +290,26 @@ export function applyPlatformMeetingRuntimeOverrides(
     ...runtime,
     meeting: {
       rtc: {
-        provider: '',
-        serverUrl: '',
-        apiKey: '',
-        apiSecret: '',
-        embedBaseUrl: '',
-        webhookSecret: '',
-        roomPrefix: DEFAULT_MEETING_ROOM_PREFIX,
+        provider: runtime.meeting?.rtc?.provider || '',
+        serverUrl: runtime.meeting?.rtc?.serverUrl || '',
+        apiKey: runtime.meeting?.rtc?.apiKey || '',
+        apiSecret: runtime.meeting?.rtc?.apiSecret || '',
+        embedBaseUrl: runtime.meeting?.rtc?.embedBaseUrl || '',
+        webhookSecret: runtime.meeting?.rtc?.webhookSecret || '',
+        roomPrefix: runtime.meeting?.rtc?.roomPrefix || DEFAULT_MEETING_ROOM_PREFIX,
       },
       asr: {
-        provider: '',
-        serviceUrl: '',
-        apiKey: '',
-        webhookSecret: '',
+        provider: runtime.meeting?.asr?.provider || '',
+        serviceUrl: runtime.meeting?.asr?.serviceUrl || '',
+        apiKey: runtime.meeting?.asr?.apiKey || '',
+        webhookSecret: runtime.meeting?.asr?.webhookSecret || '',
       },
       worker: {
         ...DEFAULT_MEETING_WORKER_SETTINGS,
+        ...(runtime.meeting?.worker || {}),
+      },
+      monitoring: {
+        prometheusBaseUrl: runtime.meeting?.monitoring?.prometheusBaseUrl || '',
       },
     },
   }

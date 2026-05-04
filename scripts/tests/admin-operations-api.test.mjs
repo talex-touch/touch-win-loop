@@ -9,6 +9,7 @@ const API_FILES = [
   'server/api/admin/operations/content.get.ts',
   'server/api/admin/operations/revenue.get.ts',
   'server/api/admin/operations/efficiency.get.ts',
+  'server/api/admin/operations/meeting-runtime.get.ts',
   'server/api/admin/operations/risks.get.ts',
   'server/api/admin/operations/reports/schema.get.ts',
   'server/api/admin/operations/reports/query.post.ts',
@@ -17,6 +18,7 @@ const API_FILES = [
 
 const STORE_FILE = resolve(process.cwd(), 'server/utils/admin-operations-store.ts')
 const EXPORT_FILE = resolve(process.cwd(), 'server/api/admin/operations/reports/export.post.ts')
+const MEETING_RUNTIME_FILE = resolve(process.cwd(), 'server/services/meeting/runtime-monitoring.ts')
 
 it('admin operations API 全量路由均复用鉴权和 contest.read_internal 权限门槛', async () => {
   for (const relativePath of API_FILES) {
@@ -47,4 +49,12 @@ it('admin operations store 固化核心风险阈值与报表数据集', async ()
   assert.match(source, /COALESCE\(MAX\(queue\.queued_count\), 0\)::INTEGER AS queued_count/, '预览队列统计未对 queued_count 执行聚合，overview 查询会触发 GROUP BY 错误')
   assert.match(source, /COALESCE\(MAX\(queue\.processing_count\), 0\)::INTEGER AS processing_count/, '预览队列统计未对 processing_count 执行聚合')
   assert.match(source, /COALESCE\(MAX\(queue\.oldest_queued_minutes\), 0\)::DOUBLE PRECISION AS oldest_queued_minutes/, '预览队列统计未对 oldest_queued_minutes 执行聚合')
+})
+
+it('会议运行时监控只通过 Prometheus 聚合，不直连 SSH 或 Docker socket', async () => {
+  const source = await readFile(MEETING_RUNTIME_FILE, 'utf8')
+  assert.match(source, /\/api\/v1\/query/, '会议监控未通过 Prometheus query API 聚合')
+  assert.match(source, /\/api\/v1\/targets/, '会议监控未读取 Prometheus targets 健康状态')
+  assert.doesNotMatch(source, /\bssh\b/, '会议监控不应执行 SSH')
+  assert.doesNotMatch(source, /docker\.sock|docker stats|child_process|exec\(/, '会议监控不应直连 Docker 或执行命令')
 })

@@ -235,6 +235,9 @@ export interface RuntimeSettings {
       batchSize: number
       maxAttempts: number
     }
+    monitoring: {
+      prometheusBaseUrl: string
+    }
   }
   defenseRealtime: {
     qwen: {
@@ -394,6 +397,9 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
         intervalMs: Math.max(1000, Math.min(60_000, Math.trunc(toNumber(runtime.meeting?.worker?.intervalMs, 5000)))),
         batchSize: Math.max(1, Math.min(50, Math.trunc(toNumber(runtime.meeting?.worker?.batchSize, 6)))),
         maxAttempts: Math.max(1, Math.min(20, Math.trunc(toNumber(runtime.meeting?.worker?.maxAttempts, 5)))),
+      },
+      monitoring: {
+        prometheusBaseUrl: trimTrailingSlash(String(runtime.meeting?.monitoring?.prometheusBaseUrl ?? '')),
       },
     },
     defenseRealtime: {

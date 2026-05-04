@@ -2,6 +2,7 @@
 import type {
   AdminContentTraceSnapshot,
   AdminEfficiencySnapshot,
+  AdminMeetingRuntimeSnapshot,
   AdminOperationsOverview,
   AdminOperationsTab,
   AdminReportDatasetKey,
@@ -22,6 +23,7 @@ definePageMeta({
 })
 
 const RISK_POLLING_INTERVAL_MS = 30_000
+const MEETING_POLLING_INTERVAL_MS = 30_000
 
 const tabs: Array<{ key: AdminOperationsTab, label: string, summary: string }> = [
   { key: 'overview', label: '总览', summary: '平台指标、趋势与待处理事项' },
@@ -29,6 +31,7 @@ const tabs: Array<{ key: AdminOperationsTab, label: string, summary: string }> =
   { key: 'content', label: '内容', summary: '资源规模、热度、治理与审计链路' },
   { key: 'revenue', label: '营收', summary: '套餐、席位、项目配额与估算金额' },
   { key: 'efficiency', label: '效能', summary: 'Worker、同步与 AI 使用效能' },
+  { key: 'meeting', label: '会议', summary: 'LiveKit、Egress、机器与带宽监控' },
   { key: 'risks', label: '风险', summary: '准实时轮询风险监控与告警' },
   { key: 'reports', label: '报表', summary: '零代码临时报表与 CSV 导出' },
 ]
@@ -51,6 +54,7 @@ const users = ref<AdminUserSegmentSnapshot | null>(null)
 const content = ref<AdminContentTraceSnapshot | null>(null)
 const revenue = ref<AdminRevenueSnapshot | null>(null)
 const efficiency = ref<AdminEfficiencySnapshot | null>(null)
+const meetingRuntime = ref<AdminMeetingRuntimeSnapshot | null>(null)
 const risks = ref<AdminRiskSnapshot | null>(null)
 const reportSchema = ref<AdminReportSchema | null>(null)
 const reportPreview = ref<AdminReportResult | null>(null)
@@ -61,6 +65,7 @@ const loadingByTab = reactive<Record<AdminOperationsTab, boolean>>({
   content: false,
   revenue: false,
   efficiency: false,
+  meeting: false,
   risks: false,
   reports: false,
 })
@@ -71,6 +76,7 @@ const loadedByTab = reactive<Record<AdminOperationsTab, boolean>>({
   content: false,
   revenue: false,
   efficiency: false,
+  meeting: false,
   risks: false,
   reports: false,
 })
@@ -81,6 +87,7 @@ const errorByTab = reactive<Record<AdminOperationsTab, string>>({
   content: '',
   revenue: '',
   efficiency: '',
+  meeting: '',
   risks: '',
   reports: '',
 })
@@ -116,6 +123,7 @@ const reportError = ref('')
 const reportLimitOptions = [50, 100, 200, 500]
 
 let riskTimer: ReturnType<typeof setInterval> | null = null
+let meetingTimer: ReturnType<typeof setInterval> | null = null
 
 function formatNumber(value: unknown): string {
   return Number(value || 0).toLocaleString('zh-CN')
@@ -127,6 +135,22 @@ function formatPercent(value: unknown): string {
 
 function formatYuan(value: unknown): string {
   return `CNY ${Number(value || 0).toFixed(2)}`
+}
+
+function formatBytes(value: unknown): string {
+  const bytes = Math.max(0, Number(value || 0))
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let current = bytes
+  let unitIndex = 0
+  while (current >= 1024 && unitIndex < units.length - 1) {
+    current /= 1024
+    unitIndex += 1
+  }
+  return `${current.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+function formatRate(value: unknown): string {
+  return `${formatBytes(value)}/s`
 }
 
 function formatDateTime(value: string | null | undefined): string {
@@ -147,6 +171,16 @@ function toneClass(kind: string): string {
   if (kind === 'success' || kind === 'healthy')
     return 'text-emerald-700 border-emerald-200 bg-emerald-50'
   return 'text-sky-700 border-sky-200 bg-sky-50'
+}
+
+function healthLabel(value: string): string {
+  if (value === 'healthy')
+    return '正常'
+  if (value === 'warning')
+    return '注意'
+  if (value === 'critical')
+    return '异常'
+  return '空闲'
 }
 
 async function switchTab(tab: AdminOperationsTab) {
@@ -261,6 +295,26 @@ async function loadEfficiency(force = false) {
   }
 }
 
+async function loadMeetingRuntime(force = false) {
+  if (loadingByTab.meeting)
+    return
+  if (loadedByTab.meeting && !force)
+    return
+  loadingByTab.meeting = true
+  errorByTab.meeting = ''
+  try {
+    const response = await authApiFetch<ApiResponse<AdminMeetingRuntimeSnapshot>>('/admin/operations/meeting-runtime')
+    meetingRuntime.value = response.data
+    loadedByTab.meeting = true
+  }
+  catch (error: any) {
+    errorByTab.meeting = String(error?.data?.message || '会议运行时监控加载失败。')
+  }
+  finally {
+    loadingByTab.meeting = false
+  }
+}
+
 async function loadRisks(force = false) {
   if (loadingByTab.risks)
     return
@@ -313,21 +367,34 @@ async function ensureTabLoaded(tab: AdminOperationsTab, force = false) {
     return loadRevenue(force)
   if (tab === 'efficiency')
     return loadEfficiency(force)
+  if (tab === 'meeting')
+    return loadMeetingRuntime(force)
   if (tab === 'risks')
     return loadRisks(force)
   return loadReportSchema(force)
 }
 
-function syncRiskPolling() {
+function syncPolling() {
   if (riskTimer) {
     clearInterval(riskTimer)
     riskTimer = null
   }
-  if (!import.meta.client || activeTab.value !== 'risks')
+  if (meetingTimer) {
+    clearInterval(meetingTimer)
+    meetingTimer = null
+  }
+  if (!import.meta.client)
     return
-  riskTimer = setInterval(() => {
-    void loadRisks(true)
-  }, RISK_POLLING_INTERVAL_MS)
+  if (activeTab.value === 'risks') {
+    riskTimer = setInterval(() => {
+      void loadRisks(true)
+    }, RISK_POLLING_INTERVAL_MS)
+  }
+  if (activeTab.value === 'meeting') {
+    meetingTimer = setInterval(() => {
+      void loadMeetingRuntime(true)
+    }, MEETING_POLLING_INTERVAL_MS)
+  }
 }
 
 const userRows = computed(() => {
@@ -504,7 +571,7 @@ async function exportReport() {
 
 watch(activeTab, (tab) => {
   void ensureTabLoaded(tab)
-  syncRiskPolling()
+  syncPolling()
 })
 
 watch(() => reportForm.dataset, () => {
@@ -514,12 +581,14 @@ watch(() => reportForm.dataset, () => {
 
 onMounted(() => {
   void ensureTabLoaded(activeTab.value)
-  syncRiskPolling()
+  syncPolling()
 })
 
 onBeforeUnmount(() => {
   if (riskTimer)
     clearInterval(riskTimer)
+  if (meetingTimer)
+    clearInterval(meetingTimer)
 })
 </script>
 
@@ -542,7 +611,7 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="border border-slate-200 bg-white overflow-hidden">
-      <div class="grid md:grid-cols-7">
+      <div class="grid md:grid-cols-4 xl:grid-cols-8">
         <button
           v-for="tab in tabs"
           :key="tab.key"
@@ -1285,6 +1354,105 @@ onBeforeUnmount(() => {
                   <td class="px-3 py-2">
                     {{ item.reason }}
                   </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </template>
+    </section>
+
+
+    <section v-else-if="activeTab === 'meeting'" class="space-y-3">
+      <section v-if="loadingByTab.meeting && !meetingRuntime" class="p-3 border border-slate-200 bg-white">
+        <a-skeleton :animation="true">
+          <a-skeleton-line :rows="10" />
+        </a-skeleton>
+      </section>
+      <section v-else-if="errorByTab.meeting" class="text-rose-700 p-3 border border-rose-200 bg-rose-50">
+        {{ errorByTab.meeting }}
+      </section>
+      <template v-else-if="meetingRuntime">
+        <section class="text-sky-700 p-3 border border-sky-200 bg-sky-50">
+          Prometheus 只读聚合，30 秒自动刷新；后台不执行 SSH，也不直连 Docker socket。
+        </section>
+
+        <section v-if="meetingRuntime.issues.length" class="text-amber-700 p-3 border border-amber-200 bg-amber-50 space-y-1">
+          <p v-for="item in meetingRuntime.issues" :key="item">
+            {{ item }}
+          </p>
+        </section>
+
+        <section class="gap-2 grid md:grid-cols-3 xl:grid-cols-5">
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">CPU</p>
+            <p class="text-[16px] font-bold mt-2">{{ formatPercent(meetingRuntime.host.cpuUsagePercent) }}</p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">内存</p>
+            <p class="text-[16px] font-bold mt-2">{{ formatPercent(meetingRuntime.host.memoryUsagePercent) }}</p>
+            <p class="text-[10px] text-slate-500 mt-1">{{ formatBytes(meetingRuntime.host.memoryUsedBytes) }} / {{ formatBytes(meetingRuntime.host.memoryTotalBytes) }}</p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">出站带宽</p>
+            <p class="text-[16px] font-bold mt-2">{{ formatRate(meetingRuntime.host.networkTxBytesPerSecond) }}</p>
+            <p class="text-[10px] text-slate-500 mt-1">累计 {{ formatBytes(meetingRuntime.host.networkTxTotalBytes) }}</p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">在线参会</p>
+            <p class="text-[16px] font-bold mt-2">{{ formatNumber(meetingRuntime.livekit.participantCount) }}</p>
+            <p class="text-[10px] text-slate-500 mt-1">房间 {{ formatNumber(meetingRuntime.livekit.roomCount) }}</p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">5人容量</p>
+            <p class="text-[16px] font-bold mt-2">{{ meetingRuntime.capacity.estimatedSafeParticipantCount }} / {{ meetingRuntime.capacity.maxExpectedParticipants }}</p>
+            <p class="text-[10px] text-slate-500 mt-1">{{ healthLabel(meetingRuntime.capacity.health) }} / {{ meetingRuntime.capacity.bottleneck }}</p>
+          </div>
+        </section>
+
+        <section class="gap-3 grid xl:grid-cols-[1fr,1fr]">
+          <div class="border border-slate-200 bg-white overflow-hidden">
+            <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">LiveKit / Egress</div>
+            <div class="overflow-auto">
+              <table class="text-[11px] min-w-full">
+                <tbody>
+                  <tr class="border-b border-slate-100"><td class="px-3 py-2 text-slate-500">LiveKit 入/出站</td><td class="px-3 py-2">{{ formatRate(meetingRuntime.livekit.inboundBytesPerSecond) }} / {{ formatRate(meetingRuntime.livekit.outboundBytesPerSecond) }}</td></tr>
+                  <tr class="border-b border-slate-100"><td class="px-3 py-2 text-slate-500">轨道发布/订阅</td><td class="px-3 py-2">{{ formatNumber(meetingRuntime.livekit.publishedTrackCount) }} / {{ formatNumber(meetingRuntime.livekit.subscribedTrackCount) }}</td></tr>
+                  <tr class="border-b border-slate-100"><td class="px-3 py-2 text-slate-500">丢包 / RTT</td><td class="px-3 py-2">{{ formatPercent(meetingRuntime.livekit.packetLossPercent) }} / {{ formatNumber(meetingRuntime.livekit.rttMs) }} ms</td></tr>
+                  <tr class="border-b border-slate-100"><td class="px-3 py-2 text-slate-500">Egress 运行/失败</td><td class="px-3 py-2">{{ formatNumber(meetingRuntime.egress.activeTaskCount) }} / {{ formatNumber(meetingRuntime.egress.failedTaskCount) }}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="border border-slate-200 bg-white overflow-hidden">
+            <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">Health</div>
+            <div class="overflow-auto">
+              <table class="text-[11px] min-w-full">
+                <thead class="text-slate-500 bg-white"><tr><th class="px-3 py-2 text-left border-b border-slate-200">服务</th><th class="px-3 py-2 text-left border-b border-slate-200">状态</th><th class="px-3 py-2 text-left border-b border-slate-200">说明</th></tr></thead>
+                <tbody>
+                  <tr v-for="item in meetingRuntime.health" :key="item.key" class="border-b border-slate-100">
+                    <td class="px-3 py-2">{{ item.label }}</td>
+                    <td class="px-3 py-2"><span class="text-[10px] px-2 py-1 border" :class="toneClass(item.health)">{{ item.status }}</span></td>
+                    <td class="px-3 py-2">{{ item.detail }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="border border-slate-200 bg-white overflow-hidden">
+          <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">Containers / 最近 {{ formatDateTime(meetingRuntime.generatedAt) }}</div>
+          <div class="overflow-auto">
+            <table class="text-[11px] min-w-full">
+              <thead class="text-slate-500 bg-white"><tr><th class="px-3 py-2 text-left border-b border-slate-200">容器</th><th class="px-3 py-2 text-left border-b border-slate-200">CPU</th><th class="px-3 py-2 text-left border-b border-slate-200">内存</th><th class="px-3 py-2 text-left border-b border-slate-200">入/出站</th></tr></thead>
+              <tbody>
+                <tr v-for="item in meetingRuntime.containers" :key="item.key" class="border-b border-slate-100">
+                  <td class="px-3 py-2">{{ item.label }}</td>
+                  <td class="px-3 py-2">{{ formatPercent(item.cpuUsagePercent) }}</td>
+                  <td class="px-3 py-2">{{ formatBytes(item.memoryUsageBytes) }}</td>
+                  <td class="px-3 py-2">{{ formatRate(item.networkRxBytesPerSecond) }} / {{ formatRate(item.networkTxBytesPerSecond) }}</td>
                 </tr>
               </tbody>
             </table>

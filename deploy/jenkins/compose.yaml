@@ -28,7 +28,149 @@ services:
       retries: 3
       start_period: 20s
 
+  meeting-redis:
+    image: ${MEETING_REDIS_IMAGE:-redis:7-alpine}
+    restart: unless-stopped
+    profiles:
+      - meeting
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+    volumes:
+      - ${MEETING_DATA_HOST_DIR:-./meeting-data}/redis:/data
+    networks:
+      - meeting-internal
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  livekit:
+    image: ${MEETING_LIVEKIT_IMAGE:-livekit/livekit-server:latest}
+    restart: unless-stopped
+    profiles:
+      - meeting
+    depends_on:
+      meeting-redis:
+        condition: service_healthy
+    command:
+      - --config
+      - /etc/livekit/livekit.yaml
+    ports:
+      - ${MEETING_LIVEKIT_HTTP_PORT:-7880}:7880/tcp
+      - ${MEETING_LIVEKIT_TCP_PORT:-7881}:7881/tcp
+      - ${MEETING_LIVEKIT_RTC_UDP_RANGE:-50000-50100}:${MEETING_LIVEKIT_RTC_UDP_RANGE:-50000-50100}/udp
+    volumes:
+      - ${MEETING_LIVEKIT_CONFIG_FILE:-./livekit.yaml}:/etc/livekit/livekit.yaml:ro
+    networks:
+      meeting-internal:
+      app-external:
+        aliases:
+          - meeting-livekit
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1:7880 || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+
+  egress:
+    image: ${MEETING_LIVEKIT_EGRESS_IMAGE:-livekit/egress:latest}
+    restart: unless-stopped
+    profiles:
+      - egress
+    depends_on:
+      meeting-redis:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    environment:
+      EGRESS_CONFIG_FILE: /etc/livekit/egress.yaml
+    volumes:
+      - ${MEETING_EGRESS_CONFIG_FILE:-./egress.yaml}:/etc/livekit/egress.yaml:ro
+      - ${MEETING_EGRESS_OUTPUT_HOST_DIR:-./meeting-data/egress}:/tmp/winloop-meeting-egress
+    cap_add:
+      - SYS_ADMIN
+    networks:
+      - meeting-internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1:8089 || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+
+  prometheus:
+    image: ${MEETING_PROMETHEUS_IMAGE:-prom/prometheus:v2.55.1}
+    restart: unless-stopped
+    profiles:
+      - meeting
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${MEETING_PROMETHEUS_RETENTION:-7d}
+      - --web.enable-lifecycle
+    ports:
+      - 127.0.0.1:${MEETING_PROMETHEUS_HOST_PORT:-9091}:9090/tcp
+    volumes:
+      - ${MEETING_PROMETHEUS_CONFIG_FILE:-./prometheus.yml}:/etc/prometheus/prometheus.yml:ro
+      - ${MEETING_DATA_HOST_DIR:-./meeting-data}/prometheus:/prometheus
+    networks:
+      meeting-internal:
+      app-external:
+        aliases:
+          - meeting-prometheus
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://127.0.0.1:9090/-/ready || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+
+  node-exporter:
+    image: ${MEETING_NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.8.2}
+    restart: unless-stopped
+    profiles:
+      - meeting
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/docker/netns)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - meeting-internal
+
+  cadvisor:
+    image: ${MEETING_CADVISOR_IMAGE:-ghcr.io/google/cadvisor:0.56.2}
+    restart: unless-stopped
+    profiles:
+      - meeting
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    networks:
+      - meeting-internal
+
 networks:
+  meeting-internal:
   app-external:
     name: ${DOCKER_EXTERNAL_NETWORK:-1panel-network}
     external: true

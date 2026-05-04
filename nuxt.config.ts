@@ -213,6 +213,9 @@ export default defineNuxtConfig({
         batchSize: resolveEnvNumber('WINLOOP_MEETING_WORKER_BATCH_SIZE', 6),
         maxAttempts: resolveEnvNumber('WINLOOP_MEETING_WORKER_MAX_ATTEMPTS', 5),
       },
+      monitoring: {
+        prometheusBaseUrl: resolveEnvValue('WINLOOP_MEETING_MONITORING_PROMETHEUS_BASE_URL', ''),
+      },
     },
     defenseRealtime: {
       qwen: {

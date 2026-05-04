@@ -260,6 +260,190 @@ check_health() {
   return 1
 }
 
+generate_secret_token() {
+  python3 - <<'PY'
+import secrets
+
+print(secrets.token_urlsafe(32))
+PY
+}
+
+generate_livekit_api_key() {
+  python3 - "$DEPLOY_ENV" <<'PY'
+import re
+import secrets
+import sys
+
+env = re.sub(r"[^a-z0-9_]+", "_", sys.argv[1].lower()).strip("_") or "staging"
+print(f"{env[:16]}_{secrets.token_hex(6)}")
+PY
+}
+
+read_existing_livekit_credential() {
+  local config_file="$1"
+  local field="$2"
+  if [[ ! -f "$config_file" ]]; then
+    return 0
+  fi
+
+  python3 - "$config_file" "$field" <<'PY'
+import pathlib
+import sys
+
+config_file = pathlib.Path(sys.argv[1])
+field = sys.argv[2]
+lines = config_file.read_text(encoding="utf-8").splitlines()
+inside_keys = False
+for line in lines:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if stripped == "keys:":
+        inside_keys = True
+        continue
+    if inside_keys and not line.startswith((" ", "\t")):
+        break
+    if inside_keys and ":" in stripped:
+        key, secret = stripped.split(":", 1)
+        print(key.strip() if field == "key" else secret.strip().strip("'\""))
+        break
+PY
+}
+
+normalize_port_range() {
+  local raw_range="$1"
+  if [[ ! "$raw_range" =~ ^[0-9]+-[0-9]+$ ]]; then
+    error "MEETING_LIVEKIT_RTC_UDP_RANGE must use <start>-<end>, got: $raw_range"
+    exit 1
+  fi
+
+  MEETING_LIVEKIT_RTC_UDP_START="${raw_range%-*}"
+  MEETING_LIVEKIT_RTC_UDP_END="${raw_range#*-}"
+  if (( MEETING_LIVEKIT_RTC_UDP_START > MEETING_LIVEKIT_RTC_UDP_END )); then
+    error "MEETING_LIVEKIT_RTC_UDP_RANGE start must be <= end: $raw_range"
+    exit 1
+  fi
+}
+
+write_meeting_configs() {
+  local existing_key=""
+  local existing_secret=""
+  local prometheus_egress_scrape=""
+
+  MEETING_LIVEKIT_CONFIG_FILE_PATH="$(resolve_path "${MEETING_LIVEKIT_CONFIG_FILE:-livekit.yaml}" "$TARGET_DIR")"
+  MEETING_EGRESS_CONFIG_FILE_PATH="$(resolve_path "${MEETING_EGRESS_CONFIG_FILE:-egress.yaml}" "$TARGET_DIR")"
+  MEETING_PROMETHEUS_CONFIG_FILE_PATH="$(resolve_path "${MEETING_PROMETHEUS_CONFIG_FILE:-prometheus.yml}" "$TARGET_DIR")"
+  MEETING_DATA_HOST_DIR_PATH="$(resolve_path "${MEETING_DATA_HOST_DIR:-./meeting-data}" "$TARGET_DIR")"
+  MEETING_EGRESS_OUTPUT_HOST_DIR_PATH="$(resolve_path "${MEETING_EGRESS_OUTPUT_HOST_DIR:-${MEETING_DATA_HOST_DIR_PATH}/egress}" "$TARGET_DIR")"
+
+  existing_key="$(read_existing_livekit_credential "$MEETING_LIVEKIT_CONFIG_FILE_PATH" key || true)"
+  existing_secret="$(read_existing_livekit_credential "$MEETING_LIVEKIT_CONFIG_FILE_PATH" secret || true)"
+
+  MEETING_LIVEKIT_API_KEY="${MEETING_LIVEKIT_API_KEY:-$existing_key}"
+  MEETING_LIVEKIT_API_SECRET="${MEETING_LIVEKIT_API_SECRET:-$existing_secret}"
+  MEETING_LIVEKIT_API_KEY="${MEETING_LIVEKIT_API_KEY:-$(generate_livekit_api_key)}"
+  MEETING_LIVEKIT_API_SECRET="${MEETING_LIVEKIT_API_SECRET:-$(generate_secret_token)}"
+  MEETING_LIVEKIT_USE_EXTERNAL_IP="$(to_bool "${MEETING_LIVEKIT_USE_EXTERNAL_IP:-true}")"
+  MEETING_LIVEKIT_LOG_LEVEL="${MEETING_LIVEKIT_LOG_LEVEL:-info}"
+  MEETING_LIVEKIT_WEBHOOK_URL="${MEETING_LIVEKIT_WEBHOOK_URL:-http://${SERVICE_NAME}:3000/api/internal/meetings/provider-events}"
+  MEETING_LIVEKIT_RTC_UDP_RANGE="${MEETING_LIVEKIT_RTC_UDP_RANGE:-50000-50100}"
+  normalize_port_range "$MEETING_LIVEKIT_RTC_UDP_RANGE"
+
+  mkdir -p \
+    "$(dirname "$MEETING_LIVEKIT_CONFIG_FILE_PATH")" \
+    "$(dirname "$MEETING_EGRESS_CONFIG_FILE_PATH")" \
+    "$(dirname "$MEETING_PROMETHEUS_CONFIG_FILE_PATH")" \
+    "${MEETING_DATA_HOST_DIR_PATH}/redis" \
+    "${MEETING_DATA_HOST_DIR_PATH}/prometheus" \
+    "$MEETING_EGRESS_OUTPUT_HOST_DIR_PATH"
+
+  cat > "$MEETING_LIVEKIT_CONFIG_FILE_PATH" <<EOF_LIVEKIT
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: ${MEETING_LIVEKIT_RTC_UDP_START}
+  port_range_end: ${MEETING_LIVEKIT_RTC_UDP_END}
+  use_external_ip: ${MEETING_LIVEKIT_USE_EXTERNAL_IP}
+
+redis:
+  address: meeting-redis:6379
+
+keys:
+  ${MEETING_LIVEKIT_API_KEY}: ${MEETING_LIVEKIT_API_SECRET}
+
+room:
+  auto_create: true
+
+webhook:
+  api_key: ${MEETING_LIVEKIT_API_KEY}
+  urls:
+    - ${MEETING_LIVEKIT_WEBHOOK_URL}
+
+prometheus:
+  port: 6789
+
+logging:
+  level: ${MEETING_LIVEKIT_LOG_LEVEL}
+EOF_LIVEKIT
+  chmod 0600 "$MEETING_LIVEKIT_CONFIG_FILE_PATH"
+
+  cat > "$MEETING_EGRESS_CONFIG_FILE_PATH" <<EOF_EGRESS
+api_key: ${MEETING_LIVEKIT_API_KEY}
+api_secret: ${MEETING_LIVEKIT_API_SECRET}
+ws_url: ws://livekit:7880
+
+redis:
+  address: meeting-redis:6379
+
+health_port: 8089
+
+logging:
+  level: ${MEETING_LIVEKIT_LOG_LEVEL}
+EOF_EGRESS
+  chmod 0600 "$MEETING_EGRESS_CONFIG_FILE_PATH"
+
+  if [[ "$MEETING_EGRESS_ENABLED" == "true" ]]; then
+    prometheus_egress_scrape='
+  - job_name: egress
+    static_configs:
+      - targets: ["egress:8089"]'
+  fi
+
+  cat > "$MEETING_PROMETHEUS_CONFIG_FILE_PATH" <<EOF_PROMETHEUS
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: livekit
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["livekit:6789"]${prometheus_egress_scrape}
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+EOF_PROMETHEUS
+  chmod 0644 "$MEETING_PROMETHEUS_CONFIG_FILE_PATH"
+
+  MEETING_LIVEKIT_CONFIG_FILE="$MEETING_LIVEKIT_CONFIG_FILE_PATH"
+  MEETING_EGRESS_CONFIG_FILE="$MEETING_EGRESS_CONFIG_FILE_PATH"
+  MEETING_PROMETHEUS_CONFIG_FILE="$MEETING_PROMETHEUS_CONFIG_FILE_PATH"
+  MEETING_DATA_HOST_DIR="$MEETING_DATA_HOST_DIR_PATH"
+  MEETING_EGRESS_OUTPUT_HOST_DIR="$MEETING_EGRESS_OUTPUT_HOST_DIR_PATH"
+  export MEETING_LIVEKIT_CONFIG_FILE MEETING_EGRESS_CONFIG_FILE MEETING_PROMETHEUS_CONFIG_FILE
+  export MEETING_DATA_HOST_DIR MEETING_EGRESS_OUTPUT_HOST_DIR
+}
+
 write_report() {
   python3 - "$REPORT_FILE" <<'PY'
 import json
@@ -293,6 +477,17 @@ PY
 compose_with_override() {
   "${COMPOSE_CMD[@]}" --project-name "$COMPOSE_PROJECT_NAME" -f "$TARGET_COMPOSE_PATH" -f "$OVERRIDE_FILE" "$@"
 }
+
+compose_with_meeting_profiles() {
+  local -a profile_args=(--profile meeting)
+  local -a services=(meeting-redis livekit prometheus node-exporter cadvisor)
+  if [[ "$MEETING_EGRESS_ENABLED" == "true" ]]; then
+    profile_args+=(--profile egress)
+    services+=(egress)
+  fi
+  "${COMPOSE_CMD[@]}" "${profile_args[@]}" --project-name "$COMPOSE_PROJECT_NAME" -f "$TARGET_COMPOSE_PATH" -f "$OVERRIDE_FILE" "$@" "${services[@]}"
+}
+
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_ENV=""
@@ -435,6 +630,12 @@ HEALTHCHECK_ATTEMPTS="${HEALTHCHECK_ATTEMPTS:-20}"
 HEALTHCHECK_INTERVAL_SEC="${HEALTHCHECK_INTERVAL_SEC:-3}"
 ROLLBACK_ON_FAILURE="$(to_bool "${ROLLBACK_ON_FAILURE:-true}")"
 FORCE_RECREATE="$(to_bool "${FORCE_RECREATE:-true}")"
+MEETING_STACK_ENABLED_DEFAULT="false"
+if [[ "$DEPLOY_ENV" == "staging" ]]; then
+  MEETING_STACK_ENABLED_DEFAULT="true"
+fi
+MEETING_STACK_ENABLED="$(to_bool "${MEETING_STACK_ENABLED:-$MEETING_STACK_ENABLED_DEFAULT}")"
+MEETING_EGRESS_ENABLED="$(to_bool "${MEETING_EGRESS_ENABLED:-false}")"
 STORAGE_HOST_DIR="${STORAGE_HOST_DIR:-./storage}"
 RUNTIME_ENV_FILE_PATH="$(resolve_path "$RUNTIME_ENV_FILE" "$TARGET_DIR")"
 DB_MIGRATION_DIR="${DB_MIGRATION_DIR:-}"
@@ -468,6 +669,9 @@ if [[ "$STORAGE_HOST_DIR" == /* ]]; then
 else
   mkdir -p "$(resolve_path "$STORAGE_HOST_DIR" "$TARGET_DIR")"
 fi
+if [[ "$MEETING_STACK_ENABLED" == "true" ]]; then
+  write_meeting_configs
+fi
 
 REPORT_STAGE="sync_compose"
 install -m 0644 "$TEMPLATE_FILE" "$TARGET_COMPOSE_PATH"
@@ -489,13 +693,20 @@ OVERRIDE_FILE="$(mktemp)"
 
 write_override() {
   local target_image_ref="$1"
+  local meeting_runtime_env=""
+  if [[ "${MEETING_STACK_ENABLED:-false}" == "true" ]]; then
+    meeting_runtime_env="
+      WINLOOP_MEETING_RTC_API_KEY: ${MEETING_LIVEKIT_API_KEY}
+      WINLOOP_MEETING_RTC_API_SECRET: ${MEETING_LIVEKIT_API_SECRET}"
+  fi
+
   cat > "$OVERRIDE_FILE" <<EOF_OVERRIDE
 services:
   ${SERVICE_NAME}:
     image: ${target_image_ref}
     environment:
       WINLOOP_BUILD_VERSION: ${BUILD_VERSION}
-      WINLOOP_BUILD_COMMIT_SHA: ${BUILD_COMMIT_SHA}
+      WINLOOP_BUILD_COMMIT_SHA: ${BUILD_COMMIT_SHA}${meeting_runtime_env}
 EOF_OVERRIDE
 }
 
@@ -520,6 +731,14 @@ if [[ "$FORCE_RECREATE" == "true" ]]; then
   compose_with_override up -d --force-recreate "$SERVICE_NAME"
 else
   compose_with_override up -d "$SERVICE_NAME"
+fi
+if [[ "$MEETING_STACK_ENABLED" == "true" ]]; then
+  REPORT_STAGE="deploy_meeting"
+  if [[ "$FORCE_RECREATE" == "true" ]]; then
+    compose_with_meeting_profiles up -d --force-recreate
+  else
+    compose_with_meeting_profiles up -d
+  fi
 fi
 
 REPORT_STAGE="healthcheck"
@@ -560,6 +779,9 @@ if [[ "$FORCE_RECREATE" == "true" ]]; then
   compose_with_override up -d --force-recreate "$SERVICE_NAME"
 else
   compose_with_override up -d "$SERVICE_NAME"
+fi
+if [[ "$MEETING_STACK_ENABLED" == "true" ]]; then
+  compose_with_meeting_profiles up -d || true
 fi
 
 if check_health; then

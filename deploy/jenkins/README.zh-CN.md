@@ -98,6 +98,12 @@ DB_MIGRATION_DIR=
 DB_MIGRATION_FILES=
 DB_MIGRATION_CLIENT_IMAGE=postgres:18-alpine
 DB_MIGRATION_NETWORK=1panel-network
+MEETING_STACK_ENABLED=true
+MEETING_EGRESS_ENABLED=false
+MEETING_LIVEKIT_HTTP_PORT=7880
+MEETING_LIVEKIT_TCP_PORT=7881
+MEETING_LIVEKIT_RTC_UDP_RANGE=50000-50100
+MEETING_PROMETHEUS_HOST_PORT=9091
 ```
 
 其中：
@@ -106,6 +112,9 @@ DB_MIGRATION_NETWORK=1panel-network
 - 如果 PostgreSQL / Redis / PgBouncer 通过容器名互联，应用必须与这些基础容器处于同一个外部网络
 - `DB_MIGRATION_*` 为可选项；默认会自动发现远端工作区里的 `scripts/migrations/*.sql`
 - 迁移不会参与自动回滚，因此所有上线 SQL 必须保持向后兼容或显式幂等
+- `MEETING_STACK_ENABLED=true` 时，标准 staging 部署会同时启动 LiveKit、meeting Redis、Prometheus、node-exporter、cAdvisor
+- `MEETING_EGRESS_ENABLED=false` 是首轮默认值；录制压测阶段再打开 Egress profile
+- LiveKit 默认暴露 `7880/tcp`、`7881/tcp`、`50000-50100/udp`；Prometheus 只绑定宿主 `127.0.0.1:9091`
 
 production 只需要改成独立的：
 
@@ -124,6 +133,7 @@ production 只需要改成独立的：
 - `WINLOOP_PUBLIC_BASE_URL`
 - `WINLOOP_API_BASE_URL`
 - `WINLOOP_ONLYOFFICE_ENDPOINT` / `WINLOOP_ONLYOFFICE_JWT_SECRET`（如果启用再配）
+- `WINLOOP_MEETING_MONITORING_PROMETHEUS_BASE_URL`（staging 默认 `http://meeting-prometheus:9090`）
 - `WINLOOP_SENTRY_DSN` / `WINLOOP_SENTRY_ENVIRONMENT`（如果启用 Sentry 再配）
 
 资源回收 worker 参数已改为后台 UI 管理，不再通过 `.env.runtime` 配置。
