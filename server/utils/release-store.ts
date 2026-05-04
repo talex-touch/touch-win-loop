@@ -2064,6 +2064,10 @@ export async function getContestReleasePublishCheck(
       })
     : null
   const existingExternalRefContestId = normalizeText(existingExternalRef?.entityId)
+  const currentContestIds = normalizeStringArray([
+    currentContestId,
+    existingExternalRefContestId,
+  ])
   if (existingExternalRefContestId && currentContestId && existingExternalRefContestId !== currentContestId) {
     pushBlocker(
       'CONTEST_DUPLICATED',
@@ -2078,13 +2082,12 @@ export async function getContestReleasePublishCheck(
   }
 
   if (hasName) {
-    const compareContestId = currentContestId || existingExternalRefContestId
     const rows = await db.query<{ id: string, name: string }>(
       `SELECT id, name
        FROM contests
        WHERE status <> 'archived'
-         AND id <> $1`,
-      [compareContestId || ''],
+         AND NOT (id = ANY($1::TEXT[]))`,
+      [currentContestIds],
     )
     const duplicate = rows.rows.find(row => normalizeCompareValue(row.name) === normalizeCompareValue(contest.name))
     if (duplicate) {

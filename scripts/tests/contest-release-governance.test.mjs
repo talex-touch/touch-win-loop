@@ -214,6 +214,27 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.doesNotMatch(workbenchSource, /<pre v-if="Object\.keys\(item\.payload \|\| \{\}\)\.length"[\s\S]*JSON\.stringify\(item\.payload/, '审批日志列表不应直接展开 payload')
   })
 
+  it('公开赛事页遵守竞赛库与赛道库字段边界', async () => {
+    const [listPageSource, detailPageSource] = await Promise.all([
+      readSource('app/pages/contests/index.vue'),
+      readSource('app/pages/contests/[id].vue'),
+    ])
+
+    assert.match(listPageSource, /placeholder="搜索赛事名称\/关键词\/赛道"/, '公开赛事列表搜索不应继续提示主办方')
+    assert.doesNotMatch(listPageSource, /主办方：\{\{\s*trimText\(contest\.organizer\)/, '公开赛事列表卡片不应展示竞赛级主办方')
+    assert.match(listPageSource, /赛道：\{\{\s*resolveTrackNames\(contest\)\s*\}\}/, '公开赛事列表应使用赛道名称补充上下文')
+    assert.match(listPageSource, /时间节点：报名/, '公开赛事列表应把报名窗口标注为时间节点报名信息')
+    assert.doesNotMatch(listPageSource, /const requiredFields = \[[\s\S]*contest\.organizer[\s\S]*contest\.participantRequirements[\s\S]*contest\.teamRule[\s\S]*\]/, '公开赛事列表缺失统计不应包含赛道库字段')
+
+    assert.doesNotMatch(detailPageSource, /主办方：\{\{\s*contest\.organizer/, '公开详情顶部不应展示竞赛级主办方')
+    assert.doesNotMatch(detailPageSource, /届次：\{\{\s*contest\.currentSeason/, '公开详情顶部不应展示竞赛级届次')
+    assert.match(detailPageSource, /aggregateTrackField\('participantRequirements'\)/, '公开详情概览参赛对象应从赛道聚合')
+    assert.match(detailPageSource, /aggregateTrackField\('teamRule'\)/, '公开详情概览组队规则应从赛道聚合')
+    assert.match(detailPageSource, /主办方：\{\{\s*formatTrackField\(track, 'organizer'\)/, '公开详情赛道卡片应展示赛道主办方')
+    assert.match(detailPageSource, /参赛对象：\{\{\s*formatTrackField\(track, 'participantRequirements'\)/, '公开详情赛道卡片应展示赛道参赛对象')
+    assert.match(detailPageSource, /组队规则：\{\{\s*formatTrackField\(track, 'teamRule'\)/, '公开详情赛道卡片应展示赛道组队规则')
+  })
+
   it('政策库审批快照按平台字段分组展示', async () => {
     const [workbenchSource, policyPageSource] = await Promise.all([
       readSource('app/components/admin/AdminReleaseWorkbench.vue'),

@@ -105,9 +105,21 @@ function resolveContestVisual(index: number): ContestVisual {
   return contestVisuals[index % contestVisuals.length] || contestVisuals[0]!
 }
 
-function trimText(value: string | undefined, fallback = '待补充') {
-  const normalized = String(value || '').trim()
-  return normalized || fallback
+function joinUniqueText(values: Array<string | undefined>, fallback = '待补充') {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const normalized = String(value || '').trim()
+    if (!normalized || seen.has(normalized))
+      continue
+    seen.add(normalized)
+    result.push(normalized)
+  }
+  return result.length > 0 ? result.join(' / ') : fallback
+}
+
+function resolveTrackNames(contest: Contest) {
+  return joinUniqueText(contest.tracks.map(track => track.name), '暂无赛道')
 }
 
 function formatDateToken(value: string | undefined) {
@@ -126,14 +138,19 @@ function formatRegistrationWindow(value: string | undefined) {
   return `${formatDateToken(dates[0])} - ${formatDateToken(dates[1])}`
 }
 
+function formatRegistrationNode(value: string | undefined) {
+  const normalized = formatRegistrationWindow(value)
+  return normalized === '待补充' ? '报名节点：待补充' : `时间节点：报名 ${normalized}`
+}
+
 function resolveMissingFieldCount(contest: Contest) {
   const requiredFields = [
-    contest.organizer,
     contest.registrationWindow,
     contest.submissionDeadline,
     contest.summary,
-    contest.participantRequirements,
-    contest.teamRule,
+    contest.level,
+    contest.officialUrl,
+    ...(contest.disciplines || []),
   ]
   return requiredFields.filter(item => !String(item || '').trim()).length
 }
@@ -166,7 +183,7 @@ onMounted(loadContests)
             <input
               v-model="search"
               class="contest-control contest-control--with-icon"
-              placeholder="搜索赛事名称/主办方/关键词"
+              placeholder="搜索赛事名称/关键词/赛道"
               @keydown.enter="loadContests"
             >
           </label>
@@ -307,11 +324,11 @@ onMounted(loadContests)
 
             <div class="contest-card__copy">
               <h2>{{ contest.name }}</h2>
-              <p class="contest-card__organizer">
-                主办方：{{ trimText(contest.organizer) }}
+              <p class="contest-card__tracks">
+                赛道：{{ resolveTrackNames(contest) }}
               </p>
               <p class="contest-card__time">
-                报名时间：{{ formatRegistrationWindow(contest.registrationWindow) }}
+                {{ formatRegistrationNode(contest.registrationWindow) }}
               </p>
             </div>
           </div>
@@ -340,6 +357,17 @@ onMounted(loadContests)
   min-height: calc(100vh - 64px);
   padding: 30px 32px 40px;
   color: #172033;
+  font-family:
+    Inter,
+    'PingFang SC',
+    'Microsoft YaHei',
+    'Noto Sans CJK SC',
+    'Source Han Sans SC',
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   font-size: 14px;
   line-height: 1.5;
   background:
@@ -396,7 +424,7 @@ onMounted(loadContests)
   color: #101a33;
   font-size: 24px;
   font-weight: 800;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   line-height: 1.16;
 }
 
@@ -710,22 +738,22 @@ onMounted(loadContests)
   color: #172033;
   font-size: 16px;
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
   line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
-.contest-card__organizer,
+.contest-card__tracks,
 .contest-card__time {
   margin: 0;
-  color: #8390a7;
-  font-size: 14px;
+  color: #66758d;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.5;
 }
 
-.contest-card__organizer {
+.contest-card__tracks {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;

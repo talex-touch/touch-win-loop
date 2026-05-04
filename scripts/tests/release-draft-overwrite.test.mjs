@@ -649,6 +649,86 @@ describe('release draft 覆盖与审批边界', () => {
     )
   })
 
+  databaseTest('发布校验不会把 external ref 绑定的当前 live 竞赛误判为重名重复', async () => {
+    await tempPool.query(
+      `INSERT INTO contests (
+        id,
+        name,
+        level,
+        official_url,
+        summary,
+        participant_requirements,
+        current_season,
+        status,
+        visibility,
+        disciplines,
+        recommended_for,
+        keywords,
+        created_by_user_id,
+        updated_by_user_id
+      ) VALUES (
+        'contest_live_self',
+        '聚合测试竞赛',
+        'national',
+        'https://example.test/contest',
+        '已发布 live 竞赛。',
+        '大学生',
+        '2026',
+        'published',
+        'public',
+        ARRAY['英语'],
+        ARRAY['大学生'],
+        ARRAY['演讲'],
+        $1,
+        $1
+      )`,
+      [ACTOR_USER_ID],
+    )
+    await tempPool.query(
+      `INSERT INTO feishu_external_refs (
+        id,
+        provider,
+        scope,
+        external_id,
+        entity_id,
+        metadata
+      ) VALUES (
+        'ref_contest_live_self',
+        'feishu_bitable',
+        'contest',
+        'contest_ext_agg',
+        'contest_live_self',
+        '{}'::JSONB
+      )`,
+    )
+
+    const draft = await createContestEntityDraft(tempPool, {
+      syncItemId: 'sync_item_contest_self_duplicate',
+      runId: 'run_contest_self_duplicate_1',
+      entityType: 'contest',
+      contestExternalId: 'contest_ext_agg',
+      scopeTitle: '聚合测试竞赛',
+      contest: buildContestSnapshot(),
+      track: buildTrackSnapshot(),
+      timelines: [buildContestTimeline()],
+    })
+    assert.ok(draft.version, '竞赛草稿应生成')
+
+    const publishCheck = await getContestReleasePublishCheck(tempPool, {
+      version: {
+        ...draft.version,
+        liveEntityId: null,
+      },
+    })
+
+    assert.ok(publishCheck, '竞赛版本应返回发布校验结果')
+    assert.equal(
+      publishCheck.blockers.some(item => item.code === 'CONTEST_DUPLICATED'),
+      false,
+      '无 liveEntityId 的版本应通过 external ref 排除当前 live 竞赛，不能把自己判成重复',
+    )
+  })
+
   databaseTest('竞赛库同步缺失人工字段时会保留已有竞赛人工字段并标记 preservedFields', async () => {
     const manualContest = buildContestSnapshot({
       organizer: '人工主办单位',
