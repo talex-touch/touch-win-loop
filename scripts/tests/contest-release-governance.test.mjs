@@ -85,9 +85,10 @@ describe('赛事版本流与前台可见性收口', () => {
   })
 
   it('版本详情与审计页已改为发布门禁 + 统一时间线', async () => {
-    const [typeSource, releaseStoreSource, workbenchSource, auditApiSource, auditPageSource] = await Promise.all([
+    const [typeSource, releaseStoreSource, contestStoreSource, workbenchSource, auditApiSource, auditPageSource] = await Promise.all([
       readSource('shared/types/domain-legacy.ts'),
       readSource('server/utils/release-store.ts'),
+      readSource('server/utils/contest-store.ts'),
       readSource('app/components/admin/AdminReleaseWorkbench.vue'),
       readSource('server/api/admin/contests/[id]/audit.get.ts'),
       readSource('app/pages/admin/contests/[id]/audit/index.vue'),
@@ -102,6 +103,11 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(releaseStoreSource, /export async function getContestReleasePublishCheck\(/, 'release-store 未提供版本级发布校验')
     assert.doesNotMatch(releaseStoreSource, /CONTEST_TRACK_NAMES_DUPLICATED/, '发布校验不能按赛道名称阻断合法的同名赛道')
     assert.doesNotMatch(releaseStoreSource, /collectDuplicatedTrackNames/, '发布校验不能按赛道名称收口赛道身份')
+    assert.match(releaseStoreSource, /label: '命中依据'[\s\S]*label: '阻断原因'[\s\S]*label: '建议处理'/, '重复竞赛发布校验应提供可诊断的命中依据、阻断原因和处理建议')
+    assert.match(releaseStoreSource, /唯一编号已被 Feishu external ref 绑定到其他 live 竞赛/, '唯一编号重复校验缺少 external ref 命中解释')
+    assert.doesNotMatch(releaseStoreSource, /赛事名称规范化后与现有未归档竞赛完全一致/, '发布校验不应再按赛事名称判重')
+    assert.doesNotMatch(releaseStoreSource, /normalizeCompareValue\(row\.name\) === normalizeCompareValue\(contest\.name\)/, 'release 发布校验不应按赛事名称绑定竞赛身份')
+    assert.doesNotMatch(contestStoreSource, /normalizeCompareValue\(row\.name\) === normalizeCompareValue\(contest\.name\)/, 'live 发布校验不应按赛事名称绑定竞赛身份')
     assert.match(releaseStoreSource, /export async function listContestWorkflowTimeline\(/, 'release-store 未提供统一流程时间线聚合')
     assert.match(releaseStoreSource, /export async function listContestAuditAggregates\(/, 'release-store 未提供赛事审核统计聚合')
     assert.match(releaseStoreSource, /JOIN release_versions rv ON rv\.id = l\.release_version_id[\s\S]*LEFT JOIN users u ON u\.id = l\.actor_user_id/, '赛事审核统计未从 review logs 联表用户信息')
@@ -482,7 +488,7 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(mappedAttachmentApiSource, /isSafeMappedAttachmentTargetKey/, '映射附件预览 API 缺少 targetKey 基本格式约束')
     assert.match(workbenchSource, /item\.syncSource\?\.recordId/, '赛道时间节点关联未纳入赛道 sync record 口径')
     assert.match(workbenchSource, /item\.syncSource\?\.syncItemId/, '赛道时间节点关联未纳入赛道 sync item 口径')
-    assert.match(workbenchSource, /item\.name/, '赛道时间节点关联未纳入赛道名称口径')
+    assert.doesNotMatch(workbenchSource, /function trackIdentityCandidates[\s\S]*item\.name[\s\S]*function timelineIdentityCandidates/, '赛道时间节点关联不应再使用赛道名称口径')
     assert.match(workbenchSource, /timeline\.externalId/, '赛道时间节点关联未从节点 externalId 兜底识别派生前缀')
     assert.match(bitableSyncSource, /record_id/, '飞书关联记录字段未把 record_id 纳入特殊文本解析')
     assert.match(bitableSyncSource, /record_ids/, '飞书关联记录字段未把 record_ids 纳入特殊文本解析')
