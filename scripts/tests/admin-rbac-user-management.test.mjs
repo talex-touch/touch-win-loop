@@ -107,7 +107,7 @@ it('用户管理与权限页按新权限控制 UI', async () => {
   assert.match(adminLayout, /admin-users[\s\S]*requiredAny: \['user\.read'\]/, 'admin 导航用户管理未改为 user.read')
 })
 
-it('schema 与迁移支持 user_admin 并拒绝多超管静默迁移', async () => {
+it('schema 与迁移支持 user_admin 并把历史多超管收敛为唯一超管', async () => {
   const [schemaSource, migrationSource] = await Promise.all([
     readFile(SCHEMA_FILE, 'utf8'),
     readFile(MIGRATION_FILE, 'utf8'),
@@ -116,6 +116,8 @@ it('schema 与迁移支持 user_admin 并拒绝多超管静默迁移', async () 
   assert.match(schemaSource, /'user_admin'/, 'bootstrap schema 未允许 user_admin')
   assert.match(migrationSource, /ADD CONSTRAINT platform_user_roles_role_check/, '迁移未重建角色 CHECK')
   assert.match(migrationSource, /'user_admin'/, '迁移 CHECK 未允许 user_admin')
-  assert.match(migrationSource, /users u[\s\S]*u\.is_platform_admin = TRUE[\s\S]*'platform_super_admin'/, '迁移未把历史 is_platform_admin 回填到角色表')
-  assert.match(migrationSource, /WHERE \(SELECT COUNT\(\*\) FROM super_admins\) > 1/, '迁移未在多超管时返回校验失败行')
+  assert.match(migrationSource, /winloop_legacy_platform_admins/, '迁移未先记录历史平台管理员')
+  assert.match(migrationSource, /canonical_super_admin[\s\S]*ORDER BY has_super_role DESC, created_at ASC, user_id ASC/, '迁移未确定性选择唯一超管')
+  assert.match(migrationSource, /'user_admin'[\s\S]*winloop_legacy_platform_admins/, '迁移未把非唯一历史超管收敛为 user_admin')
+  assert.match(migrationSource, /WHERE \(SELECT COUNT\(\*\) FROM super_admins\) <> 1/, '迁移未校验最终刚好一个超管')
 })
