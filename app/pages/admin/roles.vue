@@ -30,7 +30,7 @@ const { endpoint } = useApiEndpoint(runtime)
 
 const loading = ref(true)
 const saving = ref(false)
-const assignDialogVisible = ref(false)
+const assignDrawerVisible = ref(false)
 const errorText = ref('')
 const successText = ref('')
 const data = ref<RoleApiResult | null>(null)
@@ -38,8 +38,7 @@ const page = ref(1)
 const pageSize = ref(10)
 
 const form = reactive({
-  targetUserId: '',
-  platformSuperAdmin: false,
+  targetUserIds: [] as string[],
   userAdmin: false,
   contestAdmin: false,
   pricingAdmin: false,
@@ -54,21 +53,23 @@ const columns = [
 const canAssign = computed(() => {
   return data.value?.current.permissions.includes('role.assign') || false
 })
-const canAssignSuper = computed(() => {
-  return data.value?.current.permissions.includes('role.super.assign') || false
-})
 const userOptions = computed(() => {
-  return (data.value?.users || []).map(user => ({
+  return assignableUsers.value.map(user => ({
     label: `${user.username}（${user.userId}）`,
     value: user.userId,
   }))
 })
-const currentSuperAdmin = computed(() => {
-  return (data.value?.assignments || []).find(item => item.roles.includes('platform_super_admin')) || null
+const assignableUsers = computed(() => {
+  return (data.value?.users || []).filter(user => !user.roles.includes('platform_super_admin'))
 })
-const targetUser = computed(() => {
-  const targetUserId = form.targetUserId.trim()
-  return (data.value?.users || []).find(user => user.userId === targetUserId) || null
+const selectedUserCount = computed(() => form.targetUserIds.length)
+const allAssignableUserIds = computed(() => assignableUsers.value.map(user => user.userId))
+const allAssignableRolesSelected = computed(() => form.userAdmin && form.contestAdmin && form.pricingAdmin)
+const noAssignableRolesSelected = computed(() => !form.userAdmin && !form.contestAdmin && !form.pricingAdmin)
+const selectedRoleLabels = computed(() => selectedRoles())
+const selectedUserPreview = computed(() => {
+  const selected = new Set(form.targetUserIds)
+  return assignableUsers.value.filter(user => selected.has(user.userId)).slice(0, 8)
 })
 
 const pagedAssignments = computed(() => {
@@ -86,8 +87,6 @@ watch([() => data.value?.assignments?.length || 0, pageSize], () => {
 
 function selectedRoles(): PlatformRole[] {
   const roles: PlatformRole[] = []
-  if (form.platformSuperAdmin)
-    roles.push('platform_super_admin')
   if (form.userAdmin)
     roles.push('user_admin')
   if (form.contestAdmin)
@@ -98,29 +97,57 @@ function selectedRoles(): PlatformRole[] {
 }
 
 function fillForm(assignment: PlatformRoleAssignment) {
-  form.targetUserId = assignment.userId
-  form.platformSuperAdmin = assignment.roles.includes('platform_super_admin')
+  if (assignment.roles.includes('platform_super_admin')) {
+    resetForm()
+    return
+  }
+  form.targetUserIds = [assignment.userId]
   form.userAdmin = assignment.roles.includes('user_admin')
   form.contestAdmin = assignment.roles.includes('contest_admin')
   form.pricingAdmin = assignment.roles.includes('pricing_admin')
 }
 
 function resetForm() {
-  form.targetUserId = ''
-  form.platformSuperAdmin = false
+  form.targetUserIds = []
   form.userAdmin = false
   form.contestAdmin = false
   form.pricingAdmin = false
 }
 
-function openCreateDialog() {
+function openCreateDrawer() {
   resetForm()
-  assignDialogVisible.value = true
+  assignDrawerVisible.value = true
 }
 
-function openEditDialog(assignment: PlatformRoleAssignment) {
+function openEditDrawer(assignment: PlatformRoleAssignment) {
   fillForm(assignment)
-  assignDialogVisible.value = true
+  assignDrawerVisible.value = true
+}
+
+function selectAllUsers() {
+  form.targetUserIds = [...allAssignableUserIds.value]
+}
+
+function clearUsers() {
+  form.targetUserIds = []
+}
+
+function selectAllRoles() {
+  form.userAdmin = true
+  form.contestAdmin = true
+  form.pricingAdmin = true
+}
+
+function clearRoles() {
+  form.userAdmin = false
+  form.contestAdmin = false
+  form.pricingAdmin = false
+}
+
+function invertRoles() {
+  form.userAdmin = !form.userAdmin
+  form.contestAdmin = !form.contestAdmin
+  form.pricingAdmin = !form.pricingAdmin
 }
 
 async function loadData() {
@@ -147,13 +174,8 @@ async function loadData() {
 async function submitAssignment() {
   if (!canAssign.value)
     return
-  const targetUserId = form.targetUserId.trim()
-  if (!targetUserId) {
-    errorText.value = 'targetUserId 不能为空。'
-    return
-  }
-  if (form.platformSuperAdmin && !canAssignSuper.value) {
-    errorText.value = '当前账号无权转移唯一平台超管角色。'
+  if (form.targetUserIds.length === 0) {
+    errorText.value = '请至少选择一个目标用户。'
     return
   }
   saving.value = true
@@ -167,16 +189,16 @@ async function submitAssignment() {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        targetUserId,
+        targetUserIds: form.targetUserIds,
         roles: selectedRoles(),
       }),
     })
     const payload = await response.json().catch(() => null) as ApiResponse<unknown> | null
     if (!response.ok || (payload && payload.code !== 0))
       throw new Error(String(payload?.message || '角色分配失败。'))
-    successText.value = '角色分配已更新。'
+    successText.value = `角色分配已更新，共处理 ${form.targetUserIds.length} 个用户。`
     await loadData()
-    assignDialogVisible.value = false
+    assignDrawerVisible.value = false
   }
   catch (error: any) {
     successText.value = ''
@@ -221,8 +243,8 @@ onMounted(loadData)
       <template v-else>
         <section class="p-3 border border-slate-200 bg-white">
           <div class="mb-3 flex items-center justify-end">
-            <a-button size="small" type="primary" @click="openCreateDialog">
-              新建分配
+            <a-button size="small" type="primary" @click="openCreateDrawer">
+              批量分配
             </a-button>
           </div>
           <section>
@@ -259,7 +281,7 @@ onMounted(loadData)
               </template>
 
               <template #actions="{ record }">
-                <a-button size="mini" @click="openEditDialog(record)">
+                <a-button size="mini" :disabled="record.roles.includes('platform_super_admin')" @click="openEditDrawer(record)">
                   编辑
                 </a-button>
               </template>
@@ -289,43 +311,100 @@ onMounted(loadData)
       {{ successText }}
     </section>
 
-    <a-modal
-      v-model:visible="assignDialogVisible"
-      :footer="false"
+    <a-drawer
+      v-model:visible="assignDrawerVisible"
       title="角色分配"
-      width="460px"
+      :width="560"
+      unmount-on-close
     >
-      <div class="text-[11px] space-y-2">
-        <a-select
-          v-model="form.targetUserId"
-          :options="userOptions"
-          allow-search
-          size="small"
-          placeholder="选择目标用户"
-        />
-        <label class="text-[11px] text-slate-700 flex gap-2 items-center">
-          <a-checkbox v-model="form.platformSuperAdmin" :disabled="!canAssignSuper" />
-          platform_super_admin（唯一超管）
-        </label>
-        <p v-if="form.platformSuperAdmin" class="text-[10px] text-rose-600 m-0">
-          超管转移预览：{{ currentSuperAdmin?.username || '当前超管' }} -> {{ targetUser?.username || form.targetUserId || '未选择目标用户' }}
-        </p>
-        <label class="text-[11px] text-slate-700 flex gap-2 items-center">
-          <a-checkbox v-model="form.userAdmin" />
-          user_admin（用户管理）
-        </label>
-        <label class="text-[11px] text-slate-700 flex gap-2 items-center">
-          <a-checkbox v-model="form.contestAdmin" />
-          contest_admin
-        </label>
-        <label class="text-[11px] text-slate-700 flex gap-2 items-center">
-          <a-checkbox v-model="form.pricingAdmin" />
-          pricing_admin
-        </label>
-        <a-button long size="small" :loading="saving" type="primary" @click="submitAssignment">
-          保存角色分配
-        </a-button>
+      <div class="text-[11px] pb-6 space-y-4">
+        <section class="text-amber-800 leading-5 p-3 border border-amber-200 bg-amber-50">
+          此入口只支持分配普通内置角色：user_admin、contest_admin、pricing_admin。platform_super_admin 是唯一超管，不允许在批量分配中授予或移除。
+        </section>
+
+        <section class="space-y-2">
+          <div class="flex items-center justify-between">
+            <p class="text-[10px] text-slate-500 tracking-wider font-bold m-0 uppercase">
+              目标用户
+            </p>
+            <div class="flex gap-2">
+              <a-button size="mini" @click="selectAllUsers">
+                全选用户
+              </a-button>
+              <a-button size="mini" @click="clearUsers">
+                清空
+              </a-button>
+            </div>
+          </div>
+          <a-select
+            v-model="form.targetUserIds"
+            :options="userOptions"
+            allow-search
+            multiple
+            size="small"
+            placeholder="选择一个或多个目标用户"
+          />
+          <p class="text-[10px] text-slate-500 m-0">
+            已选择 {{ selectedUserCount }} 个用户；超管账号会自动排除。
+          </p>
+        </section>
+
+        <section class="space-y-2">
+          <div class="flex items-center justify-between">
+            <p class="text-[10px] text-slate-500 tracking-wider font-bold m-0 uppercase">
+              普通角色
+            </p>
+            <div class="flex gap-2">
+              <a-button size="mini" :disabled="allAssignableRolesSelected" @click="selectAllRoles">
+                全选角色
+              </a-button>
+              <a-button size="mini" @click="invertRoles">
+                反选
+              </a-button>
+              <a-button size="mini" :disabled="noAssignableRolesSelected" @click="clearRoles">
+                清空
+              </a-button>
+            </div>
+          </div>
+          <div class="gap-2 grid">
+            <label class="text-[11px] text-slate-700 flex gap-2 items-center">
+              <a-checkbox v-model="form.userAdmin" />
+              user_admin（用户管理）
+            </label>
+            <label class="text-[11px] text-slate-700 flex gap-2 items-center">
+              <a-checkbox v-model="form.contestAdmin" />
+              contest_admin（赛事内容）
+            </label>
+            <label class="text-[11px] text-slate-700 flex gap-2 items-center">
+              <a-checkbox v-model="form.pricingAdmin" />
+              pricing_admin（套餐计费）
+            </label>
+          </div>
+        </section>
+
+        <section class="p-3 border border-slate-200 bg-slate-50 space-y-2">
+          <p class="text-[10px] text-slate-500 tracking-wider font-bold m-0 uppercase">
+            分配预览
+          </p>
+          <p class="text-[11px] text-slate-700 m-0">
+            将为 {{ selectedUserCount }} 个用户设置角色：{{ selectedRoleLabels.join(', ') || '无平台角色' }}
+          </p>
+          <div v-if="selectedUserPreview.length" class="flex flex-wrap gap-1">
+            <a-tag v-for="user in selectedUserPreview" :key="user.userId" size="small">
+              {{ user.username }}
+            </a-tag>
+          </div>
+        </section>
+
+        <div class="flex gap-2 justify-end">
+          <a-button size="small" @click="assignDrawerVisible = false">
+            取消
+          </a-button>
+          <a-button size="small" :loading="saving" type="primary" :disabled="selectedUserCount === 0" @click="submitAssignment">
+            保存角色分配
+          </a-button>
+        </div>
       </div>
-    </a-modal>
+    </a-drawer>
   </div>
 </template>

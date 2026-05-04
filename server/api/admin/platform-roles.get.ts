@@ -15,14 +15,25 @@ export default defineEventHandler(async (event) => {
   const canAssign = access.permissions.includes('role.assign')
 
   const { assignments, users } = canAssign
-    ? await withClient(event, async db => ({
-        assignments: await listPlatformRoleAssignments(db),
-        users: (await listAdminUsers(db)).map(item => ({
-          userId: item.userId,
-          username: item.username,
-          roles: item.roles,
-        })),
-      }))
+    ? await withClient(event, async (db) => {
+        const adminUsers = await listAdminUsers(db)
+        const roleAssignments = await listPlatformRoleAssignments(db)
+        const assignmentMap = new Map(roleAssignments.map(item => [item.userId, item]))
+        return {
+          assignments: adminUsers.map(item => assignmentMap.get(item.userId) || {
+            userId: item.userId,
+            username: item.username,
+            roles: [],
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+          }),
+          users: adminUsers.map(item => ({
+            userId: item.userId,
+            username: item.username,
+            roles: item.roles,
+          })),
+        }
+      })
     : { assignments: [], users: [] }
 
   return ok({

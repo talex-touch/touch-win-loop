@@ -69,19 +69,20 @@ it('用户管理 API 按拆分后的权限校验', async () => {
   assert.match(magicLink, /userId === user\.id/, 'magic link 未禁止给自己生成')
 })
 
-it('角色分配接口强制超管转移权限与唯一超管', async () => {
+it('角色分配接口只允许批量分配普通内置角色', async () => {
   const [apiSource, storeSource, getSource] = await Promise.all([
     readFile(PLATFORM_ROLES_POST_FILE, 'utf8'),
     readFile(CONTEST_STORE_FILE, 'utf8'),
     readFile(PLATFORM_ROLES_GET_FILE, 'utf8'),
   ])
 
-  assert.match(apiSource, /ALLOWED_ROLES:[\s\S]*'user_admin'/, '角色分配接口未允许 user_admin')
-  assert.match(apiSource, /includes\('platform_super_admin'\)/, '角色分配接口未识别超管变更')
-  assert.match(apiSource, /checkPlatformPermission\(event, user, 'role\.super\.assign'\)/, '角色分配接口未校验 role.super.assign')
-  assert.match(apiSource, /allowSuperAdminTransfer: includesSuperAdmin/, '角色分配接口未把超管转移意图传入 store')
+  assert.match(apiSource, /ASSIGNABLE_ROLES:[\s\S]*'user_admin'[\s\S]*'contest_admin'[\s\S]*'pricing_admin'/, '角色分配接口未允许普通内置角色')
+  assert.doesNotMatch(apiSource, /ASSIGNABLE_ROLES:[\s\S]*'platform_super_admin'/, '批量角色分配不应允许 platform_super_admin')
+  assert.match(apiSource, /targetUserIds/, '角色分配接口未支持多用户 targetUserIds')
+  assert.match(apiSource, /for \(const targetUserId of uniqueTargetUserIds\)/, '角色分配接口未批量处理用户')
   assert.match(storeSource, /DELETE FROM platform_user_roles[\s\S]*role = 'platform_super_admin'[\s\S]*user_id <> \$1/, 'store 未原子移除其它超管')
   assert.match(storeSource, /UNIQUE_SUPER_ADMIN_REQUIRED/, 'store 未强制刚好一个超管')
+  assert.match(getSource, /adminUsers\.map\(item => assignmentMap\.get\(item\.userId\)/, '权限管理读取接口未返回全部用户分配行')
   assert.match(getSource, /users:/, '权限管理读取接口未返回用户选择器数据')
 })
 
@@ -98,8 +99,11 @@ it('用户管理与权限页按新权限控制 UI', async () => {
   assert.match(usersPage, /permissions\.includes\('user\.security\.write'\)/, '用户管理页未按 user.security.write 控制安全操作')
   assert.match(usersPage, /user_admin（用户管理）/, '用户管理页未展示 user_admin 角色')
   assert.match(usersPage, /唯一平台超管转移/, '用户管理页缺少超管转移危险确认')
-  assert.match(rolesPage, /选择目标用户/, '权限页未使用用户选择器')
-  assert.match(rolesPage, /超管转移预览/, '权限页缺少超管转移预览')
+  assert.match(rolesPage, /<a-drawer/, '权限页未改为 drawer')
+  assert.match(rolesPage, /multiple/, '权限页未支持多用户选择')
+  assert.match(rolesPage, /全选角色/, '权限页缺少角色全选')
+  assert.match(rolesPage, /全选用户/, '权限页缺少用户全选')
+  assert.match(rolesPage, /platform_super_admin 是唯一超管，不允许在批量分配中授予或移除/, '权限页缺少禁止分配超管说明')
   assert.match(adminLayout, /admin-users[\s\S]*requiredAny: \['user\.read'\]/, 'admin 导航用户管理未改为 user.read')
 })
 
