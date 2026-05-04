@@ -1699,7 +1699,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <a-drawer v-model:visible="detailVisible" :width="releaseDetailDrawerWidth" title="版本详情" unmount-on-close>
+    <a-drawer v-model:visible="detailVisible" :width="releaseDetailDrawerWidth" title="版本详情" :footer="false" unmount-on-close>
       <div v-if="detailLoading" class="p-2">
         <a-skeleton :animation="true">
           <a-skeleton-line :rows="8" />
@@ -2261,6 +2261,7 @@ onMounted(() => {
       v-model:visible="trackDetailVisible"
       title="赛道确认表单"
       :width="releaseDetailDrawerWidth"
+      :footer="false"
       unmount-on-close
     >
       <a-form v-if="selectedTrack" :model="selectedTrack" layout="vertical" class="text-xs">
@@ -2274,25 +2275,40 @@ onMounted(() => {
             :label="item.label"
             :class="item.kind === 'cover' ? 'md:col-span-2' : ''"
           >
-            <div v-if="item.kind === 'cover' && item.previewSource && !coverPreviewFailed(item.value, item.previewSource)" class="mb-3 p-2 border border-slate-200 rounded bg-slate-50">
-              <div class="border border-slate-200 rounded bg-white h-[180px] w-full overflow-hidden">
-                <img :src="item.previewSource" alt="赛道封面原图" class="h-full w-full object-contain" loading="lazy" @error="markCoverPreviewFailed(item.value, item.previewSource)">
-              </div>
-              <div class="mt-2 gap-2 grid md:grid-cols-3">
-                <div v-for="preview in coverPreviewFrames" :key="preview.key">
-                  <p class="text-[11px] text-slate-500 mb-1">
-                    {{ preview.label }}
-                  </p>
-                  <div class="border border-slate-200 rounded bg-white w-full overflow-hidden" :class="preview.className">
-                    <img :src="item.previewSource" alt="赛道封面比例预览" class="h-full w-full object-cover" loading="lazy" @error="markCoverPreviewFailed(item.value, item.previewSource)">
+            <div v-if="item.kind === 'cover'" class="w-full">
+              <div v-if="item.previewSource && !coverPreviewFailed(item.value, item.previewSource)" class="mb-3 p-2 border border-slate-200 rounded bg-slate-50">
+                <div class="border border-slate-200 rounded bg-white h-[180px] w-full overflow-hidden">
+                  <img :src="item.previewSource" alt="赛道封面原图" class="h-full w-full object-contain" loading="lazy" @error="markCoverPreviewFailed(item.value, item.previewSource)">
+                </div>
+                <a-textarea
+                  class="mt-2"
+                  :model-value="item.value"
+                  :auto-size="{ minRows: item.value.length > 80 ? 2 : 1, maxRows: 6 }"
+                  readonly
+                />
+                <div class="mt-2 gap-2 grid md:grid-cols-3">
+                  <div v-for="preview in coverPreviewFrames" :key="preview.key">
+                    <p class="text-[11px] text-slate-500 mb-1">
+                      {{ preview.label }}
+                    </p>
+                    <div class="border border-slate-200 rounded bg-white w-full overflow-hidden" :class="preview.className">
+                      <img :src="item.previewSource" alt="赛道封面比例预览" class="h-full w-full object-cover" loading="lazy" @error="markCoverPreviewFailed(item.value, item.previewSource)">
+                    </div>
                   </div>
                 </div>
               </div>
+              <p v-else-if="coverPreviewUnavailableText(item.value, item.previewSource)" class="text-[11px] text-amber-700 mb-2">
+                {{ coverPreviewUnavailableText(item.value, item.previewSource) }}
+              </p>
+              <a-textarea
+                v-if="!item.previewSource || coverPreviewFailed(item.value, item.previewSource)"
+                :model-value="item.value"
+                :auto-size="{ minRows: item.value.length > 80 ? 2 : 1, maxRows: 6 }"
+                readonly
+              />
             </div>
-            <p v-else-if="item.kind === 'cover' && coverPreviewUnavailableText(item.value, item.previewSource)" class="text-[11px] text-amber-700 mb-2">
-              {{ coverPreviewUnavailableText(item.value, item.previewSource) }}
-            </p>
             <a-textarea
+              v-else
               :model-value="item.value"
               :auto-size="{ minRows: item.value.length > 80 ? 2 : 1, maxRows: 6 }"
               readonly
@@ -2309,9 +2325,14 @@ onMounted(() => {
                 业务节点可自由填写，系统类型保持稳定枚举。
               </p>
             </div>
-            <button class="dense-btn" type="button" :disabled="!canEditSelectedTrackTimelines() || trackTimelineSaving" @click="addTrackTimelineDraft">
-              新增节点
-            </button>
+            <div class="flex gap-2 items-center">
+              <button class="dense-btn" type="button" :disabled="!canEditSelectedTrackTimelines() || trackTimelineSaving" @click="addTrackTimelineDraft">
+                新增节点
+              </button>
+              <button class="dense-btn" type="button" :disabled="!canEditSelectedTrackTimelines() || trackTimelineSaving" @click="saveTrackTimelineDrafts">
+                {{ trackTimelineSaving ? '保存中...' : '保存节点' }}
+              </button>
+            </div>
           </div>
 
           <div v-if="trackTimelineDrafts.length" class="space-y-3">
@@ -2346,11 +2367,8 @@ onMounted(() => {
         </div>
 
         <div class="pt-3 flex gap-2 justify-end">
-          <button class="dense-btn" type="button" :disabled="!canEditSelectedTrackTimelines() || trackTimelineSaving" @click="saveTrackTimelineDrafts">
-            {{ trackTimelineSaving ? '保存中...' : '保存时间节点' }}
-          </button>
           <button class="dense-btn" type="button" @click="trackDetailVisible = false">
-            确认
+            关闭
           </button>
         </div>
       </a-form>
