@@ -315,6 +315,7 @@ onMounted(loadData)
       v-model:visible="assignDrawerVisible"
       title="角色分配"
       :width="560"
+      :footer="false"
       unmount-on-close
     >
       <div class="text-[11px] pb-6 space-y-4">
