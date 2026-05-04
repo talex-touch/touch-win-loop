@@ -93,6 +93,7 @@ const canManageIntegrations = computed(() => canManageRoles.value || canManageCo
 const canManageRuntimeSettings = computed(() => isPlatformAdminUser.value || permissions.value.includes('contest.write'))
 const canPublishNotifications = computed(() => isPlatformAdminUser.value || permissions.value.includes('contest.write'))
 const canViewOperations = computed(() => canManageContest.value)
+const canViewStorageService = computed(() => isPlatformAdminUser.value || permissions.value.includes('contest.read_internal'))
 const hasAnyAdminAccess = computed(() => {
   return canManageContest.value || canManagePricing.value || canManageRoles.value || canManageUsers.value || canManageRuntimeSettings.value
 })
@@ -370,6 +371,16 @@ const homeEntries = computed<HomeEntryCard[]>(() => {
       tone: 'slate',
       action: '进入设置',
       visible: canManageRuntimeSettings.value,
+    },
+    {
+      key: 'storage-service',
+      title: '存储服务',
+      description: '查看对象存储容量、水位、流量与渠道配置。',
+      to: '/admin/storage-service',
+      icon: 'i-heroicons-outline-server-stack',
+      tone: 'blue',
+      action: '查看存储',
+      visible: canViewStorageService.value,
     },
     {
       key: 'notifications',

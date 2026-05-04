@@ -1,8 +1,8 @@
 import type { H3Event } from 'h3'
 import type { Queryable } from '~~/server/utils/db'
-import type { RuntimeSettings } from '~~/server/utils/env'
+import type { RuntimeSettings, RuntimeStorageChannel } from '~~/server/utils/env'
 import { withClient } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { normalizeRuntimeStorageSettings, readRuntimeSettings } from '~~/server/utils/env'
 import { decryptConfigSecretSafe, encryptConfigSecret, hasConfigMasterKey, isEncryptedConfigValue } from '~~/server/utils/secure-config'
 
 const PLATFORM_RUNTIME_OVERRIDES_KEY = 'platform_runtime_overrides.v1'
@@ -42,6 +42,8 @@ export interface PlatformRuntimeOverrides {
     accessKey?: string
     secretKey?: string
     forcePathStyle?: boolean
+    primaryChannelId?: string
+    channels?: RuntimeStorageChannel[]
   }
   updatedAt?: string
   updatedByUserId?: string
@@ -196,6 +198,46 @@ function normalizeStorageProvider(raw: unknown): string {
   return normalized
 }
 
+function normalizeStorageChannelId(raw: unknown, fallback: string): string {
+  const normalized = toText(raw)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || fallback
+}
+
+function normalizeStorageChannel(raw: unknown, index: number): RuntimeStorageChannel | null {
+  const source = parseJsonObject(raw)
+  if (Object.keys(source).length === 0)
+    return null
+
+  const provider = normalizeStorageProvider(source.provider)
+  if (!(provider === 'local' || provider === 's3' || provider === 'minio'))
+    return null
+
+  const id = normalizeStorageChannelId(source.id, index === 0 ? provider : `${provider}-${index + 1}`)
+  const resolvedProvider = id === 'local' ? 'local' : provider
+  const enabled = hasOwn(source, 'enabled') ? toBoolean(source.enabled) : true
+  const forcePathStyle = hasOwn(source, 'forcePathStyle') ? toBoolean(source.forcePathStyle) : true
+  return {
+    id,
+    name: toText(source.name) || id,
+    provider: resolvedProvider,
+    enabled: enabled ?? true,
+    priority: Math.max(0, Math.trunc(toNumber(source.priority) ?? index)),
+    capacityBytes: Math.max(0, Math.trunc(toNumber(source.capacityBytes) ?? 0)),
+    watermarkPercent: Math.max(1, Math.min(100, Math.trunc(toNumber(source.watermarkPercent) ?? 90))),
+    localRoot: toText(source.localRoot) || './tmp/document-storage',
+    endpoint: resolvedProvider === 'local' ? '' : toText(source.endpoint).replace(/\/+$/g, ''),
+    region: resolvedProvider === 'local' ? '' : toText(source.region),
+    bucket: resolvedProvider === 'local' ? '' : toText(source.bucket),
+    accessKey: resolvedProvider === 'local' ? '' : hasOwn(source, 'accessKey') ? String(source.accessKey || '') : '',
+    secretKey: resolvedProvider === 'local' ? '' : hasOwn(source, 'secretKey') ? String(source.secretKey || '') : '',
+    forcePathStyle: resolvedProvider === 'local' ? true : forcePathStyle ?? true,
+  }
+}
+
 function normalizeStorageSection(raw: unknown): PlatformRuntimeOverrides['storage'] {
   const source = parseJsonObject(raw)
   if (Object.keys(source).length === 0)
@@ -221,8 +263,57 @@ function normalizeStorageSection(raw: unknown): PlatformRuntimeOverrides['storag
     if (value !== undefined)
       output.forcePathStyle = value
   }
+  if (hasOwn(source, 'primaryChannelId'))
+    output.primaryChannelId = normalizeStorageChannelId(source.primaryChannelId, '')
+  if (Array.isArray(source.channels)) {
+    const channels = source.channels
+      .map((item, index) => normalizeStorageChannel(item, index))
+      .filter((item): item is RuntimeStorageChannel => Boolean(item))
+    if (channels.length > 0)
+      output.channels = channels
+  }
 
   return Object.keys(output).length > 0 ? output : undefined
+}
+
+function decryptStorageSecrets(storage: PlatformRuntimeOverrides['storage']): void {
+  if (!storage)
+    return
+  if (Object.prototype.hasOwnProperty.call(storage, 'accessKey'))
+    storage.accessKey = decryptConfigSecretSafe(storage.accessKey, undefined)
+  if (Object.prototype.hasOwnProperty.call(storage, 'secretKey'))
+    storage.secretKey = decryptConfigSecretSafe(storage.secretKey, undefined)
+  if (Array.isArray(storage.channels)) {
+    storage.channels = storage.channels.map(channel => ({
+      ...channel,
+      accessKey: decryptConfigSecretSafe(channel.accessKey, undefined),
+      secretKey: decryptConfigSecretSafe(channel.secretKey, undefined),
+    }))
+  }
+}
+
+function encryptStorageSecrets(storage: PlatformRuntimeOverrides['storage'], masterKeyReady: boolean): void {
+  if (!storage)
+    return
+  if (Object.prototype.hasOwnProperty.call(storage, 'accessKey')) {
+    const value = String(storage.accessKey || '')
+    storage.accessKey = masterKeyReady && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
+  }
+  if (Object.prototype.hasOwnProperty.call(storage, 'secretKey')) {
+    const value = String(storage.secretKey || '')
+    storage.secretKey = masterKeyReady && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
+  }
+  if (Array.isArray(storage.channels)) {
+    storage.channels = storage.channels.map((channel) => {
+      const accessKey = String(channel.accessKey || '')
+      const secretKey = String(channel.secretKey || '')
+      return {
+        ...channel,
+        accessKey: masterKeyReady && accessKey && !isEncryptedConfigValue(accessKey) ? encryptConfigSecret(accessKey) : accessKey,
+        secretKey: masterKeyReady && secretKey && !isEncryptedConfigValue(secretKey) ? encryptConfigSecret(secretKey) : secretKey,
+      }
+    })
+  }
 }
 
 function hasSectionOverrides(section: Record<string, unknown> | undefined): boolean {
@@ -298,10 +389,7 @@ export async function readPlatformRuntimeOverrides(db: Queryable): Promise<Platf
 
   try {
     const normalized = normalizePlatformRuntimeOverrides(JSON.parse(raw))
-    if (normalized.storage && Object.prototype.hasOwnProperty.call(normalized.storage, 'accessKey'))
-      normalized.storage.accessKey = decryptConfigSecretSafe(normalized.storage.accessKey, undefined)
-    if (normalized.storage && Object.prototype.hasOwnProperty.call(normalized.storage, 'secretKey'))
-      normalized.storage.secretKey = decryptConfigSecretSafe(normalized.storage.secretKey, undefined)
+    decryptStorageSecrets(normalized.storage)
     return normalized
   }
   catch {
@@ -316,14 +404,7 @@ export async function writePlatformRuntimeOverrides(
   const normalized = normalizePlatformRuntimeOverrides(overrides)
   const persistable = normalizePlatformRuntimeOverrides(normalized)
   const masterKeyReady = hasConfigMasterKey()
-  if (persistable.storage && Object.prototype.hasOwnProperty.call(persistable.storage, 'accessKey')) {
-    const value = String(persistable.storage.accessKey || '')
-    persistable.storage.accessKey = masterKeyReady && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
-  }
-  if (persistable.storage && Object.prototype.hasOwnProperty.call(persistable.storage, 'secretKey')) {
-    const value = String(persistable.storage.secretKey || '')
-    persistable.storage.secretKey = masterKeyReady && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
-  }
+  encryptStorageSecrets(persistable.storage, masterKeyReady)
   await db.query(
     `INSERT INTO migrations_meta (key, value, updated_at)
      VALUES ($1, $2, NOW())
@@ -343,7 +424,7 @@ export function applyPlatformRuntimeOverrides(
     ...runtime,
     auth: { ...runtime.auth },
     contest: { ...runtime.contest },
-    storage: { ...runtime.storage },
+    storage: normalizeRuntimeStorageSettings({ ...runtime.storage }),
     resourceRecycle: { ...runtime.resourceRecycle },
     feishuScheduler: { ...runtime.feishuScheduler },
   }
@@ -392,6 +473,7 @@ export function applyPlatformRuntimeOverrides(
 
   const storage = overrides.storage
   if (storage) {
+    const baseStorage = normalizeRuntimeStorageSettings(next.storage)
     if (storage.provider !== undefined)
       next.storage.provider = normalizeStorageProvider(storage.provider)
     if (storage.localRoot !== undefined)
@@ -408,6 +490,14 @@ export function applyPlatformRuntimeOverrides(
       next.storage.secretKey = storage.secretKey
     if (storage.forcePathStyle !== undefined)
       next.storage.forcePathStyle = Boolean(storage.forcePathStyle)
+    if (storage.primaryChannelId !== undefined)
+      next.storage.primaryChannelId = storage.primaryChannelId
+    if (storage.channels !== undefined)
+      next.storage.channels = storage.channels
+    next.storage = normalizeRuntimeStorageSettings({
+      ...baseStorage,
+      ...next.storage,
+    })
   }
 
   const feishuScheduler = overrides.feishuScheduler

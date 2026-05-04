@@ -133,6 +133,7 @@ interface ProjectResourceTreeStateRow {
 
 export interface ProjectUploadedFileRef {
   objectKey: string
+  storageProvider: string
   fileName: string
   mimeType: string
 }
@@ -3166,6 +3167,7 @@ export async function getProjectUploadedFileRef(
 
   return {
     objectKey,
+    storageProvider: normalizeString(metadata.storageProvider) || 'local',
     fileName,
     mimeType,
   }

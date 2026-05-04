@@ -1,5 +1,5 @@
 import type { Writable } from 'node:stream'
-import type { RuntimeSettings } from '~~/server/utils/env'
+import type { RuntimeSettings, RuntimeStorageChannel } from '~~/server/utils/env'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
@@ -9,11 +9,14 @@ import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 import { PassThrough, Readable } from 'node:stream'
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import {
   applyPlatformRuntimeOverrides,
   getCachedPlatformRuntimeOverridesSnapshot,
+  readEffectivePlatformRuntimeSettings,
 } from '~~/server/utils/platform-runtime-config-store'
+import { selectStorageWriteChannel } from '~~/server/utils/storage-service-store'
 
 export interface StoredObjectInput {
   key: string
@@ -29,6 +32,7 @@ export interface MergeStoredObjectsInput {
 
 export interface DocumentStorage {
   provider: string
+  channelId: string
   putObject: (input: StoredObjectInput) => Promise<void>
   putChunkObject: (input: StoredObjectInput) => Promise<void>
   getObjectBuffer: (key: string) => Promise<Buffer>
@@ -81,8 +85,11 @@ export function isDocumentStorageObjectNotFoundError(error: unknown): error is D
 
 class LocalDocumentStorage implements DocumentStorage {
   provider = 'local'
+  channelId: string
 
-  constructor(private readonly rootDir: string) {}
+  constructor(private readonly rootDir: string, channelId = 'local') {
+    this.channelId = channelId
+  }
 
   async putObject(input: StoredObjectInput): Promise<void> {
     const filePath = this.resolveKey(input.key)
@@ -245,8 +252,10 @@ class S3DocumentStorage implements DocumentStorage {
   private readonly client: S3Client
   private readonly bucket: string
   provider: string
+  channelId: string
 
   constructor(input: {
+    channelId: string
     provider: string
     endpoint: string
     region: string
@@ -256,6 +265,7 @@ class S3DocumentStorage implements DocumentStorage {
     forcePathStyle: boolean
   }) {
     this.provider = input.provider
+    this.channelId = input.channelId
     this.bucket = input.bucket
     this.client = new S3Client({
       region: input.region || 'auto',
@@ -343,6 +353,7 @@ class S3DocumentStorage implements DocumentStorage {
 
 let storageInstance: DocumentStorage | null = null
 let storageInstanceKey = ''
+const channelStorageInstances = new Map<string, DocumentStorage>()
 
 function toAbsoluteRoot(localRoot: string): string {
   if (localRoot.startsWith('/'))
@@ -363,6 +374,70 @@ function buildStorageInstanceKey(runtime: RuntimeSettings): string {
 export function invalidateDocumentStorage(): void {
   storageInstance = null
   storageInstanceKey = ''
+  channelStorageInstances.clear()
+}
+
+function createDocumentStorageForChannel(channel: RuntimeStorageChannel): DocumentStorage {
+  const provider = channel.provider.trim().toLowerCase()
+
+  if (provider === 'local') {
+    return new LocalDocumentStorage(toAbsoluteRoot(channel.localRoot), channel.id)
+  }
+
+  if (provider === 's3' || provider === 'minio') {
+    if (!channel.bucket) {
+      throw new Error('对象存储配置缺失：Bucket 不能为空。')
+    }
+    if (provider === 'minio' && !channel.endpoint) {
+      throw new Error('MinIO 模式下 Endpoint 不能为空。')
+    }
+
+    return new S3DocumentStorage({
+      channelId: channel.id,
+      provider,
+      endpoint: channel.endpoint,
+      region: channel.region || 'auto',
+      bucket: channel.bucket,
+      accessKey: channel.accessKey,
+      secretKey: channel.secretKey,
+      forcePathStyle: channel.forcePathStyle,
+    })
+  }
+
+  throw new Error(`不支持的存储 provider：${provider}。仅支持 local/s3/minio。`)
+}
+
+function resolveStorageChannel(runtime: RuntimeSettings, channelId?: string): RuntimeStorageChannel {
+  const requested = String(channelId || '').trim()
+  const channels = runtime.storage.channels || []
+  if (requested) {
+    const exact = channels.find(channel => channel.id === requested)
+    if (exact)
+      return exact
+    const providerMatch = channels.find(channel => channel.provider === requested)
+    if (providerMatch)
+      return providerMatch
+  }
+
+  const primary = channels.find(channel => channel.id === runtime.storage.primaryChannelId)
+  if (primary)
+    return primary
+  return channels[0] || {
+    id: 'local',
+    name: '本机存储',
+    provider: 'local',
+    enabled: true,
+    priority: 0,
+    capacityBytes: 0,
+    watermarkPercent: 90,
+    localRoot: runtime.storage.localRoot || './tmp/document-storage',
+    endpoint: runtime.storage.endpoint || '',
+    region: runtime.storage.region || '',
+    bucket: runtime.storage.bucket || '',
+    accessKey: runtime.storage.accessKey || '',
+    secretKey: runtime.storage.secretKey || '',
+    forcePathStyle: runtime.storage.forcePathStyle,
+  }
 }
 
 export function getDocumentStorage(runtime?: RuntimeSettings): DocumentStorage {
@@ -371,36 +446,45 @@ export function getDocumentStorage(runtime?: RuntimeSettings): DocumentStorage {
   if (storageInstance && storageInstanceKey === nextKey)
     return storageInstance
 
-  const provider = resolvedRuntime.storage.provider.trim().toLowerCase()
+  const channel = resolveStorageChannel(resolvedRuntime)
+  storageInstance = createDocumentStorageForChannel(channel)
+  storageInstanceKey = nextKey
+  return storageInstance
+}
 
-  if (provider === 'local') {
-    storageInstance = new LocalDocumentStorage(toAbsoluteRoot(resolvedRuntime.storage.localRoot))
-    storageInstanceKey = nextKey
-    return storageInstance
-  }
+export function getDocumentStorageByChannel(channelId: string, runtime?: RuntimeSettings): DocumentStorage {
+  const resolvedRuntime = resolveDocumentStorageRuntime(runtime)
+  const channel = resolveStorageChannel(resolvedRuntime, channelId)
+  const key = `${buildStorageInstanceKey(resolvedRuntime)}:${channel.id}`
+  const cached = channelStorageInstances.get(key)
+  if (cached)
+    return cached
+  const storage = createDocumentStorageForChannel(channel)
+  channelStorageInstances.set(key, storage)
+  return storage
+}
 
-  if (provider === 's3' || provider === 'minio') {
-    if (!resolvedRuntime.storage.bucket) {
-      throw new Error('对象存储配置缺失：WINLOOP_STORAGE_BUCKET 不能为空。')
-    }
-    if (provider === 'minio' && !resolvedRuntime.storage.endpoint) {
-      throw new Error('MinIO 模式下 WINLOOP_STORAGE_ENDPOINT 不能为空。')
-    }
+export async function selectDocumentWriteStorage(input: {
+  incomingBytes: number
+  runtime?: RuntimeSettings
+}): Promise<DocumentStorage> {
+  const runtime = input.runtime
+    ? applyPlatformRuntimeOverrides(input.runtime, getCachedPlatformRuntimeOverridesSnapshot())
+    : (await readEffectivePlatformRuntimeSettings()).runtime
+  const selection = await withClient(undefined, db => selectStorageWriteChannel(db, runtime, input.incomingBytes))
+  return getDocumentStorageByChannel(selection.channel.id, runtime)
+}
 
-    storageInstance = new S3DocumentStorage({
-      provider,
-      endpoint: resolvedRuntime.storage.endpoint,
-      region: resolvedRuntime.storage.region || 'auto',
-      bucket: resolvedRuntime.storage.bucket,
-      accessKey: resolvedRuntime.storage.accessKey,
-      secretKey: resolvedRuntime.storage.secretKey,
-      forcePathStyle: resolvedRuntime.storage.forcePathStyle,
-    })
-    storageInstanceKey = nextKey
-    return storageInstance
-  }
-
-  throw new Error(`不支持的存储 provider：${provider}。仅支持 local/s3/minio。`)
+export async function deleteObjectsAcrossStorageChannels(keys: string[], runtime?: RuntimeSettings): Promise<void> {
+  const normalizedKeys = [...new Set(keys.map(key => String(key || '').trim()).filter(Boolean))]
+  if (normalizedKeys.length === 0)
+    return
+  const resolvedRuntime = resolveDocumentStorageRuntime(runtime)
+  const channelIds = [...new Set((resolvedRuntime.storage.channels || []).map(channel => channel.id))]
+  await Promise.allSettled(channelIds.map(async (channelId) => {
+    const storage = getDocumentStorageByChannel(channelId, resolvedRuntime)
+    await storage.deleteObjects(normalizedKeys)
+  }))
 }
 
 function sanitizePathPart(value: string): string {

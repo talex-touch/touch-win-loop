@@ -1,6 +1,6 @@
 import { setHeader, setResponseStatus } from 'h3'
 import { verifyProjectPreviewSourceToken } from '~~/server/services/document/project-preview-token'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { getDocumentStorageByChannel } from '~~/server/storage/document-storage'
 import { fail } from '~~/server/utils/api'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
@@ -55,7 +55,7 @@ export default defineEventHandler(async (event) => {
     }, 40473)
   }
 
-  const storage = getDocumentStorage()
+  const storage = getDocumentStorageByChannel(document.sourceStorageProvider)
   const buffer = await storage.getObjectBuffer(document.sourceObjectKey)
   setHeader(event, 'Content-Type', document.sourceMimeType || 'application/octet-stream')
   setHeader(event, 'Content-Length', buffer.length)

@@ -1669,6 +1669,7 @@ export interface CanvasLibraryFrameTemplatePayload {
 export interface CanvasLibraryBinaryAssetPayload {
   mimeType: string
   objectKey: string
+  storageProvider?: string
   fileName: string
   size: number
   width?: number

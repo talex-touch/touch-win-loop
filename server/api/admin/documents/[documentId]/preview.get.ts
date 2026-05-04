@@ -1,5 +1,5 @@
 import { setHeader, setResponseStatus } from 'h3'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { getDocumentStorageByChannel } from '~~/server/storage/document-storage'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
@@ -49,7 +49,7 @@ export default defineEventHandler(async (event) => {
     }, 404100)
   }
 
-  const storage = getDocumentStorage()
+  const storage = getDocumentStorageByChannel(document.storageProvider)
   const buffer = await storage.getObjectBuffer(document.objectKey)
   setHeader(event, 'Content-Type', document.mimeType || 'application/pdf')
   setHeader(event, 'Content-Length', buffer.length)

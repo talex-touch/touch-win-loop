@@ -57,6 +57,7 @@ const navItems: AdminNavItem[] = [
   { key: 'admin-resources', to: '/admin/resources', label: '资料中心', icon: 'i-heroicons-outline-folder-open', section: 'core', requiredAny: ['contest.read_internal'] },
   { key: 'admin-ai-prompts', to: '/admin/ai-prompts', label: 'AI配置', icon: 'i-heroicons-outline-sparkles', section: 'core', requiredAny: ['contest.read_internal'] },
   { key: 'admin-operations', to: '/admin/operations', label: '运营管控', icon: 'i-heroicons-outline-chart-bar', section: 'core', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-storage-service', to: '/admin/storage-service', label: '存储服务', icon: 'i-heroicons-outline-server-stack', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-runtime-settings', to: '/admin/runtime-settings', label: '系统设置', icon: 'i-heroicons-outline-adjustments-horizontal', section: 'system', requiredAny: ['contest.write'] },
   { key: 'admin-roles', to: '/admin/roles', label: '权限管理', icon: 'i-heroicons-outline-shield-check', section: 'system', requiredAny: ['role.assign'] },
   { key: 'admin-notifications', to: '/admin/notifications', label: '通知管理', icon: 'i-heroicons-outline-bell', section: 'system', requiredAny: ['contest.write'] },

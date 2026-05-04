@@ -6,8 +6,10 @@ import type {
   Resource,
 } from '~~/shared/types/domain'
 import { generateAndSaveProjectOutline } from '~~/server/services/project-outline-generator'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, getDocumentStorageByChannel } from '~~/server/storage/document-storage'
+import { getProjectBillingScopeById, recordBillingUsageEventSafely } from '~~/server/utils/billing-usage-tracker'
 import { withTransaction } from '~~/server/utils/db'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
 import { teamCanManageProject } from '~~/server/utils/project-access-store'
 import { markProjectKnowledgeSourceStale } from '~~/server/utils/project-knowledge-store'
@@ -129,7 +131,6 @@ export async function finalizeProjectResourceUploadSession(input: {
 }> {
   const projectId = normalizeString(input.projectId)
   const sessionId = normalizeString(input.sessionId)
-  const storage = getDocumentStorage()
   const { session, sourceKeys, finalObjectKey } = await withTransaction(input.event, async (db) => {
     const lockedSession = await getProjectResourceUploadSessionById(db, {
       projectId,
@@ -209,6 +210,9 @@ export async function finalizeProjectResourceUploadSession(input: {
     }
   }
 
+  const { runtime } = await readEffectivePlatformRuntimeSettings(input.event)
+  const storage = getDocumentStorageByChannel(session.finalStorageProvider || 'local', runtime)
+
   try {
     await storage.mergeObjects({
       key: finalObjectKey,
@@ -224,7 +228,7 @@ export async function finalizeProjectResourceUploadSession(input: {
         mimeType: session.mimeType,
         fileSize: session.fileSize,
         objectKey: finalObjectKey,
-        storageProvider: storage.provider,
+        storageProvider: storage.channelId,
         title: session.title,
         summary: session.summary,
         category: session.category,
@@ -236,7 +240,7 @@ export async function finalizeProjectResourceUploadSession(input: {
         projectId,
         projectResourceId: resource.id,
         sourceObjectKey: finalObjectKey,
-        sourceStorageProvider: storage.provider,
+        sourceStorageProvider: storage.channelId,
         sourceFileName: session.fileName,
         sourceMimeType: session.mimeType,
         sourceFileSize: session.fileSize,
@@ -260,10 +264,27 @@ export async function finalizeProjectResourceUploadSession(input: {
         sessionId,
         resourceId: resource.id,
         finalObjectKey,
-        finalStorageProvider: storage.provider,
+        finalStorageProvider: storage.channelId,
       })
       if (!completed)
         throw new Error('UPLOAD_SESSION_COMPLETE_FAILED')
+
+      const scope = await getProjectBillingScopeById(db, projectId)
+      await recordBillingUsageEventSafely(db, {
+        workspaceId: scope?.workspaceId || '',
+        projectId,
+        projectResourceId: resource.id,
+        actorUserId: input.user.id,
+        eventCode: 'resource.upload',
+        result: 'success',
+        sourceRoute: input.event.path,
+        meta: {
+          bytes: session.fileSize,
+          channelId: storage.channelId,
+          provider: storage.provider,
+          objectKey: finalObjectKey,
+        },
+      })
 
       return {
         session: completed,

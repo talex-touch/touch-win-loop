@@ -26,6 +26,7 @@ const DEFAULT_ONLYOFFICE_RETRY_LIMIT = 3
 const DEFAULT_ONLYOFFICE_WORKER_INTERVAL_MS = 2500
 const DEFAULT_ONLYOFFICE_WORKER_BATCH_SIZE = 2
 const DEFAULT_PROJECT_RESOURCE_ACCESS_URL_TTL_SECONDS = 600
+const DEFAULT_STORAGE_WATERMARK_PERCENT = 90
 const ONLYOFFICE_SOURCE_BASE_HINT_KEY = Symbol.for('winloop.onlyoffice.source-base.hint.v1')
 
 interface OnlyOfficeSourceBaseHintState {
@@ -181,6 +182,8 @@ export interface RuntimeSettings {
     accessKey: string
     secretKey: string
     forcePathStyle: boolean
+    primaryChannelId: string
+    channels: RuntimeStorageChannel[]
   }
   adminAi: {
     enabled: boolean
@@ -259,6 +262,25 @@ export interface RuntimeSettings {
   }
 }
 
+export type RuntimeStorageProvider = 'local' | 's3' | 'minio'
+
+export interface RuntimeStorageChannel {
+  id: string
+  name: string
+  provider: RuntimeStorageProvider
+  enabled: boolean
+  priority: number
+  capacityBytes: number
+  watermarkPercent: number
+  localRoot: string
+  endpoint: string
+  region: string
+  bucket: string
+  accessKey: string
+  secretKey: string
+  forcePathStyle: boolean
+}
+
 function toBoolean(raw: unknown, fallback: boolean): boolean {
   if (typeof raw === 'boolean')
     return raw
@@ -272,6 +294,156 @@ function toBoolean(raw: unknown, fallback: boolean): boolean {
   return fallback
 }
 
+function normalizeStorageProvider(raw: unknown): RuntimeStorageProvider {
+  const normalized = String(raw || '').trim().toLowerCase()
+  if (normalized === 's3' || normalized === 'minio')
+    return normalized
+  return 'local'
+}
+
+function normalizeStorageChannelId(raw: unknown, fallback: string): string {
+  const normalized = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || fallback
+}
+
+function normalizeStorageChannel(raw: unknown, fallback: RuntimeStorageChannel, index: number): RuntimeStorageChannel {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {}
+  const provider = normalizeStorageProvider(source.provider ?? fallback.provider)
+  const id = normalizeStorageChannelId(source.id, index === 0 ? fallback.id : `${provider}-${index + 1}`)
+  const capacityBytes = Math.max(0, Math.trunc(toNumber(source.capacityBytes, fallback.capacityBytes)))
+  const watermarkPercent = Math.max(1, Math.min(100, Math.trunc(toNumber(source.watermarkPercent, fallback.watermarkPercent))))
+  return {
+    id,
+    name: String(source.name ?? fallback.name ?? '').trim() || id,
+    provider,
+    enabled: toBoolean(source.enabled, fallback.enabled),
+    priority: Math.max(0, Math.trunc(toNumber(source.priority, fallback.priority))),
+    capacityBytes,
+    watermarkPercent,
+    localRoot: String(source.localRoot ?? fallback.localRoot ?? './tmp/document-storage').trim() || './tmp/document-storage',
+    endpoint: trimTrailingSlash(String(source.endpoint ?? fallback.endpoint ?? '')),
+    region: String(source.region ?? fallback.region ?? '').trim(),
+    bucket: String(source.bucket ?? fallback.bucket ?? '').trim(),
+    accessKey: String(source.accessKey ?? fallback.accessKey ?? ''),
+    secretKey: String(source.secretKey ?? fallback.secretKey ?? ''),
+    forcePathStyle: toBoolean(source.forcePathStyle, fallback.forcePathStyle),
+  }
+}
+
+function buildDefaultStorageChannel(storage: {
+  provider: string
+  localRoot: string
+  endpoint: string
+  region: string
+  bucket: string
+  accessKey: string
+  secretKey: string
+  forcePathStyle: boolean
+}): RuntimeStorageChannel {
+  const provider = normalizeStorageProvider(storage.provider)
+  return {
+    id: provider === 'local' ? 'local' : provider,
+    name: provider === 'local' ? '本机存储' : provider,
+    provider,
+    enabled: true,
+    priority: 0,
+    capacityBytes: 0,
+    watermarkPercent: DEFAULT_STORAGE_WATERMARK_PERCENT,
+    localRoot: storage.localRoot || './tmp/document-storage',
+    endpoint: storage.endpoint || '',
+    region: storage.region || '',
+    bucket: storage.bucket || '',
+    accessKey: storage.accessKey || '',
+    secretKey: storage.secretKey || '',
+    forcePathStyle: storage.forcePathStyle,
+  }
+}
+
+export function normalizeRuntimeStorageSettings(storage: RuntimeSettings['storage']): RuntimeSettings['storage'] {
+  const legacy = {
+    provider: String(storage?.provider ?? 'local'),
+    localRoot: String(storage?.localRoot ?? './tmp/document-storage'),
+    endpoint: trimTrailingSlash(String(storage?.endpoint ?? '')),
+    region: String(storage?.region ?? ''),
+    bucket: String(storage?.bucket ?? ''),
+    accessKey: String(storage?.accessKey ?? ''),
+    secretKey: String(storage?.secretKey ?? ''),
+    forcePathStyle: toBoolean(storage?.forcePathStyle, true),
+  }
+  const defaultChannel = buildDefaultStorageChannel(legacy)
+  const rawChannels = Array.isArray(storage?.channels) ? storage.channels : []
+  const channelsById = new Map<string, RuntimeStorageChannel>()
+
+  const localFallback: RuntimeStorageChannel = {
+    ...defaultChannel,
+    id: 'local',
+    name: '本机存储',
+    provider: 'local',
+    priority: defaultChannel.provider === 'local' ? defaultChannel.priority : 0,
+    localRoot: legacy.localRoot || './tmp/document-storage',
+  }
+  channelsById.set(localFallback.id, localFallback)
+
+  if (rawChannels.length === 0 && defaultChannel.id !== 'local')
+    channelsById.set(defaultChannel.id, defaultChannel)
+
+  rawChannels.forEach((raw, index) => {
+    const fallback = index === 0 ? defaultChannel : {
+      ...defaultChannel,
+      id: `${defaultChannel.provider}-${index + 1}`,
+      name: `${defaultChannel.provider}-${index + 1}`,
+      priority: index,
+    }
+    const channel = normalizeStorageChannel(raw, fallback, index)
+    channelsById.set(channel.id, channel.id === 'local'
+      ? {
+          ...channel,
+          name: channel.name || '本机存储',
+          provider: 'local',
+          endpoint: '',
+          region: '',
+          bucket: '',
+          accessKey: '',
+          secretKey: '',
+          forcePathStyle: true,
+        }
+      : channel)
+  })
+
+  const channels = [...channelsById.values()]
+    .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id))
+    .map((channel, index) => ({
+      ...channel,
+      priority: Math.max(0, Math.trunc(Number.isFinite(channel.priority) ? channel.priority : index)),
+    }))
+
+  const primaryChannelId = normalizeStorageChannelId(storage?.primaryChannelId, defaultChannel.id)
+  const resolvedPrimary = channels.some(channel => channel.id === primaryChannelId && channel.enabled)
+    ? primaryChannelId
+    : (channels.find(channel => channel.id === defaultChannel.id && channel.enabled)?.id || channels.find(channel => channel.enabled)?.id || channels[0]?.id || 'local')
+  const activeChannel = channels.find(channel => channel.id === resolvedPrimary) || channels[0] || localFallback
+
+  return {
+    provider: activeChannel.provider,
+    localRoot: activeChannel.localRoot,
+    endpoint: activeChannel.endpoint,
+    region: activeChannel.region,
+    bucket: activeChannel.bucket,
+    accessKey: activeChannel.accessKey,
+    secretKey: activeChannel.secretKey,
+    forcePathStyle: activeChannel.forcePathStyle,
+    primaryChannelId: resolvedPrimary,
+    channels,
+  }
+}
+
 export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
   const runtime = useRuntimeConfig(event)
   const runtimeDefenseRealtime = runtime.defenseRealtime && typeof runtime.defenseRealtime === 'object' && !Array.isArray(runtime.defenseRealtime)
@@ -283,6 +455,19 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
   const runtimeDefenseRealtimeCoze = runtimeDefenseRealtime.coze && typeof runtimeDefenseRealtime.coze === 'object' && !Array.isArray(runtimeDefenseRealtime.coze)
     ? runtimeDefenseRealtime.coze as Record<string, unknown>
     : {}
+
+  const storageSettings = normalizeRuntimeStorageSettings({
+    provider: String(runtime.storage?.provider ?? 'local'),
+    localRoot: String(runtime.storage?.localRoot ?? './tmp/document-storage'),
+    endpoint: String(runtime.storage?.endpoint ?? ''),
+    region: String(runtime.storage?.region ?? ''),
+    bucket: String(runtime.storage?.bucket ?? ''),
+    accessKey: String(runtime.storage?.accessKey ?? ''),
+    secretKey: String(runtime.storage?.secretKey ?? ''),
+    forcePathStyle: toBoolean(runtime.storage?.forcePathStyle, true),
+    primaryChannelId: String(runtime.storage?.primaryChannelId ?? ''),
+    channels: Array.isArray(runtime.storage?.channels) ? runtime.storage.channels as RuntimeStorageChannel[] : [],
+  })
 
   return {
     envPriority: String(runtime.envPriority ?? '.env.local > .env.prod > .env.dev > .env'),
@@ -335,16 +520,7 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       workerIntervalMs: DEFAULT_ONLYOFFICE_WORKER_INTERVAL_MS,
       workerBatchSize: DEFAULT_ONLYOFFICE_WORKER_BATCH_SIZE,
     },
-    storage: {
-      provider: String(runtime.storage?.provider ?? 'local'),
-      localRoot: String(runtime.storage?.localRoot ?? './tmp/document-storage'),
-      endpoint: String(runtime.storage?.endpoint ?? ''),
-      region: String(runtime.storage?.region ?? ''),
-      bucket: String(runtime.storage?.bucket ?? ''),
-      accessKey: String(runtime.storage?.accessKey ?? ''),
-      secretKey: String(runtime.storage?.secretKey ?? ''),
-      forcePathStyle: toBoolean(runtime.storage?.forcePathStyle, true),
-    },
+    storage: storageSettings,
     adminAi: {
       enabled: toBoolean(runtime.adminAi?.enabled, false),
       tavilyApiKey: String(runtime.adminAi?.tavilyApiKey ?? ''),

@@ -2,7 +2,7 @@ import type { Resource, WorkspaceFeishuImportRequest } from '~~/shared/types/dom
 import { setResponseStatus } from 'h3'
 import { getWorkspaceFeishuMarketplaceTenantAccessToken } from '~~/server/services/feishu/workspace-auth'
 import { resolveWorkspaceFeishuImportSource } from '~~/server/services/feishu/workspace-import'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, deleteObjectsAcrossStorageChannels, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
@@ -142,7 +142,6 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    const storage = getDocumentStorage()
     const resources: Resource[] = []
     let importedCount = 0
     let skippedCount = 0
@@ -176,6 +175,10 @@ export default defineEventHandler(async (event) => {
         if (resolved.kind === 'binary') {
           const objectKey = buildDocumentObjectKey(`project-${projectId}`, resolved.fileName)
           objectKeyToCleanup = objectKey
+          const storage = await selectDocumentWriteStorage({
+            incomingBytes: resolved.buffer.length,
+            runtime,
+          })
           await storage.putObject({
             key: objectKey,
             body: resolved.buffer,
@@ -190,7 +193,7 @@ export default defineEventHandler(async (event) => {
               mimeType: resolved.mimeType,
               fileSize: resolved.buffer.length,
               objectKey,
-              storageProvider: storage.provider,
+              storageProvider: storage.channelId,
               title: resolved.title,
               summary: '',
               accessLevel: 'login_required',
@@ -213,7 +216,7 @@ export default defineEventHandler(async (event) => {
               projectId,
               projectResourceId: createdResource.id,
               sourceObjectKey: objectKey,
-              sourceStorageProvider: storage.provider,
+              sourceStorageProvider: storage.channelId,
               sourceFileName: resolved.fileName,
               sourceMimeType: resolved.mimeType,
               sourceFileSize: resolved.buffer.length,
@@ -297,7 +300,7 @@ export default defineEventHandler(async (event) => {
       }
       catch (error) {
         if (objectKeyToCleanup)
-          await storage.deleteObject(objectKeyToCleanup).catch(() => undefined)
+          await deleteObjectsAcrossStorageChannels([objectKeyToCleanup], runtime).catch(() => undefined)
         failedCount += 1
         diagnostics.push({
           token: source.token,

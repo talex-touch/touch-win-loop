@@ -5,7 +5,7 @@ import type {
 } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
 import { setResponseStatus } from 'h3'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { createAdminResource, recordContestAuditLog } from '~~/server/utils/contest-store'
@@ -157,9 +157,11 @@ export default defineEventHandler(async (event) => {
   const fileName = ensureFileName(filePart.filename, kind)
   const payload = toUploadPayload(toStringMap(parts), fileName.replace(/\.(pdf|docx?)$/i, ''))
   const objectKey = buildDocumentObjectKey(contestId, fileName)
-  const storage = getDocumentStorage()
   const fileBuffer = Buffer.from(filePart.data)
   const mimeType = toMimeType(kind, filePart.type || '')
+  const storage = await selectDocumentWriteStorage({
+    incomingBytes: fileBuffer.length,
+  })
 
   await storage.putObject({
     key: objectKey,
@@ -186,7 +188,7 @@ export default defineEventHandler(async (event) => {
         contestId,
         resourceId: resource.id,
         objectKey,
-        storageProvider: storage.provider,
+        storageProvider: storage.channelId,
         fileName,
         mimeType,
         fileSize: fileBuffer.length,
@@ -211,7 +213,7 @@ export default defineEventHandler(async (event) => {
           taskId: created.task.id,
           fileName,
           fileSize: fileBuffer.length,
-          storageProvider: storage.provider,
+          storageProvider: storage.channelId,
           documentKind: kind,
         },
       })

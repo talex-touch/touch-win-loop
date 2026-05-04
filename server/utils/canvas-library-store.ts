@@ -878,6 +878,7 @@ export async function createProjectDesignResourceFromCanvasLibrarySceneTemplate(
 
 export function buildCanvasLibraryAssetPayload(input: {
   objectKey: string
+  storageProvider?: string
   fileName: string
   mimeType: string
   size: number
@@ -893,6 +894,7 @@ export function buildCanvasLibraryAssetPayload(input: {
   const payload: CanvasLibraryBinaryAssetPayload = {
     mimeType: normalizeString(input.mimeType) || 'application/octet-stream',
     objectKey: normalizeString(input.objectKey),
+    storageProvider: normalizeString(input.storageProvider) || 'local',
     fileName: normalizeString(input.fileName) || 'asset.bin',
     size: Math.max(0, toInteger(input.size, 0)),
     width: Math.max(0, toInteger(input.width, 0)) || undefined,

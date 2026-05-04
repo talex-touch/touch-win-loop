@@ -3,7 +3,7 @@ import type { AuthUser } from '~~/shared/types/domain'
 import { sendRedirect, setHeader, setResponseStatus } from 'h3'
 import { verifyProjectResourceAccessToken } from '~~/server/services/document/project-resource-access-token'
 import {
-  getDocumentStorage,
+  getDocumentStorageByChannel,
   isDocumentStorageObjectNotFoundError,
 } from '~~/server/storage/document-storage'
 import { fail } from '~~/server/utils/api'
@@ -26,6 +26,7 @@ import { appendQueryParam } from '~~/shared/utils/api-url'
 
 interface DownloadFileRef {
   objectKey: string
+  storageProvider: string
   fileName: string
   mimeType: string
 }
@@ -234,6 +235,7 @@ export default defineEventHandler(async (event) => {
         redirectUrl: '',
         fileRef: {
           objectKey: sourceRef.objectKey,
+          storageProvider: sourceRef.storageProvider,
           fileName: sourceRef.fileName,
           mimeType: sourceRef.mimeType,
         },
@@ -288,6 +290,7 @@ export default defineEventHandler(async (event) => {
       redirectUrl: '',
       fileRef: {
         objectKey: fallbackRef.objectKey,
+        storageProvider: fallbackRef.storageProvider,
         fileName: fallbackRef.fileName,
         mimeType: fallbackRef.mimeType,
       },
@@ -335,8 +338,8 @@ export default defineEventHandler(async (event) => {
     return sendRedirect(event, prepared.redirectUrl, 302)
   }
 
-  const storage = getDocumentStorage()
   const fileRef = prepared.fileRef!
+  const storage = getDocumentStorageByChannel(fileRef.storageProvider)
 
   try {
     const buffer = await storage.getObjectBuffer(fileRef.objectKey)
@@ -352,6 +355,9 @@ export default defineEventHandler(async (event) => {
       sourceRoute,
       meta: {
         transport: 'file',
+        bytes: buffer.length,
+        channelId: storage.channelId,
+        provider: storage.provider,
       },
     })
 

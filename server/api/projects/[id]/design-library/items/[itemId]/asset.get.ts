@@ -1,5 +1,5 @@
 import { setHeader, setResponseStatus } from 'h3'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { getDocumentStorageByChannel } from '~~/server/storage/document-storage'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { getCanvasLibraryItemDetail } from '~~/server/utils/canvas-library-store'
@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
     }, 40500)
   }
 
-  const payload = publishedVersion.payload as { objectKey?: string, mimeType?: string }
+  const payload = publishedVersion.payload as { objectKey?: string, storageProvider?: string, mimeType?: string }
   const objectKey = normalizeString(payload.objectKey)
   if (!objectKey) {
     setResponseStatus(event, 404)
@@ -57,7 +57,7 @@ export default defineEventHandler(async (event) => {
     }, 40501)
   }
 
-  const storage = getDocumentStorage()
+  const storage = getDocumentStorageByChannel(normalizeString(payload.storageProvider) || 'local')
   const buffer = await storage.getObjectBuffer(objectKey).catch(() => null)
   if (!buffer) {
     setResponseStatus(event, 404)

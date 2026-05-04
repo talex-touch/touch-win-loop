@@ -1,7 +1,7 @@
 import type { AuthUser } from '~~/shared/types/domain'
 import { setHeader, setResponseStatus } from 'h3'
 import { verifyProjectResourceAccessToken } from '~~/server/services/document/project-resource-access-token'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { getDocumentStorageByChannel } from '~~/server/storage/document-storage'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
@@ -49,7 +49,7 @@ export default defineEventHandler(async (event) => {
     if (!tokenAuthorized) {
       const project = await getVisibleProjectById(db, user!, projectId)
       if (!project)
-        return { reason: 'PROJECT_NOT_FOUND' as const, fileRef: null as null | { objectKey: string, fileName: string, mimeType: string } }
+        return { reason: 'PROJECT_NOT_FOUND' as const, fileRef: null as null | { objectKey: string, storageProvider: string, fileName: string, mimeType: string } }
     }
 
     const sourceRef = await getProjectResourceSourceFileRef(db, {
@@ -61,6 +61,7 @@ export default defineEventHandler(async (event) => {
         reason: '' as const,
         fileRef: {
           objectKey: sourceRef.objectKey,
+          storageProvider: sourceRef.storageProvider,
           fileName: sourceRef.fileName,
           mimeType: sourceRef.mimeType,
         },
@@ -98,8 +99,8 @@ export default defineEventHandler(async (event) => {
     }, 40478)
   }
 
-  const storage = getDocumentStorage()
   const fileRef = result.fileRef!
+  const storage = getDocumentStorageByChannel(fileRef.storageProvider)
   try {
     const buffer = await storage.getObjectBuffer(fileRef.objectKey)
     setHeader(event, 'Content-Type', fileRef.mimeType || 'application/octet-stream')

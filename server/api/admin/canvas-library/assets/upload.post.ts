@@ -1,7 +1,7 @@
 import type { CanvasLibraryAssetKind } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
 import { setResponseStatus } from 'h3'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { buildCanvasLibraryAssetPayload } from '~~/server/utils/canvas-library-store'
@@ -74,7 +74,9 @@ export default defineEventHandler(async (event) => {
   const buffer = Buffer.from(filePart.data || Buffer.alloc(0))
   const assetKind = (normalizeString(fields.assetKind) || 'image') as CanvasLibraryAssetKind
   const objectKey = buildDocumentObjectKey('canvas-library', fileName)
-  const storage = getDocumentStorage()
+  const storage = await selectDocumentWriteStorage({
+    incomingBytes: buffer.length,
+  })
   await storage.putObject({
     key: objectKey,
     body: buffer,
@@ -87,6 +89,7 @@ export default defineEventHandler(async (event) => {
     mimeType,
     size: buffer.length,
     assetKind,
+    storageProvider: storage.channelId,
     width: Number(fields.width || 0),
     height: Number(fields.height || 0),
     metadata: parseJsonRecord(fields.metadata),

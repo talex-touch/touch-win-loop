@@ -1,7 +1,7 @@
 import type { ProjectResourceUploadSessionListResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { resolveProjectResourceUploadViewAccessContext } from '~~/server/services/project-resource-upload'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { deleteObjectsAcrossStorageChannels } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
@@ -47,8 +47,7 @@ export default defineEventHandler(async (event) => {
     return { ok: true as const, expiredChunkKeys, items }
   })
 
-  const storage = getDocumentStorage()
-  await storage.deleteObjects(result.expiredChunkKeys || []).catch(() => undefined)
+  await deleteObjectsAcrossStorageChannels(result.expiredChunkKeys || [], runtime).catch(() => undefined)
 
   if (!result.ok) {
     if (result.reason === 'PROJECT_NOT_FOUND') {

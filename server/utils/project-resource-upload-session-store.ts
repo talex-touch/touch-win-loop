@@ -228,6 +228,7 @@ export async function createProjectResourceUploadSessions(
     actorUserId: string
     chunkSize: number
     expiresAt: string
+    storageProvider?: string
     files: Array<{
       fileName: string
       mimeType: string
@@ -278,7 +279,7 @@ export async function createProjectResourceUploadSessions(
         updated_at
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-        $13, $14, 0, 0, 'queued', '', '', '', '', NULL, $15, NULL, NOW(), NOW()
+        $13, $14, 0, 0, 'queued', '', '', '', $15, NULL, $16, NULL, NOW(), NOW()
       )
       RETURNING
         id,
@@ -322,6 +323,7 @@ export async function createProjectResourceUploadSessions(
         normalizeString(file.summary),
         chunkSize,
         chunkCount,
+        normalizeString(input.storageProvider),
         input.expiresAt,
       ],
     )

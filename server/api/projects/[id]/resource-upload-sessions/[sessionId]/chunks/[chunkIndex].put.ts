@@ -3,11 +3,12 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { setResponseStatus } from 'h3'
 import { resolveProjectResourceUploadAccessContext } from '~~/server/services/project-resource-upload'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { getDocumentStorageByChannel } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import {
   buildProjectUploadChunkObjectKey,
   getProjectResourceUploadSessionById,
@@ -27,7 +28,8 @@ function toSafeInteger(value: unknown, fallback = 0): number {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const fallbackRuntime = readRuntimeSettings(event)
+  const { runtime } = await readEffectivePlatformRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
   const sessionId = normalizeString(getRouterParam(event, 'sessionId'))
@@ -37,8 +39,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少 projectId 或 sessionId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40099)
@@ -51,8 +53,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少必要的分片头信息。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40100)
@@ -95,6 +97,7 @@ export default defineEventHandler(async (event) => {
       ok: true as const,
       session,
       objectKey: buildProjectUploadChunkObjectKey(projectId, sessionId, chunkIndex),
+      storageProvider: session.finalStorageProvider || runtime.storage.primaryChannelId || 'local',
     }
   })
 
@@ -103,8 +106,8 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 404)
       return fail('project not found', {
         startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40493)
@@ -113,8 +116,8 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 403)
       return fail('当前用户无权上传项目资源。', {
         startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40393)
@@ -123,8 +126,8 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 404)
       return fail('上传会话不存在。', {
         startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40494)
@@ -132,8 +135,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 409)
     return fail('上传会话当前不可写入。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40901)
@@ -148,8 +151,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('分片大小与声明不一致。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40101)
@@ -160,14 +163,14 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('分片校验失败。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40102)
   }
 
-  const storage = getDocumentStorage()
+  const storage = getDocumentStorageByChannel(validation.storageProvider, runtime)
   await storage.putChunkObject({
     key: validation.objectKey,
     body: buffer,

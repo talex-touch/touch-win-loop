@@ -6,11 +6,13 @@ import type {
 import { Buffer } from 'node:buffer'
 import { setResponseStatus } from 'h3'
 import { generateAndSaveProjectOutline } from '~~/server/services/project-outline-generator'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, getDocumentStorageByChannel } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { recordBillingUsageEventSafely } from '~~/server/utils/billing-usage-tracker'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
 import { teamCanManageProject } from '~~/server/utils/project-access-store'
 import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
@@ -20,6 +22,7 @@ import {
   getProjectUploadedStorageUsageBytes,
 } from '~~/server/utils/project-resource-store'
 import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
+import { selectStorageWriteChannel } from '~~/server/utils/storage-service-store'
 import {
   formatFileSize,
   isProjectResourceUploadFileSupported,
@@ -80,7 +83,8 @@ interface ProjectUploadFile {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const fallbackRuntime = readRuntimeSettings(event)
+  const { runtime } = await readEffectivePlatformRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = String(getRouterParam(event, 'id') || '').trim()
 
@@ -88,8 +92,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少 projectId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40065)
@@ -117,8 +121,8 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 404)
       return fail('project not found', {
         startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40465)
@@ -127,8 +131,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权管理项目资源。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40365)
@@ -139,8 +143,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('请求体为空，请使用 multipart/form-data 上传文件。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40066)
@@ -151,8 +155,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少文件字段 file。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40067)
@@ -162,8 +166,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail(`单次最多上传 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个文件。`, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40068)
@@ -194,8 +198,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail(`文件为空：${emptyFile.fileName}。`, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40069)
@@ -209,8 +213,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail(`文件格式不支持：${unsupportedFiles.slice(0, 3).join('、')}。支持格式：${PROJECT_RESOURCE_UPLOAD_TYPES_LABEL}。`, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40070)
@@ -221,8 +225,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail(`文件过大：${oversizedFile.fileName}，单文件上限 ${formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)}。`, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40071)
@@ -233,14 +237,32 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail(`当前项目容量超限：最多 ${formatFileSize(PROJECT_RESOURCE_STORAGE_LIMIT_BYTES)}。`, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40072)
   }
 
-  const storage = getDocumentStorage()
+  let storageSelection
+  try {
+    storageSelection = await withClient(event, db => selectStorageWriteChannel(db, runtime, incomingBytes))
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'STORAGE_CAPACITY_EXCEEDED') {
+      setResponseStatus(event, 400)
+      return fail('所有启用存储渠道都已达到水位或容量上限，请调整存储服务配置后重试。', {
+        startedAt,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40074)
+    }
+    throw error
+  }
+
+  const storage = getDocumentStorageByChannel(storageSelection.channel.id, runtime)
   const uploadedObjectKeys: string[] = []
 
   try {
@@ -262,7 +284,7 @@ export default defineEventHandler(async (event) => {
           mimeType: file.mimeType,
           fileSize: file.buffer.length,
           objectKey: file.objectKey,
-          storageProvider: storage.provider,
+          storageProvider: storage.channelId,
           title: files.length === 1 ? title : '',
           summary,
           category,
@@ -283,7 +305,7 @@ export default defineEventHandler(async (event) => {
           projectId,
           projectResourceId: resource.id,
           sourceObjectKey: file.objectKey,
-          sourceStorageProvider: storage.provider,
+          sourceStorageProvider: storage.channelId,
           sourceFileName: file.fileName,
           sourceMimeType: file.mimeType,
           sourceFileSize: file.buffer.length,
@@ -308,6 +330,22 @@ export default defineEventHandler(async (event) => {
           sourceDownloadUrl: signedUrls.sourceDownloadUrl,
           sourceDownloadUrlExpiresAt: signedUrls.sourceDownloadUrlExpiresAt,
           sourceLink: signedUrls.sourceDownloadUrl,
+        })
+
+        await recordBillingUsageEventSafely(db, {
+          workspaceId: hasAccess.workspaceId,
+          projectId,
+          projectResourceId: resource.id,
+          actorUserId: user.id,
+          eventCode: 'resource.upload',
+          result: 'success',
+          sourceRoute: event.path,
+          meta: {
+            bytes: file.buffer.length,
+            channelId: storage.channelId,
+            provider: storage.provider,
+            objectKey: file.objectKey,
+          },
         })
       }
       return nextResources
@@ -342,8 +380,8 @@ export default defineEventHandler(async (event) => {
       limitBytes: PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
     }, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, files.length === 1 ? '上传成功。' : `批量上传成功（${resources.length} 个文件）。`)
@@ -355,8 +393,8 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 400)
       return fail('目标父节点不存在，或不在当前项目内。', {
         startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40073)

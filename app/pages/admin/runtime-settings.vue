@@ -24,16 +24,6 @@ interface RuntimeSettingsPayload {
   contest: {
     autoSeed: boolean
   }
-  storage: {
-    provider: string
-    localRoot: string
-    endpoint: string
-    region: string
-    bucket: string
-    accessKeyConfigured: boolean
-    secretKeyConfigured: boolean
-    forcePathStyle: boolean
-  }
   overrideState: {
     storageAccessKeyOverridden: boolean
     storageSecretKeyOverridden: boolean
@@ -49,28 +39,15 @@ interface RuntimeSettingsPayload {
   }
 }
 
-type SecretMode = 'keep' | 'replace' | 'clear'
 type RuntimeConfigSection = keyof RuntimeSettingsPayload['configSource']
-
-interface StorageTestPayload {
-  ok: boolean
-  provider: string
-  bucket: string
-  endpoint: string
-  latencyMs: number
-  detail: string
-}
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 
 const loading = ref(true)
 const saving = ref(false)
-const testingStorage = ref(false)
 const errorText = ref('')
 const successText = ref('')
-const storageTestErrorText = ref('')
-const storageTestResult = ref<StorageTestPayload | null>(null)
 const payload = ref<RuntimeSettingsPayload | null>(null)
 
 const form = reactive({
@@ -91,18 +68,6 @@ const form = reactive({
   },
   contest: {
     autoSeed: false,
-  },
-  storage: {
-    provider: 'local',
-    localRoot: './tmp/document-storage',
-    endpoint: '',
-    region: '',
-    bucket: '',
-    accessKeyMode: 'keep' as SecretMode,
-    accessKey: '',
-    secretKeyMode: 'keep' as SecretMode,
-    secretKey: '',
-    forcePathStyle: true,
   },
 })
 
@@ -131,16 +96,6 @@ function applyPayload(nextPayload: RuntimeSettingsPayload): void {
 
   form.contest.autoSeed = Boolean(nextPayload.contest.autoSeed)
 
-  form.storage.provider = nextPayload.storage.provider || 'local'
-  form.storage.localRoot = nextPayload.storage.localRoot || './tmp/document-storage'
-  form.storage.endpoint = nextPayload.storage.endpoint || ''
-  form.storage.region = nextPayload.storage.region || ''
-  form.storage.bucket = nextPayload.storage.bucket || ''
-  form.storage.accessKeyMode = 'keep'
-  form.storage.accessKey = ''
-  form.storage.secretKeyMode = 'keep'
-  form.storage.secretKey = ''
-  form.storage.forcePathStyle = Boolean(nextPayload.storage.forcePathStyle)
 }
 
 function displayConfigSource(section: RuntimeConfigSection, value?: RuntimeSettingsPayload['configSource'][RuntimeConfigSection]): string {
@@ -158,8 +113,6 @@ async function loadSettings(showLoading = false) {
     loading.value = true
   errorText.value = ''
   successText.value = ''
-  storageTestErrorText.value = ''
-  storageTestResult.value = null
   try {
     const response = await fetch(endpoint('/admin/runtime-settings'), {
       credentials: 'include',
@@ -179,26 +132,10 @@ async function loadSettings(showLoading = false) {
   }
 }
 
-function buildStoragePayload() {
-  return {
-    provider: form.storage.provider,
-    localRoot: form.storage.localRoot,
-    endpoint: form.storage.endpoint,
-    region: form.storage.region,
-    bucket: form.storage.bucket,
-    accessKeyMode: form.storage.accessKeyMode,
-    accessKey: form.storage.accessKey,
-    secretKeyMode: form.storage.secretKeyMode,
-    secretKey: form.storage.secretKey,
-    forcePathStyle: Boolean(form.storage.forcePathStyle),
-  }
-}
-
 async function saveSettings() {
   saving.value = true
   errorText.value = ''
   successText.value = ''
-  storageTestErrorText.value = ''
   try {
     const response = await fetch(endpoint('/admin/runtime-settings'), {
       method: 'PATCH',
@@ -225,7 +162,6 @@ async function saveSettings() {
         contest: {
           autoSeed: Boolean(form.contest.autoSeed),
         },
-        storage: buildStoragePayload(),
       }),
     })
     const result = await response.json().catch(() => null) as ApiResponse<RuntimeSettingsPayload> | null
@@ -243,34 +179,6 @@ async function saveSettings() {
   }
 }
 
-async function testStorageSettings() {
-  testingStorage.value = true
-  storageTestErrorText.value = ''
-  storageTestResult.value = null
-  try {
-    const response = await fetch(endpoint('/admin/runtime-settings/storage-test'), {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        storage: buildStoragePayload(),
-      }),
-    })
-    const result = await response.json().catch(() => null) as ApiResponse<StorageTestPayload> | null
-    if (!response.ok || !result || result.code !== 0)
-      throw new Error(String(result?.message || '存储探针失败。'))
-    storageTestResult.value = result.data
-  }
-  catch (error: any) {
-    storageTestErrorText.value = String(error?.data?.message || error?.message || '存储探针失败。')
-  }
-  finally {
-    testingStorage.value = false
-  }
-}
-
 onMounted(async () => {
   await loadSettings(true)
 })
@@ -285,7 +193,7 @@ onMounted(async () => {
             运行设置
           </h1>
           <p class="text-[11px] text-slate-500 mb-0 mt-1">
-            worker 参数默认使用内置值，Storage 可在后台覆盖 env 并立即用于资源、头像与会议录制落盘。
+            worker 与平台基础参数默认使用内置值。
           </p>
         </div>
         <div class="flex gap-2 items-center">
@@ -400,101 +308,6 @@ onMounted(async () => {
           <a-switch v-model="form.contest.autoSeed" size="small" />
           <span class="text-[11px] text-slate-700">自动注入 catalog 赛事（contest.autoSeed）</span>
         </label>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white space-y-3">
-        <div class="flex gap-3 items-center justify-between">
-          <div>
-            <h2 class="text-[12px] text-slate-900 font-bold m-0">
-              对象存储（storage / S3）
-            </h2>
-            <p class="text-[11px] text-slate-500 m-0 mt-1">
-              会议录制、上传资料、头像和转换产物统一走该存储配置；密钥仅在选择替换时提交。
-            </p>
-          </div>
-          <div class="flex gap-2 items-center">
-            <a-tag size="small" :color="payload?.configSource?.storage === 'override' ? 'green' : 'gray'">
-              {{ displayConfigSource('storage', payload?.configSource?.storage) }}
-            </a-tag>
-            <a-button size="small" type="outline" :loading="testingStorage" @click="testStorageSettings">
-              测试存储
-            </a-button>
-          </div>
-        </div>
-
-        <div class="gap-2 grid md:grid-cols-4">
-          <label class="block space-y-1">
-            <span class="text-[11px] text-slate-600">Provider</span>
-            <a-select v-model="form.storage.provider" size="small">
-              <a-option value="local">local</a-option>
-              <a-option value="s3">s3</a-option>
-              <a-option value="minio">minio</a-option>
-            </a-select>
-          </label>
-          <label class="block space-y-1 md:col-span-3">
-            <span class="text-[11px] text-slate-600">Local Root</span>
-            <a-input v-model="form.storage.localRoot" size="small" placeholder="./tmp/document-storage" />
-          </label>
-        </div>
-
-        <div class="gap-2 grid md:grid-cols-4">
-          <label class="block space-y-1 md:col-span-2">
-            <span class="text-[11px] text-slate-600">Endpoint</span>
-            <a-input v-model="form.storage.endpoint" size="small" placeholder="https://s3.example.com" />
-          </label>
-          <label class="block space-y-1">
-            <span class="text-[11px] text-slate-600">Region</span>
-            <a-input v-model="form.storage.region" size="small" placeholder="auto / cn-hangzhou" />
-          </label>
-          <label class="block space-y-1">
-            <span class="text-[11px] text-slate-600">Bucket</span>
-            <a-input v-model="form.storage.bucket" size="small" placeholder="winloop-prod" />
-          </label>
-        </div>
-
-        <div class="gap-2 grid md:grid-cols-4">
-          <label class="block space-y-1">
-            <span class="text-[11px] text-slate-600">Access Key 操作</span>
-            <a-select v-model="form.storage.accessKeyMode" size="small">
-              <a-option value="keep">保持现有</a-option>
-              <a-option value="replace">替换</a-option>
-              <a-option value="clear">清空</a-option>
-            </a-select>
-          </label>
-          <label class="block space-y-1">
-            <span class="text-[11px] text-slate-600">Access Key</span>
-            <a-input-password v-model="form.storage.accessKey" size="small" :disabled="form.storage.accessKeyMode !== 'replace'" />
-          </label>
-          <label class="block space-y-1">
-            <span class="text-[11px] text-slate-600">Secret Key 操作</span>
-            <a-select v-model="form.storage.secretKeyMode" size="small">
-              <a-option value="keep">保持现有</a-option>
-              <a-option value="replace">替换</a-option>
-              <a-option value="clear">清空</a-option>
-            </a-select>
-          </label>
-          <label class="block space-y-1">
-            <span class="text-[11px] text-slate-600">Secret Key</span>
-            <a-input-password v-model="form.storage.secretKey" size="small" :disabled="form.storage.secretKeyMode !== 'replace'" />
-          </label>
-        </div>
-
-        <div class="text-[11px] text-slate-600 flex flex-wrap gap-3 items-center">
-          <label class="inline-flex gap-2 items-center">
-            <a-switch v-model="form.storage.forcePathStyle" size="small" />
-            <span>Force Path Style</span>
-          </label>
-          <span>AccessKey：{{ payload?.storage?.accessKeyConfigured ? '已配置' : '未配置' }}</span>
-          <span>SecretKey：{{ payload?.storage?.secretKeyConfigured ? '已配置' : '未配置' }}</span>
-          <span>覆盖：{{ payload?.overrideState?.storageAccessKeyOverridden || payload?.overrideState?.storageSecretKeyOverridden ? '后台密钥' : 'env/default' }}</span>
-        </div>
-
-        <section v-if="storageTestResult" class="text-emerald-700 p-2 border border-emerald-200 bg-emerald-50">
-          {{ storageTestResult.detail }} provider={{ storageTestResult.provider }}，latency={{ storageTestResult.latencyMs }}ms
-        </section>
-        <section v-if="storageTestErrorText" class="text-rose-600 p-2 border border-rose-200 bg-rose-50">
-          {{ storageTestErrorText }}
-        </section>
       </section>
 
       <section class="p-3 border border-slate-200 bg-white">

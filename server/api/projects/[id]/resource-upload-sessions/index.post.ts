@@ -5,15 +5,17 @@ import type {
 } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { resolveProjectResourceUploadAccessContext } from '~~/server/services/project-resource-upload'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { deleteObjectsAcrossStorageChannels } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import {
   createProjectResourceUploadSessions,
   expireProjectResourceUploadSessions,
 } from '~~/server/utils/project-resource-upload-session-store'
+import { selectStorageWriteChannel } from '~~/server/utils/storage-service-store'
 import {
   formatFileSize,
   isProjectResourceUploadFileSupported,
@@ -79,7 +81,8 @@ function toSafeInteger(value: unknown, fallback = 0): number {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const fallbackRuntime = readRuntimeSettings(event)
+  const { runtime } = await readEffectivePlatformRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
 
@@ -87,8 +90,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少 projectId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40091)
@@ -100,8 +103,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少文件初始化信息。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40092)
@@ -111,8 +114,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail(`单次最多上传 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个文件。`, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40093)
@@ -137,8 +140,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('文件名或文件大小无效。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40094)
@@ -151,8 +154,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail(`文件格式不支持：${unsupportedFiles.slice(0, 3).join('、')}。支持格式：${PROJECT_RESOURCE_UPLOAD_TYPES_LABEL}。`, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40095)
@@ -163,8 +166,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail(`文件过大：${oversizedFile.fileName}，单文件上限 ${formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)}。`, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40096)
@@ -191,11 +194,28 @@ export default defineEventHandler(async (event) => {
       }
     }
 
+    let storageSelection
+    try {
+      storageSelection = await selectStorageWriteChannel(db, runtime, incomingBytes)
+    }
+    catch (error) {
+      if (error instanceof Error && error.message === 'STORAGE_CAPACITY_EXCEEDED') {
+        return {
+          ok: false as const,
+          reason: 'STORAGE_CAPACITY_EXCEEDED' as const,
+          expiredChunkKeys,
+          sessions: [],
+        }
+      }
+      throw error
+    }
+
     const sessions = await createProjectResourceUploadSessions(db, {
       projectId,
       actorUserId: user.id,
       chunkSize: PROJECT_RESOURCE_UPLOAD_CHUNK_SIZE_BYTES,
       expiresAt,
+      storageProvider: storageSelection.channel.id,
       files,
     })
     return {
@@ -205,16 +225,15 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  const storage = getDocumentStorage()
-  await storage.deleteObjects(result.expiredChunkKeys || []).catch(() => undefined)
+  await deleteObjectsAcrossStorageChannels(result.expiredChunkKeys || [], runtime).catch(() => undefined)
 
   if (!result.ok) {
     if (result.reason === 'PROJECT_NOT_FOUND') {
       setResponseStatus(event, 404)
       return fail('project not found', {
         startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40491)
@@ -223,17 +242,19 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 403)
       return fail('当前用户无权管理项目上传。', {
         startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40391)
     }
     setResponseStatus(event, 400)
-    return fail(`当前项目容量超限：最多 ${formatFileSize(PROJECT_RESOURCE_STORAGE_LIMIT_BYTES)}。`, {
+    return fail(result.reason === 'STORAGE_CAPACITY_EXCEEDED'
+      ? '所有启用存储渠道都已达到水位或容量上限，请调整存储服务配置后重试。'
+      : `当前项目容量超限：最多 ${formatFileSize(PROJECT_RESOURCE_STORAGE_LIMIT_BYTES)}。`, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40097)
@@ -244,8 +265,8 @@ export default defineEventHandler(async (event) => {
   }
   return ok(payload, {
     startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
+    provider: fallbackRuntime.ai.provider,
+    model: fallbackRuntime.ai.model,
     fallbackUsed: false,
     attempts: 1,
   }, '上传会话已创建。')
