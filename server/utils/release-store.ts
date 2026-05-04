@@ -915,6 +915,16 @@ function buildTrackDerivedTimelinePrefix(trackExternalId: string): string {
   return `${DERIVED_TRACK_TIMELINE_PREFIX}${trackExternalId}:`
 }
 
+function extractTrackExternalIdFromTimelineExternalId(externalId: string): string {
+  const normalized = normalizeText(externalId)
+  for (const prefix of [DERIVED_TRACK_TIMELINE_PREFIX, LEGACY_TRACK_TIMELINE_PREFIX]) {
+    if (!normalized.startsWith(prefix))
+      continue
+    return normalizeText(normalized.slice(prefix.length).split(':')[0])
+  }
+  return ''
+}
+
 function buildManualTrackExternalId(trackId: string): string {
   return `${MANUAL_TRACK_EXTERNAL_ID_PREFIX}${normalizeText(trackId)}`
 }
@@ -1926,6 +1936,22 @@ function normalizeSnapshotFaqItems(value: unknown): Array<{ question: string, an
     .filter(item => item.question || item.answer)
 }
 
+function collectDuplicatedTrackNames(tracks: ContestReleaseTrackSnapshot[]): string[] {
+  const namesByKey = new Map<string, string>()
+  const countsByKey = new Map<string, number>()
+  for (const track of tracks) {
+    const name = normalizeText(track.name)
+    const key = normalizeCompareValue(name)
+    if (!key)
+      continue
+    namesByKey.set(key, name)
+    countsByKey.set(key, (countsByKey.get(key) || 0) + 1)
+  }
+  return [...countsByKey.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([key, count]) => `${namesByKey.get(key) || key}（${count} 条）`)
+}
+
 export async function getContestReleasePublishCheck(
   db: Queryable,
   input: {
@@ -2004,6 +2030,15 @@ export async function getContestReleasePublishCheck(
   checks.push(hasTracks)
   if (!hasTracks)
     pushBlocker('CONTEST_TRACKS_REQUIRED', '至少需要 1 个赛道。', 'tracks')
+
+  const duplicatedTrackNames = collectDuplicatedTrackNames(snapshot.tracks)
+  if (duplicatedTrackNames.length > 0) {
+    pushBlocker(
+      'CONTEST_TRACK_NAMES_DUPLICATED',
+      `同一赛事下存在重复赛道名称：${duplicatedTrackNames.join('、')}。请驳回后调整赛道名称或合并重复赛道。`,
+      'tracks',
+    )
+  }
 
   const hasTimelines = snapshot.timelines.length > 0 || snapshot.trackTimelines.length > 0
   checks.push(hasTimelines)
@@ -4286,9 +4321,11 @@ async function publishContestRelease(
   }
 
   for (const timeline of directTrackTimelines) {
-    const trackId = trackIdByExternalId.get(timeline.trackExternalId) || normalizeText(timeline.trackLiveId)
+    const timelineTrackExternalId = normalizeText(timeline.trackExternalId)
+      || extractTrackExternalIdFromTimelineExternalId(timeline.externalId)
+    const trackId = trackIdByExternalId.get(timelineTrackExternalId) || normalizeText(timeline.trackLiveId)
     if (!trackId)
-      throw new Error(`RELEASE_TRACK_TIMELINE_TRACK_NOT_FOUND:${timeline.trackExternalId}`)
+      throw new Error(`RELEASE_TRACK_TIMELINE_TRACK_NOT_FOUND:${timelineTrackExternalId || timeline.externalId}`)
 
     const existingRef = directTrackTimelineRefByExternalId.get(timeline.externalId)
     let timelineId = normalizeText(existingRef?.entity_id)
@@ -4347,9 +4384,11 @@ async function publishContestRelease(
     [contestId],
   )
   for (const timeline of derivedTrackTimelines) {
-    const trackId = trackIdByExternalId.get(timeline.trackExternalId) || normalizeText(timeline.trackLiveId)
+    const timelineTrackExternalId = normalizeText(timeline.trackExternalId)
+      || extractTrackExternalIdFromTimelineExternalId(timeline.externalId)
+    const trackId = trackIdByExternalId.get(timelineTrackExternalId) || normalizeText(timeline.trackLiveId)
     if (!trackId)
-      throw new Error(`RELEASE_TRACK_TIMELINE_TRACK_NOT_FOUND:${timeline.trackExternalId}`)
+      throw new Error(`RELEASE_TRACK_TIMELINE_TRACK_NOT_FOUND:${timelineTrackExternalId || timeline.externalId}`)
 
     await db.query(
       `INSERT INTO contest_track_timelines (
