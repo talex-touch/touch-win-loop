@@ -40,6 +40,7 @@ async function prepareDeployFixture({ curlExitCode = 0 } = {}) {
   const reportFile = join(tempRoot, 'deployment.json')
   const templateFile = join(tempRoot, 'compose.yaml')
   const lockRoot = join(tempRoot, 'locks')
+  const dockerEnvLog = join(tempRoot, 'docker-env.log')
 
   await writeFile(templateFile, 'services:\n  winloop:\n    image: placeholder\n')
   await writeFile(join(tempRoot, '.keep'), '')
@@ -55,6 +56,9 @@ async function prepareDeployFixture({ curlExitCode = 0 } = {}) {
     'ROLLBACK_ON_FAILURE=false',
     'FORCE_RECREATE=true',
     'DB_MIGRATION_FILES=__none__.sql',
+    'MEETING_LIVEKIT_HTTP_PORT=7880',
+    'MEETING_LIVEKIT_TCP_PORT=7881',
+    'MEETING_LIVEKIT_RTC_UDP_RANGE=50000-50100',
     '',
   ].join('\n'))
   await writeFile(join(stagingDir, '.env.runtime'), [
@@ -73,6 +77,11 @@ if [[ "$1" == "compose" && "$2" == "version" ]]; then
   exit 0
 fi
 if [[ "$1" == "compose" ]]; then
+  {
+    printf 'MEETING_LIVEKIT_HTTP_PORT=%s\n' "\${MEETING_LIVEKIT_HTTP_PORT:-}"
+    printf 'MEETING_LIVEKIT_TCP_PORT=%s\n' "\${MEETING_LIVEKIT_TCP_PORT:-}"
+    printf 'MEETING_LIVEKIT_RTC_UDP_RANGE=%s\n' "\${MEETING_LIVEKIT_RTC_UDP_RANGE:-}"
+  } >> "\${WINLOOP_DOCKER_ENV_LOG:-/dev/null}"
   for arg in "$@"; do
     if [[ "$arg" == "ps" ]]; then
       exit 0
@@ -92,6 +101,7 @@ exit ${curlExitCode}
   return {
     binDir,
     deployBaseDir,
+    dockerEnvLog,
     lockRoot,
     reportFile,
     stagingDir,
@@ -119,6 +129,7 @@ async function runDeploy(fixture) {
       WINLOOP_DEPLOY_LOCK_ROOT: fixture.lockRoot,
       WINLOOP_DEPLOY_REPORT_FILE: fixture.reportFile,
       WINLOOP_DEPLOY_TEMPLATE_FILE: fixture.templateFile,
+      WINLOOP_DOCKER_ENV_LOG: fixture.dockerEnvLog,
     },
   })
 }
@@ -131,6 +142,8 @@ describe('jenkins deploy notification metadata', () => {
 
       const report = JSON.parse(await readFile(fixture.reportFile, 'utf8'))
       const state = JSON.parse(await readFile(join(fixture.stagingDir, 'last-successful-deployment.json'), 'utf8'))
+      const livekitConfig = await readFile(join(fixture.stagingDir, 'livekit.yaml'), 'utf8')
+      const dockerEnvLog = await readFile(fixture.dockerEnvLog, 'utf8')
 
       assert.equal(report.status, 'success')
       assert.equal(report.publicBaseUrl, 'https://staging.winloop.example')
@@ -138,6 +151,12 @@ describe('jenkins deploy notification metadata', () => {
       assert.equal(state.status, 'success')
       assert.equal(state.publicBaseUrl, 'https://staging.winloop.example')
       assert.equal(state.buildCommitSha, BUILD_COMMIT_SHA)
+      assert.match(livekitConfig, /^ {2}tcp_port: 17881$/m)
+      assert.match(livekitConfig, /^ {2}port_range_start: 51000$/m)
+      assert.match(livekitConfig, /^ {2}port_range_end: 51100$/m)
+      assert.match(dockerEnvLog, /^MEETING_LIVEKIT_HTTP_PORT=17880$/m)
+      assert.match(dockerEnvLog, /^MEETING_LIVEKIT_TCP_PORT=17881$/m)
+      assert.match(dockerEnvLog, /^MEETING_LIVEKIT_RTC_UDP_RANGE=51000-51100$/m)
     }
     finally {
       await rm(fixture.tempRoot, { recursive: true, force: true })

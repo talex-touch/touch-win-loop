@@ -61,9 +61,9 @@ services:
       - --config
       - /etc/livekit/livekit.yaml
     ports:
-      - ${MEETING_LIVEKIT_HTTP_PORT:-7880}:7880/tcp
-      - ${MEETING_LIVEKIT_TCP_PORT:-7881}:7881/tcp
-      - ${MEETING_LIVEKIT_RTC_UDP_RANGE:-50000-50100}:${MEETING_LIVEKIT_RTC_UDP_RANGE:-50000-50100}/udp
+      - ${MEETING_LIVEKIT_HTTP_PORT:-17880}:7880/tcp
+      - ${MEETING_LIVEKIT_TCP_PORT:-17881}:${MEETING_LIVEKIT_TCP_PORT:-17881}/tcp
+      - ${MEETING_LIVEKIT_RTC_UDP_RANGE:-51000-51100}:${MEETING_LIVEKIT_RTC_UDP_RANGE:-51000-51100}/udp
     volumes:
       - ${MEETING_LIVEKIT_CONFIG_FILE:-./livekit.yaml}:/etc/livekit/livekit.yaml:ro
     networks:

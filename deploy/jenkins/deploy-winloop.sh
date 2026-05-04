@@ -328,6 +328,26 @@ normalize_port_range() {
   fi
 }
 
+apply_meeting_port_defaults() {
+  if [[ "$DEPLOY_ENV" == "staging" ]]; then
+    if [[ -z "${MEETING_LIVEKIT_HTTP_PORT:-}" || "${MEETING_LIVEKIT_HTTP_PORT:-}" == "7880" ]]; then
+      MEETING_LIVEKIT_HTTP_PORT="17880"
+    fi
+    if [[ -z "${MEETING_LIVEKIT_TCP_PORT:-}" || "${MEETING_LIVEKIT_TCP_PORT:-}" == "7881" ]]; then
+      MEETING_LIVEKIT_TCP_PORT="17881"
+    fi
+    if [[ -z "${MEETING_LIVEKIT_RTC_UDP_RANGE:-}" || "${MEETING_LIVEKIT_RTC_UDP_RANGE:-}" == "50000-50100" ]]; then
+      MEETING_LIVEKIT_RTC_UDP_RANGE="51000-51100"
+    fi
+  else
+    MEETING_LIVEKIT_HTTP_PORT="${MEETING_LIVEKIT_HTTP_PORT:-17880}"
+    MEETING_LIVEKIT_TCP_PORT="${MEETING_LIVEKIT_TCP_PORT:-17881}"
+    MEETING_LIVEKIT_RTC_UDP_RANGE="${MEETING_LIVEKIT_RTC_UDP_RANGE:-51000-51100}"
+  fi
+
+  export MEETING_LIVEKIT_HTTP_PORT MEETING_LIVEKIT_TCP_PORT MEETING_LIVEKIT_RTC_UDP_RANGE
+}
+
 write_meeting_configs() {
   local existing_key=""
   local existing_secret=""
@@ -349,7 +369,7 @@ write_meeting_configs() {
   MEETING_LIVEKIT_USE_EXTERNAL_IP="$(to_bool "${MEETING_LIVEKIT_USE_EXTERNAL_IP:-true}")"
   MEETING_LIVEKIT_LOG_LEVEL="${MEETING_LIVEKIT_LOG_LEVEL:-info}"
   MEETING_LIVEKIT_WEBHOOK_URL="${MEETING_LIVEKIT_WEBHOOK_URL:-http://${SERVICE_NAME}:3000/api/internal/meetings/provider-events}"
-  MEETING_LIVEKIT_RTC_UDP_RANGE="${MEETING_LIVEKIT_RTC_UDP_RANGE:-50000-50100}"
+  apply_meeting_port_defaults
   normalize_port_range "$MEETING_LIVEKIT_RTC_UDP_RANGE"
 
   mkdir -p \
@@ -364,7 +384,7 @@ write_meeting_configs() {
 port: 7880
 
 rtc:
-  tcp_port: 7881
+  tcp_port: ${MEETING_LIVEKIT_TCP_PORT}
   port_range_start: ${MEETING_LIVEKIT_RTC_UDP_START}
   port_range_end: ${MEETING_LIVEKIT_RTC_UDP_END}
   use_external_ip: ${MEETING_LIVEKIT_USE_EXTERNAL_IP}

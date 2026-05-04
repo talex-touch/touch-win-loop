@@ -99,9 +99,9 @@ DB_MIGRATION_CLIENT_IMAGE=postgres:18-alpine
 DB_MIGRATION_NETWORK=1panel-network
 MEETING_STACK_ENABLED=true
 MEETING_EGRESS_ENABLED=false
-MEETING_LIVEKIT_HTTP_PORT=7880
-MEETING_LIVEKIT_TCP_PORT=7881
-MEETING_LIVEKIT_RTC_UDP_RANGE=50000-50100
+MEETING_LIVEKIT_HTTP_PORT=17880
+MEETING_LIVEKIT_TCP_PORT=17881
+MEETING_LIVEKIT_RTC_UDP_RANGE=51000-51100
 ```
 
 其中：
@@ -112,7 +112,8 @@ MEETING_LIVEKIT_RTC_UDP_RANGE=50000-50100
 - 迁移不会参与自动回滚，因此所有上线 SQL 必须保持向后兼容或显式幂等
 - `MEETING_STACK_ENABLED=true` 时，标准 staging 部署会同时启动 LiveKit、meeting Redis、Prometheus、node-exporter、cAdvisor
 - `MEETING_EGRESS_ENABLED=false` 是首轮默认值；录制压测阶段再打开 Egress profile
-- LiveKit 默认暴露 `7880/tcp`、`7881/tcp`、`50000-50100/udp`；Prometheus 默认不发布宿主端口，仅通过容器网络 `meeting-prometheus:9090` 访问
+- LiveKit 默认暴露宿主 `17880/tcp`、`17881/tcp`、`51000-51100/udp`，容器内 HTTP 仍为 `livekit:7880`；staging 旧默认 `7880/tcp`、`7881/tcp`、`50000-50100/udp` 会在部署时自动迁移到新默认，避免和宿主现有 LiveKit 冲突
+- Prometheus 默认不发布宿主端口，仅通过容器网络 `meeting-prometheus:9090` 访问
 
 production 只需要改成独立的：
 
@@ -130,6 +131,7 @@ production 只需要改成独立的：
 - `WINLOOP_PUBLIC_BASE_URL`
 - `WINLOOP_API_BASE_URL`
 - `WINLOOP_ONLYOFFICE_ENDPOINT` / `WINLOOP_ONLYOFFICE_JWT_SECRET`（如果启用再配）
+- `WINLOOP_MEETING_RTC_SERVER_URL`（使用内置 LiveKit 时应指向真实 staging 域名与 `MEETING_LIVEKIT_HTTP_PORT`，默认端口 `17880`）
 - `WINLOOP_MEETING_MONITORING_PROMETHEUS_BASE_URL`（staging 默认 `http://meeting-prometheus:9090`）
 - `WINLOOP_SENTRY_DSN` / `WINLOOP_SENTRY_ENVIRONMENT`（如果启用 Sentry 再配）
 
