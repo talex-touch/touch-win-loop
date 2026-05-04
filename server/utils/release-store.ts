@@ -1991,8 +1991,13 @@ export async function getContestReleasePublishCheck(
   const warnings: PublishCheckResult['warnings'] = []
   const checks: boolean[] = []
 
-  const pushBlocker = (code: string, message: string, field?: string) => {
-    blockers.push({ code, message, field, severity: 'blocker' })
+  const pushBlocker = (
+    code: string,
+    message: string,
+    field?: string,
+    details?: Array<{ label: string, value: string }>,
+  ) => {
+    blockers.push({ code, message, field, severity: 'blocker', details })
   }
 
   const pushWarning = (code: string, message: string, field?: string) => {
@@ -2064,6 +2069,11 @@ export async function getContestReleasePublishCheck(
       'CONTEST_DUPLICATED',
       `检测到重复竞赛（ID: ${existingExternalRefContestId}），请核对唯一编号/赛事名称。`,
       'externalId',
+      [
+        { label: '当前版本唯一编号', value: contestExternalId },
+        { label: '当前关联竞赛 ID', value: currentContestId },
+        { label: '已占用该编号的竞赛 ID', value: existingExternalRefContestId },
+      ],
     )
   }
 
@@ -2082,6 +2092,11 @@ export async function getContestReleasePublishCheck(
         'CONTEST_DUPLICATED',
         `检测到重复竞赛（ID: ${duplicate.id}），请核对唯一编号/赛事名称。`,
         'name',
+        [
+          { label: '当前版本赛事名称', value: normalizeText(contest.name) },
+          { label: '命中竞赛 ID', value: duplicate.id },
+          { label: '命中竞赛名称', value: duplicate.name },
+        ],
       )
     }
   }

@@ -199,6 +199,7 @@ export interface PublishCheckIssue {
   message: string
   field?: string
   severity: 'blocker' | 'warning'
+  details?: Array<{ label: string, value: string }>
 }
 
 export interface PublishCheckResult {

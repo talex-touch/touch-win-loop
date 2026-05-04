@@ -2656,8 +2656,13 @@ export async function getContestPublishCheck(
     trackTimelines,
   })
 
-  const pushBlocker = (code: string, message: string, field?: string) => {
-    blockers.push({ code, message, field, severity: 'blocker' })
+  const pushBlocker = (
+    code: string,
+    message: string,
+    field?: string,
+    details?: Array<{ label: string, value: string }>,
+  ) => {
+    blockers.push({ code, message, field, severity: 'blocker', details })
   }
 
   const pushWarning = (code: string, message: string, field?: string) => {
@@ -2743,6 +2748,11 @@ export async function getContestPublishCheck(
         'CONTEST_DUPLICATED',
         `检测到重复竞赛（ID: ${duplicateExternalRef.entity_id}），请核对唯一编号/赛事名称。`,
         'externalId',
+        [
+          { label: '当前竞赛唯一编号', value: contestExternalId },
+          { label: '当前竞赛 ID', value: input.contestId },
+          { label: '已占用该编号的竞赛 ID', value: duplicateExternalRef.entity_id },
+        ],
       )
     }
   }
@@ -2761,6 +2771,11 @@ export async function getContestPublishCheck(
         'CONTEST_DUPLICATED',
         `检测到重复竞赛（ID: ${duplicate.id}），请核对唯一编号/赛事名称。`,
         'name',
+        [
+          { label: '当前竞赛名称', value: normalizeString(contest.name) },
+          { label: '命中竞赛 ID', value: duplicate.id },
+          { label: '命中竞赛名称', value: duplicate.name },
+        ],
       )
     }
   }

@@ -11,6 +11,7 @@ import type {
   ContestWorkflowTimelineItem,
   PolicyLibraryItemSnapshot,
   PolicyLibraryReleaseSnapshot,
+  PublishCheckIssue,
   ReleaseQueueInsights,
   ReleaseQueueInsightsWindowDays,
   ReleaseQueueRecentReviewItem,
@@ -379,6 +380,10 @@ function timelineSourceColor(source: ContestWorkflowTimelineItem['source']): str
 
 function diffSummaryText(version: ReleaseVersion): string {
   return `新增 ${version.diffSummary.createdCount} / 更新 ${version.diffSummary.updatedCount} / 移除 ${version.diffSummary.removedCount}`
+}
+
+function publishCheckIssueKey(item: PublishCheckIssue): string {
+  return `${item.severity}:${item.code}:${item.field || ''}:${item.message}`
 }
 
 function rejectedSummaryText(version: ReleaseVersion): string {
@@ -1811,26 +1816,46 @@ onMounted(() => {
               </a-tag>
             </div>
             <div v-if="detail.publishCheck.blockers.length" class="mt-3 space-y-2">
-              <div v-for="item in detail.publishCheck.blockers" :key="item.code" class="p-2 border border-rose-200 rounded bg-rose-50">
+              <div v-for="item in detail.publishCheck.blockers" :key="publishCheckIssueKey(item)" class="p-2 border border-rose-200 rounded bg-rose-50">
                 <p class="text-xs text-rose-700 font-medium">
                   {{ item.message }}
                 </p>
                 <p class="text-[11px] text-rose-500 mt-1">
                   blocker / {{ item.field || item.code }}
                 </p>
+                <dl v-if="item.details?.length" class="text-[11px] mt-2 gap-1 grid">
+                  <div v-for="detailItem in item.details" :key="`${publishCheckIssueKey(item)}:${detailItem.label}`" class="gap-1 grid md:grid-cols-[128px_minmax(0,1fr)]">
+                    <dt class="text-rose-500">
+                      {{ detailItem.label }}
+                    </dt>
+                    <dd class="text-rose-700 break-all">
+                      {{ detailItem.value || '-' }}
+                    </dd>
+                  </div>
+                </dl>
               </div>
             </div>
             <div v-else class="text-xs text-emerald-700 mt-3">
               当前版本已满足发布前置条件。
             </div>
             <div v-if="detail.publishCheck.warnings.length" class="mt-3 space-y-2">
-              <div v-for="item in detail.publishCheck.warnings" :key="item.code" class="p-2 border border-amber-200 rounded bg-amber-50">
+              <div v-for="item in detail.publishCheck.warnings" :key="publishCheckIssueKey(item)" class="p-2 border border-amber-200 rounded bg-amber-50">
                 <p class="text-xs text-amber-700 font-medium">
                   {{ item.message }}
                 </p>
                 <p class="text-[11px] text-amber-500 mt-1">
                   warning / {{ item.field || item.code }}
                 </p>
+                <dl v-if="item.details?.length" class="text-[11px] mt-2 gap-1 grid">
+                  <div v-for="detailItem in item.details" :key="`${publishCheckIssueKey(item)}:${detailItem.label}`" class="gap-1 grid md:grid-cols-[128px_minmax(0,1fr)]">
+                    <dt class="text-amber-500">
+                      {{ detailItem.label }}
+                    </dt>
+                    <dd class="text-amber-700 break-all">
+                      {{ detailItem.value || '-' }}
+                    </dd>
+                  </div>
+                </dl>
               </div>
             </div>
           </div>
