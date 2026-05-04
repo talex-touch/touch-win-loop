@@ -17,11 +17,12 @@ describe('winloop image workflow sentry config', () => {
     assert.match(source, /WINLOOP_SENTRY_RELEASE=\$\{\{\s*steps\.build_meta\.outputs\.build_version\s*\}\}/)
   })
 
-  it('dev 分支允许以 smoke gate 作为镜像发布准入条件', () => {
-    assert.match(source, /const allowSmokeOnlyGate = branch === 'dev'/)
-    assert.match(source, /GET \/repos\/\{owner\}\/\{repo\}\/actions\/runs\/\{run_id\}\/jobs/)
-    assert.match(source, /const smokeJob = jobs\.find\(job => job\.name === 'smoke' \|\| job\.name === 'build_and_smoke'\)/)
-    assert.match(source, /if \(smokeJob\?\.conclusion === 'success'\)/)
+  it('镜像发布必须等待匹配 CI 全绿，不再允许 dev 分支 smoke-only 准入', () => {
+    assert.match(source, /if \(run\.conclusion === 'success'\) \{\s*core\.setOutput\('should_publish', 'true'\);/)
+    assert.match(source, /Skip image publish because CI concluded as/)
+    assert.doesNotMatch(source, /const allowSmokeOnlyGate = branch === 'dev'/)
+    assert.doesNotMatch(source, /GET \/repos\/\{owner\}\/\{repo\}\/actions\/runs\/\{run_id\}\/jobs/)
+    assert.doesNotMatch(source, /smokeJob\?\.conclusion === 'success'/)
   })
 
   it('cI 中的 smoke 不再依赖 lint 和 typecheck 完成', () => {

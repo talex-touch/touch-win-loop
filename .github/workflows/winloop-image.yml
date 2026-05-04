@@ -41,17 +41,6 @@ jobs:
             const deadline = Date.now() + timeoutMs;
             const sha = context.sha;
             const branch = context.ref.replace('refs/heads/', '');
-            const allowSmokeOnlyGate = branch === 'dev';
-
-            async function resolveRunJobs(runId) {
-              const { data } = await github.request('GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs', {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: runId,
-                per_page: 100,
-              });
-              return data.jobs || [];
-            }
 
             while (Date.now() < deadline) {
               const { data } = await github.request('GET /repos/{owner}/{repo}/actions/runs', {
@@ -85,17 +74,6 @@ jobs:
               if (run.conclusion === 'success') {
                 core.setOutput('should_publish', 'true');
                 return;
-              }
-
-              if (allowSmokeOnlyGate) {
-                const jobs = await resolveRunJobs(run.id);
-                const smokeJob = jobs.find(job => job.name === 'smoke' || job.name === 'build_and_smoke');
-
-                if (smokeJob?.conclusion === 'success') {
-                  core.warning(`CI concluded as ${run.conclusion || 'unknown'}, but smoke gate passed on ${branch}; continue image publish.`);
-                  core.setOutput('should_publish', 'true');
-                  return;
-                }
               }
 
               core.warning(`Skip image publish because CI concluded as ${run.conclusion || 'unknown'}.`);

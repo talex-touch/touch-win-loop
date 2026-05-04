@@ -1,0 +1,32 @@
+name: Setup pnpm project
+description: Install Node.js, enable pnpm, and install dependencies.
+
+inputs:
+  node-version:
+    description: Node.js version used by CI jobs.
+    required: false
+    default: 20
+  pnpm-version:
+    description: pnpm version used by the repository.
+    required: false
+    default: 10.29.2
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v5
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+        cache-dependency-path: pnpm-lock.yaml
+
+    - name: Enable Corepack (pnpm)
+      shell: bash
+      run: |
+        corepack enable
+        corepack prepare pnpm@${{ inputs.pnpm-version }} --activate
+        pnpm --version
+
+    - name: Install
+      shell: bash
+      run: pnpm install --frozen-lockfile

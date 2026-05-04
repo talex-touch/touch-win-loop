@@ -1,10 +1,10 @@
 FROM node:20-alpine AS build-stage
 
 WORKDIR /app
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@10.29.2 --activate
 
 COPY .npmrc package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN --mount=type=cache,id=pnpm-store,target=/root/.pnpm-store \
+RUN --mount=type=cache,id=pnpm-store-${TARGETPLATFORM},sharing=locked,target=/root/.pnpm-store \
     pnpm install --frozen-lockfile
 
 COPY . .
