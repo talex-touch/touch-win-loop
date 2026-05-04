@@ -1,3 +1,4 @@
+import { listAdminUsers } from '~~/server/utils/admin-user-store'
 import { ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { listPlatformRoleAssignments } from '~~/server/utils/contest-store'
@@ -13,9 +14,16 @@ export default defineEventHandler(async (event) => {
   const access = await getPlatformAccess(event, user)
   const canAssign = access.permissions.includes('role.assign')
 
-  const assignments = canAssign
-    ? await withClient(event, async db => listPlatformRoleAssignments(db))
-    : []
+  const { assignments, users } = canAssign
+    ? await withClient(event, async db => ({
+        assignments: await listPlatformRoleAssignments(db),
+        users: (await listAdminUsers(db)).map(item => ({
+          userId: item.userId,
+          username: item.username,
+          roles: item.roles,
+        })),
+      }))
+    : { assignments: [], users: [] }
 
   return ok({
     current: {
@@ -25,6 +33,7 @@ export default defineEventHandler(async (event) => {
       permissions: access.permissions,
     },
     assignments,
+    users,
   }, {
     startedAt,
     provider: runtime.ai.provider,

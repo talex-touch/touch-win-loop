@@ -10,8 +10,8 @@ export type WorkspaceMemberRole = 'owner' | 'admin' | 'manager' | 'member'
 export type ProjectMemberRole = 'owner' | 'manager' | 'editor' | 'viewer'
 export type GroupPermission = string
 
-export type PlatformRole = 'platform_super_admin' | 'contest_admin' | 'pricing_admin'
-export type PlatformPermission = 'contest.read_internal' | 'contest.write' | 'contest.publish' | 'contest.archive' | 'pricing.write' | 'role.assign'
+export type PlatformRole = 'platform_super_admin' | 'user_admin' | 'contest_admin' | 'pricing_admin'
+export type PlatformPermission = 'contest.read_internal' | 'contest.write' | 'contest.publish' | 'contest.archive' | 'pricing.write' | 'user.read' | 'user.write' | 'user.status.write' | 'user.security.write' | 'role.assign' | 'role.super.assign'
 
 export type ContestStatus = 'draft' | 'published' | 'archived'
 export type ContestVisibility = 'internal' | 'public'
@@ -55,6 +55,7 @@ export interface WorkspaceDisplayPreferenceSnapshot {
 }
 export type ProjectIssueReviewSubmissionStatus = 'draft' | 'submitted'
 export const BILLING_USAGE_EVENT_CODES = [
+  'resource.upload',
   'resource.download',
   'resource.favorite.create',
   'ai.topic_proposal.generate',

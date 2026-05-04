@@ -44,6 +44,18 @@ const PLATFORM_ROLE_PERMISSIONS: Record<PlatformRole, PlatformPermission[]> = {
     'contest.publish',
     'contest.archive',
     'pricing.write',
+    'user.read',
+    'user.write',
+    'user.status.write',
+    'user.security.write',
+    'role.assign',
+    'role.super.assign',
+  ],
+  user_admin: [
+    'user.read',
+    'user.write',
+    'user.status.write',
+    'user.security.write',
     'role.assign',
   ],
   contest_admin: [
@@ -982,9 +994,6 @@ export async function resolvePlatformAccess(
 ): Promise<{ roles: PlatformRole[], permissions: PlatformPermission[] }> {
   const roleSet = new Set<PlatformRole>()
 
-  if (user.isPlatformAdmin)
-    roleSet.add('platform_super_admin')
-
   const dbRoles = await listPlatformRolesByUserId(db, user.id)
   for (const role of dbRoles)
     roleSet.add(role)
@@ -1045,15 +1054,47 @@ export async function listPlatformRoleAssignments(db: Queryable): Promise<Platfo
   return [...grouped.values()]
 }
 
+export async function countPlatformSuperAdmins(db: Queryable): Promise<number> {
+  const result = await db.query<{ count: string }>(
+    `SELECT COUNT(DISTINCT user_id)::TEXT AS count
+     FROM platform_user_roles
+     WHERE role = 'platform_super_admin'`,
+  )
+  return Number(result.rows[0]?.count || '0')
+}
+
 export async function setPlatformRolesByUserId(
   db: Queryable,
   input: {
     targetUserId: string
     roles: PlatformRole[]
+    allowSuperAdminTransfer?: boolean
   },
 ): Promise<PlatformRoleAssignment | null> {
   const roles = dedupeBy(input.roles, item => item)
   const now = new Date().toISOString()
+  const includesSuperAdmin = roles.includes('platform_super_admin')
+
+  if (includesSuperAdmin && !input.allowSuperAdminTransfer)
+    throw new Error('SUPER_ADMIN_ASSIGN_FORBIDDEN')
+
+  const targetResult = await db.query<{ id: string, username: string }>(
+    'SELECT id, username FROM users WHERE id = $1 LIMIT 1 FOR UPDATE',
+    [input.targetUserId],
+  )
+
+  const user = targetResult.rows[0]
+  if (!user)
+    return null
+
+  if (includesSuperAdmin) {
+    await db.query(
+      `DELETE FROM platform_user_roles
+       WHERE role = 'platform_super_admin'
+         AND user_id <> $1`,
+      [input.targetUserId],
+    )
+  }
 
   await db.query('DELETE FROM platform_user_roles WHERE user_id = $1', [input.targetUserId])
 
@@ -1065,14 +1106,8 @@ export async function setPlatformRolesByUserId(
     )
   }
 
-  const result = await db.query<{ id: string, username: string }>(
-    'SELECT id, username FROM users WHERE id = $1 LIMIT 1',
-    [input.targetUserId],
-  )
-
-  const user = result.rows[0]
-  if (!user)
-    return null
+  if (await countPlatformSuperAdmins(db) !== 1)
+    throw new Error('UNIQUE_SUPER_ADMIN_REQUIRED')
 
   return {
     userId: user.id,

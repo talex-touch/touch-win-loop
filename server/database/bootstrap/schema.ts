@@ -375,7 +375,7 @@ CREATE TABLE IF NOT EXISTS user_notifications (
 CREATE TABLE IF NOT EXISTS platform_user_roles (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('platform_super_admin', 'contest_admin', 'pricing_admin')),
+  role TEXT NOT NULL CHECK (role IN ('platform_super_admin', 'user_admin', 'contest_admin', 'pricing_admin')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(user_id, role)
@@ -2680,6 +2680,7 @@ CREATE TABLE IF NOT EXISTS billing_usage_events (
   report_id TEXT,
   actor_user_id TEXT,
   event_code TEXT NOT NULL CHECK (event_code IN (
+    'resource.upload',
     'resource.download',
     'resource.favorite.create',
     'ai.topic_proposal.generate',
@@ -2700,6 +2701,7 @@ ALTER TABLE billing_usage_events
 ALTER TABLE billing_usage_events
   ADD CONSTRAINT billing_usage_events_event_code_check
   CHECK (event_code IN (
+    'resource.upload',
     'resource.download',
     'resource.favorite.create',
     'ai.topic_proposal.generate',

@@ -1,4 +1,4 @@
-import type { PlatformRole } from '~~/shared/types/domain'
+import type { PlatformRole, PlatformRoleAssignment } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -12,7 +12,7 @@ interface SetRoleBody {
   roles?: PlatformRole[]
 }
 
-const ALLOWED_ROLES: PlatformRole[] = ['platform_super_admin', 'contest_admin', 'pricing_admin']
+const ALLOWED_ROLES: PlatformRole[] = ['platform_super_admin', 'user_admin', 'contest_admin', 'pricing_admin']
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -34,8 +34,23 @@ export default defineEventHandler(async (event) => {
 
   const targetUserId = String(body?.targetUserId || '').trim()
   const roles = Array.isArray(body?.roles)
-    ? body.roles.filter(item => ALLOWED_ROLES.includes(item))
+    ? [...new Set(body.roles.filter(item => ALLOWED_ROLES.includes(item)))]
     : []
+  const includesSuperAdmin = roles.includes('platform_super_admin')
+
+  if (includesSuperAdmin) {
+    const canAssignSuper = await checkPlatformPermission(event, user, 'role.super.assign')
+    if (!canAssignSuper) {
+      setResponseStatus(event, 403)
+      return fail('当前用户无权转移平台超管角色。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40389)
+    }
+  }
 
   if (!targetUserId) {
     setResponseStatus(event, 400)
@@ -48,12 +63,41 @@ export default defineEventHandler(async (event) => {
     }, 40088)
   }
 
-  const assignment = await withTransaction(event, async (db) => {
-    return setPlatformRolesByUserId(db, {
-      targetUserId,
-      roles,
+  let assignment: PlatformRoleAssignment | null = null
+  try {
+    assignment = await withTransaction(event, async (db) => {
+      return setPlatformRolesByUserId(db, {
+        targetUserId,
+        roles,
+        allowSuperAdminTransfer: includesSuperAdmin,
+      })
     })
-  })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'SUPER_ADMIN_ASSIGN_FORBIDDEN') {
+      setResponseStatus(event, 403)
+      return fail('当前用户无权转移平台超管角色。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40389)
+    }
+
+    if (error instanceof Error && error.message === 'UNIQUE_SUPER_ADMIN_REQUIRED') {
+      setResponseStatus(event, 400)
+      return fail('平台必须且只能保留一个 platform_super_admin。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40089)
+    }
+
+    throw error
+  }
 
   if (!assignment) {
     setResponseStatus(event, 404)
