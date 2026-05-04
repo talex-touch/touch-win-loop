@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg'
 import type { RealtimeEventPayload, RealtimePresenceMemberPayload } from '~~/server/utils/realtime-events'
 import { Buffer } from 'node:buffer'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { getPool, withClient } from '~~/server/utils/db'
 import { getProjectCollabSnapshot } from '~~/server/utils/project-resource-store'
 import {
@@ -349,6 +350,9 @@ async function bootstrapRealtimePgBus(state: RealtimePgBusState): Promise<void> 
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const state = getRealtimePgBusState()
   if (state.booted)
     return

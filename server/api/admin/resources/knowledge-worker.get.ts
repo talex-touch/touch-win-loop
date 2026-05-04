@@ -194,20 +194,8 @@ export default defineEventHandler(async (event) => {
     const listWhereSql = listWhere.join(' AND ')
     const worker = getProjectKnowledgeWorkerState()
 
-    const [
-      overviewResult,
-      queueResult,
-      stageResult,
-      chunkKindResult,
-      errorResult,
-      backlogResult,
-      failureResult,
-      trendResult,
-      taskCountResult,
-      taskListResult,
-    ] = await Promise.all([
-      db.query<OverviewRow>(
-        `WITH task_window AS (
+    const overviewResult = await db.query<OverviewRow>(
+      `WITH task_window AS (
            SELECT
              status,
              attempt,
@@ -245,10 +233,10 @@ export default defineEventHandler(async (event) => {
            CASE WHEN retry_window.retry_finished > 0 THEN (retry_window.retry_succeeded::DOUBLE PRECISION / retry_window.retry_finished::DOUBLE PRECISION) * 100 ELSE 0 END::DOUBLE PRECISION AS retry_success_rate,
            COALESCE(stale_window.avg_stale_hours, 0)::DOUBLE PRECISION AS avg_stale_hours
          FROM stale_window, retry_window`,
-        [days],
-      ),
-      db.query<QueueRow>(
-        `SELECT
+      [days],
+    )
+    const queueResult = await db.query<QueueRow>(
+      `SELECT
           COUNT(*) FILTER (WHERE status = 'queued')::BIGINT AS queued_count,
           COUNT(*) FILTER (WHERE status IN ('extracting', 'chunking', 'embedding'))::BIGINT AS processing_count,
           COUNT(*) FILTER (WHERE status = 'failed')::BIGINT AS failed_count,
@@ -256,26 +244,26 @@ export default defineEventHandler(async (event) => {
           (MIN(updated_at) FILTER (WHERE status = 'queued'))::TEXT AS oldest_queued_at,
           COALESCE(EXTRACT(EPOCH FROM NOW() - MIN(updated_at) FILTER (WHERE status = 'queued')), 0)::DOUBLE PRECISION AS oldest_queued_seconds
          FROM project_knowledge_sources`,
-      ),
-      db.query<StageRow>(
-        `SELECT
+    )
+    const stageResult = await db.query<StageRow>(
+      `SELECT
           stage,
           COUNT(*)::BIGINT AS count
          FROM project_knowledge_index_tasks
          WHERE status IN ('queued', 'processing')
          GROUP BY stage
          ORDER BY count DESC, stage ASC`,
-      ),
-      db.query<ChunkKindRow>(
-        `SELECT
+    )
+    const chunkKindResult = await db.query<ChunkKindRow>(
+      `SELECT
           chunk_kind,
           COUNT(*)::BIGINT AS count
          FROM project_knowledge_chunks
          GROUP BY chunk_kind
          ORDER BY count DESC, chunk_kind ASC`,
-      ),
-      db.query<ErrorRow>(
-        `SELECT
+    )
+    const errorResult = await db.query<ErrorRow>(
+      `SELECT
           error_message AS error_text,
           COUNT(*)::BIGINT AS count
          FROM project_knowledge_index_tasks
@@ -285,10 +273,10 @@ export default defineEventHandler(async (event) => {
          GROUP BY error_message
          ORDER BY count DESC, error_message ASC
          LIMIT 12`,
-        [days],
-      ),
-      db.query<ProjectBacklogRow>(
-        `SELECT
+      [days],
+    )
+    const backlogResult = await db.query<ProjectBacklogRow>(
+      `SELECT
           s.project_id,
           p.title AS project_title,
           COUNT(*) FILTER (WHERE s.status IN ('queued', 'extracting', 'chunking', 'embedding', 'failed', 'stale'))::BIGINT AS backlog_count,
@@ -303,9 +291,9 @@ export default defineEventHandler(async (event) => {
          HAVING COUNT(*) FILTER (WHERE s.status IN ('queued', 'extracting', 'chunking', 'embedding', 'failed', 'stale')) > 0
          ORDER BY backlog_count DESC, p.title ASC NULLS LAST
          LIMIT 12`,
-      ),
-      db.query<FailureRow>(
-        `SELECT
+    )
+    const failureResult = await db.query<FailureRow>(
+      `SELECT
           t.id AS task_id,
           t.project_id,
           p.title AS project_title,
@@ -322,10 +310,10 @@ export default defineEventHandler(async (event) => {
            AND t.status IN ('failed', 'dead_letter')
          ORDER BY t.updated_at DESC
          LIMIT 12`,
-        [days],
-      ),
-      db.query<TrendRow>(
-        `SELECT
+      [days],
+    )
+    const trendResult = await db.query<TrendRow>(
+      `SELECT
           TO_CHAR(DATE_TRUNC('day', created_at), 'YYYY-MM-DD') AS day,
           COUNT(*)::BIGINT AS tasks,
           COUNT(*) FILTER (WHERE status = 'succeeded')::BIGINT AS succeeded,
@@ -335,18 +323,18 @@ export default defineEventHandler(async (event) => {
          GROUP BY DATE_TRUNC('day', created_at)
          ORDER BY DATE_TRUNC('day', created_at) DESC
          LIMIT 14`,
-        [days],
-      ),
-      db.query<TaskCountRow>(
-        `SELECT COUNT(*)::BIGINT AS total
+      [days],
+    )
+    const taskCountResult = await db.query<TaskCountRow>(
+      `SELECT COUNT(*)::BIGINT AS total
          FROM project_knowledge_index_tasks t
          LEFT JOIN projects p ON p.id = t.project_id
          LEFT JOIN project_resources pr ON pr.id = t.source_resource_id
          WHERE ${listWhereSql}`,
-        listValues,
-      ),
-      db.query<TaskListRow>(
-        `SELECT
+      listValues,
+    )
+    const taskListResult = await db.query<TaskListRow>(
+      `SELECT
           t.id AS task_id,
           t.project_id,
           p.title AS project_title,
@@ -385,9 +373,8 @@ export default defineEventHandler(async (event) => {
          ORDER BY t.updated_at DESC, t.created_at DESC
          LIMIT $${listValues.length + 1}
          OFFSET $${listValues.length + 2}`,
-        [...listValues, pageSize, offset],
-      ),
-    ])
+      [...listValues, pageSize, offset],
+    )
 
     const overview = overviewResult.rows[0] || {
       total_tasks: '0',

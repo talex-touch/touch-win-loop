@@ -1,7 +1,8 @@
 import { convertOfficeToPdfByOnlyOffice } from '~~/server/services/document/onlyoffice-converter'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import {
   getProjectDocumentPreviewWorkerState,
   pushProjectDocumentPreviewWorkerRunRecord,
@@ -107,8 +108,7 @@ function shouldPauseTaskConsumption(sourceBaseURL: string, onlyOfficeEndpoint: s
 }
 
 async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
-  const runtime = readRuntimeSettings()
-  const storage = getDocumentStorage()
+  const { runtime } = await readEffectivePlatformRuntimeSettings()
 
   const context = await withTransaction(undefined, async (db) => {
     const task = await claimNextQueuedProjectDocumentTask(db)
@@ -207,6 +207,10 @@ async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
     })
 
     const previewObjectKey = buildDocumentObjectKey(`project-${context.document.projectId}`, converted.fileName)
+    const storage = await selectDocumentWriteStorage({
+      incomingBytes: converted.pdfBuffer.length,
+      runtime,
+    })
     await storage.putObject({
       key: previewObjectKey,
       body: converted.pdfBuffer,
@@ -216,7 +220,7 @@ async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
       await updateProjectDocumentPreviewAsset(db, {
         documentId: context.document.id,
         previewObjectKey,
-        previewStorageProvider: storage.provider,
+        previewStorageProvider: storage.channelId,
         previewFileName: converted.fileName,
         previewMimeType: 'application/pdf',
         previewFileSize: converted.pdfBuffer.length,
@@ -317,7 +321,7 @@ async function runTick(): Promise<void> {
   if (state.ticking)
     return
 
-  const runtime = readRuntimeSettings()
+  const { runtime } = await readEffectivePlatformRuntimeSettings()
   state.enabled = Boolean(runtime.onlyOffice.workerEnabled)
   state.intervalMs = Math.max(1000, runtime.onlyOffice.workerIntervalMs)
   const batchSize = Math.max(1, runtime.onlyOffice.workerBatchSize)
@@ -406,32 +410,15 @@ async function runTick(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const runtimeState = getWorkerRuntimeState()
   if (runtimeState.booted)
     return
   runtimeState.booted = true
 
   const state = getProjectDocumentPreviewWorkerState()
-  const runtime = readRuntimeSettings()
-  state.enabled = Boolean(runtime.onlyOffice.workerEnabled)
-  state.intervalMs = Math.max(1000, runtime.onlyOffice.workerIntervalMs)
-  state.batchSize = Math.max(1, runtime.onlyOffice.workerBatchSize)
-
-  if (!state.enabled)
-    return
-
-  if (!normalizeString(runtime.onlyOffice.endpoint)) {
-    console.warn('[project-document-preview-worker] ONLYOFFICE endpoint 未配置，worker 不会启动。')
-    return
-  }
-
-  console.warn('[project-document-preview-worker] worker_started', {
-    sourceBaseURL: runtime.onlyOffice.sourceBaseURL,
-    onlyOfficeEndpoint: runtime.onlyOffice.endpoint,
-    intervalMs: runtime.onlyOffice.workerIntervalMs,
-    batchSize: runtime.onlyOffice.workerBatchSize,
-  })
-
   state.started = true
   void withClient(undefined, async (db) => {
     await resetStaleProjectDocumentTasks(db, {
@@ -441,10 +428,9 @@ export default defineNitroPlugin((nitroApp) => {
     logWorkerError('bootstrap', error)
   })
 
-  const intervalMs = Math.max(1000, runtime.onlyOffice.workerIntervalMs)
   runtimeState.timer = setInterval(() => {
     void runTick()
-  }, intervalMs)
+  }, 5000)
   runtimeState.timer.unref?.()
 
   nitroApp.hooks.hookOnce('close', () => {

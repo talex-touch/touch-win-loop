@@ -96,15 +96,17 @@ export default defineEventHandler(async (event) => {
       })]
     }
 
-    return Promise.all(
-      resourceIds.map(resourceId => enqueueResourceGovernanceTask(db, {
+    const tasks = []
+    for (const resourceId of resourceIds) {
+      tasks.push(await enqueueResourceGovernanceTask(db, {
         contestId,
         resourceId,
         taskType: body.taskType!,
         actorUserId: user.id,
         payload: body.payload,
-      })),
-    )
+      }))
+    }
+    return tasks
   })
 
   return ok({

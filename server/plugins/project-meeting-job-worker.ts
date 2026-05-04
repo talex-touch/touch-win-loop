@@ -2,6 +2,7 @@ import { persistMeetingNotesResource, persistMeetingRecordingResource } from '~~
 import { summarizeMeetingByAi } from '~~/server/services/meeting/meeting-summary'
 import { getRtcProviderGateway } from '~~/server/services/meeting/rtc-provider'
 import { generateAndSaveProjectOutline } from '~~/server/services/project-outline-generator'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
 import { findUserById } from '~~/server/utils/platform-store'
@@ -280,6 +281,9 @@ async function tickMeetingWorker(): Promise<void> {
 }
 
 export default defineNitroPlugin(async (nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const { runtime } = await readEffectiveMeetingRuntimeSettings()
   const state = getWorkerRuntimeState()
   if (state.booted)

@@ -29,10 +29,8 @@ export default defineEventHandler(async (event) => {
     if (!project)
       throw new Error('PROJECT_NOT_FOUND')
 
-    const [latestBoard, history] = await Promise.all([
-      getLatestProjectTopicBoard(db, projectId),
-      listProjectTopicBoardsByProject(db, { projectId, limit: 5 }),
-    ])
+    const latestBoard = await getLatestProjectTopicBoard(db, projectId)
+    const history = await listProjectTopicBoardsByProject(db, { projectId, limit: 5 })
 
     return {
       latestBoard,

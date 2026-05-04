@@ -39,22 +39,20 @@ export default defineEventHandler(async (event) => {
   const days = typeof query.days === 'string' ? Number(query.days) : 30
   const limit = typeof query.limit === 'string' ? Number(query.limit) : 20
   const payload = await withClient(event, async (db) => {
-    const [insights, recentEvents, summary] = await Promise.all([
-      listResourceDemandInsights(db, {
-        contestId,
-        days,
-        limit,
-      }),
-      listResourceSearchEvents(db, {
-        contestId,
-        days,
-        limit: Math.max(20, limit * 3),
-      }),
-      getResourceSearchEventSummary(db, {
-        contestId,
-        days,
-      }),
-    ])
+    const insights = await listResourceDemandInsights(db, {
+      contestId,
+      days,
+      limit,
+    })
+    const recentEvents = await listResourceSearchEvents(db, {
+      contestId,
+      days,
+      limit: Math.max(20, limit * 3),
+    })
+    const summary = await getResourceSearchEventSummary(db, {
+      contestId,
+      days,
+    })
 
     return {
       contestId,

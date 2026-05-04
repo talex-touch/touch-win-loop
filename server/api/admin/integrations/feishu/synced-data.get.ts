@@ -66,11 +66,9 @@ export default defineEventHandler(async (event) => {
   }
 
   const data = await withClient(event, async (db) => {
-    const [searchResult, syncs, syncItemOptions] = await Promise.all([
-      searchFeishuSyncedData(db, input),
-      listFeishuBitableSyncs(db, { includeArchived: true }),
-      listFeishuSyncedDataSyncItemOptions(db),
-    ])
+    const searchResult = await searchFeishuSyncedData(db, input)
+    const syncs = await listFeishuBitableSyncs(db, { includeArchived: true })
+    const syncItemOptions = await listFeishuSyncedDataSyncItemOptions(db)
 
     const syncOptions: FeishuSyncedDataSyncOption[] = syncs.map(sync => ({
       id: sync.id,

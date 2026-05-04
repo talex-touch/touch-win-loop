@@ -16,7 +16,8 @@ import { randomUUID } from 'node:crypto'
 import { analyzePdfBufferWithDocAi } from '~~/server/services/document/analysis'
 import { createKnowledgeEmbedding } from '~~/server/services/knowledge-ai'
 import { analyzeKnowledgeVisualProjection } from '~~/server/services/knowledge-vision'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { getDocumentStorageByChannel } from '~~/server/storage/document-storage'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
@@ -553,26 +554,27 @@ async function resolveProjectResourceFileRefs(context: ProjectKnowledgeTaskConte
   }
 
   return withClient(undefined, async (db) => {
-    const [sourceRef, previewRef] = await Promise.all([
-      getProjectResourceSourceFileRef(db, {
-        projectId: context.resource.projectId,
-        resourceId,
-      }),
-      getProjectResourcePreviewFileRef(db, {
-        projectId: context.resource.projectId,
-        resourceId,
-      }),
-    ])
+    const sourceRef = await getProjectResourceSourceFileRef(db, {
+      projectId: context.resource.projectId,
+      resourceId,
+    })
+    const previewRef = await getProjectResourcePreviewFileRef(db, {
+      projectId: context.resource.projectId,
+      resourceId,
+    })
     return { sourceRef, previewRef }
   })
 }
 
-async function resolveProjectResourceBuffer(objectKey: string): Promise<Buffer | null> {
+async function resolveProjectResourceBuffer(
+  objectKey: string,
+  storageProvider: string,
+): Promise<Buffer | null> {
   const safeObjectKey = normalizeString(objectKey)
   if (!safeObjectKey)
     return null
   try {
-    return await getDocumentStorage().getObjectBuffer(safeObjectKey)
+    return await getDocumentStorageByChannel(storageProvider || 'local').getObjectBuffer(safeObjectKey)
   }
   catch {
     return null
@@ -591,7 +593,7 @@ async function resolveProjectedDocumentAnalysis(context: ProjectKnowledgeTaskCon
   ].filter((candidate): candidate is NonNullable<typeof sourceRef> => Boolean(candidate))
 
   for (const candidate of candidates) {
-    const buffer = await resolveProjectResourceBuffer(candidate.objectKey)
+    const buffer = await resolveProjectResourceBuffer(candidate.objectKey, candidate.storageProvider)
     if (!buffer)
       continue
     try {
@@ -644,7 +646,7 @@ async function resolveImageProjectionChunks(context: ProjectKnowledgeTaskContext
   if (!imageRef)
     throw new Error('KNOWLEDGE_IMAGE_SOURCE_MISSING')
 
-  const imageBuffer = await resolveProjectResourceBuffer(imageRef.objectKey)
+  const imageBuffer = await resolveProjectResourceBuffer(imageRef.objectKey, imageRef.storageProvider)
   if (!imageBuffer)
     throw new Error('KNOWLEDGE_IMAGE_BUFFER_MISSING')
 
@@ -1169,6 +1171,9 @@ async function runTick(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const state = getProjectKnowledgeWorkerState()
   const timerState = getWorkerTimerState()
   if (state.started)

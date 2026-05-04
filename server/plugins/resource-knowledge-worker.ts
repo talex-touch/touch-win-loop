@@ -5,6 +5,7 @@ import {
   analyzeResourceKnowledgeProfile,
   buildResourceRelations,
 } from '~~/server/services/resource-knowledge'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { listAdminResources } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import {
@@ -525,6 +526,9 @@ async function runTick(state: WorkerState): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const state = getWorkerState()
   if (state.started)
     return

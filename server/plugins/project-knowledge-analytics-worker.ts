@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import {
   claimNextProjectKnowledgeAnalyticsJob,
@@ -163,6 +164,9 @@ async function runTick(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const state = getWorkerState()
   const timerState = getTimerState()
   if (state.started)

@@ -1,4 +1,5 @@
 import { runFeishuBitableSync } from '~~/server/services/feishu/bitable-sync-runner'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withTransaction } from '~~/server/utils/db'
 import {
   claimNextDueFeishuBitableSync,
@@ -194,6 +195,9 @@ async function runTick(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const runtimeState = getWorkerRuntimeState()
   if (runtimeState.booted)
     return

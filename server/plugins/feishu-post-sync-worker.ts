@@ -7,6 +7,7 @@ import {
   analyzeFeishuEntity,
   createFeishuEmbedding,
 } from '~~/server/services/feishu/post-sync-ai'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import {
@@ -411,6 +412,9 @@ async function runTick(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const runtimeState = getWorkerRuntimeState()
   if (runtimeState.booted)
     return

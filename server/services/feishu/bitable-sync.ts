@@ -582,10 +582,8 @@ export async function resolveFeishuBitableMappedAttachmentReference(
     return null
 
   const context = await withClient(event, async (db) => {
-    const [config, task] = await Promise.all([
-      readFeishuIntegrationConfig(db),
-      getFeishuBitableSyncItemById(db, syncItemId),
-    ])
+    const config = await readFeishuIntegrationConfig(db)
+    const task = await getFeishuBitableSyncItemById(db, syncItemId)
     return { config, task }
   })
   if (!context.config.enabled || !context.task)

@@ -68,16 +68,14 @@ export default defineEventHandler(async (event) => {
   const pageSize = parsePositiveInt(query.pageSize, 20)
 
   const payload = await withClient(event, async (db): Promise<BillingUsageEventsPayload> => {
-    const [listResult, summary] = await Promise.all([
-      listBillingUsageEvents(db, {
-        ...filters,
-        page,
-        pageSize,
-      }),
-      summarizeBillingUsageEvents(db, filters, {
-        successOnly: !filters.result,
-      }),
-    ])
+    const listResult = await listBillingUsageEvents(db, {
+      ...filters,
+      page,
+      pageSize,
+    })
+    const summary = await summarizeBillingUsageEvents(db, filters, {
+      successOnly: !filters.result,
+    })
 
     return {
       items: listResult.items,

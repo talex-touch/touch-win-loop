@@ -3,6 +3,7 @@ import {
   resolveFeishuStartupBuildInfo,
   sendFeishuStartupNotifyMessage,
 } from '~~/server/services/feishu/startup-notify'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readFeishuIntegrationConfig } from '~~/server/utils/feishu-integration-store'
@@ -93,6 +94,9 @@ async function runStartupNotify(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const runtimeState = getStartupNotifyRuntimeState()
   if (runtimeState.booted)
     return

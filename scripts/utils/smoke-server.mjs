@@ -49,6 +49,7 @@ export function startBuiltServer(options = resolveSmokeServerOptions()) {
     env: {
       ...process.env,
       NODE_ENV: 'production',
+      WINLOOP_DISABLE_BACKGROUND_WORKERS: '1',
       PORT: String(options.port),
       HOST: options.host,
       NITRO_PORT: String(options.port),

@@ -62,9 +62,8 @@ export default defineEventHandler(async (event) => {
       if (!canAccess)
         throw new Error('FORBIDDEN')
 
-      const [summaryResult, countResult, historyResult] = await Promise.all([
-        db.query<UsageMemberRow>(
-          `SELECT
+      const summaryResult = await db.query<UsageMemberRow>(
+        `SELECT
             l.user_id,
             u.username,
             COUNT(*)::INT AS calls,
@@ -75,19 +74,19 @@ export default defineEventHandler(async (event) => {
            WHERE l.workspace_id = $1
            GROUP BY l.user_id, u.username
            ORDER BY units DESC, calls DESC, COALESCE(u.username, '') ASC`,
-          [workspaceId],
-        ),
-        db.query<CountRow>(
-          `SELECT
+        [workspaceId],
+      )
+      const countResult = await db.query<CountRow>(
+        `SELECT
             COUNT(*)::INT AS total,
             COUNT(*)::INT AS total_calls,
             COALESCE(SUM(units), 0)::INT AS total_units
            FROM ai_usage_ledger
            WHERE workspace_id = $1`,
-          [workspaceId],
-        ),
-        db.query<UsageHistoryRow>(
-          `SELECT
+        [workspaceId],
+      )
+      const historyResult = await db.query<UsageHistoryRow>(
+        `SELECT
             l.id,
             l.user_id,
             u.username,
@@ -100,9 +99,8 @@ export default defineEventHandler(async (event) => {
            ORDER BY l.created_at DESC
            LIMIT $2
            OFFSET $3`,
-          [workspaceId, pageSize, offset],
-        ),
-      ])
+        [workspaceId, pageSize, offset],
+      )
 
       const memberSummaries: WorkspaceAiUsageMemberSummary[] = summaryResult.rows.map(row => ({
         userId: row.user_id,

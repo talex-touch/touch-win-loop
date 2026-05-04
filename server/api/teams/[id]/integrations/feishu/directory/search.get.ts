@@ -43,10 +43,8 @@ export default defineEventHandler(async (event) => {
       const canManage = await teamHasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
       if (!canManage)
         throw new Error('FORBIDDEN')
-      const [snapshot, config] = await Promise.all([
-        getFeishuWorkspaceIntegrationSnapshot(db, workspaceId),
-        readFeishuIntegrationConfig(db),
-      ])
+      const snapshot = await getFeishuWorkspaceIntegrationSnapshot(db, workspaceId)
+      const config = await readFeishuIntegrationConfig(db)
       return {
         snapshot,
         config,
