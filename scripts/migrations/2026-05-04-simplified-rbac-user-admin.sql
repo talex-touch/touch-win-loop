@@ -5,7 +5,9 @@ ALTER TABLE platform_user_roles
   ADD CONSTRAINT platform_user_roles_role_check
   CHECK (role IN ('platform_super_admin', 'user_admin', 'contest_admin', 'pricing_admin'));
 
-CREATE TEMP TABLE winloop_legacy_platform_admins ON COMMIT DROP AS
+DROP TABLE IF EXISTS winloop_legacy_platform_admins;
+
+CREATE TEMP TABLE winloop_legacy_platform_admins AS
 SELECT
   u.id AS user_id,
   u.created_at,
