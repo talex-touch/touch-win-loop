@@ -235,6 +235,19 @@ describe('版本审批与赛道同步新流程', () => {
           note: '',
           sourceLink: '',
         },
+        {
+          externalId: 'opened-only-stale',
+          trackExternalId: '',
+          trackLiveId: '',
+          year: 2024,
+          nodeType: 'other',
+          businessNodeLabel: '用户已删除节点',
+          recognitionStatus: 'needs_confirmation',
+          startAt: null,
+          endAt: null,
+          note: '',
+          sourceLink: '',
+        },
       ],
       resources: [],
     }
@@ -269,6 +282,7 @@ describe('版本审批与赛道同步新流程', () => {
       actorUserId: 'admin-1',
       releaseVersionId,
       trackExternalId,
+      removedTrackTimelineExternalIds: ['opened-only-stale'],
       trackTimelines: [{
         externalId: 'manual-new',
         trackExternalId,

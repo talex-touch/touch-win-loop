@@ -119,6 +119,7 @@ const insights = ref<ReleaseQueueInsights | null>(null)
 const currentUserId = ref('')
 const selectedTrack = ref<ContestReleaseTrackSnapshot | null>(null)
 const trackTimelineDrafts = ref<ContestReleaseTrackTimelineSnapshot[]>([])
+const openedTrackTimelineExternalIds = ref<string[]>([])
 const selectedReviewLog = ref<ReleaseReviewLog | null>(null)
 const selectedResourcePreview = ref<ResourcePreviewState | null>(null)
 
@@ -764,7 +765,6 @@ function trackIdentityCandidates(item: ContestReleaseTrackSnapshot): string[] {
     item.liveId ? `manual:track:${item.liveId}` : '',
     item.name,
     item.syncSource?.recordId,
-    item.syncSource?.syncItemId,
   ]
   return [...new Set(candidates.flatMap(identityTokens))]
 }
@@ -775,7 +775,6 @@ function timelineIdentityCandidates(timeline: ContestReleaseTrackTimelineSnapsho
     timeline.trackLiveId,
     timeline.externalId,
     timeline.syncSource?.recordId,
-    timeline.syncSource?.syncItemId,
   ]
   return [...new Set(candidates.flatMap(identityTokens))]
 }
@@ -994,7 +993,9 @@ async function openRouteVersionDetail(items: ReleaseVersion[] = versions.value) 
 
 function openTrackDetail(item: ContestReleaseTrackSnapshot) {
   selectedTrack.value = item
-  trackTimelineDrafts.value = trackTimelinesForTrack(item, detailContestSnapshot.value)
+  const trackTimelines = trackTimelinesForTrack(item, detailContestSnapshot.value)
+  openedTrackTimelineExternalIds.value = trackTimelines.map(timeline => metadataText(timeline.externalId)).filter(Boolean)
+  trackTimelineDrafts.value = trackTimelines
     .map(timeline => ({
       ...timeline,
       startAt: formatDateTimeInput(timeline.startAt),
@@ -1058,6 +1059,7 @@ async function saveTrackTimelineDrafts() {
             note: metadataText(item.note),
             sourceLink: metadataText(item.sourceLink),
           })),
+          removedTrackTimelineExternalIds: openedTrackTimelineExternalIds.value,
         },
       },
       '结构化节点保存失败。',
@@ -1073,6 +1075,7 @@ async function saveTrackTimelineDrafts() {
         startAt: formatDateTimeInput(item.startAt),
         endAt: formatDateTimeInput(item.endAt),
       }))
+    openedTrackTimelineExternalIds.value = trackTimelineDrafts.value.map(item => metadataText(item.externalId)).filter(Boolean)
     successText.value = '结构化节点已保存到当前待审版本。建议同步修正飞书赛道库原始时间节点后重新导入。'
   }
   catch (error: any) {

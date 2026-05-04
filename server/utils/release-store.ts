@@ -1147,6 +1147,7 @@ export async function patchContestReleaseTrackTimelines(
     releaseVersionId: string
     trackExternalId: string
     trackTimelines: ContestReleaseTrackTimelineSnapshot[]
+    removedTrackTimelineExternalIds?: string[]
   },
 ): Promise<ReleaseVersionDetail> {
   const row = await getLockedReleaseVersion(db, input.releaseVersionId)
@@ -1186,8 +1187,17 @@ export async function patchContestReleaseTrackTimelines(
   if (normalizedTimelines.length === 0)
     track.timelineText = ''
 
+  const explicitRemovedExternalIds = new Set(
+    (input.removedTrackTimelineExternalIds || [])
+      .map(item => normalizeText(item))
+      .filter(Boolean),
+  )
+
   snapshot.trackTimelines = [
-    ...snapshot.trackTimelines.filter(item => !isTrackTimelineForSnapshotTrack(item, track)),
+    ...snapshot.trackTimelines.filter(item =>
+      !explicitRemovedExternalIds.has(normalizeText(item.externalId))
+      && !isTrackTimelineForSnapshotTrack(item, track),
+    ),
     ...normalizedTimelines,
   ]
   const sanitizedSnapshot = sanitizeContestReleaseSnapshot(snapshot)

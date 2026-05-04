@@ -10,6 +10,7 @@ import { patchContestReleaseTrackTimelines } from '~~/server/utils/release-store
 interface PatchReleaseTrackTimelinesBody {
   trackExternalId?: string
   trackTimelines?: ContestReleaseTrackTimelineSnapshot[]
+  removedTrackTimelineExternalIds?: string[]
 }
 
 function mapPatchError(error: Error): { status: number, message: string, code: number } | null {
@@ -61,6 +62,7 @@ export default defineEventHandler(async (event) => {
         releaseVersionId,
         trackExternalId: body.trackExternalId!,
         trackTimelines: body.trackTimelines || [],
+        removedTrackTimelineExternalIds: body.removedTrackTimelineExternalIds || [],
       })
     })
 
