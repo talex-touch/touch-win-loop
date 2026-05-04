@@ -387,12 +387,24 @@ function rejectedSummaryText(version: ReleaseVersion): string {
   return String(version.rejectReason || '').trim() || '未填写驳回原因'
 }
 
-function rejectedMetaText(version: ReleaseVersion): string {
+function truncateRejectReason(version: ReleaseVersion): string {
+  const text = rejectedSummaryText(version)
+  return text.length > 20 ? `${text.slice(0, 20)}...` : text
+}
+
+function rejectedByName(version: ReleaseVersion): string {
+  return String(version.rejectedByName || normalizeUserId(version.rejectedByUserId) || '未知管理员').trim()
+}
+
+function rejectedDetailText(version: ReleaseVersion): string {
   if (version.status !== 'rejected')
     return ''
-  const rejectedBy = normalizeUserId(version.rejectedByUserId) || '未知管理员'
-  const rejectedAt = formatDateTime(version.rejectedAt)
-  return rejectedAt === '-' ? `驳回人：${rejectedBy}` : `驳回人：${rejectedBy} · 驳回时间：${rejectedAt}`
+  return [
+    `驳回人：${rejectedByName(version)}`,
+    `驳回时间：${formatDateTime(version.rejectedAt)}`,
+    `驳回理由：${rejectedSummaryText(version)}`,
+    version.rejectedByUserId ? `用户 ID：${version.rejectedByUserId}` : '',
+  ].filter(Boolean).join('\n')
 }
 
 function previewTitle(version: ReleaseVersion): string {
@@ -1642,14 +1654,21 @@ onMounted(() => {
 
               <a-table-column title="驳回摘要" data-index="rejectReason" :width="220">
                 <template #cell="{ record }">
-                  <div v-if="record.status === 'rejected'" class="space-y-1">
-                    <p class="text-xs text-rose-700 line-clamp-2">
-                      {{ rejectedSummaryText(record) }}
-                    </p>
-                    <p class="text-[11px] text-slate-500">
-                      {{ rejectedMetaText(record) }}
-                    </p>
-                  </div>
+                  <a-tooltip v-if="record.status === 'rejected'" :content="rejectedDetailText(record)" position="top">
+                    <div class="max-w-[200px] space-y-1">
+                      <div class="text-[11px] text-slate-600 flex gap-1.5 items-center">
+                        <span>已被</span>
+                        <a-avatar :size="18" :image-url="record.rejectedByAvatarUrl || undefined">
+                          {{ rejectedByName(record).slice(0, 1) }}
+                        </a-avatar>
+                        <span class="text-slate-900 font-medium truncate">{{ rejectedByName(record) }}</span>
+                        <span>驳回</span>
+                      </div>
+                      <p class="text-xs text-rose-700 truncate">
+                        {{ truncateRejectReason(record) }}
+                      </p>
+                    </div>
+                  </a-tooltip>
                   <span v-else class="text-[11px] text-slate-400">-</span>
                 </template>
               </a-table-column>

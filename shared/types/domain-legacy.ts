@@ -2264,6 +2264,8 @@ export interface ReleaseVersion {
   secondReviewByUserId?: string | null
   secondReviewAt?: string | null
   rejectedByUserId?: string | null
+  rejectedByName?: string | null
+  rejectedByAvatarUrl?: string | null
   rejectedAt?: string | null
   rejectReason?: string | null
   publishedByUserId?: string | null

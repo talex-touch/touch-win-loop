@@ -92,6 +92,8 @@ interface ReleaseVersionRow {
   second_review_by_user_id: string | null
   second_review_at: string | null
   rejected_by_user_id: string | null
+  rejected_by_name: string | null
+  rejected_by_avatar_url: string | null
   rejected_at: string | null
   reject_reason: string
   published_by_user_id: string | null
@@ -338,6 +340,8 @@ function mapReleaseVersion(row: ReleaseVersionRow): ReleaseVersion {
     secondReviewByUserId: row.second_review_by_user_id,
     secondReviewAt: row.second_review_at,
     rejectedByUserId: row.rejected_by_user_id,
+    rejectedByName: normalizeText(row.rejected_by_name) || null,
+    rejectedByAvatarUrl: normalizeText(row.rejected_by_avatar_url) || null,
     rejectedAt: row.rejected_at,
     rejectReason: row.reject_reason || null,
     publishedByUserId: row.published_by_user_id,
@@ -985,61 +989,65 @@ async function listReleaseScopedVersions(
 
   if (input.scopeKind) {
     values.push(input.scopeKind)
-    where.push(`scope_kind = $${values.length}`)
+    where.push(`rv.scope_kind = $${values.length}`)
   }
 
   if (normalizeText(input.scopeId)) {
     values.push(normalizeText(input.scopeId))
-    where.push(`scope_id = $${values.length}`)
+    where.push(`rv.scope_id = $${values.length}`)
   }
 
   if (normalizeText(input.liveEntityId)) {
     values.push(normalizeText(input.liveEntityId))
-    where.push(`live_entity_id = $${values.length}`)
+    where.push(`rv.live_entity_id = $${values.length}`)
   }
 
   if (input.statuses?.length) {
     values.push(input.statuses)
-    where.push(`status = ANY($${values.length}::TEXT[])`)
+    where.push(`rv.status = ANY($${values.length}::TEXT[])`)
   }
 
   const limit = Math.max(1, Math.min(200, normalizeInteger(input.limit || 50, 50)))
   values.push(limit)
   const snapshotSelect = input.includeSnapshot === false
     ? `'{}'::JSONB AS snapshot_json`
-    : 'snapshot_json'
+    : 'rv.snapshot_json'
 
   const result = await db.query<ReleaseVersionRow>(
     `SELECT
-      id,
-      scope_kind,
-      scope_id,
-      live_entity_id,
-      scope_title,
-      version_number,
-      status,
+      rv.id,
+      rv.scope_kind,
+      rv.scope_id,
+      rv.live_entity_id,
+      rv.scope_title,
+      rv.version_number,
+      rv.status,
       ${snapshotSelect},
-      diff_summary_json,
-      sync_item_id,
-      sync_run_id,
-      first_review_by_user_id,
-      first_review_at::TEXT,
-      second_review_claimed_by_user_id,
-      second_review_claimed_at::TEXT,
-      second_review_by_user_id,
-      second_review_at::TEXT,
-      rejected_by_user_id,
-      rejected_at::TEXT,
-      reject_reason,
-      published_by_user_id,
-      published_at::TEXT,
-      created_by_user_id,
-      updated_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM release_versions
+      rv.diff_summary_json,
+      rv.sync_item_id,
+      rv.sync_run_id,
+      rv.first_review_by_user_id,
+      rv.first_review_at::TEXT,
+      rv.second_review_claimed_by_user_id,
+      rv.second_review_claimed_at::TEXT,
+      rv.second_review_by_user_id,
+      rv.second_review_at::TEXT,
+      rv.rejected_by_user_id,
+      rejected_user.username AS rejected_by_name,
+      rejected_user.avatar_url AS rejected_by_avatar_url,
+      rv.rejected_at::TEXT,
+      rv.reject_reason,
+      rv.published_by_user_id,
+      rv.published_at::TEXT,
+      rv.created_by_user_id,
+      rv.updated_by_user_id,
+      rv.created_at::TEXT,
+      rv.updated_at::TEXT
+     FROM release_versions rv
+     LEFT JOIN users rejected_user
+       ON rejected_user.id = rv.rejected_by_user_id
      WHERE ${where.join(' AND ')}
-     ORDER BY version_number DESC, created_at DESC
+     ORDER BY rv.version_number DESC, rv.created_at DESC
      LIMIT $${values.length}`,
     values,
   )
