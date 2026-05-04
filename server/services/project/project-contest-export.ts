@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto'
 import * as Y from 'yjs'
 import { findContestById } from '~~/server/data/catalog'
 import { generateProjectExportPdfBuffer } from '~~/server/services/project/project-export-pdf'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
 import { buildServerApiEndpoint } from '~~/server/utils/api-url'
 import { listProjectMeetings } from '~~/server/utils/project-meeting-store'
 import { buildProjectKnowledgeIndexDashboard } from '~~/server/utils/project-knowledge-store'
@@ -263,7 +263,9 @@ async function persistArtifactResource(
     profileId: string
   },
 ): Promise<ProjectExportArtifact> {
-  const storage = getDocumentStorage()
+  const storage = await selectDocumentWriteStorage({
+    incomingBytes: input.body.length,
+  })
   const objectKey = buildDocumentObjectKey(`project-${input.projectId}-exports`, input.fileName)
   await storage.putObject({
     key: objectKey,
@@ -278,7 +280,7 @@ async function persistArtifactResource(
     mimeType: input.mimeType,
     fileSize: input.body.length,
     objectKey,
-    storageProvider: storage.provider,
+    storageProvider: storage.channelId,
     title: input.title,
     summary: input.summary,
     category: 'templates',

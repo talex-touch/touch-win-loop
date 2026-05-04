@@ -93,7 +93,6 @@ function resolvePendingSigningSecret(): string {
     process.env.WINLOOP_AUTH_ONBOARDING_SECRET
     || process.env.WINLOOP_CONFIG_MASTER_KEY
     || process.env.WINLOOP_ONLYOFFICE_JWT_SECRET
-    || process.env.WINLOOP_STORAGE_SECRET_KEY
     || '',
   ).trim()
   if (configured)

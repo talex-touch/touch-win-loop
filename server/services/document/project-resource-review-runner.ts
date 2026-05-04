@@ -3,7 +3,7 @@ import type { RuntimeSettings } from '~~/server/utils/env'
 import type { DocumentAnalysis, ProjectResourceReviewJob } from '~~/shared/types/domain'
 import { analyzePdfBufferWithDocAi } from '~~/server/services/document/analysis'
 import { reviewDocumentPages } from '~~/server/services/document/page-review'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { getDocumentStorageByChannel } from '~~/server/storage/document-storage'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import {
   getProjectResourceDocumentAnalysisByResourceId,
@@ -76,7 +76,7 @@ async function resolveReviewAnalysis(input: {
   if (!previewRef || !normalizeString(previewRef.mimeType).toLowerCase().includes('pdf'))
     throw new Error('PREVIEW_NOT_READY')
 
-  const buffer = await getDocumentStorage().getObjectBuffer(previewRef.objectKey)
+  const buffer = await getDocumentStorageByChannel(previewRef.storageProvider).getObjectBuffer(previewRef.objectKey)
   const parsed = await analyzePdfBufferWithDocAi(buffer, {
     fileName: previewRef.fileName,
     runtime: input.runtime,
