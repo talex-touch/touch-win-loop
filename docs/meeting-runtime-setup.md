@@ -57,7 +57,7 @@
   - `egress webhook` 直接携带可下载 URL
   - 或本地自建 egress 写入 `/tmp/winloop-meeting-egress` 后由应用读取本地文件
 - 远端录制 URL 导入已经带超时与重试，最终资源会写入全局 Storage。
-- 全局 Storage 可在 `/admin/runtime-settings` 配置为 `local`、`s3` 或 `minio`，后台会用 `WINLOOP_CONFIG_MASTER_KEY` 加密 accessKey / secretKey。
+- 全局 Storage 可在 `/admin/storage-service` 配置为 `local`、`s3` 或 `minio` 渠道池，后台会用 `WINLOOP_CONFIG_MASTER_KEY` 加密 accessKey / secretKey。
 - 当前是否能看到真实字幕，取决于你采用哪种 ASR 路线：
   - `http`
     - 由外部 ASR 服务消费 `/sessions/frame` 并回调 `/api/internal/meetings/asr-events`

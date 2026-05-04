@@ -9,7 +9,7 @@ import type {
 import { Buffer } from 'node:buffer'
 import { readFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
 import { buildServerApiEndpoint } from '~~/server/utils/api-url'
 import * as projectResourceStore from '~~/server/utils/project-resource-store'
 
@@ -251,7 +251,10 @@ export async function persistMeetingRecordingResource(
   const buffer = await resolveArtifactBuffer(input.artifact)
   const fileName = normalizeString(input.artifact.fileName) || `meeting-recording-${input.meeting.id}.bin`
   const mimeType = normalizeString(input.artifact.mimeType) || 'application/octet-stream'
-  const storage = getDocumentStorage(input.runtime)
+  const storage = await selectDocumentWriteStorage({
+    incomingBytes: buffer.length,
+    runtime: input.runtime,
+  })
   const objectKey = buildDocumentObjectKey(`project-${input.meeting.projectId}`, fileName)
   const meetingMemory = await projectResourceStore.ensureProjectMeetingMemoryResource(db, {
     projectId: input.meeting.projectId,
@@ -270,7 +273,7 @@ export async function persistMeetingRecordingResource(
     mimeType,
     fileSize: buffer.length,
     objectKey,
-    storageProvider: storage.provider,
+    storageProvider: storage.channelId,
     title: `会议录制 · ${input.meeting.title}`,
     summary: '会议录制文件已自动沉淀到项目资料。',
     category: 'templates',
@@ -280,7 +283,8 @@ export async function persistMeetingRecordingResource(
       artifactKind: 'meeting_recording',
       meetingId: input.meeting.id,
       provider: input.meeting.provider,
-      sourceStorageProvider: storage.provider,
+      sourceStorageProvider: storage.channelId,
+      sourceStorageProviderType: storage.provider,
       artifactDownloadUrl: input.artifact.downloadUrl ? sanitizeArtifactDownloadUrl(input.artifact.downloadUrl) : '',
       artifactLocalFilePath: input.artifact.localFilePath ? normalizeString(input.artifact.localFilePath) : '',
       ...input.artifact.metadata,

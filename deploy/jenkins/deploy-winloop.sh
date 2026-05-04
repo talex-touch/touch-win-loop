@@ -27,6 +27,9 @@ Environment:
   WINLOOP_DEPLOY_REPORT_FILE    Output report path (default: ./deployment.json)
   WINLOOP_DEPLOY_TEMPLATE_FILE  Compose template path (default: deploy/jenkins/compose.yaml)
   WINLOOP_DEPLOY_LOCK_ROOT      Lock directory root (default: /tmp/winloop-deploy-locks)
+  WINLOOP_DEPLOY_SUCCESS_STATE_FILE
+                                  Successful deployment state path
+                                  (default: <env dir>/last-successful-deployment.json)
 USAGE
 }
 
@@ -444,6 +447,58 @@ EOF_PROMETHEUS
   export MEETING_DATA_HOST_DIR MEETING_EGRESS_OUTPUT_HOST_DIR
 }
 
+read_success_state_commit() {
+  local state_file="$1"
+  if [[ ! -f "$state_file" ]]; then
+    return 0
+  fi
+
+  python3 - "$state_file" <<'PY'
+import json
+import sys
+
+state_file = sys.argv[1]
+try:
+    with open(state_file, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+except Exception:
+    raise SystemExit(0)
+
+print(str(payload.get("buildCommitSha") or "").strip())
+PY
+}
+
+write_success_state() {
+  local state_file="$1"
+  local tmp_file="${state_file}.tmp"
+
+  python3 - "$tmp_file" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+state_file = sys.argv[1]
+finished_at = os.environ.get("REPORT_FINISHED_AT", "").strip()
+if not finished_at:
+    finished_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+payload = {
+    "status": "success",
+    "environment": os.environ.get("REPORT_DEPLOY_ENV", ""),
+    "buildVersion": os.environ.get("REPORT_BUILD_VERSION", ""),
+    "buildCommitSha": os.environ.get("REPORT_BUILD_COMMIT_SHA", ""),
+    "imageRef": os.environ.get("REPORT_IMAGE_REF", ""),
+    "publicBaseUrl": os.environ.get("REPORT_PUBLIC_BASE_URL", ""),
+    "finishedAt": finished_at,
+}
+with open(state_file, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, ensure_ascii=False)
+    handle.write("\n")
+PY
+  mv "$tmp_file" "$state_file"
+}
+
 write_report() {
   python3 - "$REPORT_FILE" <<'PY'
 import json
@@ -463,8 +518,10 @@ payload = {
     "previousImage": os.environ.get("REPORT_PREVIOUS_IMAGE", ""),
     "rolledBack": os.environ.get("REPORT_ROLLED_BACK", "false").lower() == "true",
     "healthcheckUrl": os.environ.get("REPORT_HEALTHCHECK_URL", ""),
+    "publicBaseUrl": os.environ.get("REPORT_PUBLIC_BASE_URL", ""),
     "buildVersion": os.environ.get("REPORT_BUILD_VERSION", ""),
     "buildCommitSha": os.environ.get("REPORT_BUILD_COMMIT_SHA", ""),
+    "previousSuccessfulCommitSha": os.environ.get("REPORT_PREVIOUS_SUCCESSFUL_COMMIT_SHA", ""),
     "startedAt": os.environ.get("REPORT_STARTED_AT", ""),
     "finishedAt": os.environ.get("REPORT_FINISHED_AT", ""),
 }
@@ -488,7 +545,6 @@ compose_with_meeting_profiles() {
   "${COMPOSE_CMD[@]}" "${profile_args[@]}" --project-name "$COMPOSE_PROJECT_NAME" -f "$TARGET_COMPOSE_PATH" -f "$OVERRIDE_FILE" "$@" "${services[@]}"
 }
 
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_ENV=""
 IMAGE_REF=""
@@ -511,15 +567,18 @@ REPORT_SERVICE_NAME=""
 REPORT_IMAGE_REF=""
 REPORT_PREVIOUS_IMAGE=""
 REPORT_HEALTHCHECK_URL=""
+REPORT_PUBLIC_BASE_URL=""
 REPORT_BUILD_VERSION=""
 REPORT_BUILD_COMMIT_SHA=""
+REPORT_PREVIOUS_SUCCESSFUL_COMMIT_SHA=""
 OVERRIDE_FILE=""
 
 on_exit() {
   REPORT_FINISHED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   export REPORT_STATUS REPORT_STAGE REPORT_MESSAGE REPORT_ROLLED_BACK REPORT_STARTED_AT REPORT_FINISHED_AT
   export REPORT_DEPLOY_ENV REPORT_TARGET_DIR REPORT_COMPOSE_PROJECT_NAME REPORT_SERVICE_NAME
-  export REPORT_IMAGE_REF REPORT_PREVIOUS_IMAGE REPORT_HEALTHCHECK_URL REPORT_BUILD_VERSION REPORT_BUILD_COMMIT_SHA
+  export REPORT_IMAGE_REF REPORT_PREVIOUS_IMAGE REPORT_HEALTHCHECK_URL REPORT_PUBLIC_BASE_URL
+  export REPORT_BUILD_VERSION REPORT_BUILD_COMMIT_SHA REPORT_PREVIOUS_SUCCESSFUL_COMMIT_SHA
   if [[ -n "$OVERRIDE_FILE" ]]; then
     rm -f "$OVERRIDE_FILE"
   fi
@@ -596,6 +655,7 @@ TARGET_DIR="${DEPLOY_BASE_DIR}/${DEPLOY_ENV}"
 DEPLOY_ENV_FILE_PATH="${TARGET_DIR}/deploy.env"
 TARGET_COMPOSE_PATH="${TARGET_DIR}/compose.yaml"
 LOCK_DIR="${LOCK_ROOT}/touch-win-loop-${DEPLOY_ENV}.lock"
+SUCCESS_STATE_FILE="${WINLOOP_DEPLOY_SUCCESS_STATE_FILE:-${TARGET_DIR}/last-successful-deployment.json}"
 
 REPORT_DEPLOY_ENV="$DEPLOY_ENV"
 REPORT_TARGET_DIR="$TARGET_DIR"
@@ -621,6 +681,7 @@ fi
 
 REPORT_STAGE="load_env"
 load_env_file "$DEPLOY_ENV_FILE_PATH"
+REPORT_PREVIOUS_SUCCESSFUL_COMMIT_SHA="$(read_success_state_commit "$SUCCESS_STATE_FILE")"
 
 SERVICE_NAME="${SERVICE_NAME:-winloop}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-touch-win-loop-${DEPLOY_ENV}}"
@@ -636,7 +697,6 @@ if [[ "$DEPLOY_ENV" == "staging" ]]; then
 fi
 MEETING_STACK_ENABLED="$(to_bool "${MEETING_STACK_ENABLED:-$MEETING_STACK_ENABLED_DEFAULT}")"
 MEETING_EGRESS_ENABLED="$(to_bool "${MEETING_EGRESS_ENABLED:-false}")"
-STORAGE_HOST_DIR="${STORAGE_HOST_DIR:-./storage}"
 RUNTIME_ENV_FILE_PATH="$(resolve_path "$RUNTIME_ENV_FILE" "$TARGET_DIR")"
 DB_MIGRATION_DIR="${DB_MIGRATION_DIR:-}"
 DB_MIGRATION_FILES="${DB_MIGRATION_FILES:-}"
@@ -663,12 +723,7 @@ if [[ ! -f "$RUNTIME_ENV_FILE_PATH" ]]; then
   exit 1
 fi
 
-mkdir -p "$TARGET_DIR"
-if [[ "$STORAGE_HOST_DIR" == /* ]]; then
-  mkdir -p "$STORAGE_HOST_DIR"
-else
-  mkdir -p "$(resolve_path "$STORAGE_HOST_DIR" "$TARGET_DIR")"
-fi
+mkdir -p "$TARGET_DIR/storage"
 if [[ "$MEETING_STACK_ENABLED" == "true" ]]; then
   write_meeting_configs
 fi
@@ -676,7 +731,9 @@ fi
 REPORT_STAGE="sync_compose"
 install -m 0644 "$TEMPLATE_FILE" "$TARGET_COMPOSE_PATH"
 
+unset WINLOOP_PUBLIC_BASE_URL
 load_env_file "$RUNTIME_ENV_FILE_PATH"
+REPORT_PUBLIC_BASE_URL="${WINLOOP_PUBLIC_BASE_URL:-}"
 export RUNTIME_ENV_FILE
 
 cd "$TARGET_DIR"
@@ -746,6 +803,11 @@ if check_health; then
   REPORT_STATUS="success"
   REPORT_STAGE="completed"
   REPORT_MESSAGE="Deployment succeeded"
+  REPORT_FINISHED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  export REPORT_DEPLOY_ENV REPORT_BUILD_VERSION REPORT_BUILD_COMMIT_SHA REPORT_IMAGE_REF REPORT_PUBLIC_BASE_URL REPORT_FINISHED_AT
+  if ! write_success_state "$SUCCESS_STATE_FILE"; then
+    log "Success state update failed: $SUCCESS_STATE_FILE"
+  fi
   log "$REPORT_MESSAGE"
   exit 0
 fi

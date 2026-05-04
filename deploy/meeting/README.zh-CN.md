@@ -33,7 +33,7 @@
 - 但如果你仍然使用本目录里的 `ASR dev bridge` 纯桥接模式，它不会自动回调真实字幕
 - `RtcProviderGateway.startRecording()` 现在已经会调用 `LiveKit Egress`
 - 录制 worker 也已经支持从 `egress_ended` webhook 里的本地文件路径或 URL 导入 artifact，URL 导入带超时与重试
-- 应用侧对象存储可在 `/admin/runtime-settings` 切换为 `local`、`s3` 或 `minio`
+- 应用侧对象存储可在 `/admin/storage-service` 配置为 `local`、`s3` 或 `minio` 渠道池
 
 所以这个目录当前能做到的是：
 

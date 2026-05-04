@@ -537,7 +537,6 @@ services:
       PORT: 3000
       NUXT_HOST: 0.0.0.0
       NUXT_PORT: 3000
-      WINLOOP_STORAGE_LOCAL_ROOT: /app/tmp/document-storage
       WINLOOP_PG_URL: \${WINLOOP_PG_URL:-postgresql://winloop:password@127.0.0.1:5432/winloop}
       WINLOOP_REDIS_URL: \${WINLOOP_REDIS_URL:-redis://:password@127.0.0.1:6379/0}
     volumes:
@@ -743,7 +742,6 @@ EOF_OVERRIDE
       PORT: ${PORT:-3000}
       NUXT_HOST: ${NUXT_HOST:-0.0.0.0}
       NUXT_PORT: ${NUXT_PORT:-3000}
-      WINLOOP_STORAGE_LOCAL_ROOT: ${WINLOOP_STORAGE_LOCAL_ROOT:-/app/tmp/document-storage}
       WINLOOP_BUILD_VERSION: ${WINLOOP_BUILD_VERSION:-}
       WINLOOP_BUILD_COMMIT_SHA: ${WINLOOP_BUILD_COMMIT_SHA:-}
 EOF_OVERRIDE_ENV

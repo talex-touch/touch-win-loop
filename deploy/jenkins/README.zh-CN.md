@@ -93,7 +93,6 @@ ROLLBACK_ON_FAILURE=true
 FORCE_RECREATE=true
 APP_BIND_IP=127.0.0.1
 APP_HOST_PORT=3511
-STORAGE_HOST_DIR=./storage
 DB_MIGRATION_DIR=
 DB_MIGRATION_FILES=
 DB_MIGRATION_CLIENT_IMAGE=postgres:18-alpine
@@ -121,7 +120,6 @@ production 只需要改成独立的：
 - `COMPOSE_PROJECT_NAME`
 - `HEALTHCHECK_URL`
 - `APP_HOST_PORT`
-- `STORAGE_HOST_DIR`（如需额外隔离可改）
 
 ## 3）.env.runtime 约定
 
@@ -135,6 +133,8 @@ production 只需要改成独立的：
 - `WINLOOP_ONLYOFFICE_ENDPOINT` / `WINLOOP_ONLYOFFICE_JWT_SECRET`（如果启用再配）
 - `WINLOOP_MEETING_MONITORING_PROMETHEUS_BASE_URL`（staging 默认 `http://meeting-prometheus:9090`）
 - `WINLOOP_SENTRY_DSN` / `WINLOOP_SENTRY_ENVIRONMENT`（如果启用 Sentry 再配）
+
+`WINLOOP_PUBLIC_BASE_URL` 是 Jenkins 发布通知里“环境访问 / 访问地址”的唯一来源，staging 与 production 必须分别配置为真实可访问的公网地址。未配置时不影响发布，但飞书通知不会展示访问地址。
 
 资源回收 worker 参数已改为后台 UI 管理，不再通过 `.env.runtime` 配置。
 Sentry 未配置时应用仍可正常运行，只是不启用错误上报。
@@ -170,6 +170,7 @@ Sentry 未配置时应用仍可正常运行，只是不启用错误上报。
    - `IMAGE_REF`
    - `TRIGGERED_BY`
    - `WORKFLOW_RUN_URL`
+   - `COMMIT_CHANGES`（可选兜底，默认留空；Jenkins 会优先基于上次成功发布 commit 自动生成）
 4. Pipeline script 使用以下模板：
    - staging：`deploy/jenkins/job-bootstrap.groovy`
    - production：`deploy/jenkins/job-bootstrap-production.groovy`
@@ -211,13 +212,27 @@ feishuWebhookSecretCredentialsId: 'jenkins-feishu-webhook-secret',
 
 如果飞书机器人没有开启签名校验，只保留第一行即可。
 
+通知由 `pipeline.groovy` 内置 stage 控制：
+
+- `Notify Feishu Start`：参数校验通过后立即发送开始通知。
+- `Notify Feishu`：发布结束后发送成功 / 失败通知，即使部署失败也会尽力发送。
+
 通知内容会包含：
 
-- 部署结果（成功 / 失败）
+- 部署结果（开始 / 成功 / 失败）
 - 环境、分支、版本、Commit、镜像摘要
+- 当前环境访问地址（来自 `.env.runtime` 的 `WINLOOP_PUBLIC_BASE_URL`）
+- 本次发布 commit changes 列表
 - GitHub Actions 运行链接
 - Jenkins 构建链接
-- 失败阶段、失败信息、是否触发回滚
+- 流程阶段或失败阶段、失败信息、是否触发回滚
+
+commit changes 的生成规则：
+
+- 优先读取目标环境目录下 `last-successful-deployment.json` 的 `buildCommitSha`。
+- 结束通知使用 `git log <previous>..<current> --format='- %h %s (%an)' --no-merges` 生成，最多展示 20 条。
+- 首次发布、上次 commit 不可解析或生成失败时，降级为当前发布 commit 的一条摘要。
+- 只有健康检查成功的发布才会更新 `last-successful-deployment.json`；失败、回滚不会更新，避免污染下一次 changes 范围。
 
 ## 5）GitHub Secrets
 

@@ -33,6 +33,14 @@ String shortenSha(String raw) {
   return value.length() <= 7 ? value : value.take(7)
 }
 
+int parsePositiveInt(String raw) {
+  String value = String.valueOf(raw ?: '').trim()
+  if (!(value ==~ /^[0-9]+$/)) {
+    return 0
+  }
+  return value.toInteger()
+}
+
 String normalizeCredentialsId(String raw, Map aliases = [:]) {
   String value = String.valueOf(raw).trim()
   return String.valueOf(aliases.getOrDefault(value, value)).trim()
@@ -53,10 +61,171 @@ Map readDeploymentReport(script) {
   }
 }
 
+String readRemotePublicBaseUrl(script, Map input = [:]) {
+  String sshCredentialsId = String.valueOf(input.sshCredentialsId ?: '').trim()
+  String sshTarget = String.valueOf(input.sshTarget ?: '').trim()
+  String sshOptions = String.valueOf(input.sshOptions ?: '-o BatchMode=yes -o StrictHostKeyChecking=accept-new').trim()
+  String remoteDeployBaseDir = String.valueOf(input.remoteDeployBaseDir ?: '').trim()
+  String deployEnvironment = String.valueOf(input.deployEnvironment ?: '').trim()
+
+  if (!sshCredentialsId || !sshTarget || !remoteDeployBaseDir || !deployEnvironment) {
+    return ''
+  }
+
+  String targetDir = "${remoteDeployBaseDir}/${deployEnvironment}"
+  String output = ''
+  try {
+    script.sshagent(credentials: [sshCredentialsId]) {
+      output = script.sh(
+        label: 'read public base url',
+        returnStdout: true,
+        script: """#!/usr/bin/env bash
+set -euo pipefail
+ssh_target=${shellQuote(sshTarget)}
+ssh ${sshOptions} "\${ssh_target}" "TARGET_DIR=${shellQuote(targetDir)} bash -s" <<'BASH'
+set -euo pipefail
+
+deploy_env_file="\${TARGET_DIR}/deploy.env"
+runtime_env_file=".env.runtime"
+
+if [[ -f "\${deploy_env_file}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "\${deploy_env_file}"
+  set +a
+  runtime_env_file="\${RUNTIME_ENV_FILE:-.env.runtime}"
+fi
+
+if [[ "\${runtime_env_file}" != /* ]]; then
+  runtime_env_file="\${TARGET_DIR}/\${runtime_env_file}"
+fi
+
+if [[ ! -f "\${runtime_env_file}" ]]; then
+  exit 0
+fi
+
+unset WINLOOP_PUBLIC_BASE_URL
+set -a
+# shellcheck disable=SC1090
+source "\${runtime_env_file}"
+set +a
+
+printf '%s' "\${WINLOOP_PUBLIC_BASE_URL:-}"
+BASH
+""",
+      ).trim()
+    }
+  }
+  catch (Throwable error) {
+    script.echo("Failed to read public base url: ${error.message}")
+    return ''
+  }
+
+  return output
+}
+
+boolean isGitCommitResolvable(script, String rawSha) {
+  String sha = String.valueOf(rawSha ?: '').trim()
+  if (!sha) {
+    return false
+  }
+
+  int status = script.sh(
+    script: "git cat-file -e ${shellQuote("${sha}^{commit}")}",
+    returnStatus: true,
+  )
+  return status == 0
+}
+
+String formatGitLogLine(String raw) {
+  String value = String.valueOf(raw ?: '').trim()
+  if (!value) {
+    return ''
+  }
+
+  String[] parts = value.split('\\t', 3)
+  String shortSha = parts.length > 0 ? parts[0].trim() : '-'
+  String subject = parts.length > 1 ? parts[1].trim() : '当前发布提交'
+  String author = parts.length > 2 ? parts[2].trim() : ''
+  String authorLabel = author ? " (${author})" : ''
+  return "- ${shortSha ?: '-'} ${subject ?: '当前发布提交'}${authorLabel}"
+}
+
+String buildCurrentCommitSummary(script, String rawSha) {
+  String sha = String.valueOf(rawSha ?: '').trim()
+  if (!sha) {
+    return ''
+  }
+
+  try {
+    if (isGitCommitResolvable(script, sha)) {
+      String rawLog = script.sh(
+        script: "git log -1 --format=%h%x09%s%x09%an ${shellQuote(sha)}",
+        returnStdout: true,
+      ).trim()
+      String line = formatGitLogLine(rawLog)
+      if (line) {
+        return line
+      }
+    }
+  }
+  catch (Throwable ignored) {
+    // Fall through to the deterministic short SHA summary.
+  }
+
+  return "- ${shortenSha(sha)} 当前发布提交"
+}
+
+String buildCommitChanges(script, String rawPreviousSha, String rawCurrentSha) {
+  String previousSha = String.valueOf(rawPreviousSha ?: '').trim()
+  String currentSha = String.valueOf(rawCurrentSha ?: '').trim()
+  if (!currentSha) {
+    return ''
+  }
+
+  if (previousSha && !previousSha.equalsIgnoreCase(currentSha)) {
+    try {
+      if (isGitCommitResolvable(script, previousSha) && isGitCommitResolvable(script, currentSha)) {
+        String range = "${previousSha}..${currentSha}"
+        String countRaw = script.sh(
+          script: "git rev-list --count --no-merges ${shellQuote(range)}",
+          returnStdout: true,
+        ).trim()
+        int total = parsePositiveInt(countRaw)
+        String rawLog = script.sh(
+          script: "git log ${shellQuote(range)} --format=%h%x09%s%x09%an --no-merges -n 20",
+          returnStdout: true,
+        ).trim()
+
+        List<String> lines = []
+        rawLog.readLines().each { String rawLine ->
+          String line = formatGitLogLine(rawLine)
+          if (line) {
+            lines << line
+          }
+        }
+
+        if (lines) {
+          if (total > lines.size()) {
+            lines << "... and ${total - lines.size()} more"
+          }
+          return lines.join('\n')
+        }
+      }
+    }
+    catch (Throwable ignored) {
+      // Fall through to the current commit summary.
+    }
+  }
+
+  return buildCurrentCommitSummary(script, currentSha)
+}
+
 String buildFeishuDeployNotifyText(Map input = [:]) {
+  String resultLabel = String.valueOf(input.resultLabel ?: '-').trim() ?: '-'
   List<String> lines = [
     'WinLoop Jenkins 部署通知',
-    "结果：${input.resultLabel ?: '-'}",
+    "结果：${resultLabel}",
     "环境：${input.deployEnvironment ?: '-'}",
     "分支：${input.branch ?: '-'}",
     "版本：${input.buildVersion ?: '-'}",
@@ -71,18 +240,33 @@ String buildFeishuDeployNotifyText(Map input = [:]) {
   String workflowRunUrl = String.valueOf(input.workflowRunUrl ?: '').trim()
   String buildUrl = String.valueOf(input.buildUrl ?: '').trim()
   String rollbackLabel = String.valueOf(input.rollbackLabel ?: '').trim()
+  String publicBaseUrl = String.valueOf(input.publicBaseUrl ?: '').trim()
+  String commitChanges = String.valueOf(input.commitChanges ?: '').trim()
+
+  if (publicBaseUrl) {
+    lines << "${resultLabel == '开始' ? '环境访问' : '访问地址'}：${publicBaseUrl}"
+  }
 
   if (reportStatus) {
     lines << "部署状态：${reportStatus}"
   }
   if (reportStage) {
-    lines << "失败阶段：${reportStage}"
+    lines << "${resultLabel == '失败' ? '失败阶段' : '流程阶段'}：${reportStage}"
   }
   if (reportMessage) {
     lines << "详情：${truncateText(reportMessage, 300)}"
   }
   if (rollbackLabel) {
     lines << "回滚：${rollbackLabel}"
+  }
+  if (commitChanges) {
+    lines << '变更列表：'
+    commitChanges.readLines().each { String line ->
+      String normalizedLine = String.valueOf(line ?: '').trim()
+      if (normalizedLine) {
+        lines << normalizedLine
+      }
+    }
   }
   if (triggeredBy) {
     lines << "触发来源：${triggeredBy}"
@@ -241,8 +425,10 @@ void runPipeline(script, Map config = [:]) {
   String imageRef = requiredValue(script, 'IMAGE_REF')
   String triggeredBy = String.valueOf(script.params.TRIGGERED_BY ?: '').trim()
   String workflowRunUrl = String.valueOf(script.params.WORKFLOW_RUN_URL ?: '').trim()
+  String providedCommitChanges = String.valueOf(script.params.COMMIT_CHANGES ?: '').trim()
   String remoteWorkspace = "${remoteWorkspaceRoot}/${sanitizePathComponent(script.env.JOB_NAME ?: 'job')}/${sanitizePathComponent(script.env.BUILD_NUMBER ?: '0')}-${deployEnvironment}"
   String sshOptions = '-o BatchMode=yes -o StrictHostKeyChecking=accept-new'
+  String publicBaseUrl = ''
   Throwable pipelineError = null
 
   script.currentBuild.displayName = "#${script.env.BUILD_NUMBER} ${deployEnvironment} ${buildVersion}"
@@ -276,6 +462,13 @@ void runPipeline(script, Map config = [:]) {
 
     script.stage('Notify Feishu Start') {
       try {
+        publicBaseUrl = readRemotePublicBaseUrl(script, [
+          sshCredentialsId: sshCredentialsId,
+          sshTarget: sshTarget,
+          sshOptions: sshOptions,
+          remoteDeployBaseDir: remoteDeployBaseDir,
+          deployEnvironment: deployEnvironment,
+        ])
         sendFeishuDeployNotification(script, [
           feishuWebhookCredentialsId: config.feishuWebhookCredentialsId,
           feishuWebhookSecretCredentialsId: config.feishuWebhookSecretCredentialsId,
@@ -289,6 +482,7 @@ void runPipeline(script, Map config = [:]) {
           buildVersion: buildVersion,
           buildCommitSha: shortenSha(buildCommitSha),
           imageRef: truncateText(imageRef, 120),
+          publicBaseUrl: publicBaseUrl,
           triggeredBy: triggeredBy,
           workflowRunUrl: workflowRunUrl,
           buildUrl: String.valueOf(script.env.BUILD_URL ?: '').trim(),
@@ -379,6 +573,10 @@ ssh ${sshOptions} "\${ssh_target}" "rm -rf \\"\${remote_workspace}\\"" 2>/dev/nu
         ? '已执行'
         : '未执行'
       String resultLabel = pipelineError == null ? '成功' : '失败'
+      publicBaseUrl = String.valueOf(deploymentReport.publicBaseUrl ?: publicBaseUrl).trim()
+      String previousSuccessfulCommitSha = String.valueOf(deploymentReport.previousSuccessfulCommitSha ?: '').trim()
+      String autoCommitChanges = buildCommitChanges(script, previousSuccessfulCommitSha, buildCommitSha)
+      String commitChanges = autoCommitChanges ?: providedCommitChanges
 
       try {
         sendFeishuDeployNotification(script, [
@@ -394,10 +592,12 @@ ssh ${sshOptions} "\${ssh_target}" "rm -rf \\"\${remote_workspace}\\"" 2>/dev/nu
           buildVersion: buildVersion,
           buildCommitSha: shortenSha(buildCommitSha),
           imageRef: truncateText(imageRef, 120),
+          publicBaseUrl: publicBaseUrl,
           reportStatus: reportStatus,
           reportStage: reportStage,
           reportMessage: reportMessage,
           rollbackLabel: pipelineError == null && !reportStatus ? '' : rollbackLabel,
+          commitChanges: commitChanges,
           triggeredBy: triggeredBy,
           workflowRunUrl: workflowRunUrl,
           buildUrl: String.valueOf(script.env.BUILD_URL ?: '').trim(),

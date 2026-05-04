@@ -9,6 +9,7 @@ properties([
     string(name: 'IMAGE_REF', defaultValue: '', trim: true),
     string(name: 'TRIGGERED_BY', defaultValue: 'manual', trim: true),
     string(name: 'WORKFLOW_RUN_URL', defaultValue: '', trim: true),
+    text(name: 'COMMIT_CHANGES', defaultValue: '', description: 'Optional fallback commit changes text. Jenkins auto-generates changes from previous successful deployment first.'),
   ]),
 ])
 

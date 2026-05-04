@@ -10,13 +10,12 @@ services:
       PORT: ${PORT:-3000}
       NUXT_HOST: ${NUXT_HOST:-0.0.0.0}
       NUXT_PORT: ${NUXT_PORT:-3000}
-      WINLOOP_STORAGE_LOCAL_ROOT: ${WINLOOP_STORAGE_LOCAL_ROOT:-/app/tmp/document-storage}
       WINLOOP_BUILD_VERSION: ${WINLOOP_BUILD_VERSION:-}
       WINLOOP_BUILD_COMMIT_SHA: ${WINLOOP_BUILD_COMMIT_SHA:-}
     ports:
       - ${APP_BIND_IP:-127.0.0.1}:${APP_HOST_PORT:-3510}:3000
     volumes:
-      - ${STORAGE_HOST_DIR:-./storage}:/app/tmp/document-storage
+      - ./storage:/app/tmp/document-storage
     networks:
       - app-external
     healthcheck:
