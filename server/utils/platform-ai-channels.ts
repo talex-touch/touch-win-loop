@@ -35,6 +35,7 @@ export type PlatformAiChannelKey
     | 'workspace_document_assist'
     | 'admin_general'
     | 'admin_publish_assistant'
+    | 'admin_operations_analysis'
     | 'knowledge_embedding'
     | 'knowledge_visual_embedding'
     | 'knowledge_query_planner'
@@ -287,6 +288,7 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
   defineChannel({ key: 'workspace_canvas_refine', label: '画布续改', description: '基于现有图结构重写和优化结构源', builtinPrompt: '优化现有画布结构，使关系更清晰、命名更一致。' }),
   defineChannel({ key: 'admin_general', label: '管理助手-通用', description: '后台管理通用任务', builtinPrompt: '聚焦后台配置状态、风险识别、问题定位与可执行修复步骤。' }),
   defineChannel({ key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议', builtinPrompt: '聚焦发布阻断项、字段缺口、模块级修复动作。' }),
+  defineChannel({ key: 'admin_operations_analysis', label: '运营管控-AI 分析', description: '运营总览、SLA、风险和待办分析', builtinPrompt: '基于后台运营快照进行平台运营分析，输出风险等级、SLA 解读和可执行动作，禁止编造未提供指标。' }),
   defineChannel({
     key: 'knowledge_embedding',
     label: '知识库文本 Embedding',

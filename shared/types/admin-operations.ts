@@ -2,6 +2,7 @@ export type AdminOperationsTab = 'overview' | 'users' | 'content' | 'revenue' | 
 export type AdminOperationsTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 export type AdminOperationsHealth = 'healthy' | 'warning' | 'critical' | 'idle'
 export type AdminRiskSeverity = 'critical' | 'high' | 'medium' | 'low'
+export type AdminOperationsAiAnalysisStatus = 'idle' | 'running' | 'completed' | 'failed' | 'stale'
 export type AdminReportDatasetKey = 'users' | 'content' | 'revenue' | 'efficiency' | 'risks'
 export type AdminReportFieldType = 'string' | 'number' | 'boolean' | 'datetime'
 export type AdminReportFilterOperator = 'eq' | 'contains' | 'gte' | 'lte'
@@ -353,6 +354,38 @@ export interface AdminRiskSnapshot {
     low: number
   }
   alerts: AdminRiskAlert[]
+}
+
+export interface AdminOperationsAiAnalysisCitation {
+  label: string
+  value: string
+}
+
+export interface AdminOperationsAiAnalysisResult {
+  summary: string
+  riskLevel: AdminOperationsTone
+  keyRisks: string[]
+  slaNotes: string[]
+  actions: string[]
+  citations: AdminOperationsAiAnalysisCitation[]
+  generatedAt: string
+}
+
+export interface AdminOperationsAiAnalysisSnapshot {
+  status: AdminOperationsAiAnalysisStatus
+  stale: boolean
+  expiresAt: string | null
+  lastRunAt: string | null
+  result: AdminOperationsAiAnalysisResult | null
+  error: string
+  provider: string
+  model: string
+  fallbackUsed: boolean
+  attempts: number
+}
+
+export interface AdminOperationsAiAnalysisRunResult extends AdminOperationsAiAnalysisSnapshot {
+  triggered: boolean
 }
 
 export interface AdminReportFieldOption {

@@ -11,6 +11,8 @@ const API_FILES = [
   'server/api/admin/operations/efficiency.get.ts',
   'server/api/admin/operations/meeting-runtime.get.ts',
   'server/api/admin/operations/risks.get.ts',
+  'server/api/admin/operations/ai-analysis.get.ts',
+  'server/api/admin/operations/ai-analysis/run.post.ts',
   'server/api/admin/operations/reports/schema.get.ts',
   'server/api/admin/operations/reports/query.post.ts',
   'server/api/admin/operations/reports/export.post.ts',
@@ -19,6 +21,8 @@ const API_FILES = [
 const STORE_FILE = resolve(process.cwd(), 'server/utils/admin-operations-store.ts')
 const EXPORT_FILE = resolve(process.cwd(), 'server/api/admin/operations/reports/export.post.ts')
 const MEETING_RUNTIME_FILE = resolve(process.cwd(), 'server/services/meeting/runtime-monitoring.ts')
+const AI_ANALYSIS_SERVICE_FILE = resolve(process.cwd(), 'server/services/admin-operations-ai-analysis.ts')
+const PLATFORM_AI_CHANNELS_FILE = resolve(process.cwd(), 'server/utils/platform-ai-channels.ts')
 
 it('admin operations API 全量路由均复用鉴权和 contest.read_internal 权限门槛', async () => {
   for (const relativePath of API_FILES) {
@@ -57,4 +61,20 @@ it('会议运行时监控只通过 Prometheus 聚合，不直连 SSH 或 Docker 
   assert.match(source, /\/api\/v1\/targets/, '会议监控未读取 Prometheus targets 健康状态')
   assert.doesNotMatch(source, /\bssh\b/, '会议监控不应执行 SSH')
   assert.doesNotMatch(source, /docker\.sock|docker stats|child_process|exec\(/, '会议监控不应直连 Docker 或执行命令')
+})
+
+it('运营 AI 分析使用专属 channel、8h 缓存和失败兜底', async () => {
+  const serviceSource = await readFile(AI_ANALYSIS_SERVICE_FILE, 'utf8')
+  const channelSource = await readFile(PLATFORM_AI_CHANNELS_FILE, 'utf8')
+
+  assert.match(serviceSource, /ADMIN_OPERATIONS_AI_ANALYSIS_CHANNEL = 'admin_operations_analysis'/, '运营 AI 分析未使用专属 channel')
+  assert.match(serviceSource, /ADMIN_OPERATIONS_AI_ANALYSIS_STALE_MS = 8 \* 60 \* 60 \* 1000/, '运营 AI 分析未固化 8h 过期策略')
+  assert.match(serviceSource, /getAdminOperationsOverview/, '运营 AI 分析未读取 overview 快照')
+  assert.match(serviceSource, /getAdminOperationsEfficiency/, '运营 AI 分析未读取 efficiency 快照')
+  assert.match(serviceSource, /getAdminOperationsRisks/, '运营 AI 分析未读取 risks 快照')
+  assert.match(serviceSource, /buildAdminMeetingRuntimeSnapshot/, '运营 AI 分析未读取会议运行时快照')
+  assert.match(serviceSource, /cachedSnapshot\.result \? 'completed' : 'failed'/, '运营 AI 失败时未保留旧结果并兜底 failed')
+  assert.match(serviceSource, /runWithPlatformAiChannelFallback/, '运营 AI 分析未走平台 AI channel fallback')
+  assert.match(channelSource, /key: 'admin_operations_analysis'/, '平台 AI channel 缺少 admin_operations_analysis')
+  assert.match(channelSource, /运营管控-AI 分析/, '平台 AI channel 缺少运营管控标签')
 })
