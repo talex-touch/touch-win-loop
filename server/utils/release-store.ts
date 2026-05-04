@@ -375,10 +375,6 @@ function hasReleaseDiffSummaryChanges(summary: ReleaseDiffSummary): boolean {
     || summary.changedExternalIds.length > 0
 }
 
-function normalizeCompareValue(value: unknown): string {
-  return normalizeText(value).toLowerCase()
-}
-
 interface SyncPreservationSummaryItem {
   label: string
   value: string
@@ -2064,44 +2060,21 @@ export async function getContestReleasePublishCheck(
       })
     : null
   const existingExternalRefContestId = normalizeText(existingExternalRef?.entityId)
-  const currentContestIds = normalizeStringArray([
-    currentContestId,
-    existingExternalRefContestId,
-  ])
   if (existingExternalRefContestId && currentContestId && existingExternalRefContestId !== currentContestId) {
     pushBlocker(
       'CONTEST_DUPLICATED',
-      `检测到重复竞赛（ID: ${existingExternalRefContestId}），请核对唯一编号/赛事名称。`,
+      `检测到重复竞赛（ID: ${existingExternalRefContestId}），请核对唯一编号。`,
       'externalId',
       [
+        { label: '命中依据', value: '唯一编号已被 Feishu external ref 绑定到其他 live 竞赛。' },
+        { label: '阻断原因', value: '继续发布会把同一个飞书竞赛编号写入两个不同竞赛实体。' },
         { label: '当前版本唯一编号', value: contestExternalId },
+        { label: '当前版本赛事名称', value: normalizeText(contest.name) },
         { label: '当前关联竞赛 ID', value: currentContestId },
         { label: '已占用该编号的竞赛 ID', value: existingExternalRefContestId },
+        { label: '建议处理', value: '如这是同一赛事，请把当前版本关联到已占用竞赛；如不是同一赛事，请先修正飞书唯一编号后重新导入。' },
       ],
     )
-  }
-
-  if (hasName) {
-    const rows = await db.query<{ id: string, name: string }>(
-      `SELECT id, name
-       FROM contests
-       WHERE status <> 'archived'
-         AND NOT (id = ANY($1::TEXT[]))`,
-      [currentContestIds],
-    )
-    const duplicate = rows.rows.find(row => normalizeCompareValue(row.name) === normalizeCompareValue(contest.name))
-    if (duplicate) {
-      pushBlocker(
-        'CONTEST_DUPLICATED',
-        `检测到重复竞赛（ID: ${duplicate.id}），请核对唯一编号/赛事名称。`,
-        'name',
-        [
-          { label: '当前版本赛事名称', value: normalizeText(contest.name) },
-          { label: '命中竞赛 ID', value: duplicate.id },
-          { label: '命中竞赛名称', value: duplicate.name },
-        ],
-      )
-    }
   }
 
   const faqItems = normalizeSnapshotFaqItems(contest.faqItems)

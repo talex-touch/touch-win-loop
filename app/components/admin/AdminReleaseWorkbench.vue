@@ -794,7 +794,6 @@ function trackIdentityCandidates(item: ContestReleaseTrackSnapshot): string[] {
     item.externalId,
     item.liveId || '',
     item.liveId ? `manual:track:${item.liveId}` : '',
-    item.name,
     item.syncSource?.recordId,
   ]
   return [...new Set(candidates.flatMap(identityTokens))]

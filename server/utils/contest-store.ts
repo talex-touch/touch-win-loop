@@ -114,10 +114,6 @@ const DISCIPLINE_DICTIONARY: DisciplineDictionaryItem[] = [
   { code: 'interdisciplinary', label: '交叉学科', sortOrder: 13, enabled: true },
 ]
 
-function normalizeCompareValue(value: unknown): string {
-  return normalizeString(value).toLowerCase()
-}
-
 export function listDisciplineDictionary(): DisciplineDictionaryItem[] {
   return [...DISCIPLINE_DICTIONARY]
     .filter(item => item.enabled !== false)
@@ -2746,35 +2742,15 @@ export async function getContestPublishCheck(
     if (duplicateExternalRef?.entity_id) {
       pushBlocker(
         'CONTEST_DUPLICATED',
-        `检测到重复竞赛（ID: ${duplicateExternalRef.entity_id}），请核对唯一编号/赛事名称。`,
+        `检测到重复竞赛（ID: ${duplicateExternalRef.entity_id}），请核对唯一编号。`,
         'externalId',
         [
+          { label: '命中依据', value: '唯一编号已被 Feishu external ref 绑定到其他 live 竞赛。' },
+          { label: '阻断原因', value: '继续发布会把同一个飞书竞赛编号写入两个不同竞赛实体。' },
           { label: '当前竞赛唯一编号', value: contestExternalId },
           { label: '当前竞赛 ID', value: input.contestId },
           { label: '已占用该编号的竞赛 ID', value: duplicateExternalRef.entity_id },
-        ],
-      )
-    }
-  }
-
-  if (hasName) {
-    const rows = await db.query<{ id: string, name: string }>(
-      `SELECT id, name
-       FROM contests
-       WHERE id <> $1
-         AND status <> 'archived'`,
-      [input.contestId],
-    )
-    const duplicate = rows.rows.find(row => normalizeCompareValue(row.name) === normalizeCompareValue(contest.name))
-    if (duplicate) {
-      pushBlocker(
-        'CONTEST_DUPLICATED',
-        `检测到重复竞赛（ID: ${duplicate.id}），请核对唯一编号/赛事名称。`,
-        'name',
-        [
-          { label: '当前竞赛名称', value: normalizeString(contest.name) },
-          { label: '命中竞赛 ID', value: duplicate.id },
-          { label: '命中竞赛名称', value: duplicate.name },
+          { label: '建议处理', value: '如这是同一赛事，请复用已占用竞赛；如不是同一赛事，请先修正飞书唯一编号后重新导入。' },
         ],
       )
     }

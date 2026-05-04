@@ -223,7 +223,7 @@ function buildPublishFixArtifact(input: {
     CONTEST_TRACKS_REQUIRED: { module: 'tracks', action: '新增至少 1 个赛道。' },
     CONTEST_TIMELINES_REQUIRED: { module: 'timelines', action: '新增至少 1 条时间节点。' },
     CONTEST_RUBRICS_REQUIRED: { module: 'rubrics', action: '新增至少 1 条评分规则。' },
-    CONTEST_DUPLICATED: { module: 'overview', action: '核对唯一编号和赛事名称。' },
+    CONTEST_DUPLICATED: { module: 'overview', action: '核对唯一编号绑定。' },
   }
 
   const blockerFixes = input.blockers.map((item) => {
