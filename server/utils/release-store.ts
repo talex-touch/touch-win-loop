@@ -108,6 +108,8 @@ interface ReleaseReviewLogRow {
   id: string
   release_version_id: string
   actor_user_id: string | null
+  actor_name: string | null
+  actor_avatar_url: string | null
   action: ReleaseReviewAction
   payload: unknown
   created_at: string
@@ -358,6 +360,8 @@ function mapReleaseReviewLog(row: ReleaseReviewLogRow): ReleaseReviewLog {
     id: row.id,
     releaseVersionId: row.release_version_id,
     actorUserId: row.actor_user_id,
+    actorName: normalizeText(row.actor_name) || null,
+    actorAvatarUrl: normalizeText(row.actor_avatar_url) || null,
     action: row.action,
     payload: parseJsonObject(row.payload),
     createdAt: row.created_at,
@@ -1076,15 +1080,18 @@ export async function listReleaseReviewLogs(
 ): Promise<ReleaseReviewLog[]> {
   const result = await db.query<ReleaseReviewLogRow>(
     `SELECT
-      id,
-      release_version_id,
-      actor_user_id,
-      action,
-      payload,
-      created_at::TEXT
-     FROM release_review_logs
-     WHERE release_version_id = $1
-     ORDER BY created_at ASC`,
+      l.id,
+      l.release_version_id,
+      l.actor_user_id,
+      u.username AS actor_name,
+      u.avatar_url AS actor_avatar_url,
+      l.action,
+      l.payload,
+      l.created_at::TEXT
+     FROM release_review_logs l
+     LEFT JOIN users u ON u.id = l.actor_user_id
+     WHERE l.release_version_id = $1
+     ORDER BY l.created_at ASC`,
     [input.releaseVersionId],
   )
   return result.rows.map(mapReleaseReviewLog)

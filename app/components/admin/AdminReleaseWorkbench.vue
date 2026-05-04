@@ -396,6 +396,19 @@ function rejectedByName(version: ReleaseVersion): string {
   return String(version.rejectedByName || normalizeUserId(version.rejectedByUserId) || '未知管理员').trim()
 }
 
+function reviewLogActorName(item: ReleaseReviewLog): string {
+  return String(item.actorName || normalizeUserId(item.actorUserId) || '未知管理员').trim()
+}
+
+function reviewLogActorDetailText(item: ReleaseReviewLog): string {
+  return [
+    `操作人：${reviewLogActorName(item)}`,
+    item.actorUserId ? `用户 ID：${item.actorUserId}` : '',
+    `动作：${actionLabel(item.action)}`,
+    `时间：${formatDateTime(item.createdAt)}`,
+  ].filter(Boolean).join('\n')
+}
+
 function rejectedDetailText(version: ReleaseVersion): string {
   if (version.status !== 'rejected')
     return ''
@@ -1986,9 +1999,14 @@ onMounted(() => {
               </a-table-column>
               <a-table-column title="操作人" data-index="actorUserId" :width="260">
                 <template #cell="{ record }">
-                  <p class="text-[11px] text-slate-500 break-all">
-                    {{ record.actorUserId || '-' }}
-                  </p>
+                  <a-tooltip :content="reviewLogActorDetailText(record)" position="top">
+                    <div class="text-[11px] text-slate-600 flex gap-1.5 max-w-[240px] items-center">
+                      <a-avatar :size="18" :image-url="record.actorAvatarUrl || undefined">
+                        {{ reviewLogActorName(record).slice(0, 1) }}
+                      </a-avatar>
+                      <span class="text-slate-900 font-medium truncate">{{ reviewLogActorName(record) }}</span>
+                    </div>
+                  </a-tooltip>
                 </template>
               </a-table-column>
               <a-table-column title="时间" data-index="createdAt" :width="160">
@@ -2086,9 +2104,13 @@ onMounted(() => {
             </p>
           </div>
           <div class="mt-3 gap-2 grid">
-            <p class="text-slate-600 break-all">
-              操作人：{{ selectedReviewLog.actorUserId || '-' }}
-            </p>
+            <div class="text-slate-600 flex gap-2 items-center">
+              <a-avatar :size="22" :image-url="selectedReviewLog.actorAvatarUrl || undefined">
+                {{ reviewLogActorName(selectedReviewLog).slice(0, 1) }}
+              </a-avatar>
+              <span class="text-slate-900 font-medium">{{ reviewLogActorName(selectedReviewLog) }}</span>
+              <span class="text-slate-500 break-all">{{ selectedReviewLog.actorUserId || '-' }}</span>
+            </div>
             <p class="text-slate-600 break-all">
               日志 ID：{{ selectedReviewLog.id }}
             </p>

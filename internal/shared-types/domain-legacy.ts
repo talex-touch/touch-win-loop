@@ -2281,6 +2281,8 @@ export interface ReleaseReviewLog {
   id: string
   releaseVersionId: string
   actorUserId?: string | null
+  actorName?: string | null
+  actorAvatarUrl?: string | null
   action: ReleaseReviewAction
   payload: Record<string, unknown>
   createdAt: string
