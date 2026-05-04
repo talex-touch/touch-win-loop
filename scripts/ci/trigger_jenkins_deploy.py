@@ -98,6 +98,45 @@ def request_json(
     raise
 
 
+def request_text(
+  url: str,
+  headers: dict[str, str],
+  *,
+  context: str = 'Jenkins text request',
+  ignore_http_statuses: tuple[int, ...] = (),
+) -> str:
+  request = urllib.request.Request(url, headers=headers)
+  try:
+    with open_request(request, timeout=30) as response:
+      return response.read().decode('utf-8', errors='replace')
+  except urllib.error.HTTPError as exc:
+    if exc.code in ignore_http_statuses:
+      if exc.code in REDIRECT_STATUS_CODES:
+        location = to_text(exc.headers.get('Location')) if exc.headers else ''
+        location_detail = f' Location: {location}.' if location else ''
+        print(
+          f'{context} was redirected with HTTP {exc.code} {exc.reason}; '
+          f'continue without this optional response.{location_detail}'
+        )
+      return ''
+    raise_http_error(context, exc)
+    raise
+
+
+def fetch_build_console_tail(*, build_url: str, headers: dict[str, str], max_lines: int = 120) -> str:
+  console_text = request_text(
+    urllib.parse.urljoin(build_url if build_url.endswith('/') else f'{build_url}/', 'consoleText'),
+    headers,
+    context='Jenkins console request',
+    ignore_http_statuses=(401, 403, 404, *REDIRECT_STATUS_CODES),
+  ).strip()
+  if not console_text:
+    return ''
+
+  lines = console_text.splitlines()
+  return '\n'.join(lines[-max_lines:])
+
+
 def fetch_crumb_headers(base_url: str, default_headers: dict[str, str]) -> dict[str, str]:
   crumb_url = f'{base_url}/crumbIssuer/api/json'
   try:
@@ -250,6 +289,10 @@ def main() -> int:
   result = wait_for_build_result(build_url=build_url, headers=default_headers)
   print(f'Jenkins build result: {result}')
   if result != 'SUCCESS':
+    console_tail = fetch_build_console_tail(build_url=build_url, headers=default_headers)
+    if console_tail:
+      print('Jenkins console tail:')
+      print(console_tail)
     raise SystemExit(f'Jenkins deployment failed with result: {result}')
   return 0
 

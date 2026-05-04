@@ -86,6 +86,16 @@ class TriggerJenkinsDeployTests(unittest.TestCase):
 
     self.assertEqual(result, 'SUCCESS')
 
+  def test_fetch_build_console_tail_returns_last_lines(self) -> None:
+    with mock.patch.object(MODULE, 'request_text', return_value='one\ntwo\nthree\n'):
+      tail = MODULE.fetch_build_console_tail(
+        build_url='https://jenkins.example/job/staging/15/',
+        headers={'Authorization': 'Basic token'},
+        max_lines=2,
+      )
+
+    self.assertEqual(tail, 'two\nthree')
+
   def test_fetch_crumb_headers_tolerates_redirect_when_api_token_exempts_crumb(self) -> None:
     redirect = urllib.error.HTTPError(
       url='https://jenkins.example/crumbIssuer/api/json',
