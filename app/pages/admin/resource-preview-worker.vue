@@ -149,6 +149,15 @@ const stageOptions = [
   { label: 'failed', value: 'failed' },
 ]
 
+const previewStatusOptions = [
+  { label: '全部预览状态', value: '' },
+  { label: 'queued', value: 'queued' },
+  { label: 'converting', value: 'converting' },
+  { label: 'finalizing', value: 'finalizing' },
+  { label: 'succeeded', value: 'succeeded' },
+  { label: 'failed', value: 'failed' },
+]
+
 const loading = ref(true)
 const refreshing = ref(false)
 const autoRefresh = ref(true)
@@ -206,6 +215,10 @@ const providerOptions = computed(() => {
 const taskRows = computed(() => payload.value?.tasks.items || [])
 const runRows = computed(() => payload.value?.worker.recentRuns || [])
 const trendRows = computed(() => payload.value?.trend || [])
+const trendChartRows = computed(() => [...trendRows.value].reverse())
+const trendMaxCalls = computed(() => {
+  return Math.max(1, ...trendRows.value.map(item => Number(item.calls || 0)))
+})
 
 const pagination = computed(() => {
   return {
@@ -215,7 +228,7 @@ const pagination = computed(() => {
   }
 })
 
-const summaryRows = computed(() => {
+const overviewCards = computed(() => {
   const worker = payload.value?.worker
   const overview = payload.value?.overview
   const queue = payload.value?.queue
@@ -223,19 +236,151 @@ const summaryRows = computed(() => {
     return []
 
   return [
-    { label: '调用次数', value: `${overview.totalCalls} 次（${overview.days} 天）` },
-    { label: '成功率', value: `${overview.successRate.toFixed(2)}%` },
-    { label: '成功/失败', value: `${overview.succeededCalls}/${overview.failedCalls}` },
-    { label: '排队/处理中', value: `${queue.queuedCount}/${queue.processingCount}` },
-    { label: '平均耗时', value: formatDuration(overview.avgDurationMs) },
-    { label: 'P95耗时', value: formatDuration(overview.p95DurationMs) },
-    { label: '平均尝试次数', value: `${overview.avgAttempt.toFixed(2)} 次` },
-    { label: '重试任务数', value: `${overview.retriedCalls} 次` },
-    { label: 'worker运行轮次', value: `${worker.runCount} 次` },
-    { label: 'worker成功/失败', value: `${worker.successCount}/${worker.failureCount}` },
-    { label: 'worker累计处理', value: `${worker.processedTaskCount} 任务` },
-    { label: '最老排队等待', value: queue.oldestQueuedSeconds > 0 ? `${Math.round(queue.oldestQueuedSeconds)} 秒` : '-' },
+    {
+      label: `调用次数（${overview.days} 天）`,
+      value: formatCount(overview.totalCalls, '次'),
+      hint: `成功 ${overview.succeededCalls} / 失败 ${overview.failedCalls}`,
+      icon: 'i-heroicons-outline-arrow-path',
+      tone: 'blue',
+    },
+    {
+      label: '成功率',
+      value: `${overview.successRate.toFixed(2)}%`,
+      hint: `平均尝试 ${overview.avgAttempt.toFixed(2)} 次`,
+      icon: 'i-heroicons-outline-check-circle',
+      tone: overview.successRate >= 80 || overview.totalCalls === 0 ? 'emerald' : overview.successRate >= 50 ? 'amber' : 'rose',
+    },
+    {
+      label: '失败 / 超时',
+      value: `${overview.failedCalls} / ${topTimeoutErrorCount.value}`,
+      hint: `重试任务 ${overview.retriedCalls} 次`,
+      icon: 'i-heroicons-outline-exclamation-triangle',
+      tone: overview.failedCalls > 0 ? 'amber' : 'slate',
+    },
+    {
+      label: '平均耗时',
+      value: formatDuration(overview.avgDurationMs),
+      hint: `P95 ${formatDuration(overview.p95DurationMs)}`,
+      icon: 'i-heroicons-outline-clock',
+      tone: 'violet',
+    },
+    {
+      label: '队列深度',
+      value: `${queue.queuedCount} / ${queue.processingCount}`,
+      hint: `最老等待 ${formatQueueWait(queue.oldestQueuedSeconds)}`,
+      icon: 'i-heroicons-outline-inbox-stack',
+      tone: queue.queuedCount + queue.processingCount > 0 ? 'blue' : 'slate',
+    },
+    {
+      label: '当前任务',
+      value: formatCount(payload.value?.tasks.total || 0, '个'),
+      hint: `本页 ${taskRows.value.length} 条明细`,
+      icon: 'i-heroicons-outline-document-text',
+      tone: 'rose',
+    },
   ]
+})
+
+const workerStatus = computed(() => {
+  const worker = payload.value?.worker
+  if (!worker) {
+    return {
+      label: '未加载',
+      detail: '等待监控数据返回',
+      className: 'text-slate-700 border-slate-200 bg-slate-50',
+      dotClass: 'bg-slate-400',
+    }
+  }
+
+  if (!worker.enabled) {
+    return {
+      label: '已停用',
+      detail: 'Worker 未启用，任务不会被消费',
+      className: 'text-amber-700 border-amber-200 bg-amber-50',
+      dotClass: 'bg-amber-500',
+    }
+  }
+
+  if (!worker.endpointConfigured) {
+    return {
+      label: '待配置',
+      detail: 'ONLYOFFICE endpoint 缺失',
+      className: 'text-rose-700 border-rose-200 bg-rose-50',
+      dotClass: 'bg-rose-500',
+    }
+  }
+
+  if (worker.lastError) {
+    return {
+      label: '有错误',
+      detail: '最近调度出现错误',
+      className: 'text-rose-700 border-rose-200 bg-rose-50',
+      dotClass: 'bg-rose-500',
+    }
+  }
+
+  if (worker.ticking) {
+    return {
+      label: '运行中',
+      detail: '正在消费转换任务',
+      className: 'text-blue-700 border-blue-200 bg-blue-50',
+      dotClass: 'bg-blue-500',
+    }
+  }
+
+  return {
+    label: '健康',
+    detail: '等待下一轮调度',
+    className: 'text-emerald-700 border-emerald-200 bg-emerald-50',
+    dotClass: 'bg-emerald-500',
+  }
+})
+
+const workerConfigItems = computed(() => {
+  const worker = payload.value?.worker
+  if (!worker)
+    return []
+
+  return [
+    { label: 'worker', value: worker.enabled ? 'enabled' : 'disabled' },
+    { label: 'endpoint', value: worker.endpointConfigured ? 'configured' : 'missing' },
+    { label: 'batch', value: String(worker.batchSize) },
+    { label: 'interval', value: `${worker.intervalMs}ms` },
+    { label: 'timeout', value: `${worker.timeoutMs}ms` },
+    { label: 'retryLimit', value: String(worker.retryLimit) },
+  ]
+})
+
+const workerHealthItems = computed(() => {
+  const worker = payload.value?.worker
+  if (!worker)
+    return []
+
+  return [
+    { label: '最近完成', value: worker.lastFinishedAt ? formatDateTime(worker.lastFinishedAt) : '-' },
+    { label: '最近成功', value: worker.lastSuccessAt ? formatDateTime(worker.lastSuccessAt) : '-' },
+    { label: '最近耗时', value: formatDuration(worker.lastDurationMs) },
+    { label: '运行轮次', value: `${worker.runCount} 次` },
+    { label: '累计处理', value: `${worker.processedTaskCount} 任务` },
+    { label: '成功/失败', value: `${worker.successCount}/${worker.failureCount}` },
+  ]
+})
+
+const stageTotal = computed(() => {
+  return Math.max(0, (payload.value?.stages || []).reduce((total, item) => total + Number(item.count || 0), 0))
+})
+
+const providerTotal = computed(() => {
+  return Math.max(0, (payload.value?.providers || []).reduce((total, item) => total + Number(item.count || 0), 0))
+})
+
+const topTimeoutErrorCount = computed(() => {
+  return (payload.value?.topErrors || []).reduce((total, item) => {
+    const text = String(item.errorText || '').toLowerCase()
+    if (text.includes('timeout') || text.includes('超时'))
+      return total + Number(item.count || 0)
+    return total
+  }, 0)
 })
 
 function formatDateTime(value: string): string {
@@ -273,6 +418,81 @@ function formatEtaSeconds(seconds: number): string {
   if (minutes < 60)
     return `${minutes}m`
   return `${Math.ceil(minutes / 60)}h`
+}
+
+function formatCount(value: number, unit: string): string {
+  return `${Math.max(0, Number(value || 0)).toLocaleString('zh-CN')} ${unit}`
+}
+
+function formatQueueWait(seconds: number): string {
+  const safe = Math.max(0, Math.round(Number(seconds || 0)))
+  if (safe <= 0)
+    return '-'
+  if (safe < 60)
+    return `${safe} 秒`
+  const minutes = Math.round(safe / 60)
+  if (minutes < 60)
+    return `${minutes} 分钟`
+  return `${(minutes / 60).toFixed(1)} 小时`
+}
+
+function toPercent(value: number, total: number): number {
+  if (total <= 0)
+    return 0
+  return Math.max(0, Math.min(100, (Number(value || 0) / total) * 100))
+}
+
+function toTrendBarHeight(calls: number): string {
+  const value = Number(calls || 0)
+  if (value <= 0)
+    return '2px'
+  return `${Math.max(8, toPercent(value, trendMaxCalls.value))}%`
+}
+
+function toMetricIconClass(tone: string): string {
+  if (tone === 'emerald')
+    return 'text-emerald-700 bg-emerald-50 border-emerald-100'
+  if (tone === 'amber')
+    return 'text-amber-700 bg-amber-50 border-amber-100'
+  if (tone === 'rose')
+    return 'text-rose-700 bg-rose-50 border-rose-100'
+  if (tone === 'violet')
+    return 'text-violet-700 bg-violet-50 border-violet-100'
+  if (tone === 'blue')
+    return 'text-blue-700 bg-blue-50 border-blue-100'
+  return 'text-slate-700 bg-slate-50 border-slate-100'
+}
+
+function toMetricValueClass(tone: string): string {
+  if (tone === 'emerald')
+    return 'text-emerald-700'
+  if (tone === 'amber')
+    return 'text-amber-700'
+  if (tone === 'rose')
+    return 'text-rose-700'
+  if (tone === 'violet')
+    return 'text-violet-700'
+  if (tone === 'blue')
+    return 'text-blue-700'
+  return 'text-slate-900'
+}
+
+function toSuccessRateTextClass(rate: number): string {
+  if (rate >= 80)
+    return 'text-emerald-700'
+  if (rate >= 50)
+    return 'text-amber-700'
+  return 'text-rose-700'
+}
+
+function toStageBarClass(stage: string): string {
+  if (stage === 'succeeded')
+    return 'bg-emerald-500'
+  if (stage === 'failed')
+    return 'bg-rose-500'
+  if (stage === 'converting' || stage === 'finalizing' || stage === 'processing')
+    return 'bg-blue-500'
+  return 'bg-slate-400'
 }
 
 function toTaskStatusTag(status: string): string {
@@ -407,18 +627,25 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="text-[11px] space-y-3">
-    <section class="p-3 border border-slate-200 bg-white">
-      <div class="flex gap-3 items-center justify-between">
-        <div>
-          <h1 class="text-[13px] text-slate-900 tracking-tight font-bold m-0 uppercase">
-            文档转换监控
-          </h1>
-          <p class="text-[11px] text-slate-500 mb-0 mt-1">
-            提供 ONLYOFFICE 转换任务的检索、进度、调度、成功率、调用次数与失败分析统计。
+  <div class="space-y-4">
+    <section class="px-5 py-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div class="min-w-0">
+          <div class="flex gap-2 items-center">
+            <span class="i-heroicons-outline-arrow-path-rounded-square text-lg text-blue-600" aria-hidden="true" />
+            <h1 class="text-xl text-slate-900 tracking-tight font-semibold m-0">
+              文档转换监控
+            </h1>
+          </div>
+          <p class="text-sm text-slate-500 mb-0 mt-1">
+            ONLYOFFICE 转换任务的全链路监控与失败分析。
           </p>
         </div>
-        <div class="flex gap-2 items-center">
+        <div class="flex flex-wrap gap-2 items-center justify-start lg:justify-end">
+          <span class="text-xs px-2.5 py-1 border rounded-full inline-flex gap-1.5 items-center" :class="workerStatus.className">
+            <span class="rounded-full size-1.5" :class="workerStatus.dotClass" />
+            {{ workerStatus.label }}
+          </span>
           <a-switch v-model="autoRefresh" size="small">
             <template #checked>
               自动刷新
@@ -427,282 +654,467 @@ onBeforeUnmount(() => {
               手动刷新
             </template>
           </a-switch>
-          <a-button size="small" type="outline" :loading="refreshing" @click="loadData(false)">
+          <a-button size="small" type="primary" :loading="refreshing" @click="loadData(false)">
+            <template #icon>
+              <span class="i-heroicons-outline-arrow-path" />
+            </template>
             刷新
           </a-button>
         </div>
       </div>
     </section>
 
-    <section v-if="loading" class="p-3 border border-slate-200 bg-white">
+    <section v-if="loading" class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
-    <section v-else-if="errorText" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
+    <section v-else-if="errorText" class="text-sm text-rose-700 p-4 border border-rose-200 rounded-2xl bg-rose-50">
       {{ errorText }}
     </section>
 
     <template v-else-if="payload">
-      <section class="border border-slate-200 bg-white overflow-hidden">
-        <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
-          Worker & Queue Summary
-        </div>
-        <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-          <div
-            v-for="item in summaryRows"
-            :key="item.label"
-            class="px-3 py-2 border-b border-r border-slate-200 last:border-r-0"
-          >
-            <p class="text-[10px] text-slate-400 tracking-wider m-0 uppercase">
-              {{ item.label }}
-            </p>
-            <p class="text-[12px] text-slate-800 font-bold mb-0 mt-1">
-              {{ item.value }}
+      <section class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+        <div class="mb-4 flex items-center justify-between">
+          <div>
+            <h2 class="text-sm text-slate-900 font-semibold m-0">
+              概览
+            </h2>
+            <p class="text-xs text-slate-500 m-0 mt-1">
+              当前窗口 {{ payload.overview.days }} 天，自动刷新间隔 15 秒。
             </p>
           </div>
+          <span class="text-xs text-slate-500 hidden md:inline-flex">
+            {{ workerStatus.detail }}
+          </span>
         </div>
-        <div class="text-[11px] text-slate-500 px-3 py-2 border-t border-slate-200 bg-slate-50">
-          <span class="mr-3">workerEnabled={{ payload.worker.enabled ? 'true' : 'false' }}</span>
-          <span class="mr-3">endpointConfigured={{ payload.worker.endpointConfigured ? 'true' : 'false' }}</span>
-          <span class="mr-3">batch={{ payload.worker.batchSize }}</span>
-          <span class="mr-3">interval={{ payload.worker.intervalMs }}ms</span>
-          <span class="mr-3">timeout={{ payload.worker.timeoutMs }}ms</span>
-          <span>retryLimit={{ payload.worker.retryLimit }}</span>
+        <div class="gap-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6">
+          <article
+            v-for="item in overviewCards"
+            :key="item.label"
+            class="px-4 py-3 border border-slate-200 rounded-xl bg-white min-w-0"
+          >
+            <div class="flex gap-3 items-start">
+              <span class="border rounded-full inline-flex shrink-0 size-9 items-center justify-center" :class="toMetricIconClass(item.tone)">
+                <span class="text-lg" :class="item.icon" aria-hidden="true" />
+              </span>
+              <div class="min-w-0">
+                <p class="text-xs text-slate-500 m-0">
+                  {{ item.label }}
+                </p>
+                <p class="text-2xl leading-tight font-semibold m-0 mt-1" :class="toMetricValueClass(item.tone)">
+                  {{ item.value }}
+                </p>
+                <p class="text-xs text-slate-500 m-0 mt-1 truncate" :title="item.hint">
+                  {{ item.hint }}
+                </p>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="mt-4 px-3 py-2 border border-slate-200 rounded-xl bg-slate-50">
+          <div class="flex flex-wrap gap-x-4 gap-y-1">
+            <span
+              v-for="item in workerConfigItems"
+              :key="item.label"
+              class="text-xs text-slate-600"
+            >
+              <span class="text-slate-400">{{ item.label }}=</span>{{ item.value }}
+            </span>
+          </div>
         </div>
         <div
           v-if="payload.worker.lastError"
-          class="text-[11px] text-rose-600 px-3 py-2 border-t border-rose-200 bg-rose-50"
+          class="text-xs text-rose-700 mt-3 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50 break-all"
         >
           最近 worker 错误：{{ payload.worker.lastError }}
         </div>
       </section>
 
-      <section class="gap-3 grid grid-cols-1 xl:grid-cols-3">
-        <div class="border border-slate-200 bg-white overflow-hidden xl:col-span-2">
-          <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
-            调用趋势
+      <section class="gap-4 grid grid-cols-1 xl:grid-cols-[1.6fr,1fr]">
+        <div class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+          <div class="flex flex-wrap gap-3 items-center justify-between">
+            <div>
+              <h2 class="text-sm text-slate-900 font-semibold m-0">
+                调用趋势
+              </h2>
+              <p class="text-xs text-slate-500 m-0 mt-1">
+                按日统计调用量、成功量和失败量。
+              </p>
+            </div>
+            <a-select v-model="filters.days" :options="dayOptions" size="small" class="w-[120px]" @change="applyFilters" />
           </div>
-          <a-table
-            :bordered="{ cell: true }"
-            :columns="trendColumns"
-            :data="trendRows"
-            :pagination="false"
-            size="small"
-            row-key="day"
-          >
-            <template #successRate="{ record }">
-              <span class="text-[11px] font-semibold" :class="record.successRate >= 80 ? 'text-emerald-600' : record.successRate >= 50 ? 'text-amber-600' : 'text-rose-600'">
-                {{ Number(record.successRate || 0).toFixed(2) }}%
-              </span>
-            </template>
-          </a-table>
+
+          <div v-if="trendChartRows.length > 0" class="mt-4 px-3 pt-3 border-b border-l border-slate-200 h-[220px]">
+            <div class="flex gap-3 h-full items-end">
+              <div
+                v-for="item in trendChartRows"
+                :key="item.day"
+                class="flex flex-1 flex-col h-full min-w-[52px] items-center justify-end"
+              >
+                <div class="flex gap-1 h-[168px] w-full items-end justify-center">
+                  <div
+                    class="rounded-t bg-blue-500 w-3 transition-all duration-300"
+                    :style="{ height: toTrendBarHeight(item.calls) }"
+                    :title="`调用 ${item.calls}`"
+                  />
+                  <div
+                    class="rounded-t bg-emerald-500 w-3 transition-all duration-300"
+                    :style="{ height: toTrendBarHeight(item.succeeded) }"
+                    :title="`成功 ${item.succeeded}`"
+                  />
+                  <div
+                    class="rounded-t bg-rose-500 w-3 transition-all duration-300"
+                    :style="{ height: toTrendBarHeight(item.failed) }"
+                    :title="`失败 ${item.failed}`"
+                  />
+                </div>
+                <p class="text-[11px] text-slate-500 m-0 mt-2">
+                  {{ item.day.slice(5) }}
+                </p>
+              </div>
+            </div>
+          </div>
+          <div v-else class="mt-4 border border-slate-200 rounded-xl border-dashed bg-slate-50 flex flex-col h-[220px] items-center justify-center">
+            <span class="i-heroicons-outline-chart-bar text-3xl text-slate-300" aria-hidden="true" />
+            <p class="text-sm text-slate-400 m-0 mt-2">
+              暂无趋势数据
+            </p>
+          </div>
+
+          <div class="text-xs text-slate-500 mt-3 flex gap-4">
+            <span class="inline-flex gap-1.5 items-center"><span class="rounded-full bg-blue-500 size-2" />调用</span>
+            <span class="inline-flex gap-1.5 items-center"><span class="rounded-full bg-emerald-500 size-2" />成功</span>
+            <span class="inline-flex gap-1.5 items-center"><span class="rounded-full bg-rose-500 size-2" />失败</span>
+          </div>
         </div>
 
-        <div class="space-y-3">
-          <div class="border border-slate-200 bg-white overflow-hidden">
-            <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
-              阶段分布
+        <div class="space-y-4">
+          <section class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+            <div class="flex gap-3 items-center justify-between">
+              <h2 class="text-sm text-slate-900 font-semibold m-0">
+                Worker 健康
+              </h2>
+              <span class="text-xs px-2 py-1 border rounded-full" :class="workerStatus.className">
+                {{ workerStatus.label }}
+              </span>
             </div>
-            <div class="p-2 max-h-[220px] overflow-auto space-y-1">
+            <div class="mt-3 gap-2 grid grid-cols-2">
+              <div
+                v-for="item in workerHealthItems"
+                :key="item.label"
+                class="px-3 py-2 rounded-xl bg-slate-50"
+              >
+                <p class="text-[11px] text-slate-500 m-0">
+                  {{ item.label }}
+                </p>
+                <p class="text-xs text-slate-900 font-semibold m-0 mt-1 break-all">
+                  {{ item.value }}
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+            <div class="flex gap-3 items-center justify-between">
+              <h2 class="text-sm text-slate-900 font-semibold m-0">
+                阶段分布
+              </h2>
+              <span class="text-xs text-slate-500">{{ stageTotal }} 次</span>
+            </div>
+            <div class="mt-3 max-h-[180px] overflow-auto space-y-3">
               <div
                 v-for="item in payload.stages"
                 :key="item.stage"
-                class="text-[11px] px-2 py-1 border border-slate-200 bg-white flex items-center justify-between"
+                class="space-y-1"
               >
-                <span class="text-slate-700">{{ item.stage }}</span>
-                <span class="text-slate-900 font-semibold">{{ item.count }}</span>
+                <div class="text-xs flex items-center justify-between">
+                  <span class="text-slate-700">{{ item.stage }}</span>
+                  <span class="text-slate-900 font-semibold">{{ item.count }}</span>
+                </div>
+                <div class="rounded-full bg-slate-100 h-1.5 overflow-hidden">
+                  <div
+                    class="rounded-full h-full"
+                    :class="toStageBarClass(item.stage)"
+                    :style="{ width: `${toPercent(item.count, stageTotal)}%` }"
+                  />
+                </div>
               </div>
-              <div v-if="payload.stages.length === 0" class="text-[11px] text-slate-400 px-1 py-2">
+              <div v-if="payload.stages.length === 0" class="text-sm text-slate-400 px-3 py-6 text-center border border-slate-200 rounded-xl border-dashed bg-slate-50">
                 暂无数据
               </div>
             </div>
-          </div>
-
-          <div class="border border-slate-200 bg-white overflow-hidden">
-            <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
-              Top 错误
-            </div>
-            <div class="p-2 max-h-[220px] overflow-auto space-y-1">
-              <div
-                v-for="item in payload.topErrors"
-                :key="`${item.errorText}-${item.count}`"
-                class="text-[11px] px-2 py-1 border border-rose-200 bg-rose-50"
-              >
-                <p class="text-rose-700 m-0 break-all">
-                  {{ item.errorText }}
-                </p>
-                <p class="text-rose-500 m-0 mt-1">
-                  {{ item.count }} 次
-                </p>
-              </div>
-              <div v-if="payload.topErrors.length === 0" class="text-[11px] text-slate-400 px-1 py-2">
-                暂无错误
-              </div>
-            </div>
-          </div>
+          </section>
         </div>
       </section>
 
-      <section class="p-3 border border-slate-200 bg-white">
-        <div class="gap-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6">
+      <section class="gap-4 grid grid-cols-1 xl:grid-cols-[0.95fr,1.05fr]">
+        <section class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+          <div class="flex gap-3 items-center justify-between">
+            <h2 class="text-sm text-slate-900 font-semibold m-0">
+              Provider 分布
+            </h2>
+            <span class="text-xs text-slate-500">{{ providerTotal }} 次</span>
+          </div>
+          <div class="mt-3 max-h-[170px] overflow-auto space-y-3">
+            <div
+              v-for="item in payload.providers"
+              :key="item.provider"
+              class="space-y-1"
+            >
+              <div class="text-xs flex items-center justify-between">
+                <span class="text-slate-700">{{ item.provider }}</span>
+                <span class="text-slate-900 font-semibold">{{ item.count }}</span>
+              </div>
+              <div class="rounded-full bg-slate-100 h-1.5 overflow-hidden">
+                <div
+                  class="rounded-full bg-cyan-500 h-full"
+                  :style="{ width: `${toPercent(item.count, providerTotal)}%` }"
+                />
+              </div>
+            </div>
+            <div v-if="payload.providers.length === 0" class="text-sm text-slate-400 px-3 py-6 text-center border border-slate-200 rounded-xl border-dashed bg-slate-50">
+              暂无数据
+            </div>
+          </div>
+        </section>
+
+        <section class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+          <div class="flex gap-3 items-center justify-between">
+            <h2 class="text-sm text-slate-900 font-semibold m-0">
+              Top 错误
+            </h2>
+            <span class="text-xs text-slate-500">最多 10 条</span>
+          </div>
+          <div class="mt-3 max-h-[170px] overflow-auto space-y-2">
+            <div
+              v-for="item in payload.topErrors"
+              :key="`${item.errorText}-${item.count}`"
+              class="px-3 py-2 border border-rose-100 rounded-xl bg-rose-50"
+            >
+              <div class="flex gap-3 items-start justify-between">
+                <p class="text-xs text-rose-700 leading-5 m-0 break-all">
+                  {{ item.errorText }}
+                </p>
+                <span class="text-xs text-rose-700 font-semibold whitespace-nowrap">{{ item.count }} 次</span>
+              </div>
+            </div>
+            <div v-if="payload.topErrors.length === 0" class="text-sm text-slate-400 px-3 py-6 text-center border border-slate-200 rounded-xl border-dashed bg-slate-50">
+              暂无错误
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+        <div class="mb-3 flex flex-wrap gap-3 items-center justify-between">
+          <div>
+            <h2 class="text-sm text-slate-900 font-semibold m-0">
+              任务筛选
+            </h2>
+            <p class="text-xs text-slate-500 m-0 mt-1">
+              检索任务、文档、项目、文件名或错误信息。
+            </p>
+          </div>
+          <div class="flex gap-2 items-center">
+            <a-button size="small" type="primary" @click="applyFilters">
+              查询
+            </a-button>
+            <a-button size="small" type="outline" @click="resetFilters">
+              重置
+            </a-button>
+          </div>
+        </div>
+        <div class="gap-2 grid grid-cols-1 xl:grid-cols-[120px,160px,160px,160px,180px,1fr] md:grid-cols-2">
           <a-select v-model="filters.days" :options="dayOptions" size="small" />
           <a-select v-model="filters.status" :options="taskStatusOptions" size="small" />
           <a-select v-model="filters.stage" :options="stageOptions" size="small" />
-          <a-select v-model="filters.previewStatus" :options="stageOptions" size="small" />
+          <a-select v-model="filters.previewStatus" :options="previewStatusOptions" size="small" />
           <a-select v-model="filters.provider" :options="providerOptions" size="small" />
           <a-input v-model="filters.q" size="small" placeholder="关键词（taskId / 文档 / 项目 / 文件名 / 错误）" allow-clear />
         </div>
-        <div class="mt-2 flex gap-2 items-center">
-          <a-button size="small" type="primary" @click="applyFilters">
-            查询
-          </a-button>
-          <a-button size="small" type="outline" @click="resetFilters">
-            重置
-          </a-button>
+      </section>
+
+      <section class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+        <details>
+          <summary class="text-sm text-slate-700 font-medium cursor-pointer">
+            趋势明细表
+          </summary>
+          <div class="mt-3">
+            <a-table
+              :bordered="{ cell: true }"
+              :columns="trendColumns"
+              :data="trendRows"
+              :pagination="false"
+              size="small"
+              row-key="day"
+            >
+              <template #successRate="{ record }">
+                <span class="text-[11px] font-semibold" :class="toSuccessRateTextClass(record.successRate)">
+                  {{ Number(record.successRate || 0).toFixed(2) }}%
+                </span>
+              </template>
+            </a-table>
+          </div>
+        </details>
+      </section>
+
+      <section class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+        <div class="mb-3 flex gap-3 items-center justify-between">
+          <div>
+            <h2 class="text-sm text-slate-900 font-semibold m-0">
+              任务明细
+            </h2>
+            <p class="text-xs text-slate-500 m-0 mt-1">
+              共 {{ pagination.total }} 条，按创建时间倒序。
+            </p>
+          </div>
+          <span class="text-xs text-slate-500">
+            pageSize={{ pagination.pageSize }}
+          </span>
+        </div>
+        <div class="border border-slate-200 rounded-xl overflow-hidden">
+          <a-table
+            :bordered="{ cell: true }"
+            :columns="taskColumns"
+            :data="taskRows"
+            :pagination="{
+              ...pagination,
+              showTotal: true,
+              showPageSize: true,
+              pageSizeOptions: [10, 20, 50, 100],
+            }"
+            size="small"
+            row-key="taskId"
+            @page-change="onPageChange"
+            @page-size-change="onPageSizeChange"
+          >
+            <template #createdAt="{ record }">
+              <div class="text-[11px]">
+                <p class="text-slate-700 m-0">
+                  {{ formatDateTime(record.createdAt) }}
+                </p>
+                <p class="text-slate-400 m-0 mt-0.5">
+                  {{ record.taskId }}
+                </p>
+              </div>
+            </template>
+
+            <template #task="{ record }">
+              <div class="text-[11px] min-w-0">
+                <p class="text-slate-800 font-semibold m-0 truncate" :title="record.sourceFileName">
+                  {{ record.sourceFileName || '-' }}
+                </p>
+                <p class="text-slate-500 m-0 mt-0.5 truncate" :title="record.projectTitle">
+                  项目：{{ record.projectTitle || record.projectId }}
+                </p>
+                <p class="text-slate-400 m-0 mt-0.5 truncate" :title="record.resourceTitle">
+                  资源：{{ record.resourceTitle || record.resourceId }}
+                </p>
+              </div>
+            </template>
+
+            <template #status="{ record }">
+              <div class="space-y-1">
+                <span class="text-[10px] px-2 py-0.5 border rounded inline-flex" :class="toTaskStatusTag(record.taskStatus)">
+                  task: {{ record.taskStatus }}
+                </span>
+                <span class="text-[10px] ml-1 px-2 py-0.5 border rounded inline-flex" :class="toPreviewStatusTag(record.previewStatus)">
+                  preview: {{ record.previewStatus }}
+                </span>
+                <p class="text-[10px] text-slate-400 m-0">
+                  attempt={{ record.attempt }}
+                </p>
+              </div>
+            </template>
+
+            <template #progress="{ record }">
+              <div class="w-[150px]">
+                <div class="rounded bg-slate-200 h-1.5 w-full overflow-hidden">
+                  <div
+                    class="rounded h-full transition-all duration-300 from-blue-600 to-cyan-500 bg-gradient-to-r"
+                    :style="{ width: `${Math.max(0, Math.min(100, Number(record.previewProgressPercent || 0)))}%` }"
+                  />
+                </div>
+                <p class="text-[10px] text-slate-500 m-0 mt-1">
+                  {{ Math.max(0, Math.min(100, Number(record.previewProgressPercent || 0))) }}% · ETA {{ formatEtaSeconds(record.previewEtaSeconds) }}
+                </p>
+              </div>
+            </template>
+
+            <template #duration="{ record }">
+              <div class="text-[11px]">
+                <p class="text-slate-700 m-0">
+                  {{ formatDuration(record.durationMs) }}
+                </p>
+                <p v-if="record.runningDurationMs > 0" class="text-slate-400 m-0 mt-0.5">
+                  运行中 {{ formatDuration(record.runningDurationMs) }}
+                </p>
+              </div>
+            </template>
+
+            <template #error="{ record }">
+              <p class="text-[11px] text-rose-600 m-0 break-all line-clamp-2">
+                {{ record.errorMessage || '-' }}
+              </p>
+            </template>
+
+            <template #actions="{ record }">
+              <a-button size="mini" type="outline" @click="openTaskDetail(record)">
+                详情
+              </a-button>
+            </template>
+          </a-table>
         </div>
       </section>
 
-      <section class="p-3 border border-slate-200 bg-white">
-        <div class="mb-2 flex gap-3 items-center justify-between">
-          <h2 class="text-[12px] text-slate-800 font-bold m-0">
-            任务明细（{{ pagination.total }}）
+      <section class="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm">
+        <div class="mb-3 flex gap-3 items-center justify-between">
+          <h2 class="text-sm text-slate-900 font-semibold m-0">
+            调度运行记录
           </h2>
+          <span class="text-xs text-slate-500">
+            {{ runRows.length }} 条
+          </span>
         </div>
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="taskColumns"
-          :data="taskRows"
-          :pagination="{
-            ...pagination,
-            showTotal: true,
-            showPageSize: true,
-            pageSizeOptions: [10, 20, 50, 100],
-          }"
-          size="small"
-          row-key="taskId"
-          @page-change="onPageChange"
-          @page-size-change="onPageSizeChange"
-        >
-          <template #createdAt="{ record }">
-            <div class="text-[11px]">
-              <p class="text-slate-700 m-0">
-                {{ formatDateTime(record.createdAt) }}
+        <div class="border border-slate-200 rounded-xl overflow-hidden">
+          <a-table
+            :bordered="{ cell: true }"
+            :columns="runColumns"
+            :data="runRows"
+            :pagination="false"
+            size="small"
+            row-key="id"
+          >
+            <template #startedAt="{ record }">
+              <p class="text-[11px] m-0">
+                {{ formatDateTime(record.startedAt) }}
               </p>
-              <p class="text-slate-400 m-0 mt-0.5">
-                {{ record.taskId }}
-              </p>
-            </div>
-          </template>
-
-          <template #task="{ record }">
-            <div class="text-[11px] min-w-0">
-              <p class="text-slate-800 font-semibold m-0 truncate" :title="record.sourceFileName">
-                {{ record.sourceFileName || '-' }}
-              </p>
-              <p class="text-slate-500 m-0 mt-0.5 truncate" :title="record.projectTitle">
-                项目：{{ record.projectTitle || record.projectId }}
-              </p>
-              <p class="text-slate-400 m-0 mt-0.5 truncate" :title="record.resourceTitle">
-                资源：{{ record.resourceTitle || record.resourceId }}
-              </p>
-            </div>
-          </template>
-
-          <template #status="{ record }">
-            <div class="space-y-1">
-              <span class="text-[10px] px-2 py-0.5 border rounded inline-flex" :class="toTaskStatusTag(record.taskStatus)">
-                task: {{ record.taskStatus }}
-              </span>
-              <span class="text-[10px] ml-1 px-2 py-0.5 border rounded inline-flex" :class="toPreviewStatusTag(record.previewStatus)">
-                preview: {{ record.previewStatus }}
-              </span>
-              <p class="text-[10px] text-slate-400 m-0">
-                attempt={{ record.attempt }}
-              </p>
-            </div>
-          </template>
-
-          <template #progress="{ record }">
-            <div class="w-[150px]">
-              <div class="rounded bg-slate-200 h-1.5 w-full overflow-hidden">
-                <div
-                  class="rounded h-full transition-all duration-300 from-blue-600 to-cyan-500 bg-gradient-to-r"
-                  :style="{ width: `${Math.max(0, Math.min(100, Number(record.previewProgressPercent || 0)))}%` }"
-                />
-              </div>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                {{ Math.max(0, Math.min(100, Number(record.previewProgressPercent || 0))) }}% · ETA {{ formatEtaSeconds(record.previewEtaSeconds) }}
-              </p>
-            </div>
-          </template>
-
-          <template #duration="{ record }">
-            <div class="text-[11px]">
-              <p class="text-slate-700 m-0">
+            </template>
+            <template #duration="{ record }">
+              <p class="text-[11px] m-0">
                 {{ formatDuration(record.durationMs) }}
               </p>
-              <p v-if="record.runningDurationMs > 0" class="text-slate-400 m-0 mt-0.5">
-                运行中 {{ formatDuration(record.runningDurationMs) }}
+            </template>
+            <template #sf="{ record }">
+              <p class="text-[11px] m-0">
+                {{ record.succeededTaskCount }}/{{ record.failedTaskCount }}
               </p>
-            </div>
-          </template>
-
-          <template #error="{ record }">
-            <p class="text-[11px] text-rose-600 m-0 break-all line-clamp-2">
-              {{ record.errorMessage || '-' }}
-            </p>
-          </template>
-
-          <template #actions="{ record }">
-            <a-button size="mini" type="outline" @click="openTaskDetail(record)">
-              详情
-            </a-button>
-          </template>
-        </a-table>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white">
-        <div class="mb-2 flex gap-3 items-center justify-between">
-          <h2 class="text-[12px] text-slate-800 font-bold m-0">
-            调度运行记录（{{ runRows.length }}）
-          </h2>
+            </template>
+            <template #status="{ record }">
+              <span class="text-[10px] px-2 py-0.5 border rounded inline-flex" :class="record.success ? 'text-emerald-700 border-emerald-200 bg-emerald-50' : 'text-rose-700 border-rose-200 bg-rose-50'">
+                {{ record.success ? 'success' : 'failed' }}
+              </span>
+            </template>
+            <template #errorMessage="{ record }">
+              <p class="text-[11px] m-0 break-all" :class="record.errorMessage ? 'text-rose-600' : 'text-slate-400'">
+                {{ record.errorMessage || '-' }}
+              </p>
+            </template>
+          </a-table>
         </div>
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="runColumns"
-          :data="runRows"
-          :pagination="false"
-          size="small"
-          row-key="id"
-        >
-          <template #startedAt="{ record }">
-            <p class="text-[11px] m-0">
-              {{ formatDateTime(record.startedAt) }}
-            </p>
-          </template>
-          <template #duration="{ record }">
-            <p class="text-[11px] m-0">
-              {{ formatDuration(record.durationMs) }}
-            </p>
-          </template>
-          <template #sf="{ record }">
-            <p class="text-[11px] m-0">
-              {{ record.succeededTaskCount }}/{{ record.failedTaskCount }}
-            </p>
-          </template>
-          <template #status="{ record }">
-            <span class="text-[10px] px-2 py-0.5 border rounded inline-flex" :class="record.success ? 'text-emerald-700 border-emerald-200 bg-emerald-50' : 'text-rose-700 border-rose-200 bg-rose-50'">
-              {{ record.success ? 'success' : 'failed' }}
-            </span>
-          </template>
-          <template #errorMessage="{ record }">
-            <p class="text-[11px] m-0 break-all" :class="record.errorMessage ? 'text-rose-600' : 'text-slate-400'">
-              {{ record.errorMessage || '-' }}
-            </p>
-          </template>
-        </a-table>
       </section>
     </template>
 
