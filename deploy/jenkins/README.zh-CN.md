@@ -102,7 +102,6 @@ MEETING_EGRESS_ENABLED=false
 MEETING_LIVEKIT_HTTP_PORT=7880
 MEETING_LIVEKIT_TCP_PORT=7881
 MEETING_LIVEKIT_RTC_UDP_RANGE=50000-50100
-MEETING_PROMETHEUS_HOST_PORT=9091
 ```
 
 其中：
@@ -113,7 +112,7 @@ MEETING_PROMETHEUS_HOST_PORT=9091
 - 迁移不会参与自动回滚，因此所有上线 SQL 必须保持向后兼容或显式幂等
 - `MEETING_STACK_ENABLED=true` 时，标准 staging 部署会同时启动 LiveKit、meeting Redis、Prometheus、node-exporter、cAdvisor
 - `MEETING_EGRESS_ENABLED=false` 是首轮默认值；录制压测阶段再打开 Egress profile
-- LiveKit 默认暴露 `7880/tcp`、`7881/tcp`、`50000-50100/udp`；Prometheus 只绑定宿主 `127.0.0.1:9091`
+- LiveKit 默认暴露 `7880/tcp`、`7881/tcp`、`50000-50100/udp`；Prometheus 默认不发布宿主端口，仅通过容器网络 `meeting-prometheus:9090` 访问
 
 production 只需要改成独立的：
 
