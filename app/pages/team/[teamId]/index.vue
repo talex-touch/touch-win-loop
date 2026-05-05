@@ -8,7 +8,6 @@ import type {
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
   ProjectSettingsSnapshot,
-  ProjectTopicBoardCreateSeed,
   WorkspaceBillingEstimate,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
@@ -16,7 +15,6 @@ import type {
 import type { TeamProjectCardItem } from '~/composables/team-ui'
 import type { WorkspaceProjectCommonForm } from '~/types/workspace'
 import { Message } from '@arco-design/web-vue'
-import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
 import {
   buildProjectSettingsCommonPatch,
   cloneProjectCommonForm,
@@ -84,23 +82,11 @@ const creatingProject = ref(false)
 const createSubmittingMode = ref<'stay' | 'enter' | ''>('')
 const createErrorText = ref('')
 
-function createEmptyTopicBoardSeed(): ProjectTopicBoardCreateSeed {
-  return {
-    keywords: [],
-    teamSkillTags: [],
-    candidateCount: 3,
-    source: 'project_create',
-    autoGenerate: true,
-  }
-}
-
 const createForm = reactive<WorkspaceProjectCommonForm & {
   contestIds: string[]
-  topicBoardSeed: ProjectTopicBoardCreateSeed
 }>({
   ...createEmptyProjectCommonForm(),
   contestIds: [] as string[],
-  topicBoardSeed: createEmptyTopicBoardSeed(),
 })
 
 const workspaceOptions = computed<WorkspaceWithQuota[]>(() => {
@@ -663,7 +649,6 @@ function resetCreateForm() {
   Object.assign(createForm, {
     ...createEmptyProjectCommonForm(),
     contestIds: [],
-    topicBoardSeed: createEmptyTopicBoardSeed(),
   })
 }
 
@@ -706,20 +691,6 @@ async function submitQuickCreate(mode: 'stay' | 'enter') {
     const created = response.data
     const createdWorkspaceId = String(created.teamId || created.workspaceId || '').trim() || workspaceId
 
-    if (import.meta.client && createForm.topicBoardSeed.autoGenerate !== false) {
-      try {
-        window.sessionStorage.setItem(
-          `${TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX}${created.id}`,
-          JSON.stringify({
-            ...createForm.topicBoardSeed,
-            contestId: createForm.contestIds[0] || '',
-          } satisfies ProjectTopicBoardCreateSeed),
-        )
-      }
-      catch (error) {
-        console.warn('[topic-board] 创建后写入 seed 失败，已跳过自动接力。', error)
-      }
-    }
     mergeProjectIntoList(created)
     resetCreateForm()
     createDialogVisible.value = false
@@ -950,7 +921,6 @@ onMounted(async () => {
       :helper-text="createDialogHelperText"
       :model-value="createForm"
       :contest-ids="createForm.contestIds"
-      :topic-board-seed="createForm.topicBoardSeed"
       :contests="contests"
       :error-text="createErrorText"
       :submitting="creatingProject"
@@ -959,7 +929,6 @@ onMounted(async () => {
       @submit="submitQuickCreate"
       @update:model-value="updateCreateForm"
       @update:contest-ids="createForm.contestIds = $event"
-      @update:topic-board-seed="createForm.topicBoardSeed = $event"
     />
 
     <TeamProjectDetailDialog

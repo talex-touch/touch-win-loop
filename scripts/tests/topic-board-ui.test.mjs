@@ -3,15 +3,14 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
 
-const CREATE_DIALOG_FILE = resolve(process.cwd(), 'app/components/team/TeamCreateProjectDialog.vue')
 const PROJECT_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
+const WORKSPACE_DETAIL_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/index.vue')
 
-it('创建项目弹层提供选题板预配置入口', async () => {
-  const source = await readFile(CREATE_DIALOG_FILE, 'utf8')
+it('新建项目流程不再预配置选题板', async () => {
+  const teamSource = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
 
-  assert.match(source, /创建后自动生成 AI 智能选题板/, '创建项目弹层缺少选题板自动生成入口')
-  assert.match(source, /团队技能标签/, '创建项目弹层缺少团队技能标签输入')
-  assert.match(source, /候选数（3-5）/, '创建项目弹层缺少候选数控制')
+  assert.doesNotMatch(teamSource, /TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX/, 'Team 新建项目仍会触发选题板自动生成')
+  assert.doesNotMatch(teamSource, /topicBoardSeed/, 'Team 新建项目仍保留选题板预配置草稿')
 })
 
 it('项目页保留选题板状态与关键动作', async () => {
