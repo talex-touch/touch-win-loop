@@ -867,7 +867,6 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
       :workspace-member-role-submitting-user-id="workspaceMemberRoleSubmittingUserId"
       :workspace-invitation-revoking-id="workspaceInvitationRevokingId"
       :editable-role-options="editableRoleOptions"
-      :resolve-initial="resolveInitial"
       :format-date-time="formatDateTime"
       :resolve-member-role-label="resolveMemberRoleLabel"
       :format-workspace-role-label="formatWorkspaceRoleLabel"

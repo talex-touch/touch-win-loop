@@ -21,6 +21,7 @@ const WORKSPACE_ROLE_PRIORITY: Record<WorkspaceMemberRole, number> = {
 interface WorkspaceMemberSummaryRow {
   user_id: string
   username: string
+  avatar_url: string | null
   roles: WorkspaceMemberRole[] | null
   joined_at: string
   updated_at: string
@@ -89,6 +90,7 @@ function mapWorkspaceMemberSummary(row: WorkspaceMemberSummaryRow): WorkspaceMem
   return {
     userId: row.user_id,
     username: row.username,
+    avatarUrl: row.avatar_url || null,
     roles,
     joinedAt: row.joined_at,
     updatedAt: row.updated_at,
@@ -193,6 +195,7 @@ export async function teamGetWorkspaceMemberManagementSnapshot(
     `SELECT
        wm.user_id,
        u.username,
+       u.avatar_url,
        ARRAY_AGG(DISTINCT wm.role ORDER BY wm.role)::TEXT[] AS roles,
        MIN(wm.created_at)::TEXT AS joined_at,
        MAX(wm.updated_at)::TEXT AS updated_at
@@ -200,7 +203,7 @@ export async function teamGetWorkspaceMemberManagementSnapshot(
      JOIN users u ON u.id = wm.user_id
      WHERE wm.workspace_id = $1
        AND wm.is_enabled = TRUE
-     GROUP BY wm.user_id, u.username
+     GROUP BY wm.user_id, u.username, u.avatar_url
      ORDER BY MIN(wm.created_at) ASC, u.username ASC`,
     [workspaceId],
   )
@@ -354,6 +357,7 @@ export async function teamPatchWorkspaceMemberRole(
     `SELECT
       wm.user_id,
       u.username,
+      u.avatar_url,
       ARRAY_AGG(DISTINCT wm.role ORDER BY wm.role)::TEXT[] AS roles,
       MIN(wm.created_at)::TEXT AS joined_at,
       MAX(wm.updated_at)::TEXT AS updated_at
@@ -362,7 +366,7 @@ export async function teamPatchWorkspaceMemberRole(
      WHERE wm.workspace_id = $1
        AND wm.user_id = $2
        AND wm.is_enabled = TRUE
-     GROUP BY wm.user_id, u.username`,
+     GROUP BY wm.user_id, u.username, u.avatar_url`,
     [input.workspaceId, normalizedTargetUserId],
   )
 

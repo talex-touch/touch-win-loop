@@ -2721,6 +2721,7 @@ export interface InvitationWithToken extends Invitation {
 export interface WorkspaceMemberSummary {
   userId: string
   username: string
+  avatarUrl?: string | null
   roles: WorkspaceMemberRole[]
   joinedAt: string
   updatedAt: string

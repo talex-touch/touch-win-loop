@@ -17,7 +17,6 @@ const props = withDefaults(defineProps<{
   workspaceMemberRoleSubmittingUserId?: string
   workspaceInvitationRevokingId?: string
   editableRoleOptions?: Array<{ value: EditableWorkspaceRole, label: string }>
-  resolveInitial: (value: string | null | undefined) => string
   formatDateTime: (value: string) => string
   resolveMemberRoleLabel: (member: WorkspaceMemberSummary | null | undefined) => string
   formatWorkspaceRoleLabel: (role: string | null | undefined) => string
@@ -86,18 +85,48 @@ const emit = defineEmits<{
             :key="member.userId"
             class="user-settings-member-item"
           >
-            <div class="user-settings-member-avatar">
-              {{ props.resolveInitial(member.username) }}
-            </div>
+            <UnifiedAvatar
+              :name="member.username"
+              :src="member.avatarUrl"
+              :size="34"
+              popover
+            >
+              <template #popover>
+                <div class="user-settings-member-popover">
+                  <div class="user-settings-member-popover__header">
+                    <UnifiedAvatar :name="member.username" :src="member.avatarUrl" :size="42" />
+                    <div class="min-w-0">
+                      <p class="user-settings-member-popover__name">
+                        {{ member.username }}
+                      </p>
+                      <p class="user-settings-member-popover__id">
+                        {{ member.userId }}
+                      </p>
+                    </div>
+                  </div>
+                  <dl class="user-settings-member-popover__detail">
+                    <div>
+                      <dt>权限</dt>
+                      <dd>{{ props.resolveMemberRoleLabel(member) }}</dd>
+                    </div>
+                    <div>
+                      <dt>加入时间</dt>
+                      <dd>{{ props.formatDateTime(member.joinedAt) }}</dd>
+                    </div>
+                    <div>
+                      <dt>最近更新</dt>
+                      <dd><Time :value="member.updatedAt" /></dd>
+                    </div>
+                  </dl>
+                </div>
+              </template>
+            </UnifiedAvatar>
             <div class="flex-1 min-w-0">
               <p class="user-settings-name truncate">
                 {{ member.username }}
               </p>
               <p class="user-settings-meta mt-1">
-                加入时间 {{ props.formatDateTime(member.joinedAt) }}
-              </p>
-              <p class="user-settings-meta mt-1">
-                当前权限 {{ props.resolveMemberRoleLabel(member) }} · 最近更新 {{ props.formatDateTime(member.updatedAt) }}
+                加入时间 {{ props.formatDateTime(member.joinedAt) }} · 最近更新 <Time :value="member.updatedAt" />
               </p>
             </div>
             <div class="user-settings-member-actions">

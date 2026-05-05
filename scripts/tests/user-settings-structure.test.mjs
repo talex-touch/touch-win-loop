@@ -9,6 +9,10 @@ const USER_AI_USAGE_FILE = resolve(process.cwd(), 'app/composables/useUserAiUsag
 const USER_WORKSPACE_MEMBERSHIP_FILE = resolve(process.cwd(), 'app/composables/useUserWorkspaceMembership.ts')
 const USER_AUTH_BINDINGS_FILE = resolve(process.cwd(), 'app/composables/useUserAuthBindings.ts')
 const USER_SESSION_HISTORY_FILE = resolve(process.cwd(), 'app/composables/useUserSessionHistory.ts')
+const USER_SETTINGS_MEMBERS_PANEL_FILE = resolve(process.cwd(), 'app/components/user-settings/UserSettingsMembersPanel.vue')
+const TIME_COMPONENT_FILE = resolve(process.cwd(), 'app/components/Time.vue')
+const TEAM_MEMBERSHIP_STORE_FILE = resolve(process.cwd(), 'server/utils/team-membership-store.ts')
+const DOMAIN_TYPES_FILE = resolve(process.cwd(), 'shared/types/domain-legacy.ts')
 
 it('用户设置弹窗已拆成 shell + panel + composable 结构', async () => {
   const [
@@ -58,4 +62,27 @@ it('用户设置弹窗已拆成 shell + panel + composable 结构', async () => 
   assert.match(membershipSource, /export function useUserWorkspaceMembership\(/, '缺少 workspace membership composable')
   assert.match(authBindingsSource, /export function useUserAuthBindings\(/, '缺少 auth bindings composable')
   assert.match(sessionHistorySource, /export function useUserSessionHistory\(/, '缺少 session history composable')
+})
+
+it('工作空间成员设置复用统一头像与相对时间展示', async () => {
+  const [
+    membersPanelSource,
+    timeComponentSource,
+    teamMembershipStoreSource,
+    domainTypesSource,
+  ] = await Promise.all([
+    readFile(USER_SETTINGS_MEMBERS_PANEL_FILE, 'utf8'),
+    readFile(TIME_COMPONENT_FILE, 'utf8'),
+    readFile(TEAM_MEMBERSHIP_STORE_FILE, 'utf8'),
+    readFile(DOMAIN_TYPES_FILE, 'utf8'),
+  ])
+
+  assert.match(membersPanelSource, /<UnifiedAvatar[\s\S]*?:src="member\.avatarUrl"[\s\S]*?popover/, '成员列表未复用统一头像与悬浮详情')
+  assert.match(membersPanelSource, /<Time :value="member\.updatedAt" \/>/, '成员最近更新未接入 Time 组件')
+  assert.match(timeComponentSource, /formatRelativeTime/, 'Time 组件未复用相对时间格式器')
+  assert.doesNotMatch(membersPanelSource, /user-settings-member-avatar/, '成员列表仍保留手写头像容器')
+  assert.doesNotMatch(membersPanelSource, /当前权限/, '成员行文字仍重复展示当前权限')
+  assert.match(teamMembershipStoreSource, /u\.avatar_url/, '成员管理快照未查询 users.avatar_url')
+  assert.match(teamMembershipStoreSource, /avatarUrl: row\.avatar_url \|\| null/, '成员管理快照未映射 avatarUrl')
+  assert.match(domainTypesSource, /export interface WorkspaceMemberSummary \{[\s\S]*avatarUrl\?: string \| null/, 'WorkspaceMemberSummary 未暴露 avatarUrl')
 })
