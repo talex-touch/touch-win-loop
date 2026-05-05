@@ -842,7 +842,7 @@ onBeforeUnmount(() => {
                       :aria-current="isContestNavItemActive(item) ? 'page' : undefined"
                       @click="selectContestNavItem(item)"
                     >
-                      <span :class="item.icon" />
+                      <span class="contest-detail-modal__nav-icon" :class="item.icon" />
                       {{ item.label }}
                     </button>
                   </div>
@@ -857,7 +857,7 @@ onBeforeUnmount(() => {
                       :aria-current="isContestNavItemActive(item) ? 'page' : undefined"
                       @click="selectContestNavItem(item)"
                     >
-                      <span :class="item.icon" />
+                      <span class="contest-detail-modal__nav-icon" :class="item.icon" />
                       <span class="contest-detail-modal__nav-copy">
                         <strong>{{ item.label }}</strong>
                         <small>{{ item.years.length ? item.years.join(' / ') : '年份待补充' }}</small>
@@ -2168,7 +2168,7 @@ onBeforeUnmount(() => {
     color 0.18s ease;
 }
 
-.contest-detail-modal__nav-item > span {
+.contest-detail-modal__nav-icon {
   width: 17px;
   height: 17px;
   flex: 0 0 auto;
@@ -2184,7 +2184,7 @@ onBeforeUnmount(() => {
   font-weight: 850;
 }
 
-.contest-detail-modal__nav-item--track > span {
+.contest-detail-modal__nav-item--track .contest-detail-modal__nav-icon {
   width: 15px;
   height: 15px;
   margin-top: 2px;
