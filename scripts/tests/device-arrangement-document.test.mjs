@@ -35,10 +35,6 @@ it('独立设备排布文档会规范化尺寸、自动布局与导出 SVG', asy
         name: '首页',
         screenshotSrc: 'https://example.com/hero.png',
         devicePresetKey: 'iphone-16-pro',
-        offsetX: 24,
-        offsetY: -12,
-        scale: 1.1,
-        rotationOffset: 8,
       }),
       createDeviceArrangementItem({
         id: 'feature',
@@ -54,7 +50,7 @@ it('独立设备排布文档会规范化尺寸、自动布局与导出 SVG', asy
   assert.equal(document.canvas.height, 1080)
   assert.equal(document.items.length, 2)
   assert.ok(document.items[0].x !== 0 || document.items[0].y !== 0)
-  assert.equal(document.items[0].scale, 1.1)
+  assert.equal(document.items[0].scale, 1)
   assert.equal(document.exportSizePresetKeys.length, 2)
 
   const svg = renderDeviceArrangementDocumentToSvg(document)
