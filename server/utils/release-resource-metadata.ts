@@ -32,8 +32,12 @@ export function sanitizeContestReleaseSnapshot(
 ): ContestReleaseSnapshot {
   return {
     ...snapshot,
+    tracks: Array.isArray(snapshot.tracks) ? snapshot.tracks : [],
+    timelines: Array.isArray(snapshot.timelines) ? snapshot.timelines : [],
+    trackTimelines: Array.isArray(snapshot.trackTimelines) ? snapshot.trackTimelines : [],
     resources: Array.isArray(snapshot.resources)
       ? snapshot.resources.map(sanitizeContestReleaseResourceSnapshot)
       : [],
+    faqItems: Array.isArray(snapshot.faqItems) ? snapshot.faqItems : [],
   }
 }

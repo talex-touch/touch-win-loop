@@ -23,6 +23,7 @@ const FEISHU_SYNCED_DATA_SCOPES = new Set<FeishuBitableSyncItemEntityType>([
   'resource',
   'policy',
   'persona',
+  'faq',
 ])
 
 function readTextQuery(value: unknown): string {

@@ -273,6 +273,7 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'category', label: 'category（资料类别）' },
     { key: 'attachment', label: 'attachment（附件）' },
     { key: 'attachmentSummary', label: 'attachmentSummary（附件摘要）' },
+    { key: 'year', label: 'year（资料年份）' },
   ],
   policy: [
     { key: 'externalId', label: 'externalId（会议编号）' },
@@ -301,12 +302,23 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'persona4', label: 'persona4（人设4）' },
     { key: 'persona5', label: 'persona5（人设5）' },
   ],
+  faq: [
+    { key: 'externalId', label: 'externalId（FAQ 编号）' },
+    { key: 'contestExternalId', label: 'contestExternalId（对应竞赛）' },
+    { key: 'trackExternalId', label: 'trackExternalId（对应赛道，可选）' },
+    { key: 'year', label: 'year（年份）' },
+    { key: 'question', label: 'question（问题）' },
+    { key: 'answer', label: 'answer（答案）' },
+    { key: 'sourceLink', label: 'sourceLink（来源链接）' },
+    { key: 'sortOrder', label: 'sortOrder（排序）' },
+  ],
 }
 
 const ENTITY_TYPE_OPTIONS: SelectOption<FeishuBitableSyncItemEntityType>[] = [
   { value: 'contest', label: '竞赛' },
   { value: 'track', label: '赛道' },
   { value: 'resource', label: '资料' },
+  { value: 'faq', label: 'FAQ' },
   { value: 'persona', label: '人设' },
   { value: 'policy', label: '政策' },
   { value: 'track_timeline', label: '赛道时间线（兼容）' },
@@ -988,11 +1000,13 @@ const unexpectedConfiguredMappingLabels = computed(() => {
 })
 
 function optionFieldGroups(entityType: FeishuBitableSyncItemEntityType) {
-  if (entityType === 'track') {
+  if (entityType === 'track' || entityType === 'faq') {
     return [{
       key: 'contestId',
       label: '默认 contestId',
-      description: '当赛道没有从飞书列里映射 contestExternalId 时，可用这个值兜底绑定到固定竞赛。',
+      description: entityType === 'track'
+        ? '当赛道没有从飞书列里映射 contestExternalId 时，可用这个值兜底绑定到固定竞赛。'
+        : '当 FAQ 没有从飞书列里映射 contestExternalId 时，可用这个值兜底绑定到固定竞赛。',
     }]
   }
 
@@ -1559,7 +1573,7 @@ function buildOptionsPayload(entityType: FeishuBitableSyncItemEntityType): Recor
   if (entityType === 'contest')
     return {}
 
-  if (entityType === 'track') {
+  if (entityType === 'track' || entityType === 'faq') {
     return {
       contestId: toText(optionForm.contestId),
     }
@@ -1790,11 +1804,13 @@ function previewFocusFields(entityType: FeishuBitableSyncItemEntityType): string
   if (entityType === 'track_timeline')
     return ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType', 'year']
   if (entityType === 'resource')
-    return ['externalId', 'contestExternalId', 'trackExternalId', 'title', 'attachment']
+    return ['externalId', 'contestExternalId', 'trackExternalId', 'title', 'attachment', 'year']
   if (entityType === 'policy')
     return ['externalId', 'meetingName', 'conferenceDate', 'importance']
   if (entityType === 'persona')
     return ['externalId', 'contestExternalId', 'object', 'persona1', 'persona2']
+  if (entityType === 'faq')
+    return ['externalId', 'contestExternalId', 'trackExternalId', 'question', 'answer', 'year']
   return ['externalId', 'name', 'officialUrl', 'timelineText', 'recommendedFor']
 }
 
@@ -4505,7 +4521,7 @@ watch(() => props.selectedItemId, (value) => {
               </div>
 
               <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
-                <label v-if="itemForm.entityType === 'track' || itemForm.entityType === 'resource'" class="text-[11px] text-slate-600 font-medium block">
+                <label v-if="itemForm.entityType === 'track' || itemForm.entityType === 'resource' || itemForm.entityType === 'faq'" class="text-[11px] text-slate-600 font-medium block">
                   默认 contestId
                   <a-input v-model="optionForm.contestId" class="mt-1" size="small" allow-clear />
                   <p class="text-[10px] text-slate-400 m-0 mt-1">
@@ -6241,7 +6257,7 @@ watch(() => props.selectedItemId, (value) => {
             推荐模板说明
           </p>
           <p class="m-0 mt-1">
-            `contest` 默认关注 `externalId + 名称/官网/简介`；`track` 额外带 `contestExternalId`；`resource` 会再补 `trackExternalId` 和资料默认值；`policy` 重点确认 `会议编号 + 会议名称`；`persona` 重点确认 `对应竞赛 + 对象 + 至少一个人设槽位`。
+            `contest` 默认关注 `externalId + 名称/官网/简介`；`track` 额外带 `contestExternalId`；`resource` 会再补 `trackExternalId` 和资料年份；`faq` 重点确认 `对应竞赛 + 问题/答案`；`policy` 重点确认 `会议编号 + 会议名称`；`persona` 重点确认 `对应竞赛 + 对象 + 至少一个人设槽位`。
           </p>
         </div>
         <div class="gap-3 grid md:grid-cols-2">

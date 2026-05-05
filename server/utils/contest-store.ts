@@ -359,6 +359,7 @@ async function upsertContestTimelineNode(
     endAt?: string | null
     note?: string
     sourceLink?: string
+    metadata?: Record<string, unknown>
   },
 ): Promise<void> {
   const existing = input.timelineRows.find(row => row.year === input.year && row.node_type === input.nodeType)
@@ -400,6 +401,7 @@ async function upsertContestTimelineNode(
     endAt: input.endAt,
     note: input.note,
     sourceLink: input.sourceLink,
+    metadata: input.metadata,
   })
 
   input.timelineRows.push({
@@ -412,6 +414,7 @@ async function upsertContestTimelineNode(
     end_at: created.endAt,
     note: created.note,
     source_link: created.sourceLink,
+    metadata: created.metadata || {},
   })
 }
 
@@ -488,6 +491,7 @@ interface ContestRow {
   recommended_for: string[]
   faq: string
   faq_items: ContestFaqItem[]
+  metadata: Record<string, unknown>
   created_at: string
   updated_at: string
 }
@@ -509,6 +513,7 @@ interface TrackRow {
   rubric_id: string | null
   sort_order: number
   status: ContestStatus
+  metadata: Record<string, unknown>
 }
 
 interface TimelineRow {
@@ -521,6 +526,7 @@ interface TimelineRow {
   end_at: string | null
   note: string
   source_link: string
+  metadata: Record<string, unknown>
 }
 
 interface TrackTimelineRow {
@@ -534,6 +540,22 @@ interface TrackTimelineRow {
   end_at: string | null
   note: string
   source_link: string
+  metadata: Record<string, unknown>
+}
+
+interface ContestFaqRow {
+  id: string
+  contest_id: string
+  track_id: string | null
+  year: number | null
+  question: string
+  answer: string
+  source_link: string
+  sort_order: number
+  status: 'active' | 'archived'
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
 }
 
 interface RubricRow {
@@ -771,6 +793,7 @@ function mapTrack(row: TrackRow): Track {
     rubricId: row.rubric_id || null,
     sortOrder: Number(row.sort_order || 0),
     status: row.status,
+    metadata: parseResourceMetadata(row.metadata),
   }
 }
 
@@ -785,6 +808,7 @@ function mapTimeline(row: TimelineRow): ContestTimeline {
     endAt: row.end_at,
     note: row.note,
     sourceLink: row.source_link,
+    metadata: parseResourceMetadata(row.metadata),
   }
 }
 
@@ -800,6 +824,22 @@ function mapTrackTimeline(row: TrackTimelineRow): TrackTimeline {
     endAt: row.end_at,
     note: row.note,
     sourceLink: row.source_link,
+    metadata: parseResourceMetadata(row.metadata),
+  }
+}
+
+function mapContestFaqItem(row: ContestFaqRow): ContestFaqItem {
+  return {
+    id: row.id,
+    contestId: row.contest_id,
+    trackId: row.track_id || null,
+    year: row.year ?? null,
+    question: row.question,
+    answer: row.answer,
+    sourceLink: row.source_link,
+    sortOrder: Number(row.sort_order || 0),
+    status: row.status,
+    metadata: parseResourceMetadata(row.metadata),
   }
 }
 
@@ -864,6 +904,7 @@ function mapContest(row: ContestRow, tracks: Track[], timelines: ContestTimeline
     faq: row.faq,
     faqItems,
     timelines,
+    metadata: parseResourceMetadata(row.metadata),
   }
 }
 
@@ -1572,6 +1613,7 @@ async function loadContests(db: Queryable, includeInternal: boolean): Promise<Co
       recommended_for,
       faq,
       faq_items,
+      metadata,
       created_at::TEXT,
       updated_at::TEXT
      FROM contests
@@ -1617,7 +1659,8 @@ async function loadTracks(db: Queryable, contestIds: string[], includeInternal: 
       deliverable_types,
       rubric_id,
       sort_order,
-      status
+      status,
+      metadata
      FROM contest_tracks
      WHERE contest_id = ANY($1::TEXT[])
        AND ($2::BOOLEAN = TRUE OR status = 'published')
@@ -1633,7 +1676,7 @@ async function loadTimelines(db: Queryable, contestIds: string[]): Promise<Timel
     return []
 
   const result = await db.query<TimelineRow>(
-    `SELECT id, contest_id, year, node_type, business_node_label, start_at::TEXT, end_at::TEXT, note, source_link
+    `SELECT id, contest_id, year, node_type, business_node_label, start_at::TEXT, end_at::TEXT, note, source_link, metadata
      FROM contest_timelines
      WHERE contest_id = ANY($1::TEXT[])
      ORDER BY year DESC, created_at ASC`,
@@ -1658,7 +1701,8 @@ async function loadTrackTimelines(db: Queryable, contestIds: string[]): Promise<
       start_at::TEXT,
       end_at::TEXT,
       note,
-      source_link
+      source_link,
+      metadata
      FROM contest_track_timelines
      WHERE contest_id = ANY($1::TEXT[])
      ORDER BY year DESC, created_at ASC`,
@@ -1666,6 +1710,127 @@ async function loadTrackTimelines(db: Queryable, contestIds: string[]): Promise<
   )
 
   return result.rows
+}
+
+async function loadContestResources(db: Queryable, contestIds: string[], includeInternal: boolean): Promise<ResourceRow[]> {
+  if (contestIds.length === 0)
+    return []
+
+  const result = await db.query<ResourceRow>(
+    `SELECT
+      id,
+      contest_id,
+      category,
+      title,
+      year,
+      url,
+      access_level,
+      source_type,
+      summary,
+      content,
+      metadata,
+      copyright_note,
+      status,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM contest_resources
+     WHERE contest_id = ANY($1::TEXT[])
+       AND ($2::BOOLEAN = TRUE OR status = 'active')
+     ORDER BY year DESC, created_at DESC`,
+    [contestIds, includeInternal],
+  )
+
+  return result.rows
+}
+
+async function loadContestFaqItems(db: Queryable, contestIds: string[], includeInternal: boolean): Promise<ContestFaqRow[]> {
+  if (contestIds.length === 0)
+    return []
+
+  const result = await db.query<ContestFaqRow>(
+    `SELECT
+      id,
+      contest_id,
+      track_id,
+      year,
+      question,
+      answer,
+      source_link,
+      sort_order,
+      status,
+      metadata,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM contest_faq_items
+     WHERE contest_id = ANY($1::TEXT[])
+       AND ($2::BOOLEAN = TRUE OR status = 'active')
+     ORDER BY sort_order ASC, created_at ASC`,
+    [contestIds, includeInternal],
+  )
+
+  return result.rows
+}
+
+function attachContestRelations(input: {
+  contest: Contest
+  trackTimelines: TrackTimeline[]
+  resources: Resource[]
+  faqItems: ContestFaqItem[]
+}): Contest {
+  const trackTimelinesByTrackId = new Map<string, TrackTimeline[]>()
+  for (const item of input.trackTimelines) {
+    const list = trackTimelinesByTrackId.get(item.trackId) || []
+    list.push(item)
+    trackTimelinesByTrackId.set(item.trackId, list)
+  }
+
+  const resourcesByTrackId = new Map<string, Resource[]>()
+  const contestResources: Resource[] = []
+  for (const item of input.resources) {
+    const trackId = normalizeString(item.metadata?.trackId)
+    if (trackId) {
+      const list = resourcesByTrackId.get(trackId) || []
+      list.push(item)
+      resourcesByTrackId.set(trackId, list)
+    }
+    else {
+      contestResources.push(item)
+    }
+  }
+
+  const faqByTrackId = new Map<string, ContestFaqItem[]>()
+  const contestFaqItems: ContestFaqItem[] = []
+  for (const item of input.faqItems) {
+    const trackId = normalizeString(item.trackId)
+    if (trackId) {
+      const list = faqByTrackId.get(trackId) || []
+      list.push(item)
+      faqByTrackId.set(trackId, list)
+    }
+    else {
+      contestFaqItems.push(item)
+    }
+  }
+
+  const tracks = input.contest.tracks.map((track) => {
+    const timelines = trackTimelinesByTrackId.get(track.id) || []
+    const years = [...new Set(timelines.map(item => Number(item.year || 0)).filter(year => year >= 1900))]
+      .sort((left, right) => right - left)
+    return {
+      ...track,
+      years,
+      timelines,
+      resources: resourcesByTrackId.get(track.id) || [],
+      faqItems: faqByTrackId.get(track.id) || [],
+    }
+  })
+
+  return {
+    ...input.contest,
+    tracks,
+    resources: contestResources,
+    faqItems: [...(input.contest.faqItems || []), ...contestFaqItems],
+  }
 }
 
 function isUpcomingDeadline(contest: Contest): boolean {
@@ -1821,6 +1986,9 @@ export async function listContestLibrary(
   const ids = rows.map(item => item.id)
   const tracks = await loadTracks(db, ids, input.includeInternal)
   const timelines = await loadTimelines(db, ids)
+  const trackTimelines = (await loadTrackTimelines(db, ids)).map(mapTrackTimeline)
+  const resources = (await loadContestResources(db, ids, input.includeInternal)).map(mapResource)
+  const faqItems = (await loadContestFaqItems(db, ids, input.includeInternal)).map(mapContestFaqItem)
 
   const trackMap = new Map<string, Track[]>()
   for (const row of tracks) {
@@ -1836,12 +2004,35 @@ export async function listContestLibrary(
     timelineMap.set(row.contest_id, list)
   }
 
+  const trackTimelineMap = new Map<string, TrackTimeline[]>()
+  for (const item of trackTimelines) {
+    const list = trackTimelineMap.get(item.contestId) || []
+    list.push(item)
+    trackTimelineMap.set(item.contestId, list)
+  }
+
+  const resourceMap = new Map<string, Resource[]>()
+  for (const item of resources) {
+    const list = resourceMap.get(item.contestId) || []
+    list.push(item)
+    resourceMap.set(item.contestId, list)
+  }
+
+  const faqItemMap = new Map<string, ContestFaqItem[]>()
+  for (const item of faqItems) {
+    const list = faqItemMap.get(item.contestId || '') || []
+    list.push(item)
+    faqItemMap.set(item.contestId || '', list)
+  }
+
   const contests = rows.map((row) => {
-    return mapContest(
-      row,
-      trackMap.get(row.id) || [],
-      timelineMap.get(row.id) || [],
-    )
+    const contest = mapContest(row, trackMap.get(row.id) || [], timelineMap.get(row.id) || [])
+    return attachContestRelations({
+      contest,
+      trackTimelines: trackTimelineMap.get(row.id) || [],
+      resources: resourceMap.get(row.id) || [],
+      faqItems: faqItemMap.get(row.id) || [],
+    })
   })
 
   const filtered = contests.filter(contest =>
@@ -1901,6 +2092,7 @@ export async function getContestDetail(
       recommended_for,
       faq,
       faq_items,
+      metadata,
       created_at::TEXT,
       updated_at::TEXT
      FROM contests
@@ -1929,6 +2121,9 @@ export async function getContestDetail(
 
   const tracks = (await loadTracks(db, [row.id], input.includeInternal)).map(mapTrack)
   const timelines = (await loadTimelines(db, [row.id])).map(mapTimeline)
+  const trackTimelines = (await loadTrackTimelines(db, [row.id])).map(mapTrackTimeline)
+  const resources = (await loadContestResources(db, [row.id], input.includeInternal)).map(mapResource)
+  const faqItems = (await loadContestFaqItems(db, [row.id], input.includeInternal)).map(mapContestFaqItem)
 
   const rubricRows = await db.query<RubricRow>(
     `SELECT
@@ -1968,12 +2163,20 @@ export async function getContestDetail(
     }
   })
 
-  const contest = mapContest(row, tracks, timelines)
+  const contest = attachContestRelations({
+    contest: mapContest(row, tracks, timelines),
+    trackTimelines,
+    resources,
+    faqItems,
+  })
 
   return {
     contest,
     timelines,
+    trackTimelines,
     rubrics: rubricRows.rows.map(mapRubric),
+    resources,
+    faqItems,
     resourceStats,
   }
 }
@@ -2335,6 +2538,7 @@ export async function listAdminContests(
       recommended_for,
       faq,
       faq_items,
+      metadata,
       created_at::TEXT,
       updated_at::TEXT
      FROM contests
@@ -2385,6 +2589,7 @@ export async function createAdminContest(
     faqItems?: ContestFaqItem[]
     hotScore?: number
     visibility?: ContestVisibility
+    metadata?: Record<string, unknown>
   },
 ): Promise<Contest> {
   const now = new Date().toISOString()
@@ -2414,13 +2619,14 @@ export async function createAdminContest(
       recommended_for,
       faq,
       faq_items,
+      metadata,
       created_by_user_id,
       updated_by_user_id,
       created_at,
       updated_at
     ) VALUES (
       $1, $2, $3::TEXT[], $4, $5::TEXT[], $6, $7, $8, $9, $10, $11, $12,
-      'draft', $13, $14, $15::TEXT[], $16::TEXT[], $17, $18::JSONB, $19, $19, $20, $20
+      'draft', $13, $14, $15::TEXT[], $16::TEXT[], $17, $18::JSONB, $19::JSONB, $20, $20, $21, $21
     )`,
     [
       contestId,
@@ -2441,6 +2647,7 @@ export async function createAdminContest(
       normalizeStringArray(input.recommendedFor),
       normalizeString(input.faq),
       JSON.stringify(normalizeFaqItems(input.faqItems)),
+      JSON.stringify(parseResourceMetadata(input.metadata)),
       input.actorUserId,
       now,
     ],
@@ -2542,6 +2749,7 @@ export async function patchAdminContest(
       faqItems?: ContestFaqItem[]
       hotScore?: number
       visibility?: ContestVisibility
+      metadata?: Record<string, unknown>
     }
   },
 ): Promise<Contest | null> {
@@ -2587,6 +2795,8 @@ export async function patchAdminContest(
     addSet('hot_score', Number(input.patch.hotScore || 0))
   if (input.patch.visibility !== undefined)
     addSet('visibility', input.patch.visibility)
+  if (input.patch.metadata !== undefined)
+    addSet('metadata', JSON.stringify(parseResourceMetadata(input.patch.metadata)))
 
   if (sets.length === 0)
     return getContestDetail(db, { contestId: input.contestId, includeInternal: true }).then(item => item?.contest || null)
@@ -2873,6 +3083,7 @@ export async function createAdminTrack(
     rubricId?: string | null
     sortOrder?: number
     status?: ContestStatus
+    metadata?: Record<string, unknown>
   },
 ): Promise<Track> {
   const trackId = randomUUID()
@@ -2901,10 +3112,11 @@ export async function createAdminTrack(
       rubric_id,
       sort_order,
       status,
+      metadata,
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::TEXT[], $13::TEXT[], $14, $15, $16, $17, $17
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::TEXT[], $13::TEXT[], $14, $15, $16, $17::JSONB, $18, $18
     )`,
     [
       trackId,
@@ -2923,6 +3135,7 @@ export async function createAdminTrack(
       normalizeString(input.rubricId) || null,
       Number(input.sortOrder || 0),
       input.status || 'draft',
+      JSON.stringify(parseResourceMetadata(input.metadata)),
       now,
     ],
   )
@@ -2954,7 +3167,8 @@ export async function createAdminTrack(
       deliverable_types,
       rubric_id,
       sort_order,
-      status
+      status,
+      metadata
      FROM contest_tracks
      WHERE id = $1
      LIMIT 1`,
@@ -2986,6 +3200,7 @@ export async function patchAdminTrack(
       rubricId?: string | null
       sortOrder?: number
       status?: ContestStatus
+      metadata?: Record<string, unknown>
     }
   },
 ): Promise<Track | null> {
@@ -3025,6 +3240,8 @@ export async function patchAdminTrack(
     addSet('sort_order', Number(input.patch.sortOrder || 0))
   if (input.patch.status !== undefined)
     addSet('status', input.patch.status)
+  if (input.patch.metadata !== undefined)
+    addSet('metadata', JSON.stringify(parseResourceMetadata(input.patch.metadata)))
 
   if (sets.length === 0)
     return null
@@ -3075,7 +3292,8 @@ export async function patchAdminTrack(
       deliverable_types,
       rubric_id,
       sort_order,
-      status
+      status,
+      metadata
      FROM contest_tracks
      WHERE id = $1 AND contest_id = $2
      LIMIT 1`,
@@ -3104,6 +3322,7 @@ export async function createAdminTimeline(
     endAt?: string | null
     note?: string
     sourceLink?: string
+    metadata?: Record<string, unknown>
   },
 ): Promise<ContestTimeline> {
   const timelineId = randomUUID()
@@ -3125,9 +3344,10 @@ export async function createAdminTimeline(
       end_at,
       note,
       source_link,
+      metadata,
       created_at,
       updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::JSONB, $11, $11)`,
     [
       timelineId,
       input.contestId,
@@ -3138,6 +3358,7 @@ export async function createAdminTimeline(
       input.endAt || null,
       normalizeString(input.note),
       normalizeString(input.sourceLink),
+      JSON.stringify(parseResourceMetadata(input.metadata)),
       now,
     ],
   )
@@ -3153,7 +3374,7 @@ export async function createAdminTimeline(
   })
 
   const result = await db.query<TimelineRow>(
-    `SELECT id, contest_id, year, node_type, business_node_label, start_at::TEXT, end_at::TEXT, note, source_link
+    `SELECT id, contest_id, year, node_type, business_node_label, start_at::TEXT, end_at::TEXT, note, source_link, metadata
      FROM contest_timelines
      WHERE id = $1
      LIMIT 1`,
@@ -3178,6 +3399,7 @@ export async function patchAdminTimeline(
       endAt?: string | null
       note?: string
       sourceLink?: string
+      metadata?: Record<string, unknown>
     }
   },
 ): Promise<ContestTimeline | null> {
@@ -3203,6 +3425,8 @@ export async function patchAdminTimeline(
     addSet('note', normalizeString(input.patch.note))
   if (input.patch.sourceLink !== undefined)
     addSet('source_link', normalizeString(input.patch.sourceLink))
+  if (input.patch.metadata !== undefined)
+    addSet('metadata', JSON.stringify(parseResourceMetadata(input.patch.metadata)))
 
   if (sets.length === 0)
     return null
@@ -3231,7 +3455,7 @@ export async function patchAdminTimeline(
   })
 
   const result = await db.query<TimelineRow>(
-    `SELECT id, contest_id, year, node_type, business_node_label, start_at::TEXT, end_at::TEXT, note, source_link
+    `SELECT id, contest_id, year, node_type, business_node_label, start_at::TEXT, end_at::TEXT, note, source_link, metadata
      FROM contest_timelines
      WHERE id = $1 AND contest_id = $2
      LIMIT 1`,
@@ -3261,6 +3485,7 @@ export async function createAdminTrackTimeline(
     endAt?: string | null
     note?: string
     sourceLink?: string
+    metadata?: Record<string, unknown>
   },
 ): Promise<TrackTimeline> {
   await assertTrackExistsForContest(db, input.contestId, input.trackId)
@@ -3284,9 +3509,10 @@ export async function createAdminTrackTimeline(
       end_at,
       note,
       source_link,
+      metadata,
       created_at,
       updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::JSONB, $12, $12)`,
     [
       timelineId,
       input.contestId,
@@ -3298,6 +3524,7 @@ export async function createAdminTrackTimeline(
       input.endAt || null,
       normalizeString(input.note),
       normalizeString(input.sourceLink),
+      JSON.stringify(parseResourceMetadata(input.metadata)),
       now,
     ],
   )
@@ -3320,10 +3547,12 @@ export async function createAdminTrackTimeline(
       track_id,
       year,
       node_type,
+      business_node_label,
       start_at::TEXT,
       end_at::TEXT,
       note,
-      source_link
+      source_link,
+      metadata
      FROM contest_track_timelines
      WHERE id = $1
      LIMIT 1`,
@@ -3349,6 +3578,7 @@ export async function patchAdminTrackTimeline(
       endAt?: string | null
       note?: string
       sourceLink?: string
+      metadata?: Record<string, unknown>
     }
   },
 ): Promise<TrackTimeline | null> {
@@ -3379,6 +3609,8 @@ export async function patchAdminTrackTimeline(
     addSet('note', normalizeString(input.patch.note))
   if (input.patch.sourceLink !== undefined)
     addSet('source_link', normalizeString(input.patch.sourceLink))
+  if (input.patch.metadata !== undefined)
+    addSet('metadata', JSON.stringify(parseResourceMetadata(input.patch.metadata)))
 
   if (sets.length === 0)
     return null
@@ -3417,7 +3649,8 @@ export async function patchAdminTrackTimeline(
       start_at::TEXT,
       end_at::TEXT,
       note,
-      source_link
+      source_link,
+      metadata
      FROM contest_track_timelines
      WHERE id = $1 AND contest_id = $2
      LIMIT 1`,
@@ -3754,6 +3987,199 @@ export async function listAdminResources(
   )
 
   return result.rows.map(mapResource)
+}
+
+export async function createAdminContestFaqItem(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    contestId: string
+    bypassSourceOfTruthGuard?: boolean
+    trackId?: string | null
+    year?: number | null
+    question: string
+    answer?: string
+    sourceLink?: string
+    sortOrder?: number
+    status?: 'active' | 'archived'
+    metadata?: Record<string, unknown>
+  },
+): Promise<ContestFaqItem> {
+  const faqId = randomUUID()
+  const now = new Date().toISOString()
+  const trackId = normalizeString(input.trackId)
+  if (trackId)
+    await assertTrackExistsForContest(db, input.contestId, trackId)
+
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
+
+  await db.query(
+    `INSERT INTO contest_faq_items (
+      id,
+      contest_id,
+      track_id,
+      year,
+      question,
+      answer,
+      source_link,
+      sort_order,
+      status,
+      metadata,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::JSONB, $11, $11
+    )`,
+    [
+      faqId,
+      input.contestId,
+      trackId || null,
+      input.year ?? null,
+      normalizeString(input.question),
+      normalizeString(input.answer),
+      normalizeString(input.sourceLink),
+      Number(input.sortOrder || 0),
+      input.status || 'active',
+      JSON.stringify(parseResourceMetadata(input.metadata)),
+      now,
+    ],
+  )
+
+  await appendAuditLog(db, {
+    actorUserId: input.actorUserId,
+    action: 'faq.create',
+    contestId: input.contestId,
+    payload: {
+      faqId,
+      trackId: trackId || null,
+    },
+  })
+
+  const result = await db.query<ContestFaqRow>(
+    `SELECT
+      id,
+      contest_id,
+      track_id,
+      year,
+      question,
+      answer,
+      source_link,
+      sort_order,
+      status,
+      metadata,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM contest_faq_items
+     WHERE id = $1
+     LIMIT 1`,
+    [faqId],
+  )
+
+  return mapContestFaqItem(result.rows[0]!)
+}
+
+export async function patchAdminContestFaqItem(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    contestId: string
+    faqItemId: string
+    bypassSourceOfTruthGuard?: boolean
+    patch: {
+      trackId?: string | null
+      year?: number | null
+      question?: string
+      answer?: string
+      sourceLink?: string
+      sortOrder?: number
+      status?: 'active' | 'archived'
+      metadata?: Record<string, unknown>
+    }
+  },
+): Promise<ContestFaqItem | null> {
+  if (input.patch.trackId !== undefined && normalizeString(input.patch.trackId))
+    await assertTrackExistsForContest(db, input.contestId, normalizeString(input.patch.trackId))
+
+  const values: unknown[] = [input.faqItemId, input.contestId]
+  const sets: string[] = []
+  const addSet = (column: string, value: unknown) => {
+    values.push(value)
+    sets.push(`${column} = $${values.length}`)
+  }
+
+  if (input.patch.trackId !== undefined)
+    addSet('track_id', normalizeString(input.patch.trackId) || null)
+  if (input.patch.year !== undefined)
+    addSet('year', input.patch.year ?? null)
+  if (input.patch.question !== undefined)
+    addSet('question', normalizeString(input.patch.question))
+  if (input.patch.answer !== undefined)
+    addSet('answer', normalizeString(input.patch.answer))
+  if (input.patch.sourceLink !== undefined)
+    addSet('source_link', normalizeString(input.patch.sourceLink))
+  if (input.patch.sortOrder !== undefined)
+    addSet('sort_order', Number(input.patch.sortOrder || 0))
+  if (input.patch.status !== undefined)
+    addSet('status', input.patch.status)
+  if (input.patch.metadata !== undefined)
+    addSet('metadata', JSON.stringify(parseResourceMetadata(input.patch.metadata)))
+
+  if (sets.length === 0)
+    return null
+
+  await assertContestReleaseWorkflowPatchAllowed(db, {
+    contestId: input.contestId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
+  await assertFeishuSourceOfTruthPatchAllowed(db, {
+    scope: 'faq',
+    entityId: input.faqItemId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
+
+  sets.push('updated_at = NOW()')
+  await db.query(
+    `UPDATE contest_faq_items
+     SET ${sets.join(', ')}
+     WHERE id = $1 AND contest_id = $2`,
+    values,
+  )
+
+  await appendAuditLog(db, {
+    actorUserId: input.actorUserId,
+    action: 'faq.patch',
+    contestId: input.contestId,
+    payload: {
+      faqItemId: input.faqItemId,
+      ...input.patch,
+    },
+  })
+
+  const result = await db.query<ContestFaqRow>(
+    `SELECT
+      id,
+      contest_id,
+      track_id,
+      year,
+      question,
+      answer,
+      source_link,
+      sort_order,
+      status,
+      metadata,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM contest_faq_items
+     WHERE id = $1 AND contest_id = $2
+     LIMIT 1`,
+    [input.faqItemId, input.contestId],
+  )
+
+  const row = result.rows[0]
+  return row ? mapContestFaqItem(row) : null
 }
 
 export async function createAdminResource(

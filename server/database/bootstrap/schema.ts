@@ -577,7 +577,7 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_sync_items (
   id TEXT PRIMARY KEY,
   sync_id TEXT REFERENCES feishu_bitable_syncs(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona')),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq')),
   app_token TEXT NOT NULL,
   table_id TEXT NOT NULL,
   view_id TEXT NOT NULL DEFAULT '',
@@ -654,7 +654,7 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_sync_config_shares (
 CREATE TABLE IF NOT EXISTS feishu_external_refs (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL CHECK (provider IN ('feishu_bitable')),
-  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona')),
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq')),
   external_id TEXT NOT NULL,
   sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
   entity_id TEXT NOT NULL,
@@ -679,7 +679,7 @@ CREATE TABLE IF NOT EXISTS feishu_post_sync_tasks (
   id TEXT PRIMARY KEY,
   sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
   run_id TEXT REFERENCES feishu_bitable_sync_item_runs(id) ON DELETE SET NULL,
-  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona')),
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq')),
   entity_id TEXT NOT NULL,
   external_id TEXT NOT NULL DEFAULT '',
   task_type TEXT NOT NULL CHECK (task_type IN ('embedding_upsert', 'search_index_refresh', 'entity_analysis', 'writeback_retry')),
@@ -713,7 +713,7 @@ BEGIN
   ) THEN
     CREATE TABLE IF NOT EXISTS feishu_vectors (
       id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona')),
+      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq')),
       entity_id TEXT NOT NULL,
       chunk_index INTEGER NOT NULL DEFAULT 0,
       content TEXT NOT NULL DEFAULT '',
@@ -727,7 +727,7 @@ BEGIN
   ELSE
     CREATE TABLE IF NOT EXISTS feishu_vectors (
       id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona')),
+      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq')),
       entity_id TEXT NOT NULL,
       chunk_index INTEGER NOT NULL DEFAULT 0,
       content TEXT NOT NULL DEFAULT '',
@@ -743,7 +743,7 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS feishu_search_index (
   id TEXT PRIMARY KEY,
-  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona')),
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq')),
   entity_id TEXT NOT NULL,
   external_id TEXT NOT NULL DEFAULT '',
   sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
@@ -761,7 +761,7 @@ CREATE TABLE IF NOT EXISTS feishu_search_index (
 
 CREATE TABLE IF NOT EXISTS feishu_entity_analysis (
   id TEXT PRIMARY KEY,
-  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona')),
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq')),
   entity_id TEXT NOT NULL,
   external_id TEXT NOT NULL DEFAULT '',
   sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
@@ -938,7 +938,7 @@ CREATE TABLE IF NOT EXISTS rule_annotations (
 CREATE TABLE IF NOT EXISTS feishu_sync_issues (
   id TEXT PRIMARY KEY,
   sync_item_id TEXT NOT NULL REFERENCES feishu_bitable_sync_items(id) ON DELETE CASCADE,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona')),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq')),
   record_id TEXT NOT NULL,
   external_id TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'ignored')),
@@ -974,6 +974,7 @@ CREATE TABLE IF NOT EXISTS contests (
   recommended_for TEXT[] NOT NULL DEFAULT '{}',
   faq TEXT NOT NULL DEFAULT '',
   faq_items JSONB NOT NULL DEFAULT '[]'::JSONB,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   published_at TIMESTAMPTZ,
@@ -996,6 +997,7 @@ CREATE TABLE IF NOT EXISTS contest_tracks (
   suitable_majors TEXT[] NOT NULL DEFAULT '{}',
   deliverable_types TEXT[] NOT NULL DEFAULT '{}',
   rubric_id TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   sort_order INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1140,6 +1142,7 @@ CREATE TABLE IF NOT EXISTS contest_timelines (
   end_at TIMESTAMPTZ,
   note TEXT NOT NULL DEFAULT '',
   source_link TEXT NOT NULL DEFAULT '',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1155,6 +1158,7 @@ CREATE TABLE IF NOT EXISTS contest_track_timelines (
   end_at TIMESTAMPTZ,
   note TEXT NOT NULL DEFAULT '',
   source_link TEXT NOT NULL DEFAULT '',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1211,6 +1215,21 @@ CREATE TABLE IF NOT EXISTS contest_resources (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(contest_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS contest_faq_items (
+  id TEXT PRIMARY KEY,
+  contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+  track_id TEXT REFERENCES contest_tracks(id) ON DELETE SET NULL,
+  year INTEGER,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL DEFAULT '',
+  source_link TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 DO $$
@@ -3322,14 +3341,14 @@ ALTER TABLE feishu_bitable_sync_items
 
 ALTER TABLE feishu_bitable_sync_items
   ADD CONSTRAINT feishu_bitable_sync_items_entity_type_check
-  CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona'));
+  CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq'));
 
 ALTER TABLE feishu_sync_issues
   DROP CONSTRAINT IF EXISTS feishu_sync_issues_entity_type_check;
 
 ALTER TABLE feishu_sync_issues
   ADD CONSTRAINT feishu_sync_issues_entity_type_check
-  CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona'));
+  CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq'));
 
 ALTER TABLE feishu_sync_issues
   DROP CONSTRAINT IF EXISTS feishu_sync_issues_resolution_check;
@@ -3343,35 +3362,35 @@ ALTER TABLE feishu_external_refs
 
 ALTER TABLE feishu_external_refs
   ADD CONSTRAINT feishu_external_refs_scope_check
-  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona'));
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq'));
 
 ALTER TABLE feishu_post_sync_tasks
   DROP CONSTRAINT IF EXISTS feishu_post_sync_tasks_scope_check;
 
 ALTER TABLE feishu_post_sync_tasks
   ADD CONSTRAINT feishu_post_sync_tasks_scope_check
-  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona'));
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq'));
 
 ALTER TABLE feishu_vectors
   DROP CONSTRAINT IF EXISTS feishu_vectors_scope_check;
 
 ALTER TABLE feishu_vectors
   ADD CONSTRAINT feishu_vectors_scope_check
-  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona'));
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq'));
 
 ALTER TABLE feishu_search_index
   DROP CONSTRAINT IF EXISTS feishu_search_index_scope_check;
 
 ALTER TABLE feishu_search_index
   ADD CONSTRAINT feishu_search_index_scope_check
-  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona'));
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq'));
 
 ALTER TABLE feishu_entity_analysis
   DROP CONSTRAINT IF EXISTS feishu_entity_analysis_scope_check;
 
 ALTER TABLE feishu_entity_analysis
   ADD CONSTRAINT feishu_entity_analysis_scope_check
-  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona'));
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq'));
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_sync_issues_sync_item_record_external_unique
   ON feishu_sync_issues(sync_item_id, record_id, external_id);
@@ -3386,6 +3405,10 @@ CREATE INDEX IF NOT EXISTS idx_project_contest_bindings_project_sort ON project_
 CREATE INDEX IF NOT EXISTS idx_project_contest_bindings_contest ON project_contest_bindings(contest_id);
 CREATE INDEX IF NOT EXISTS idx_project_contest_adaptations_project ON project_contest_adaptations(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_contest_adaptations_contest ON project_contest_adaptations(contest_id);
+CREATE INDEX IF NOT EXISTS idx_contest_faq_items_contest_track_year
+  ON contest_faq_items(contest_id, track_id, year, sort_order);
+CREATE INDEX IF NOT EXISTS idx_contest_faq_items_status
+  ON contest_faq_items(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_settings_drafts_user_project ON project_settings_drafts(user_id, project_id);
 CREATE INDEX IF NOT EXISTS idx_project_settings_drafts_project ON project_settings_drafts(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_settings_drafts_user_project_opened ON project_settings_drafts(user_id, project_id, last_opened_at DESC, updated_at DESC);
@@ -3900,6 +3923,9 @@ WHERE psq.seat_used <= 15
 ALTER TABLE contests
   ADD COLUMN IF NOT EXISTS faq_items JSONB NOT NULL DEFAULT '[]'::JSONB;
 
+ALTER TABLE contests
+  ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
+
 ALTER TABLE contest_tracks
   ADD COLUMN IF NOT EXISTS rubric_id TEXT;
 
@@ -3923,6 +3949,15 @@ ALTER TABLE contest_tracks
 
 ALTER TABLE contest_tracks
   ADD COLUMN IF NOT EXISTS award_ratio TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE contest_tracks
+  ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE contest_timelines
+  ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE contest_track_timelines
+  ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
 
 ALTER TABLE contest_tracks
   DROP CONSTRAINT IF EXISTS contest_tracks_contest_id_name_key;

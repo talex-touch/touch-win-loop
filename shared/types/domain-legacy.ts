@@ -17,6 +17,7 @@ export type ContestStatus = 'draft' | 'published' | 'archived'
 export type ContestVisibility = 'internal' | 'public'
 export type ResourceStatus = 'active' | 'invalid' | 'pending_verify' | 'archived'
 export type PolicyLibraryItemStatus = 'active' | 'archived'
+export type ContestFaqItemStatus = 'active' | 'archived'
 export type BillingCycle = 'monthly' | 'quarterly' | 'yearly'
 export type DocumentParseStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
 export type DocumentTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
@@ -87,9 +88,16 @@ export type TimelineNodeType = 'registration' | 'submission' | 'preliminary' | '
 export type RubricScoringMode = 'weighted' | 'checklist'
 
 export interface ContestFaqItem {
+  id?: string
+  contestId?: string
+  trackId?: string | null
+  year?: number | null
   question: string
   answer: string
+  sourceLink?: string
   sortOrder?: number
+  status?: ContestFaqItemStatus
+  metadata?: Record<string, unknown>
 }
 
 export interface DisciplineDictionaryItem {
@@ -141,6 +149,11 @@ export interface Track {
   sortOrder?: number
   status?: ContestStatus
   rubricId?: string | null
+  years?: number[]
+  timelines?: TrackTimeline[]
+  resources?: Resource[]
+  faqItems?: ContestFaqItem[]
+  metadata?: Record<string, unknown>
 }
 
 export interface ContestTimeline {
@@ -153,6 +166,7 @@ export interface ContestTimeline {
   endAt: string | null
   note: string
   sourceLink: string
+  metadata?: Record<string, unknown>
 }
 
 export interface TrackTimeline {
@@ -166,6 +180,7 @@ export interface TrackTimeline {
   endAt: string | null
   note: string
   sourceLink: string
+  metadata?: Record<string, unknown>
 }
 
 export interface Contest {
@@ -192,6 +207,8 @@ export interface Contest {
   faq?: string
   faqItems?: ContestFaqItem[]
   timelines?: ContestTimeline[]
+  resources?: Resource[]
+  metadata?: Record<string, unknown>
 }
 
 export interface PublishCheckIssue {
@@ -2134,6 +2151,7 @@ export interface ContestReleaseContestSnapshot {
   faqItems?: ContestFaqItem[]
   hotScore?: number
   visibility?: ContestVisibility
+  metadata?: Record<string, unknown>
 }
 
 export interface ContestReleaseTrackSnapshot {
@@ -2158,6 +2176,7 @@ export interface ContestReleaseTrackSnapshot {
   evidenceRequirements?: string[]
   scoringPoints?: string[]
   deductionItems?: string[]
+  metadata?: Record<string, unknown>
 }
 
 export interface ContestReleaseTimelineSnapshot {
@@ -2170,6 +2189,7 @@ export interface ContestReleaseTimelineSnapshot {
   endAt: string | null
   note: string
   sourceLink: string
+  metadata?: Record<string, unknown>
 }
 
 export interface ContestReleaseTrackTimelineSnapshot {
@@ -2185,6 +2205,7 @@ export interface ContestReleaseTrackTimelineSnapshot {
   endAt: string | null
   note: string
   sourceLink: string
+  metadata?: Record<string, unknown>
 }
 
 export interface ContestReleaseResourceSnapshot {
@@ -2206,6 +2227,22 @@ export interface ContestReleaseResourceSnapshot {
   metadata?: Record<string, unknown>
 }
 
+export interface ContestReleaseFaqSnapshot {
+  liveId?: string | null
+  externalId: string
+  syncSource?: ReleaseSyncSource
+  contestExternalId: string
+  trackExternalId?: string
+  trackLiveId?: string | null
+  year?: number
+  question: string
+  answer: string
+  sourceLink?: string
+  sortOrder?: number
+  status?: ContestFaqItemStatus
+  metadata?: Record<string, unknown>
+}
+
 export interface ContestReleaseSnapshot {
   contestExternalId: string
   contest?: ContestReleaseContestSnapshot | null
@@ -2213,6 +2250,7 @@ export interface ContestReleaseSnapshot {
   timelines: ContestReleaseTimelineSnapshot[]
   trackTimelines: ContestReleaseTrackTimelineSnapshot[]
   resources: ContestReleaseResourceSnapshot[]
+  faqItems: ContestReleaseFaqSnapshot[]
 }
 
 export interface PolicyLibraryItemSnapshot {
@@ -4799,7 +4837,7 @@ export interface PlatformRoleAssignment {
   updatedAt: string
 }
 
-export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy' | 'persona'
+export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy' | 'persona' | 'faq'
 export type FeishuBitableSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
 export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event' | 'scheduled'
 export type FeishuSyncRunMode = 'full' | 'delta'
@@ -5734,6 +5772,7 @@ export interface FeishuBitableSyncCleanupLegacySummary {
   track: number
   trackTimeline: number
   resource: number
+  faq: number
   policy: number
 }
 
@@ -5830,7 +5869,10 @@ export interface FeishuSyncedDataResult {
 export interface ContestDetailPayload {
   contest: Contest
   timelines: ContestTimeline[]
+  trackTimelines?: TrackTimeline[]
   rubrics: Rubric[]
+  resources?: Resource[]
+  faqItems?: ContestFaqItem[]
   resourceStats: Array<{ category: ResourceCategory, count: number }>
 }
 

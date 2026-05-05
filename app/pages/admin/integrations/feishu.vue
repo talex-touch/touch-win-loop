@@ -282,6 +282,7 @@ const SYNC_ITEM_ENTITY_TYPE_LABELS: Record<FeishuBitableSyncItemEntityType, stri
   persona: '人设',
   policy: '政策',
   track_timeline: '赛道时间线',
+  faq: 'FAQ',
 }
 
 const sourceResolveLoading = ref(false)

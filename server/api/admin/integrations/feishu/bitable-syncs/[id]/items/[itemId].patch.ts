@@ -28,7 +28,7 @@ interface PatchItemBody {
   schedule?: Partial<FeishuTaskScheduleConfig>
 }
 
-const ENTITY_TYPES: FeishuBitableSyncItemEntityType[] = ['contest', 'track', 'track_timeline', 'resource', 'policy', 'persona']
+const ENTITY_TYPES: FeishuBitableSyncItemEntityType[] = ['contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq']
 
 function toText(raw: unknown): string {
   return String(raw || '').trim()

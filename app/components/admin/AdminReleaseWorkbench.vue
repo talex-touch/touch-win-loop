@@ -439,6 +439,7 @@ function toContestSnapshot(snapshot: Record<string, unknown>): ContestReleaseSna
     timelines: Array.isArray(raw.timelines) ? raw.timelines : [],
     trackTimelines: Array.isArray(raw.trackTimelines) ? raw.trackTimelines : [],
     resources: Array.isArray(raw.resources) ? raw.resources : [],
+    faqItems: Array.isArray(raw.faqItems) ? raw.faqItems : [],
   }
 }
 

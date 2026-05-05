@@ -25,7 +25,7 @@ import {
 
 const PACKAGE_KIND = 'feishu_bitable_sync_config'
 const SUPPORTED_VERSION = 1
-const ENTITY_TYPES = new Set<FeishuBitableSyncItemEntityType>(['contest', 'track', 'track_timeline', 'resource', 'policy', 'persona'])
+const ENTITY_TYPES = new Set<FeishuBitableSyncItemEntityType>(['contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq'])
 
 export interface FeishuBitableSyncConfigImportDraft {
   name: string

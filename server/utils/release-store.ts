@@ -3,8 +3,10 @@ import type {
   AdminContestListItem,
   AdminReleaseQueueResult,
   ContestAuditAggregates,
+  ContestFaqItemStatus,
   ContestLevel,
   ContestReleaseContestSnapshot,
+  ContestReleaseFaqSnapshot,
   ContestReleaseResourceSnapshot,
   ContestReleaseSnapshot,
   ContestReleaseTimelineSnapshot,
@@ -43,6 +45,7 @@ import type {
 import { createHash, randomUUID } from 'node:crypto'
 import {
   createAdminContest,
+  createAdminContestFaqItem,
   createAdminResource,
   createAdminRubric,
   createAdminTrack,
@@ -51,6 +54,7 @@ import {
   listAdminResources,
   listAdminTrackTimelines,
   patchAdminContest,
+  patchAdminContestFaqItem,
   patchAdminResource,
   patchAdminRubric,
   patchAdminTrack,
@@ -154,7 +158,7 @@ interface ReleaseQueueCurrentUserRow {
 }
 
 interface FeishuExternalRefRow {
-  scope: 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy'
+  scope: FeishuBitableSyncItemEntityType
   external_id: string
   entity_id: string
   metadata: unknown
@@ -679,6 +683,7 @@ function toContestSnapshot(raw: unknown, contestExternalId: string): ContestRele
     timelines: Array.isArray(source.timelines) ? source.timelines as ContestReleaseTimelineSnapshot[] : [],
     trackTimelines: Array.isArray(source.trackTimelines) ? source.trackTimelines as ContestReleaseTrackTimelineSnapshot[] : [],
     resources: Array.isArray(source.resources) ? source.resources as ContestReleaseResourceSnapshot[] : [],
+    faqItems: Array.isArray(source.faqItems) ? source.faqItems as ContestReleaseFaqSnapshot[] : [],
   })
 }
 
@@ -706,6 +711,7 @@ function collectReleaseVersionSyncSources(version: ReleaseVersion): ReleaseSyncS
       ...snapshot.tracks.map(item => item.syncSource),
       ...snapshot.trackTimelines.map(item => item.syncSource),
       ...snapshot.resources.map(item => item.syncSource),
+      ...snapshot.faqItems.map(item => item.syncSource),
     ].filter((item): item is ReleaseSyncSource => Boolean(item))
   }
 
@@ -872,6 +878,7 @@ function computeContestDiffSummary(base: ContestReleaseSnapshot, current: Contes
     computeListDiffSummary(base.timelines, current.timelines),
     computeListDiffSummary(base.trackTimelines, current.trackTimelines),
     computeListDiffSummary(base.resources, current.resources),
+    computeListDiffSummary(base.faqItems, current.faqItems),
   )
 }
 
@@ -894,6 +901,7 @@ function createEmptyContestSnapshot(contestExternalId: string): ContestReleaseSn
     timelines: [],
     trackTimelines: [],
     resources: [],
+    faqItems: [],
   }
 }
 
@@ -2207,7 +2215,7 @@ async function loadContestScopedRefs(
        AND (
          (scope = 'contest' AND external_id = $1)
          OR (
-           scope IN ('track', 'track_timeline', 'resource')
+          scope IN ('track', 'track_timeline', 'resource', 'faq')
            AND metadata->>'contestId' = $2
          )
        )`,
@@ -2264,6 +2272,7 @@ async function buildContestLiveBaseSnapshot(
   const trackExternalIdByTrackId = new Map<string, string>()
   const resourceRefById = new Map<string, FeishuExternalRefRow>()
   const trackTimelineRefById = new Map<string, FeishuExternalRefRow>()
+  const faqRefById = new Map<string, FeishuExternalRefRow>()
   for (const row of refs) {
     if (row.scope === 'track') {
       trackRefById.set(row.entity_id, row)
@@ -2274,6 +2283,9 @@ async function buildContestLiveBaseSnapshot(
     }
     else if (row.scope === 'track_timeline') {
       trackTimelineRefById.set(row.entity_id, row)
+    }
+    else if (row.scope === 'faq') {
+      faqRefById.set(row.entity_id, row)
     }
   }
 
@@ -2298,6 +2310,7 @@ async function buildContestLiveBaseSnapshot(
     faqItems: detail.contest.faqItems || [],
     hotScore: Number(detail.contest.hotScore || 0),
     visibility: detail.contest.visibility || 'internal',
+    metadata: parseJsonObject(detail.contest.metadata),
   }
 
   const tracks: ContestReleaseTrackSnapshot[] = detail.contest.tracks
@@ -2325,6 +2338,7 @@ async function buildContestLiveBaseSnapshot(
         evidenceRequirements: rubric?.evidenceRequirements || [],
         scoringPoints: rubric?.scoringPoints || [],
         deductionItems: rubric?.deductionItems || [],
+        metadata: parseJsonObject(item.metadata),
       }
     })
 
@@ -2344,6 +2358,7 @@ async function buildContestLiveBaseSnapshot(
         endAt: item.endAt || null,
         note: stripManagedNotePrefix(item.note),
         sourceLink: item.sourceLink || '',
+        metadata: parseJsonObject(item.metadata),
       }
     })
 
@@ -2370,6 +2385,7 @@ async function buildContestLiveBaseSnapshot(
       endAt: item.endAt || null,
       note: stripManagedNotePrefix(item.note),
       sourceLink: item.sourceLink || '',
+      metadata: parseJsonObject(item.metadata),
     })
   }
 
@@ -2398,6 +2414,27 @@ async function buildContestLiveBaseSnapshot(
       }
     })
 
+  const faqItems: ContestReleaseFaqSnapshot[] = (detail.contest.faqItems || [])
+    .filter(item => includeUnmanaged || (item.id && faqRefById.has(item.id)))
+    .map((item) => {
+      const ref = item.id ? faqRefById.get(item.id) : undefined
+      const trackId = normalizeText(item.trackId)
+      return {
+        liveId: item.id || null,
+        externalId: ref?.external_id || (item.id ? `manual:faq:${item.id}` : `manual:faq:${createHash('sha1').update(`${item.question}:${item.answer}`).digest('hex').slice(0, 12)}`),
+        contestExternalId: contestExternalId || detail.contest.id,
+        trackExternalId: trackId ? (trackExternalIdByTrackId.get(trackId) || buildManualTrackExternalId(trackId)) : '',
+        trackLiveId: trackId || null,
+        year: item.year ?? undefined,
+        question: item.question,
+        answer: item.answer,
+        sourceLink: item.sourceLink || '',
+        sortOrder: normalizeInteger(item.sortOrder),
+        status: (item.status || 'active') as ContestFaqItemStatus,
+        metadata: parseJsonObject(item.metadata),
+      }
+    })
+
   return {
     snapshot: {
       contestExternalId: contestExternalId || detail.contest.id,
@@ -2406,6 +2443,7 @@ async function buildContestLiveBaseSnapshot(
       timelines,
       trackTimelines: snapshotTrackTimelines,
       resources: snapshotResources,
+      faqItems,
     },
     liveEntityId: contestId,
   }
@@ -2881,12 +2919,13 @@ export async function upsertContestReleaseDraft(
     recordId?: string
     contestExternalId: string
     scopeTitle?: string
-    entityType: 'contest' | 'track' | 'track_timeline' | 'resource'
+    entityType: 'contest' | 'track' | 'track_timeline' | 'resource' | 'faq'
     contest?: ContestReleaseContestSnapshot | null
     track?: ContestReleaseTrackSnapshot | null
     timelines?: ContestReleaseTimelineSnapshot[]
     trackTimelines?: ContestReleaseTrackTimelineSnapshot[]
     resource?: ContestReleaseResourceSnapshot | null
+    faqItem?: ContestReleaseFaqSnapshot | null
   },
 ): Promise<{ version: ReleaseVersion | null, existed: boolean }> {
   const scopeId = normalizeText(input.contestExternalId)
@@ -2977,6 +3016,15 @@ export async function upsertContestReleaseDraft(
     )
     current.resources = resourceResult.items
     existed = resourceResult.existed
+  }
+
+  if (input.entityType === 'faq' && input.faqItem) {
+    const faqResult = upsertSnapshotItem(
+      current.faqItems,
+      attachReleaseSyncSource(input.faqItem, syncSource),
+    )
+    current.faqItems = faqResult.items
+    existed = faqResult.existed
   }
 
   current.tracks.sort((left, right) => normalizeInteger(left.sortOrder) - normalizeInteger(right.sortOrder))
@@ -3214,6 +3262,7 @@ function createEmptyLegacyReleaseSummary(): FeishuBitableSyncCleanupLegacySummar
     track: 0,
     trackTimeline: 0,
     resource: 0,
+    faq: 0,
     policy: 0,
   }
 }
@@ -3221,14 +3270,14 @@ function createEmptyLegacyReleaseSummary(): FeishuBitableSyncCleanupLegacySummar
 function finalizeLegacyReleaseSummary(
   summary: FeishuBitableSyncCleanupLegacySummary,
 ): FeishuBitableSyncCleanupLegacySummary {
-  summary.total = summary.contest + summary.track + summary.trackTimeline + summary.resource + summary.policy
+  summary.total = summary.contest + summary.track + summary.trackTimeline + summary.resource + summary.faq + summary.policy
   return summary
 }
 
 function publishedReleaseScopeKind(
   entityType: FeishuBitableSyncItemEntityType,
 ): ReleaseScopeKind | null {
-  if (entityType === 'contest' || entityType === 'track' || entityType === 'track_timeline' || entityType === 'resource')
+  if (entityType === 'contest' || entityType === 'track' || entityType === 'track_timeline' || entityType === 'resource' || entityType === 'faq')
     return 'contest'
   if (entityType === 'policy')
     return 'policy_library'
@@ -3309,6 +3358,21 @@ async function countPublishedManagedReleaseEntities(
     )
     return Math.max(0, Number(result.rows[0]?.item_count || 0) || 0)
   }
+  if (entityType === 'faq') {
+    const result = await db.query<{ item_count: string }>(
+      `SELECT COALESCE(SUM(jsonb_array_length(
+        CASE
+          WHEN jsonb_typeof(snapshot_json -> 'faqItems') = 'array'
+            THEN snapshot_json -> 'faqItems'
+          ELSE '[]'::JSONB
+        END
+      )), 0)::TEXT AS item_count
+       FROM release_versions
+       WHERE scope_kind = 'contest'
+         AND status = 'published'`,
+    )
+    return Math.max(0, Number(result.rows[0]?.item_count || 0) || 0)
+  }
   if (entityType === 'policy') {
     const result = await db.query<{ item_count: string }>(
       `SELECT COALESCE(SUM(jsonb_array_length(
@@ -3330,7 +3394,7 @@ async function countPublishedManagedReleaseEntities(
 export async function findReleaseSnapshotOwnerByExternalId(
   db: Queryable,
   input: {
-    entityType: 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy'
+    entityType: 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy' | 'faq'
     externalId: string
   },
 ): Promise<{
@@ -3414,6 +3478,26 @@ export async function findReleaseSnapshotOwnerByExternalId(
     WHERE rv.scope_kind = 'contest'
       AND rv.status NOT IN ('published', 'superseded', 'rejected')
       AND resource_item.item ->> 'externalId' = $1
+    ORDER BY rv.updated_at DESC, rv.created_at DESC
+    LIMIT 1`
+  }
+  else if (input.entityType === 'faq') {
+    query = `SELECT
+      rv.id AS release_version_id,
+      rv.status AS release_status,
+      rv.scope_id,
+      NULLIF(faq_item.item -> 'syncSource' ->> 'syncItemId', '') AS owner_sync_item_id
+    FROM release_versions rv
+    JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(rv.snapshot_json -> 'faqItems') = 'array'
+          THEN rv.snapshot_json -> 'faqItems'
+        ELSE '[]'::JSONB
+      END
+    ) AS faq_item(item) ON TRUE
+    WHERE rv.scope_kind = 'contest'
+      AND rv.status NOT IN ('published', 'superseded', 'rejected')
+      AND faq_item.item ->> 'externalId' = $1
     ORDER BY rv.updated_at DESC, rv.created_at DESC
     LIMIT 1`
   }
@@ -3514,6 +3598,16 @@ export async function previewFeishuManagedReleaseDraftCleanup(
             unpublishedReleaseDrafts += 1
           else if (!owner)
             legacyReleaseCleanup.resource += 1
+        }
+        continue
+      }
+      if (input.entityType === 'faq') {
+        for (const item of snapshot.faqItems) {
+          const owner = normalizeReleaseSyncSource(item.syncSource)
+          if (owner?.syncItemId === syncItemId)
+            unpublishedReleaseDrafts += 1
+          else if (!owner)
+            legacyReleaseCleanup.faq += 1
         }
       }
       continue
@@ -3640,6 +3734,20 @@ export async function cleanupFeishuManagedReleaseDrafts(
             return true
           if (removeLegacy)
             legacyReleaseCleanup.resource += 1
+          unpublishedReleaseDrafts += 1
+          changed = true
+          return false
+        })
+      }
+      else if (input.entityType === 'faq') {
+        current.faqItems = current.faqItems.filter((item) => {
+          const owner = normalizeReleaseSyncSource(item.syncSource)
+          const removeManaged = owner?.syncItemId === syncItemId && !preserveExternalIds.has(item.externalId)
+          const removeLegacy = !owner
+          if (!removeManaged && !removeLegacy)
+            return true
+          if (removeLegacy)
+            legacyReleaseCleanup.faq += 1
           unpublishedReleaseDrafts += 1
           changed = true
           return false
@@ -4086,6 +4194,7 @@ async function publishContestRelease(
           faqItems: snapshot.contest.faqItems || [],
           hotScore: Number(snapshot.contest.hotScore || 0),
           visibility: snapshot.contest.visibility || 'internal',
+          metadata: parseJsonObject(snapshot.contest.metadata),
         },
       })
       contestId = normalizeText(patched?.id || contestId)
@@ -4107,6 +4216,7 @@ async function publishContestRelease(
         faqItems: snapshot.contest.faqItems || [],
         hotScore: Number(snapshot.contest.hotScore || 0),
         visibility: snapshot.contest.visibility || 'internal',
+        metadata: parseJsonObject(snapshot.contest.metadata),
       })
       contestId = created.id
     }
@@ -4116,6 +4226,11 @@ async function publishContestRelease(
       scope: 'contest',
       externalId: input.version.scopeId,
       entityId: contestId,
+      metadata: {
+        ...parseJsonObject(snapshot.contest.metadata),
+        contestId,
+        releaseVersionId: input.version.id,
+      },
     })
   }
 
@@ -4128,12 +4243,15 @@ async function publishContestRelease(
   })
   const trackRefByExternalId = new Map<string, FeishuExternalRefRow>()
   const resourceRefByExternalId = new Map<string, FeishuExternalRefRow>()
+  const faqRefByExternalId = new Map<string, FeishuExternalRefRow>()
   const directTrackTimelineRefByExternalId = new Map<string, FeishuExternalRefRow>()
   for (const row of currentRefs) {
     if (row.scope === 'track')
       trackRefByExternalId.set(row.external_id, row)
     else if (row.scope === 'resource')
       resourceRefByExternalId.set(row.external_id, row)
+    else if (row.scope === 'faq')
+      faqRefByExternalId.set(row.external_id, row)
     else if (row.scope === 'track_timeline')
       directTrackTimelineRefByExternalId.set(row.external_id, row)
   }
@@ -4172,6 +4290,7 @@ async function publishContestRelease(
           deliverableTypes: track.deliverableTypes || [],
           sortOrder: normalizeInteger(track.sortOrder),
           status: 'published',
+          metadata: parseJsonObject(track.metadata),
         },
       })
       trackId = normalizeText(patched?.id || trackId)
@@ -4194,6 +4313,7 @@ async function publishContestRelease(
         deliverableTypes: track.deliverableTypes || [],
         sortOrder: normalizeInteger(track.sortOrder),
         status: 'published',
+        metadata: parseJsonObject(track.metadata),
       })
       trackId = created.id
     }
@@ -4214,7 +4334,9 @@ async function publishContestRelease(
       externalId: track.externalId,
       entityId: trackId,
       metadata: {
+        ...parseJsonObject(track.metadata),
         contestId,
+        releaseVersionId: input.version.id,
       },
     })
     track.liveId = trackId
@@ -4274,9 +4396,10 @@ async function publishContestRelease(
         end_at,
         note,
         source_link,
+        metadata,
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::JSONB, NOW(), NOW())`,
       [
         randomUUID(),
         contestId,
@@ -4287,6 +4410,7 @@ async function publishContestRelease(
         timeline.endAt || null,
         buildManagedNote(timeline.externalId, timeline.note),
         normalizeText(timeline.sourceLink),
+        JSON.stringify(parseJsonObject(timeline.metadata)),
       ],
     )
   }
@@ -4336,6 +4460,7 @@ async function publishContestRelease(
           endAt: timeline.endAt || null,
           note: buildManagedNote(timeline.externalId, timeline.note),
           sourceLink: normalizeText(timeline.sourceLink),
+          metadata: parseJsonObject(timeline.metadata),
         },
       })
       timelineId = normalizeText(patched?.id || timelineId)
@@ -4353,6 +4478,7 @@ async function publishContestRelease(
         endAt: timeline.endAt || null,
         note: buildManagedNote(timeline.externalId, timeline.note),
         sourceLink: normalizeText(timeline.sourceLink),
+        metadata: parseJsonObject(timeline.metadata),
       })
       timelineId = created.id
     }
@@ -4363,8 +4489,10 @@ async function publishContestRelease(
       externalId: timeline.externalId,
       entityId: timelineId,
       metadata: {
+        ...parseJsonObject(timeline.metadata),
         contestId,
         trackId,
+        releaseVersionId: input.version.id,
       },
     })
   }
@@ -4394,9 +4522,10 @@ async function publishContestRelease(
         end_at,
         note,
         source_link,
+        metadata,
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::JSONB, NOW(), NOW())`,
       [
         randomUUID(),
         contestId,
@@ -4408,6 +4537,7 @@ async function publishContestRelease(
         timeline.endAt || null,
         buildManagedNote(timeline.externalId, timeline.note),
         normalizeText(timeline.sourceLink),
+        JSON.stringify(parseJsonObject(timeline.metadata)),
       ],
     )
   }
@@ -4469,10 +4599,7 @@ async function publishContestRelease(
       scope: 'resource',
       externalId: resource.externalId,
       entityId: resourceId,
-      metadata: {
-        contestId,
-        trackId,
-      },
+      metadata,
     })
     resource.liveId = resourceId
     resource.trackLiveId = trackId || null
@@ -4488,6 +4615,86 @@ async function publishContestRelease(
       actorUserId: input.actorUserId,
       contestId,
       resourceId,
+      bypassSourceOfTruthGuard: true,
+      patch: {
+        status: 'archived',
+      },
+    })
+  }
+
+  const activeFaqExternalIds = new Set(snapshot.faqItems.map(item => item.externalId))
+  for (const faq of snapshot.faqItems) {
+    const existingRef = faqRefByExternalId.get(faq.externalId)
+    const trackId = faq.trackExternalId ? (trackIdByExternalId.get(faq.trackExternalId) || '') : ''
+    const metadata = {
+      ...parseJsonObject(faq.metadata),
+      contestId,
+      trackId,
+      source: 'feishu_bitable',
+      releaseVersionId: input.version.id,
+    }
+
+    let faqId = normalizeText(faq.liveId || '') || normalizeText(existingRef?.entity_id)
+    if (faqId) {
+      const patched = await patchAdminContestFaqItem(db, {
+        actorUserId: input.actorUserId,
+        contestId,
+        faqItemId: faqId,
+        bypassSourceOfTruthGuard: true,
+        patch: {
+          trackId: trackId || null,
+          year: faq.year ?? null,
+          question: faq.question,
+          answer: faq.answer,
+          sourceLink: normalizeText(faq.sourceLink),
+          sortOrder: normalizeInteger(faq.sortOrder),
+          status: (faq.status || 'active') as ContestFaqItemStatus,
+          metadata,
+        },
+      })
+      faqId = normalizeText(patched?.id || faqId)
+    }
+    else {
+      const created = await createAdminContestFaqItem(db, {
+        actorUserId: input.actorUserId,
+        contestId,
+        bypassSourceOfTruthGuard: true,
+        trackId: trackId || null,
+        year: faq.year ?? null,
+        question: faq.question,
+        answer: faq.answer,
+        sourceLink: normalizeText(faq.sourceLink),
+        sortOrder: normalizeInteger(faq.sortOrder),
+        status: (faq.status || 'active') as ContestFaqItemStatus,
+        metadata,
+      })
+      faqId = created.id || ''
+    }
+
+    if (!faqId)
+      continue
+
+    await upsertFeishuExternalRef(db, {
+      syncItemId: normalizeText(input.version.syncItemId) || input.version.id,
+      scope: 'faq',
+      externalId: faq.externalId,
+      entityId: faqId,
+      metadata,
+    })
+    faq.liveId = faqId
+    faq.trackLiveId = trackId || null
+  }
+
+  for (const [externalId, ref] of faqRefByExternalId) {
+    if (activeFaqExternalIds.has(externalId))
+      continue
+    const faqId = normalizeText(ref.entity_id)
+    if (!faqId)
+      continue
+    await patchAdminContestFaqItem(db, {
+      actorUserId: input.actorUserId,
+      contestId,
+      faqItemId: faqId,
       bypassSourceOfTruthGuard: true,
       patch: {
         status: 'archived',
@@ -4518,6 +4725,7 @@ async function publishContestRelease(
       timelineCount: snapshot.timelines.length,
       trackTimelineCount: snapshot.trackTimelines.length,
       resourceCount: snapshot.resources.length,
+      faqCount: snapshot.faqItems.length,
     },
   })
 
@@ -4607,6 +4815,10 @@ async function publishPolicyRelease(
       scope: 'policy',
       externalId: item.externalId,
       entityId: policyId,
+      metadata: {
+        ...parseJsonObject(item.metadata),
+        releaseVersionId: input.version.id,
+      },
     })
     item.liveId = policyId
   }

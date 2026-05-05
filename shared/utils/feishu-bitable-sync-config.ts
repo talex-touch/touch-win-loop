@@ -25,6 +25,7 @@ const ENTITY_TYPE_SOURCE_HINTS: Record<FeishuBitableSyncItemEntityType, string[]
   resource: ['资料', '资源', '素材', '文档', 'resource', 'material'],
   policy: ['政策', '会议', '大会', 'policy', 'notice'],
   persona: ['人设', '评委', '答辩', 'persona', 'judge'],
+  faq: ['faq', '常见问题', '常见疑问', '问答', 'q&a'],
 }
 
 const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, string[]> = {
@@ -34,6 +35,7 @@ const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, strin
   resource: ['externalId', 'contestExternalId', 'title', 'attachment'],
   policy: ['externalId', 'meetingName'],
   persona: ['externalId', 'contestExternalId', 'object'],
+  faq: ['externalId', 'contestExternalId', 'question'],
 }
 
 const REQUIRED_MAPPING_FIELD_GROUPS: Record<FeishuBitableSyncItemEntityType, FeishuRequiredSyncItemFieldGroup[]> = {
@@ -42,6 +44,7 @@ const REQUIRED_MAPPING_FIELD_GROUPS: Record<FeishuBitableSyncItemEntityType, Fei
   track_timeline: REQUIRED_MAPPING_FIELD_KEYS.track_timeline.map(key => ({ keys: [key], label: key, mode: 'all' })),
   resource: REQUIRED_MAPPING_FIELD_KEYS.resource.map(key => ({ keys: [key], label: key, mode: 'all' })),
   policy: REQUIRED_MAPPING_FIELD_KEYS.policy.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  faq: REQUIRED_MAPPING_FIELD_KEYS.faq.map(key => ({ keys: [key], label: key, mode: 'all' })),
   persona: [
     ...REQUIRED_MAPPING_FIELD_KEYS.persona.map(key => ({ keys: [key], label: key, mode: 'all' as const })),
     {
@@ -162,6 +165,32 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
     }
   }
 
+  if (entityType === 'resource') {
+    return {
+      mapping: {
+        externalIdField: '',
+        contestExternalIdField: '',
+        trackExternalIdField: '',
+        fieldMap: {
+          title: '',
+          category: '',
+          attachment: '',
+          attachmentSummary: '',
+          year: '',
+        },
+      },
+      options: {
+        contestId: '',
+        defaultVisibility: 'internal',
+        defaultStatus: 'active',
+        defaultResourceCategory: 'basic_info',
+        defaultResourceAccessLevel: 'public',
+      },
+      writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
+    }
+  }
+
   if (entityType === 'policy') {
     return {
       mapping: {
@@ -209,25 +238,34 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
     }
   }
 
+  if (entityType === 'faq') {
+    return {
+      mapping: {
+        externalIdField: '',
+        contestExternalIdField: '',
+        trackExternalIdField: '',
+        fieldMap: {
+          year: '',
+          question: '',
+          answer: '',
+          sourceLink: '',
+          sortOrder: '',
+        },
+      },
+      options: {
+        contestId: '',
+      },
+      writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
+    }
+  }
+
   return {
     mapping: {
       externalIdField: '',
-      contestExternalIdField: '',
-      trackExternalIdField: '',
-      fieldMap: {
-        title: '',
-        category: '',
-        attachment: '',
-        attachmentSummary: '',
-      },
+      fieldMap: {},
     },
-    options: {
-      contestId: '',
-      defaultVisibility: 'internal',
-      defaultStatus: 'active',
-      defaultResourceCategory: 'basic_info',
-      defaultResourceAccessLevel: 'public',
-    },
+    options: {},
     writeback: buildDefaultWriteback(),
     autoSync: buildDefaultAutoSync(),
   }
@@ -281,7 +319,7 @@ export function suggestSyncItemEntityType(input: {
   if (!sourceText)
     return null
 
-  for (const entityType of ['persona', 'track_timeline', 'track', 'policy', 'resource', 'contest'] as const) {
+  for (const entityType of ['persona', 'faq', 'track_timeline', 'track', 'policy', 'resource', 'contest'] as const) {
     const hints = ENTITY_TYPE_SOURCE_HINTS[entityType] || []
     if (hints.some(hint => sourceText.includes(normalizeSourceHintText(hint))))
       return entityType
@@ -307,7 +345,9 @@ export function buildSuggestedSyncItemName(
           ? '政策同步'
           : entityType === 'persona'
             ? '人设同步'
-            : '资料同步'
+            : entityType === 'faq'
+              ? 'FAQ 同步'
+              : '资料同步'
 
   if (normalizedTableName && normalizedViewName)
     return `${normalizedTableName} / ${normalizedViewName} · ${entityLabel}`

@@ -45,6 +45,9 @@ const COMMON_TARGET_ALIASES: Record<string, string[]> = {
   attachment: ['attachment', '附件', '附件链接', '资料附件', '资源附件', '下载链接', '材料链接', '文件链接'],
   attachmentSummary: ['attachmentSummary', 'attachment_summary', '附件摘要', '摘要', '资料摘要'],
   year: ['year', '年份', '年度'],
+  question: ['question', '问题', '疑问', '常见问题', '常见疑问', 'faq问题'],
+  answer: ['answer', '答案', '回答', '解答', 'faq答案'],
+  sortOrder: ['sortOrder', 'sort_order', '排序', '顺序', '序号'],
   meetingName: ['meetingName', 'meeting_name', '会议名称', '大会名称', '政策名称'],
   conferenceDate: ['conferenceDate', 'conference_date', '大会日期', '会议日期', '发布时间'],
   importance: ['importance', '重要程度', '重要级别', '优先级'],
@@ -80,6 +83,12 @@ const ENTITY_TARGET_ALIASES: Partial<Record<FeishuBitableSyncItemEntityType, Rec
   resource: {
     title: ['资料标题', '资源标题', '材料标题'],
     attachment: ['资料附件', '资源附件', '资料链接', '资源链接'],
+    year: ['资料年份', '资源年份', '材料年份'],
+  },
+  faq: {
+    externalId: ['FAQ编号', '问题编号', '问答编号'],
+    question: ['问题', '常见问题', '常见疑问'],
+    answer: ['答案', '回答', '解答'],
   },
   policy: {
     externalId: ['会议编号', '大会编号', '政策编号'],

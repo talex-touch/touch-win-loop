@@ -79,6 +79,11 @@ import {
   upsertPolicyLibraryReleaseDraft,
 } from '~~/server/utils/release-store'
 import {
+  deriveFeishuCodeMetadata,
+  deriveTrackCodeMetadata,
+  resolveResourceYear,
+} from '~~/shared/utils/contest-code-metadata'
+import {
   buildFeishuPersonaSyncDrafts,
   computeFeishuPersonaStaleExternalIds,
   countFeishuPersonaFilledSlots,
@@ -194,7 +199,7 @@ async function assertFeishuEntityOwnership(
   db: Queryable,
   input: {
     syncItemId: string
-    entityType: 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy' | 'persona'
+    entityType: FeishuBitableSyncItemEntityType
     externalId: string
   },
 ): Promise<ApplyRecordResult | null> {
@@ -325,6 +330,7 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
     'category',
     'attachment',
     'attachmentSummary',
+    'year',
   ],
   policy: [
     'externalId',
@@ -349,6 +355,16 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
     'object',
     ...PERSONA_SLOT_FIELD_KEYS,
   ],
+  faq: [
+    'externalId',
+    'contestExternalId',
+    'trackExternalId',
+    'year',
+    'question',
+    'answer',
+    'sourceLink',
+    'sortOrder',
+  ],
 }
 
 const REQUIRED_TARGET_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> = {
@@ -358,6 +374,7 @@ const REQUIRED_TARGET_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> 
   resource: ['contestExternalId', 'title', 'attachment'],
   policy: ['externalId', 'meetingName'],
   persona: ['externalId', 'contestExternalId', 'object'],
+  faq: ['contestExternalId', 'question'],
 }
 
 const ARRAY_PREVIEW_FIELDS = new Set([
@@ -430,7 +447,7 @@ function toStringArray(raw: unknown): string[] {
 }
 
 function isEntityType(raw: unknown): raw is FeishuBitableSyncItemEntityType {
-  return raw === 'contest' || raw === 'track' || raw === 'track_timeline' || raw === 'resource' || raw === 'policy' || raw === 'persona'
+  return raw === 'contest' || raw === 'track' || raw === 'track_timeline' || raw === 'resource' || raw === 'policy' || raw === 'persona' || raw === 'faq'
 }
 
 function resolvePreviewOverrideString(
@@ -1070,7 +1087,7 @@ export function getFeishuSyncItemManualRunBlockReason(input: {
   const options = normalizeOptions(input.options, mapping.defaults)
 
   if (
-    (input.entityType === 'track' || input.entityType === 'track_timeline' || input.entityType === 'resource')
+    (input.entityType === 'track' || input.entityType === 'track_timeline' || input.entityType === 'resource' || input.entityType === 'faq')
     && !hasMappingValue(mapping, 'contestExternalId')
     && !toText(options.contestId)
   ) {
@@ -1372,6 +1389,10 @@ function buildContestReleaseTimelines(
   contestExternalId: string,
   timelineText: string,
 ): ContestReleaseTimelineSnapshot[] {
+  const contestMetadata = deriveFeishuCodeMetadata({
+    entityType: 'contest',
+    externalId: contestExternalId,
+  })
   return parseTimelineTextLines(timelineText).map(item => ({
     externalId: buildContestDerivedTimelineExternalId(contestExternalId, item.rawLine),
     year: item.year,
@@ -1382,6 +1403,10 @@ function buildContestReleaseTimelines(
     endAt: item.endAt,
     note: item.rawLine,
     sourceLink: '',
+    metadata: {
+      ...contestMetadata,
+      yearSource: item.rawLine.match(/\b(20\d{2}|21\d{2})\b/) ? 'timeline_text' : 'parser_current_year',
+    },
   }))
 }
 
@@ -1389,10 +1414,12 @@ function buildTrackReleaseTimelines(
   trackExternalId: string,
   timelineText: string,
 ): ContestReleaseTrackTimelineSnapshot[] {
+  const trackMetadata = deriveTrackCodeMetadata(trackExternalId)
+  const trackCodeYear = Number(trackMetadata.year || 0)
   return parseTimelineTextLines(timelineText).map(item => ({
     externalId: buildTrackDerivedTimelineExternalId(trackExternalId, item.rawLine),
     trackExternalId,
-    year: item.year,
+    year: item.rawLine.match(/\b(20\d{2}|21\d{2})\b/) ? item.year : (trackCodeYear || item.year),
     nodeType: item.nodeType,
     businessNodeLabel: item.businessNodeLabel,
     recognitionStatus: item.recognitionStatus,
@@ -1400,6 +1427,14 @@ function buildTrackReleaseTimelines(
     endAt: item.endAt,
     note: item.rawLine,
     sourceLink: '',
+    metadata: {
+      ...trackMetadata,
+      yearSource: item.rawLine.match(/\b(20\d{2}|21\d{2})\b/)
+        ? 'timeline_text'
+        : trackCodeYear
+          ? 'track_code'
+          : 'parser_current_year',
+    },
   }))
 }
 
@@ -2099,6 +2134,13 @@ async function applyContestRecord(
     keywords,
     recommendedFor,
     visibility: input.options.defaultVisibility,
+    metadata: deriveFeishuCodeMetadata({
+      entityType: 'contest',
+      externalId: input.externalId,
+      fields: {
+        title: name,
+      },
+    }),
   }
   const timelines = buildContestReleaseTimelines(input.externalId, timelineText)
 
@@ -2233,6 +2275,13 @@ async function applyTrackRecord(
     evidenceRequirements,
     scoringPoints,
     deductionItems,
+    metadata: deriveFeishuCodeMetadata({
+      entityType: 'track',
+      externalId: input.externalId,
+      fields: {
+        title: name,
+      },
+    }),
   }
   const trackTimelines = buildTrackReleaseTimelines(input.externalId, timelineText)
 
@@ -2418,11 +2467,13 @@ async function applyResourceRecord(
     categoryText,
     attachment,
     attachmentSummary,
+    explicitYear,
   ] = await Promise.all([
     input.resolver.getText('title'),
     input.resolver.getText('category'),
     input.resolver.getText('attachment'),
     input.resolver.getText('attachmentSummary'),
+    input.resolver.getText('year'),
   ])
   if (!title || !attachment) {
     const missingFields = [
@@ -2445,6 +2496,22 @@ async function applyResourceRecord(
   const trackLink = await resolveTrackIdByExternal(db, {
     resolver: input.resolver,
   })
+  const trackMetadata = trackLink.trackExternalId ? deriveTrackCodeMetadata(trackLink.trackExternalId) : null
+  const yearResult = resolveResourceYear({
+    explicitYear,
+    externalId: input.externalId,
+    title,
+    trackMetadata,
+    fallbackYear: new Date().getFullYear(),
+  })
+  const codeMetadata = deriveFeishuCodeMetadata({
+    entityType: 'resource',
+    externalId: input.externalId,
+    fields: {
+      title,
+      year: explicitYear,
+    },
+  })
   const resourceSnapshot: ContestReleaseResourceSnapshot = {
     externalId: input.externalId,
     contestExternalId: contestLink.contestExternalId,
@@ -2452,15 +2519,18 @@ async function applyResourceRecord(
     title,
     category: mapResourceCategory(categoryText, input.options.defaultResourceCategory),
     url: attachment,
-    year: new Date().getFullYear(),
+    year: yearResult.year,
     summary: attachmentSummary,
     content: '',
     sourceType: 'feishu_bitable',
     accessLevel: input.options.defaultResourceAccessLevel,
     status: input.options.defaultStatus,
     metadata: {
+      ...codeMetadata,
       source: 'feishu_bitable',
       recordId: input.record.recordId,
+      yearSource: yearResult.source,
+      ...(trackLink.trackExternalId ? { trackExternalId: trackLink.trackExternalId } : {}),
     },
   }
 
@@ -2474,6 +2544,130 @@ async function applyResourceRecord(
       scopeTitle: contestLink.scopeTitle || contestLink.contestExternalId,
       entityType: 'resource',
       resource: resourceSnapshot,
+    })
+    return {
+      status: draft.existed ? 'updated' : 'created',
+      externalId: input.externalId,
+      entityId: draft.version?.id || '',
+    }
+  }
+
+  return {
+    status: 'created',
+    externalId: input.externalId,
+  }
+}
+
+async function applyFaqRecord(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    runId?: string
+    record: FeishuBitableRecord
+    externalId: string
+    mapping: NormalizedMapping
+    options: NormalizedOptions
+    resolver: RecordValueResolver
+    dryRun: boolean
+  },
+): Promise<ApplyRecordResult> {
+  const ownershipConflict = await assertFeishuEntityOwnership(db, {
+    syncItemId: input.syncItemId,
+    entityType: 'faq',
+    externalId: input.externalId,
+  })
+  if (ownershipConflict)
+    return ownershipConflict
+
+  const contestLink = await resolveContestIdByExternal(db, {
+    options: input.options,
+    resolver: input.resolver,
+  })
+  if (!contestLink.contestExternalId) {
+    return {
+      status: 'skipped',
+      externalId: input.externalId,
+      reasonCode: 'CONTEST_REF_NOT_FOUND',
+      message: 'FAQ 记录未找到关联竞赛编号。',
+      payload: {},
+    }
+  }
+
+  const [
+    yearText,
+    question,
+    answer,
+    sourceLink,
+    sortOrderText,
+  ] = await Promise.all([
+    input.resolver.getText('year'),
+    input.resolver.getText('question'),
+    input.resolver.getText('answer'),
+    input.resolver.getText('sourceLink'),
+    input.resolver.getText('sortOrder'),
+  ])
+  if (!question) {
+    return {
+      status: 'skipped',
+      externalId: input.externalId,
+      reasonCode: 'MISSING_REQUIRED_FIELD',
+      message: 'FAQ 记录缺少必要字段 question。',
+      payload: {
+        hasQuestion: false,
+        missingFields: ['question'],
+      },
+    }
+  }
+
+  const trackLink = await resolveTrackIdByExternal(db, {
+    resolver: input.resolver,
+  })
+  const trackMetadata = trackLink.trackExternalId ? deriveTrackCodeMetadata(trackLink.trackExternalId) : null
+  const explicitYear = Number(yearText || 0)
+  const derivedYear = Number.isInteger(explicitYear) && explicitYear >= 1900 && explicitYear <= 2100
+    ? explicitYear
+    : Number(trackMetadata?.year || 0) || undefined
+  const faqItem = {
+    externalId: input.externalId,
+    contestExternalId: contestLink.contestExternalId,
+    trackExternalId: trackLink.trackExternalId || '',
+    year: derivedYear,
+    question,
+    answer,
+    sourceLink,
+    sortOrder: Number.isFinite(Number(sortOrderText)) ? Math.trunc(Number(sortOrderText)) : 0,
+    status: 'active' as const,
+    metadata: {
+      ...deriveFeishuCodeMetadata({
+        entityType: 'faq',
+        externalId: input.externalId,
+        fields: {
+          title: question,
+          year: yearText,
+        },
+      }),
+      ...(trackMetadata ? { trackCode: trackMetadata } : {}),
+      yearSource: Number.isInteger(explicitYear) && explicitYear >= 1900 && explicitYear <= 2100
+        ? 'explicit_year'
+        : trackMetadata?.year
+          ? 'track_code'
+          : 'none',
+      source: 'feishu_bitable',
+      recordId: input.record.recordId,
+    },
+  }
+
+  if (!input.dryRun && input.runId) {
+    const draft = await upsertContestReleaseDraft(db, {
+      actorUserId: input.actorUserId,
+      syncItemId: input.syncItemId,
+      syncRunId: input.runId,
+      recordId: input.record.recordId,
+      contestExternalId: contestLink.contestExternalId,
+      scopeTitle: contestLink.scopeTitle || contestLink.contestExternalId,
+      entityType: 'faq',
+      faqItem,
     })
     return {
       status: draft.existed ? 'updated' : 'created',
@@ -2576,6 +2770,13 @@ async function applyPolicyRecord(
     douyinMaterialLink,
     xiaohongshuMaterial,
     xiaohongshuMaterialLink,
+    metadata: deriveFeishuCodeMetadata({
+      entityType: 'policy',
+      externalId: explicitExternalId,
+      fields: {
+        title: meetingName,
+      },
+    }),
     status: 'active',
   }
 
@@ -2870,6 +3071,20 @@ async function applySingleRecord(
 
   if (input.entityType === 'resource') {
     return applyResourceRecord(db, {
+      actorUserId: input.actorUserId,
+      syncItemId: input.syncItemId,
+      runId: input.runId,
+      record: input.record,
+      externalId,
+      mapping: input.mapping,
+      options: input.options,
+      resolver,
+      dryRun: input.dryRun,
+    })
+  }
+
+  if (input.entityType === 'faq') {
+    return applyFaqRecord(db, {
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
       runId: input.runId,

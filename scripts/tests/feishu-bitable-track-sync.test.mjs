@@ -329,6 +329,42 @@ describe('版本审批与赛道同步新流程', () => {
     assert.match(releaseStoreSource, /patch: \{[\s\S]*currentSeason: effectiveMetadata\.currentSeason/, '发布版本时未按有效元信息回写 currentSeason')
   })
 
+  it('飞书字段口径新增 FAQ、资料年份和编号 metadata 派生', async () => {
+    const [
+      configSource,
+      guessSource,
+      editorSource,
+      serviceSource,
+      metadataSource,
+      releaseStoreSource,
+    ] = await Promise.all([
+      readSource('shared/utils/feishu-bitable-sync-config.ts'),
+      readSource('shared/utils/feishu-bitable-field-guess.ts'),
+      readSource('app/components/admin/AdminFeishuBitableSyncEditor.vue'),
+      readSource('server/services/feishu/bitable-sync.ts'),
+      readSource('shared/utils/contest-code-metadata.ts'),
+      readSource('server/utils/release-store.ts'),
+    ])
+
+    assert.match(configSource, /faq:\s*\['externalId', 'contestExternalId', 'question'\]/, 'FAQ 同步缺少必要字段配置')
+    assert.match(configSource, /if \(entityType === 'faq'\)/, '默认同步项配置缺少 FAQ entity')
+    assert.match(configSource, /if \(entityType === 'resource'\) \{[\s\S]*year:\s*''/, '资料库默认配置缺少 year 字段')
+    assert.match(guessSource, /question:[\s\S]*问题/, '字段猜测缺少 FAQ question alias')
+    assert.match(guessSource, /resource:[\s\S]*year/, '资料字段猜测缺少 year alias')
+    assert.match(editorSource, /MAPPING_OPTIONS[\s\S]*faq:[\s\S]*question（问题）[\s\S]*answer（答案）/, '飞书配置 UI 缺少 FAQ 映射选项')
+    assert.match(editorSource, /resource:[\s\S]*year（年份）/, '飞书配置 UI 资料映射缺少年份')
+    assert.match(serviceSource, /function buildTrackReleaseTimelines[\s\S]*deriveTrackCodeMetadata[\s\S]*yearSource/, '赛道时间线解析缺少从赛道编号兜底年份并记录 yearSource')
+    assert.match(serviceSource, /async function applyResourceRecord[\s\S]*resolveResourceYear[\s\S]*yearSource/, '资料同步缺少年份解析和 yearSource metadata')
+    assert.match(serviceSource, /async function applyFaqRecord[\s\S]*entityType: 'faq'[\s\S]*faqItem/, '飞书同步缺少 FAQ 独立导入路径')
+    assert.match(serviceSource, /async function applyPolicyRecord[\s\S]*deriveFeishuCodeMetadata/, '政策同步缺少编号 metadata 派生')
+    assert.match(metadataSource, /export function deriveContestCodeMetadata/, '缺少竞赛编号 metadata 派生工具')
+    assert.match(metadataSource, /export function deriveTrackCodeMetadata/, '缺少赛道编号 metadata 派生工具')
+    assert.match(metadataSource, /export function deriveResourceCodeMetadata/, '缺少资料编号 metadata 派生工具')
+    assert.match(metadataSource, /export function derivePolicyCodeMetadata/, '缺少政策编号 metadata 派生工具')
+    assert.match(metadataSource, /codeParsed: false/, '编号解析失败应落 metadata 而不是阻断导入')
+    assert.match(releaseStoreSource, /metadata: \{\s*\.\.\.parseJsonObject\(item\.metadata\),\s*releaseVersionId: input\.version\.id,\s*\}/, '政策发布 external ref 未保存派生 metadata')
+  })
+
   it('管理后台已经提供版本队列、竞赛版本页和政策版本页入口', async () => {
     const adminIndexSource = await readSource('app/pages/admin/index.vue')
     const contestWorkspaceSource = await readSource('app/pages/admin/contests/[id].vue')
