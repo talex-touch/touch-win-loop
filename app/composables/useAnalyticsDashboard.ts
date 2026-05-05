@@ -13,6 +13,14 @@ import type {
   AnalyticsTrendAnalysisPayload,
 } from '~~/shared/types/analytics'
 import type { ApiResponse, AuthMeResult, Contest, Project } from '~~/shared/types/domain'
+import {
+  applyAnalyticsAwardMockupFallback,
+  applyAnalyticsDifficultyMockupFallback,
+  applyAnalyticsOverviewMockupFallback,
+  applyAnalyticsPreparationMockupFallback,
+  applyAnalyticsProfileMockupFallback,
+  applyAnalyticsTrendMockupFallback,
+} from '~/utils/analytics-mockup'
 import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 interface AnalyticsOption<T extends string> {
@@ -479,7 +487,7 @@ export function useAnalyticsDashboard() {
       if (requestId !== overviewRequestId)
         return
 
-      overview.value = response.data
+      overview.value = applyAnalyticsOverviewMockupFallback(response.data)
     }
     catch (error: any) {
       if (requestId !== overviewRequestId)
@@ -518,7 +526,7 @@ export function useAnalyticsDashboard() {
           query: buildRequestQuery(),
         })
         if (requestId === detailRequestId)
-          trendAnalysis.value = response.data
+          trendAnalysis.value = applyAnalyticsTrendMockupFallback(response.data)
       }
 
       if (view === 'awards') {
@@ -526,7 +534,7 @@ export function useAnalyticsDashboard() {
           query: buildRequestQuery(),
         })
         if (requestId === detailRequestId)
-          awardAnalysis.value = response.data
+          awardAnalysis.value = applyAnalyticsAwardMockupFallback(response.data)
       }
 
       if (view === 'profile') {
@@ -534,7 +542,7 @@ export function useAnalyticsDashboard() {
           query: buildRequestQuery(),
         })
         if (requestId === detailRequestId)
-          profileAnalysis.value = response.data
+          profileAnalysis.value = applyAnalyticsProfileMockupFallback(response.data)
       }
 
       if (view === 'difficulty') {
@@ -542,7 +550,7 @@ export function useAnalyticsDashboard() {
           query: buildRequestQuery(),
         })
         if (requestId === detailRequestId)
-          difficultyAnalysis.value = response.data
+          difficultyAnalysis.value = applyAnalyticsDifficultyMockupFallback(response.data)
       }
 
       if (view === 'preparation') {
@@ -550,7 +558,7 @@ export function useAnalyticsDashboard() {
           query: buildRequestQuery(),
         })
         if (requestId === detailRequestId)
-          preparationAnalysis.value = response.data
+          preparationAnalysis.value = applyAnalyticsPreparationMockupFallback(response.data)
       }
     }
     catch (error: any) {

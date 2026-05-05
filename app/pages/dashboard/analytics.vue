@@ -179,6 +179,14 @@ const capabilityPreviewItems = computed(() => {
   return overview.value.capabilityRadar.slice(0, 5)
 })
 
+const awardPreviewItems = computed(() => {
+  return overview.value.awardFeatureTags.slice(0, 6)
+})
+
+const timelinePreviewItems = computed(() => {
+  return overview.value.preparationTimeline.slice(0, 6)
+})
+
 const activeSummary = computed(() => {
   if (activeView.value === 'trends')
     return trendAnalysis.value.summary
@@ -516,6 +524,50 @@ onMounted(() => {
                 <div class="analytics-capability-bar">
                   <span :style="{ width: `${clampPercent(item.score)}%` }" />
                 </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="analytics-chart-panel">
+            <div class="analytics-panel-head">
+              <div>
+                <div class="analytics-section-label">
+                  获奖特征
+                </div>
+                <h4>高频特征速览</h4>
+              </div>
+              <span>{{ awardPreviewItems.length }} 项</span>
+            </div>
+
+            <div class="analytics-feature-chip-grid">
+              <div v-for="item in awardPreviewItems" :key="item.label" class="analytics-feature-chip">
+                <div class="analytics-feature-chip__head">
+                  <span>{{ item.label }}</span>
+                  <strong>{{ item.weight }}</strong>
+                </div>
+                <p>{{ item.description }}</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="analytics-chart-panel">
+            <div class="analytics-panel-head">
+              <div>
+                <div class="analytics-section-label">
+                  备赛节奏
+                </div>
+                <h4>近期节点</h4>
+              </div>
+              <span>{{ timelinePreviewItems.length }} 个</span>
+            </div>
+
+            <div class="analytics-mini-timeline">
+              <div v-for="item in timelinePreviewItems" :key="item.id" class="analytics-mini-timeline__item">
+                <div>
+                  <span>{{ phaseLabel(item.phase) }}</span>
+                  <strong>{{ item.label }}</strong>
+                </div>
+                <em>{{ item.timeText }}</em>
               </div>
             </div>
           </article>
@@ -1036,7 +1088,8 @@ onMounted(() => {
 .analytics-side-card p,
 .analytics-row-card p,
 .analytics-signal-card__desc,
-.analytics-gap-card p {
+.analytics-gap-card p,
+.analytics-feature-chip p {
   color: #5b6b84;
   font-size: 14px;
   line-height: 1.72;
@@ -1328,6 +1381,7 @@ onMounted(() => {
 
 .analytics-signal-card {
   padding: 14px;
+  min-width: 0;
 }
 
 .analytics-signal-card::after {
@@ -1378,6 +1432,7 @@ onMounted(() => {
   font-size: 18px;
   font-weight: 850;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .analytics-signal-card__desc {
@@ -1484,6 +1539,7 @@ onMounted(() => {
   border-radius: 8px;
   padding: 10px;
   background: #ffffff;
+  min-width: 0;
 }
 
 .analytics-row-card__head,
@@ -1492,6 +1548,7 @@ onMounted(() => {
   gap: 12px;
   align-items: center;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .analytics-row-card__head span,
@@ -1499,6 +1556,8 @@ onMounted(() => {
   color: #1f2937;
   font-size: 14px;
   font-weight: 800;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .analytics-row-card__head strong {
@@ -1514,6 +1573,7 @@ onMounted(() => {
   border-radius: 8px;
   padding: 10px;
   background: #ffffff;
+  min-width: 0;
 }
 
 .analytics-capability-item__head strong {
@@ -1569,6 +1629,7 @@ onMounted(() => {
   border: 1px solid;
   border-radius: 8px;
   padding: 10px;
+  min-width: 0;
 }
 
 .analytics-gap-card .material-symbols-outlined {
@@ -1597,11 +1658,108 @@ onMounted(() => {
 .analytics-gap-card__title {
   font-size: 14px;
   font-weight: 850;
+  overflow-wrap: anywhere;
 }
 
 .analytics-gap-card p {
   margin: 6px 0 0;
   color: color-mix(in srgb, currentColor 76%, #334155);
+}
+
+.analytics-feature-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.analytics-feature-chip {
+  min-width: 0;
+  border: 1px solid #e8eef8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.analytics-feature-chip__head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.analytics-feature-chip__head span {
+  min-width: 0;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.analytics-feature-chip__head strong {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.analytics-feature-chip p {
+  margin: 6px 0 0;
+}
+
+.analytics-mini-timeline {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.analytics-mini-timeline__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid #e8eef8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.analytics-mini-timeline__item div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.analytics-mini-timeline__item span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.analytics-mini-timeline__item strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.analytics-mini-timeline__item em {
+  color: #2563eb;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.analytics-detail-panel
+  :where(.min-w-0, h4, .text-slate-900, .text-slate-950, .text-slate-800, .text-slate-700, .text-slate-600) {
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 1280px) {
@@ -1639,7 +1797,8 @@ onMounted(() => {
   }
 
   .analytics-filter-row,
-  .analytics-overview-grid {
+  .analytics-overview-grid,
+  .analytics-feature-chip-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1662,6 +1821,14 @@ onMounted(() => {
   .analytics-metric-card__media img {
     width: 96px;
     height: 72px;
+  }
+
+  .analytics-mini-timeline__item {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-mini-timeline__item em {
+    white-space: normal;
   }
 }
 
