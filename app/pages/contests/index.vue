@@ -21,7 +21,7 @@ interface ContestVisual {
 type ContestDetailTab = 'participation' | 'resources' | 'faq'
 type ContestDetailNavItem
   = | { type: 'tab', id: ContestDetailTab, label: string, icon: string }
-    | { type: 'track', id: string, label: string, icon: string, years: number[] }
+    | { type: 'track', id: string, label: string, icon: string, displayId: string, years: number[] }
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
@@ -169,6 +169,7 @@ const contestDetailNavItems = computed<ContestDetailNavItem[]>(() => {
     id: track.id,
     label: resolveText(track.name, '未命名赛道'),
     icon: 'i-heroicons-outline-rectangle-stack',
+    displayId: resolveTrackDisplayId(track),
     years: resolveTrackYears(track),
   }))
   return [
@@ -374,6 +375,7 @@ function resolveTrackPopoverItems(contest: Contest) {
   return contest.tracks.map(track => ({
     id: track.id,
     name: resolveText(track.name, '未命名赛道'),
+    displayId: resolveTrackDisplayId(track),
     summary: resolveText(track.summary, '暂无赛道说明。'),
     years: resolveTrackYears(track),
     deliverables: resolveTextList(track.deliverableTypes, '交付物待补充'),
@@ -383,15 +385,44 @@ function resolveTrackPopoverItems(contest: Contest) {
 
 function resolveTrackTimelines(track: Contest['tracks'][number]) {
   return [...(track.timelines || [])]
-    .filter(item => Number(item.year || 0) >= 1900 || item.startAt || item.endAt)
+    .filter(item => isReliableTrackTimelineYear(item) || item.startAt || item.endAt)
     .sort((left, right) => Number(right.year || 0) - Number(left.year || 0))
 }
 
+function normalizeDisplayId(value: unknown) {
+  return String(value || '').trim()
+}
+
+function resolveTrackDisplayId(track: Contest['tracks'][number]) {
+  const metadata = track.metadata || {}
+  return normalizeDisplayId(metadata.externalId)
+    || normalizeDisplayId(metadata.trackExternalId)
+    || normalizeDisplayId(metadata.code)
+    || normalizeDisplayId(metadata.trackCode)
+    || normalizeDisplayId(track.id)
+}
+
+function isReliableTrackTimelineYear(item: { year?: unknown, metadata?: Record<string, unknown> }) {
+  const year = Number(item.year || 0)
+  if (!Number.isFinite(year) || year < 1900)
+    return false
+  const yearSource = String(item.metadata?.yearSource || '').trim()
+  return yearSource !== 'parser_current_year' && yearSource !== 'fallback_current_year'
+}
+
 function resolveTrackYears(track: Contest['tracks'][number]) {
-  const fromTrack = (track.years || []).map(item => Number(item || 0))
-  const fromTimelines = (track.timelines || []).map(item => Number(item.year || 0))
-  const fromMetadata = Number(track.metadata?.year || track.metadata?.trackYear || 0)
-  return [...new Set([...fromTrack, ...fromTimelines, fromMetadata].filter(year => Number.isFinite(year) && year >= 1900))]
+  const reliableTimelineYears = (track.timelines || [])
+    .filter(isReliableTrackTimelineYear)
+    .map(item => Number(item.year || 0))
+  const fromTrack = (track.years || [])
+    .map(item => Number(item || 0))
+    .filter(year => reliableTimelineYears.includes(year))
+  const metadata = track.metadata || {}
+  const metadataYearSource = String(metadata.yearSource || '').trim()
+  const fromMetadata = ['track_code', 'timeline_text', 'explicit_year'].includes(metadataYearSource) || metadata.codeParsed === true
+    ? Number(metadata.year || metadata.trackYear || 0)
+    : 0
+  return [...new Set([...fromTrack, ...reliableTimelineYears, fromMetadata].filter(year => Number.isFinite(year) && year >= 1900))]
     .sort((left, right) => right - left)
 }
 
@@ -679,7 +710,10 @@ onBeforeUnmount(() => {
                     :key="track.id"
                     class="contest-card__track-popover-item"
                   >
-                    <span class="contest-card__track-popover-name">{{ track.name }}</span>
+                    <span class="contest-card__track-popover-name">
+                      {{ track.name }}
+                      <code>{{ track.displayId }}</code>
+                    </span>
                     <span class="contest-card__track-popover-year">{{ track.years.length ? track.years.join(' / ') : '年份待补充' }}</span>
                     <span class="contest-card__track-popover-summary">{{ track.summary }}</span>
                     <span class="contest-card__track-popover-meta">
@@ -859,7 +893,10 @@ onBeforeUnmount(() => {
                     >
                       <span class="contest-detail-modal__nav-icon" :class="item.icon" />
                       <span class="contest-detail-modal__nav-copy">
-                        <strong>{{ item.label }}</strong>
+                        <strong>
+                          {{ item.label }}
+                          <code>{{ item.displayId }}</code>
+                        </strong>
                         <small>{{ item.years.length ? item.years.join(' / ') : '年份待补充' }}</small>
                       </span>
                     </button>
@@ -944,7 +981,10 @@ onBeforeUnmount(() => {
                       <span>{{ selectedContestTrack ? formatTrackYears(selectedContestTrack) : '未选择赛道' }}</span>
                     </div>
                     <article v-if="selectedContestTrack" class="contest-detail-modal__track-detail">
-                      <h4>{{ selectedContestTrack.name }}</h4>
+                      <h4>
+                        {{ selectedContestTrack.name }}
+                        <code>{{ resolveTrackDisplayId(selectedContestTrack) }}</code>
+                      </h4>
                       <p>{{ resolveText(selectedContestTrack.summary, '暂无赛道说明。') }}</p>
                       <dl class="contest-detail-modal__info contest-detail-modal__info--compact">
                         <div>
@@ -980,7 +1020,7 @@ onBeforeUnmount(() => {
                         </div>
                         <div v-if="selectedTrackTimelines.length" class="contest-detail-modal__timeline-list">
                           <article v-for="item in selectedTrackTimelines" :key="item.id">
-                            <span>{{ item.year || '年份待补充' }}</span>
+                            <span>{{ isReliableTrackTimelineYear(item) ? item.year : '年份待补充' }}</span>
                             <strong>{{ resolveTimelineLabel(item.nodeType, item.businessNodeLabel) }}</strong>
                             <p>{{ formatTimelineRange(item) }}</p>
                           </article>

@@ -31,11 +31,31 @@ type CreateProjectStep = 'basic' | 'contest'
 
 const createStep = ref<CreateProjectStep>('basic')
 const contestLinkEnabled = ref(false)
+const contestSearchQuery = ref('')
 const basicStepError = ref('')
 
 const isBasicStep = computed(() => createStep.value === 'basic')
 const isContestStep = computed(() => createStep.value === 'contest')
 const selectedContestCount = computed(() => props.contestIds.length)
+const normalizedContestSearchQuery = computed(() => contestSearchQuery.value.trim().toLowerCase())
+const filteredContests = computed(() => {
+  const query = normalizedContestSearchQuery.value
+  if (!query)
+    return props.contests
+
+  return props.contests.filter((contest) => {
+    const haystack = [
+      contest.name,
+      contest.summary,
+      contest.organizer,
+      contest.level,
+      ...(contest.disciplines || []),
+      ...(contest.tags || []),
+    ].join('\n').toLowerCase()
+
+    return haystack.includes(query)
+  })
+})
 
 watch(
   () => props.visible,
@@ -45,6 +65,7 @@ watch(
 
     createStep.value = 'basic'
     contestLinkEnabled.value = props.contestIds.length > 0
+    contestSearchQuery.value = ''
     basicStepError.value = ''
   },
 )
@@ -233,13 +254,43 @@ function submitCreate(mode: 'stay' | 'enter') {
               data-testid="team-create-project-contest-select"
               class="border border-slate-200 rounded-lg bg-white overflow-hidden"
             >
+              <div v-if="contests.length > 0" class="p-3 border-b border-slate-100 bg-white">
+                <label class="block">
+                  <span class="sr-only">搜索竞赛</span>
+                  <span class="block relative">
+                    <span class="i-heroicons-outline-magnifying-glass text-slate-400 left-3 top-1/2 absolute -translate-y-1/2" />
+                    <input
+                      v-model="contestSearchQuery"
+                      data-testid="team-create-project-contest-search-input"
+                      class="text-sm text-slate-800 pl-9 pr-9 border border-slate-200 rounded-lg bg-white h-9 w-full placeholder:text-slate-400 focus:outline-none focus:border-blue-400"
+                      placeholder="搜索竞赛名称、简介、主办方、学科"
+                      type="search"
+                    >
+                    <button
+                      v-if="contestSearchQuery"
+                      type="button"
+                      data-testid="team-create-project-contest-search-clear"
+                      class="text-slate-400 rounded flex h-6 w-6 items-center right-2 top-1/2 justify-center absolute hover:bg-slate-100 -translate-y-1/2"
+                      :disabled="submitting"
+                      @click="contestSearchQuery = ''"
+                    >
+                      <span class="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </span>
+                </label>
+              </div>
+
               <div v-if="contests.length === 0" class="text-xs text-slate-500 px-4 py-4" data-testid="team-create-project-empty-contests">
                 暂无竞赛可选，可稍后在项目设置中补充。
               </div>
 
+              <div v-else-if="filteredContests.length === 0" class="text-xs text-slate-500 px-4 py-4" data-testid="team-create-project-empty-contest-search">
+                没有匹配的竞赛，可调整关键词或清空搜索。
+              </div>
+
               <div v-else class="max-h-56 overflow-y-auto divide-slate-100 divide-y">
                 <label
-                  v-for="item in contests"
+                  v-for="item in filteredContests"
                   :key="item.id"
                   class="px-4 py-3 flex gap-3 cursor-pointer transition-colors items-start hover:bg-slate-50"
                   :data-testid="`team-create-project-contest-option-${item.id}`"
