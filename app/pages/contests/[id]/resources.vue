@@ -105,6 +105,14 @@ const years = computed(() => {
 })
 
 const tagOptions = computed(() => collectResourceTags(resources.value))
+const tagFilterOptions = computed(() => [
+  { label: '全部标签', value: '' },
+  ...tagOptions.value.map(tag => ({ label: tag, value: tag })),
+])
+const yearFilterOptions = computed(() => [
+  { label: '全部年份', value: '' },
+  ...years.value.map(value => ({ label: String(value), value: String(value) })),
+])
 
 async function loadDetail() {
   if (!contestId.value)
@@ -267,48 +275,14 @@ onMounted(async () => {
     <section class="p-4 border border-slate-200 rounded-lg bg-white">
       <div class="gap-2 grid md:grid-cols-6">
         <input v-model="queryText" class="dense-input md:col-span-2" placeholder="搜索资料标题、摘要、AI 标签">
-        <select v-model="category" class="dense-input">
-          <option
-            v-for="item in resourceCategoryOptions"
-            :key="item.label"
-            :value="item.value"
-          >
-            {{ item.label }}
-          </option>
-        </select>
-        <select v-model="selectedTag" class="dense-input">
-          <option value="">
-            全部标签
-          </option>
-          <option v-for="tag in tagOptions" :key="tag" :value="tag">
-            {{ tag }}
-          </option>
-        </select>
-        <select v-model="sort" class="dense-input">
-          <option v-for="item in resourceSortOptions" :key="item.value" :value="item.value">
-            {{ item.label }}
-          </option>
-        </select>
+        <UiSelect v-model="category" :options="resourceCategoryOptions" placeholder="全部分类" aria-label="资料分类" />
+        <UiSelect v-model="selectedTag" :options="tagFilterOptions" placeholder="全部标签" aria-label="标签" />
+        <UiSelect v-model="sort" :options="resourceSortOptions" placeholder="综合相关" aria-label="排序" />
         <input v-model="minQuality" class="dense-input" type="number" min="0" max="100" placeholder="最低质量分">
       </div>
       <div class="mt-2 gap-2 grid md:grid-cols-4">
-        <select v-model="year" class="dense-input">
-          <option value="">
-            全部年份
-          </option>
-          <option v-for="value in years" :key="value" :value="String(value)">
-            {{ value }}
-          </option>
-        </select>
-        <select v-model="availability" class="dense-input">
-          <option
-            v-for="item in resourceAvailabilityOptions"
-            :key="item.label"
-            :value="item.value"
-          >
-            {{ item.label }}
-          </option>
-        </select>
+        <UiSelect v-model="year" :options="yearFilterOptions" placeholder="全部年份" aria-label="年份" />
+        <UiSelect v-model="availability" :options="resourceAvailabilityOptions" placeholder="全部可访问性" aria-label="可访问性" />
         <div class="flex gap-2 md:col-span-2">
           <button class="dense-btn" @click="loadResources">
             应用筛选
