@@ -99,6 +99,13 @@ const overrideForm = reactive({
   governanceStatus: 'review' as ResourceKnowledgeGovernanceStatus,
 })
 
+const governanceStatusOptions = [
+  { value: 'healthy', label: 'healthy' },
+  { value: 'review', label: 'review' },
+  { value: 'suggested_invalid', label: 'suggested_invalid' },
+  { value: 'suggested_archive', label: 'suggested_archive' },
+] as const
+
 const visibleResources = computed(() => {
   if (activeView.value === 'quality') {
     return [...resources.value].sort((left, right) => Number(right.aiProfile?.qualityScore || 0) - Number(left.aiProfile?.qualityScore || 0))
@@ -718,15 +725,7 @@ watch(contestId, async (value, oldValue) => {
                 人工覆盖
               </p>
               <div class="space-y-2">
-                <select v-model="overrideForm.predictedCategory" class="dense-input">
-                  <option
-                    v-for="item in resourceCategoryOptions"
-                    :key="item.value || 'all'"
-                    :value="item.value"
-                  >
-                    {{ item.label }}
-                  </option>
-                </select>
+                <UiSelect v-model="overrideForm.predictedCategory" :options="resourceCategoryOptions" size="sm" aria-label="人工分类" class="w-full" />
                 <textarea
                   v-model="overrideForm.aiTagsText"
                   class="dense-input min-h-[96px]"
@@ -740,20 +739,7 @@ watch(contestId, async (value, oldValue) => {
                   max="100"
                   placeholder="人工质量分"
                 >
-                <select v-model="overrideForm.governanceStatus" class="dense-input">
-                  <option value="healthy">
-                    healthy
-                  </option>
-                  <option value="review">
-                    review
-                  </option>
-                  <option value="suggested_invalid">
-                    suggested_invalid
-                  </option>
-                  <option value="suggested_archive">
-                    suggested_archive
-                  </option>
-                </select>
+                <UiSelect v-model="overrideForm.governanceStatus" :options="governanceStatusOptions" size="sm" aria-label="治理状态" class="w-full" />
                 <button class="dense-btn w-full" :disabled="actionLoading" @click="saveOverrides">
                   保存人工覆盖
                 </button>

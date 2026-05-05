@@ -99,6 +99,24 @@ const emit = defineEmits<{
 
 const hasActiveProject = computed(() => Boolean(props.activeProject?.id))
 
+const contestSelectOptions = computed(() => [
+  { value: '', label: '选择竞赛', disabled: true },
+  ...props.contests.map(contest => ({
+    value: contest.id,
+    label: contest.name,
+  })),
+])
+
+function trackSelectOptions(contestId: string) {
+  return [
+    { value: '', label: '选择赛道', disabled: true },
+    ...props.contestTracksByContestId(contestId).map(track => ({
+      value: track.id,
+      label: track.name,
+    })),
+  ]
+}
+
 function shouldShowSection(sectionId: WorkspaceProjectSettingsSectionId): boolean {
   return !props.activeSettingsSectionId || props.activeSettingsSectionId === sectionId
 }
@@ -269,31 +287,21 @@ function shouldShowSection(sectionId: WorkspaceProjectSettingsSectionId): boolea
             :key="`binding-${binding.contestId}-${index}`"
             class="p-3 border border-slate-200 rounded-2xl bg-slate-50/70 gap-2 grid grid-cols-1 items-center lg:grid-cols-[minmax(0,1fr),minmax(0,1fr),auto,auto]"
           >
-            <select
-              :value="binding.contestId"
-              class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-              @change="emit('updateProjectSettingsBindingContest', { index, contestId: ($event.target as HTMLSelectElement).value })"
-            >
-              <option value="" disabled>
-                选择竞赛
-              </option>
-              <option v-for="contest in props.contests" :key="contest.id" :value="contest.id">
-                {{ contest.name }}
-              </option>
-            </select>
+            <UiSelect
+              :model-value="binding.contestId"
+              :options="contestSelectOptions"
+              aria-label="选择竞赛"
+              class="w-full"
+              @change="value => emit('updateProjectSettingsBindingContest', { index, contestId: String(value) })"
+            />
 
-            <select
-              :value="binding.trackId"
-              class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-              @change="emit('updateProjectSettingsBindingTrack', { index, trackId: ($event.target as HTMLSelectElement).value })"
-            >
-              <option value="" disabled>
-                选择赛道
-              </option>
-              <option v-for="track in props.contestTracksByContestId(binding.contestId)" :key="track.id" :value="track.id">
-                {{ track.name }}
-              </option>
-            </select>
+            <UiSelect
+              :model-value="binding.trackId"
+              :options="trackSelectOptions(binding.contestId)"
+              aria-label="选择赛道"
+              class="w-full"
+              @change="value => emit('updateProjectSettingsBindingTrack', { index, trackId: String(value) })"
+            />
 
             <button
               class="text-xs font-semibold px-3.5 py-2 border rounded-full transition-colors"

@@ -143,6 +143,32 @@ const filters = reactive({
   pageSize: 20,
 })
 
+const dayFilterOptions = [
+  { value: 7, label: '7 天' },
+  { value: 14, label: '14 天' },
+  { value: 30, label: '30 天' },
+  { value: 90, label: '90 天' },
+] as const
+
+const taskStatusOptions = [
+  { value: '', label: '全部' },
+  { value: 'queued', label: 'queued' },
+  { value: 'processing', label: 'processing' },
+  { value: 'succeeded', label: 'succeeded' },
+  { value: 'failed', label: 'failed' },
+  { value: 'dead_letter', label: 'dead_letter' },
+  { value: 'cancelled', label: 'cancelled' },
+] as const
+
+const taskStageOptions = [
+  { value: '', label: '全部' },
+  { value: 'queued', label: 'queued' },
+  { value: 'extracting', label: 'extracting' },
+  { value: 'chunking', label: 'chunking' },
+  { value: 'embedding', label: 'embedding' },
+  { value: 'finalizing', label: 'finalizing' },
+] as const
+
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 function formatDateTime(value: string | null | undefined): string {
@@ -324,35 +350,15 @@ const summaryCards = computed(() => {
         <div class="flex flex-wrap gap-3 items-end">
           <label class="space-y-1">
             <span class="text-xs text-slate-600 font-medium block">时间窗口</span>
-            <select v-model="filters.days" class="dense-input min-w-[120px]">
-              <option :value="7">7 天</option>
-              <option :value="14">14 天</option>
-              <option :value="30">30 天</option>
-              <option :value="90">90 天</option>
-            </select>
+            <UiSelect v-model="filters.days" :options="dayFilterOptions" size="sm" aria-label="时间窗口" class="min-w-[120px]" />
           </label>
           <label class="space-y-1">
             <span class="text-xs text-slate-600 font-medium block">任务状态</span>
-            <select v-model="filters.status" class="dense-input min-w-[140px]">
-              <option value="">全部</option>
-              <option value="queued">queued</option>
-              <option value="processing">processing</option>
-              <option value="succeeded">succeeded</option>
-              <option value="failed">failed</option>
-              <option value="dead_letter">dead_letter</option>
-              <option value="cancelled">cancelled</option>
-            </select>
+            <UiSelect v-model="filters.status" :options="taskStatusOptions" size="sm" aria-label="任务状态" class="min-w-[140px]" />
           </label>
           <label class="space-y-1">
             <span class="text-xs text-slate-600 font-medium block">阶段</span>
-            <select v-model="filters.stage" class="dense-input min-w-[140px]">
-              <option value="">全部</option>
-              <option value="queued">queued</option>
-              <option value="extracting">extracting</option>
-              <option value="chunking">chunking</option>
-              <option value="embedding">embedding</option>
-              <option value="finalizing">finalizing</option>
-            </select>
+            <UiSelect v-model="filters.stage" :options="taskStageOptions" size="sm" aria-label="阶段" class="min-w-[140px]" />
           </label>
           <label class="space-y-1">
             <span class="text-xs text-slate-600 font-medium block">项目 ID</span>

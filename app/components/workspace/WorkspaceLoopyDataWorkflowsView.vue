@@ -38,6 +38,19 @@ const AGENT_MODE_OPTIONS = [
   { id: 'document_assist', label: '文稿助手' },
   { id: 'contextual_agent', label: '上下文 Agent' },
 ]
+const TRIGGER_TYPE_OPTIONS = [
+  { value: 'manual', label: 'manual' },
+  { value: 'resource.batch', label: 'resource.batch' },
+] as const
+const STEP_TYPE_OPTIONS = [
+  { value: 'prompt', label: 'prompt' },
+  { value: 'tool', label: 'tool' },
+  { value: 'agent', label: 'agent' },
+] as const
+const agentModeSelectOptions = AGENT_MODE_OPTIONS.map(mode => ({
+  value: mode.id,
+  label: mode.label,
+}))
 
 interface DraftState {
   id?: string
@@ -76,6 +89,14 @@ const editingDraft = ref<DraftState | null>(null)
 const workflowChangeSecondConfirmIds = ref<string[]>([])
 const workflowDeleteSecondConfirmId = ref('')
 const toolInputDraftMap = reactive<Record<string, string>>({})
+
+const toolSelectOptions = computed(() => [
+  { value: '', label: '请选择工具' },
+  ...availableTools.value.map(tool => ({
+    value: tool.key,
+    label: `${tool.label} · ${tool.source} · ${tool.riskLevel}`,
+  })),
+])
 
 function createLocalId(): string {
   return globalThis.crypto?.randomUUID?.() || `workflow-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
@@ -505,10 +526,7 @@ watch(workflows, (items) => {
             </label>
             <label class="workflow-editor__field">
               <span>触发器</span>
-              <select v-model="editingDraft.definition.trigger.type">
-                <option value="manual">manual</option>
-                <option value="resource.batch">resource.batch</option>
-              </select>
+              <UiSelect v-model="editingDraft.definition.trigger.type" :options="TRIGGER_TYPE_OPTIONS" size="xs" aria-label="触发器" />
             </label>
           </div>
 
@@ -587,38 +605,24 @@ watch(workflows, (items) => {
                 </label>
                 <label class="workflow-editor__field">
                   <span>步骤类型</span>
-                  <select v-model="step.type">
-                    <option value="prompt">prompt</option>
-                    <option value="tool">tool</option>
-                    <option value="agent">agent</option>
-                  </select>
+                  <UiSelect v-model="step.type" :options="STEP_TYPE_OPTIONS" size="xs" aria-label="步骤类型" />
                 </label>
               </div>
 
               <label v-if="step.type === 'agent'" class="workflow-editor__field">
                 <span>Agent 模式</span>
-                <select v-model="step.agentMode">
-                  <option v-for="mode in AGENT_MODE_OPTIONS" :key="mode.id" :value="mode.id">
-                    {{ mode.label }}
-                  </option>
-                </select>
+                <UiSelect v-model="step.agentMode" :options="agentModeSelectOptions" size="xs" aria-label="Agent 模式" />
               </label>
 
               <label v-if="step.type === 'tool'" class="workflow-editor__field">
                 <span>工具</span>
-                <select
+                <UiSelect
                   v-model="step.toolKey"
-                  @change="ensureToolAllowlist(step.toolKey || '')"
-                >
-                  <option value="">请选择工具</option>
-                  <option
-                    v-for="tool in availableTools"
-                    :key="tool.key"
-                    :value="tool.key"
-                  >
-                    {{ tool.label }} · {{ tool.source }} · {{ tool.riskLevel }}
-                  </option>
-                </select>
+                  :options="toolSelectOptions"
+                  size="xs"
+                  aria-label="工具"
+                  @change="value => ensureToolAllowlist(String(value || ''))"
+                />
               </label>
 
               <label v-if="step.type === 'prompt' || step.type === 'agent'" class="workflow-editor__field">

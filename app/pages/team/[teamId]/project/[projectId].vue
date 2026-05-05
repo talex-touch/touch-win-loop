@@ -630,9 +630,9 @@ interface DefenseVoiceRuntimeSelectionPayload {
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
 type WorkspaceMainTabId = WorkspaceOpenTabState
 type WorkspaceWorkbenchMode = ProjectWorkbenchMode
-type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
+type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense' | 'loopy_page'>
 type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
-type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist' | 'contextual_agent'>
+type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist' | 'contextual_agent' | 'loopy_page'>
 type WorkbenchSwitchPhase = 'idle' | 'loading' | 'animating'
 type WorkbenchSceneTransitionName = 'workspace-workbench-scene-forward' | 'workspace-workbench-scene-backward'
 interface WorkspaceProjectContextualAssistant {

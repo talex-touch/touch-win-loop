@@ -119,70 +119,73 @@ function formatDateTime(value: string): string {
     </button>
   </div>
 
-  <div v-else class="flex flex-col h-full">
-    <div v-if="loading && items.length === 0" class="py-12 flex items-center justify-center">
+  <div v-else class="notification-list-content notification-list-content--drawer">
+    <div v-if="loading && items.length === 0" class="notification-list-content__drawer-state">
       <a-spin />
     </div>
 
-    <div v-else-if="errorText && items.length === 0" class="text-[12px] text-rose-600 p-3 border border-rose-200 rounded bg-rose-50">
+    <div v-else-if="errorText && items.length === 0" class="notification-list-content__drawer-error">
       {{ errorText }}
     </div>
 
-    <div v-else-if="items.length === 0" class="py-12">
+    <div v-else-if="items.length === 0" class="notification-list-content__drawer-state">
       <a-empty description="当前没有可展示的通知" />
     </div>
 
-    <div v-else class="overflow-y-auto space-y-2">
+    <div v-else class="notification-list-content__drawer-stack">
       <button
         v-for="item in items"
         :key="item.id"
         type="button"
-        class="p-3 text-left border rounded-lg w-full transition-colors"
+        class="notification-list-content__drawer-item"
         :class="normalizeString(item.readAt)
-          ? 'border-slate-200 bg-white hover:bg-slate-50'
-          : 'border-blue-200 bg-blue-50/70 hover:bg-blue-50'"
+          ? 'notification-list-content__drawer-item--read'
+          : 'notification-list-content__drawer-item--unread'"
         @click="center.openNotification(item)"
       >
-        <div class="flex gap-2 items-start justify-between">
-          <div class="min-w-0">
-            <div class="flex gap-2 items-center">
-              <span class="text-[10px] text-slate-500 px-1.5 py-0.5 border border-slate-200 rounded bg-white">
+        <div class="notification-list-content__drawer-item-head">
+          <div class="notification-list-content__drawer-item-main">
+            <div class="notification-list-content__drawer-item-meta">
+              <span class="notification-list-content__drawer-item-category">
                 {{ categoryLabel(item) }}
               </span>
-              <span v-if="!normalizeString(item.readAt)" class="border border-white rounded-full bg-rose-500 shrink-0 h-2 w-2" />
+              <span
+                v-if="!normalizeString(item.readAt)"
+                class="notification-list-content__drawer-item-dot"
+              />
             </div>
-            <p class="text-[13px] text-slate-900 font-semibold m-0 mt-2">
+            <p class="notification-list-content__drawer-item-title">
               {{ item.title }}
             </p>
-            <p class="text-[12px] text-slate-600 leading-5 m-0 mt-1 whitespace-pre-wrap">
+            <p class="notification-list-content__drawer-item-body">
               {{ item.body }}
             </p>
             <p
               v-if="normalizeString(item.payload?.fullBody) && normalizeString(item.payload?.fullBody) !== item.body"
-              class="text-[11px] text-slate-500 leading-5 m-0 mt-1 line-clamp-3"
+              class="notification-list-content__drawer-item-extra"
             >
               {{ item.payload?.fullBody }}
             </p>
           </div>
-          <span class="text-[10px] text-slate-400 shrink-0">
+          <span class="notification-list-content__drawer-item-time">
             {{ formatDateTime(item.createdAt) }}
           </span>
         </div>
-        <div v-if="normalizeString(item.actionLabel)" class="text-[11px] text-blue-600 mt-2">
+        <div v-if="normalizeString(item.actionLabel)" class="notification-list-content__drawer-item-action">
           {{ item.actionLabel }}
         </div>
       </button>
     </div>
 
-    <div class="mt-3 pt-3 border-t border-slate-100">
-      <a-button
-        long
-        type="outline"
+    <div class="notification-list-content__drawer-more-shell">
+      <button
+        class="notification-list-content__drawer-more"
+        type="button"
         :disabled="!nextCursor || loadingMore"
         @click="center.loadMore"
       >
         {{ loadingMore ? '加载中...' : (nextCursor ? '加载更多' : '没有更多通知') }}
-      </a-button>
+      </button>
     </div>
   </div>
 </template>
@@ -320,5 +323,218 @@ function formatDateTime(value: string): string {
 .notification-list-content__workspace-more {
   width: 100%;
   justify-content: center;
+}
+
+.notification-list-content--drawer {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.notification-list-content__drawer-stack {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 0 2px 2px;
+}
+
+.notification-list-content__drawer-state {
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notification-list-content__drawer-error {
+  margin-top: 4px;
+  padding: 12px 14px;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #be123c;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.notification-list-content__drawer-item {
+  width: 100%;
+  padding: 14px 14px 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  text-align: left;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.notification-list-content__drawer-item--unread {
+  border-color: #dbeafe;
+}
+
+.notification-list-content__drawer-item:hover {
+  border-color: #c7d2fe;
+  background: #fbfdff;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.notification-list-content__drawer-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.notification-list-content__drawer-item-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.notification-list-content__drawer-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notification-list-content__drawer-item-category {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: #eef4ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.notification-list-content__drawer-item-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #f43f5e;
+  flex-shrink: 0;
+}
+
+.notification-list-content__drawer-item-title {
+  margin: 12px 0 0;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.notification-list-content__drawer-item-body {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notification-list-content__drawer-item-extra {
+  display: -webkit-box;
+  margin: 5px 0 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  color: #718096;
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.notification-list-content__drawer-item-time {
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.notification-list-content__drawer-item-action {
+  margin-top: 12px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.notification-list-content__drawer-more-shell {
+  flex-shrink: 0;
+  padding-top: 12px;
+}
+
+.notification-list-content__drawer-more {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.notification-list-content__drawer-more::before,
+.notification-list-content__drawer-more::after {
+  content: '';
+  width: min(92px, 24%);
+  height: 1px;
+  background: #e2e8f0;
+}
+
+.notification-list-content__drawer-more:not(:disabled):hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.notification-list-content__drawer-more:disabled {
+  cursor: default;
+}
+
+@media (max-width: 560px) {
+  .notification-list-content__drawer-stack {
+    gap: 10px;
+  }
+
+  .notification-list-content__drawer-item {
+    padding: 13px 12px 12px;
+  }
+
+  .notification-list-content__drawer-item-head {
+    gap: 10px;
+  }
+
+  .notification-list-content__drawer-item-title {
+    font-size: 13px;
+  }
+
+  .notification-list-content__drawer-item-time {
+    font-size: 10px;
+  }
 }
 </style>

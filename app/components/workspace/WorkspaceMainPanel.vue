@@ -693,6 +693,20 @@ const userWorkspaceDisplayFontSizeDraft = ref<NullableWorkspaceFontSizePreset>('
 const userWorkspaceDisplayTabSpacingDraft = ref<NullableWorkspaceTabSpacingPreset>('')
 const teamWorkspaceDisplayFontSizeDraft = ref<NullableWorkspaceFontSizePreset>('')
 const teamWorkspaceDisplayTabSpacingDraft = ref<NullableWorkspaceTabSpacingPreset>('')
+const workspaceDisplayFontSizeSelectOptions = computed(() => [
+  { value: '', label: '跟随系统默认' },
+  ...WORKSPACE_FONT_SIZE_PRESET_OPTIONS.map(option => ({
+    value: option.value,
+    label: option.label,
+  })),
+])
+const workspaceDisplayTabSpacingSelectOptions = computed(() => [
+  { value: '', label: '跟随系统默认' },
+  ...WORKSPACE_TAB_SPACING_PRESET_OPTIONS.map(option => ({
+    value: option.value,
+    label: option.label,
+  })),
+])
 
 function migrateLegacyTabIdFromProps(tabId: WorkspaceMainTabId | '' | undefined): WorkspaceMainTabId | '' {
   const normalizedTabId = String(tabId || '').trim()
@@ -3034,34 +3048,24 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
                 <div class="gap-4 grid md:grid-cols-2">
                   <label class="text-xs text-slate-600 block space-y-1.5">
                     <span class="text-slate-700 font-semibold">默认字号</span>
-                    <select
-                      :value="teamWorkspaceDisplayFontSizeDraft"
-                      class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-                      @change="teamWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(($event.target as HTMLSelectElement).value)"
-                    >
-                      <option value="">
-                        跟随系统默认
-                      </option>
-                      <option v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS" :key="`team-font-size-${option.value}`" :value="option.value">
-                        {{ option.label }}
-                      </option>
-                    </select>
+                    <UiSelect
+                      :model-value="teamWorkspaceDisplayFontSizeDraft"
+                      :options="workspaceDisplayFontSizeSelectOptions"
+                      aria-label="团队默认字号"
+                      class="w-full"
+                      @change="value => teamWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(String(value))"
+                    />
                   </label>
 
                   <label class="text-xs text-slate-600 block space-y-1.5">
                     <span class="text-slate-700 font-semibold">默认标签边距</span>
-                    <select
-                      :value="teamWorkspaceDisplayTabSpacingDraft"
-                      class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-                      @change="teamWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(($event.target as HTMLSelectElement).value)"
-                    >
-                      <option value="">
-                        跟随系统默认
-                      </option>
-                      <option v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS" :key="`team-tab-spacing-${option.value}`" :value="option.value">
-                        {{ option.label }}
-                      </option>
-                    </select>
+                    <UiSelect
+                      :model-value="teamWorkspaceDisplayTabSpacingDraft"
+                      :options="workspaceDisplayTabSpacingSelectOptions"
+                      aria-label="团队默认标签边距"
+                      class="w-full"
+                      @change="value => teamWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(String(value))"
+                    />
                   </label>
                 </div>
 

@@ -304,6 +304,17 @@ const shareTargetResourceId = ref('')
 const shareResourceModalVisible = ref(false)
 const shareVisibility = ref<ProjectResourceShareVisibility>('public')
 const shareDuration = ref<ProjectResourceShareDurationPreset>('7d')
+const shareVisibilityOptions = [
+  { value: 'public', label: '公开可见' },
+  { value: 'workspace', label: '组织内成员可见' },
+] as const
+const shareDurationOptions = [
+  { value: '1h', label: '1h' },
+  { value: '1d', label: '1d' },
+  { value: '3d', label: '3d' },
+  { value: '7d', label: '7d' },
+  { value: '1mon', label: '1mon' },
+] as const
 const resourceDetailTargetId = ref('')
 const resourceDetailModalVisible = ref(false)
 const libraryModalKeyword = ref('')
@@ -4249,43 +4260,26 @@ onBeforeUnmount(() => {
 
             <label class="workspace-share-modal__field">
               <span>可见范围</span>
-              <select
+              <UiSelect
                 v-model="shareVisibility"
-                class="workspace-share-modal__select"
+                :options="shareVisibilityOptions"
                 :disabled="resourceMutating"
-              >
-                <option value="public">
-                  公开可见
-                </option>
-                <option value="workspace">
-                  组织内成员可见
-                </option>
-              </select>
+                size="sm"
+                aria-label="可见范围"
+                class="w-full"
+              />
             </label>
 
             <label class="workspace-share-modal__field">
               <span>有效期</span>
-              <select
+              <UiSelect
                 v-model="shareDuration"
-                class="workspace-share-modal__select"
+                :options="shareDurationOptions"
                 :disabled="resourceMutating"
-              >
-                <option value="1h">
-                  1h
-                </option>
-                <option value="1d">
-                  1d
-                </option>
-                <option value="3d">
-                  3d
-                </option>
-                <option value="7d">
-                  7d
-                </option>
-                <option value="1mon">
-                  1mon
-                </option>
-              </select>
+                size="sm"
+                aria-label="有效期"
+                class="w-full"
+              />
             </label>
 
             <div class="workspace-share-modal__actions">

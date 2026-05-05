@@ -105,12 +105,20 @@ const form = reactive({
 })
 
 const rtcProviderOptions = [
+  { value: '', label: '请选择' },
   { value: 'livekit', label: 'livekit' },
 ] as const
 
 const asrProviderOptions = [
+  { value: '', label: '请选择' },
   { value: 'http', label: 'http' },
   { value: 'openai-compatible', label: 'openai-compatible / Coze / 百炼' },
+] as const
+
+const secretModeOptions = [
+  { value: 'keep', label: '保持' },
+  { value: 'replace', label: '替换' },
+  { value: 'clear', label: '清空' },
 ] as const
 
 function formatTime(raw: string): string {
@@ -475,14 +483,7 @@ onMounted(async () => {
         <div class="gap-3 grid md:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-slate-600">Provider</span>
-            <select v-model="form.rtcProvider" class="admin-select">
-              <option value="">
-                请选择
-              </option>
-              <option v-for="item in rtcProviderOptions" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
+            <UiSelect v-model="form.rtcProvider" :options="rtcProviderOptions" size="sm" aria-label="RTC Provider" class="w-full" />
           </label>
           <label class="block space-y-1">
             <span class="text-slate-600">Room Prefix</span>
@@ -500,31 +501,19 @@ onMounted(async () => {
         <div class="gap-3 grid md:grid-cols-3">
           <label class="block space-y-1">
             <span class="text-slate-600">API Key</span>
-            <select v-model="form.rtcApiKeyMode" class="admin-select">
-              <option value="keep">保持</option>
-              <option value="replace">替换</option>
-              <option value="clear">清空</option>
-            </select>
+            <UiSelect v-model="form.rtcApiKeyMode" :options="secretModeOptions" size="sm" aria-label="RTC API Key 模式" class="w-full" />
             <input v-model="form.rtcApiKey" class="admin-input" :disabled="form.rtcApiKeyMode !== 'replace'" placeholder="仅在替换时填写">
             <span class="text-[10px] text-slate-500">已配置：{{ payload.rtc.apiKeyConfigured ? '是' : '否' }}</span>
           </label>
           <label class="block space-y-1">
             <span class="text-slate-600">API Secret</span>
-            <select v-model="form.rtcApiSecretMode" class="admin-select">
-              <option value="keep">保持</option>
-              <option value="replace">替换</option>
-              <option value="clear">清空</option>
-            </select>
+            <UiSelect v-model="form.rtcApiSecretMode" :options="secretModeOptions" size="sm" aria-label="RTC API Secret 模式" class="w-full" />
             <input v-model="form.rtcApiSecret" class="admin-input" :disabled="form.rtcApiSecretMode !== 'replace'" placeholder="仅在替换时填写">
             <span class="text-[10px] text-slate-500">已配置：{{ payload.rtc.apiSecretConfigured ? '是' : '否' }}</span>
           </label>
           <label class="block space-y-1">
             <span class="text-slate-600">Webhook Secret</span>
-            <select v-model="form.rtcWebhookSecretMode" class="admin-select">
-              <option value="keep">保持</option>
-              <option value="replace">替换</option>
-              <option value="clear">清空</option>
-            </select>
+            <UiSelect v-model="form.rtcWebhookSecretMode" :options="secretModeOptions" size="sm" aria-label="RTC Webhook Secret 模式" class="w-full" />
             <input v-model="form.rtcWebhookSecret" class="admin-input" :disabled="form.rtcWebhookSecretMode !== 'replace'" placeholder="仅在替换时填写">
             <span class="text-[10px] text-slate-500">已配置：{{ payload.rtc.webhookSecretConfigured ? '是' : '否' }}</span>
           </label>
@@ -551,14 +540,7 @@ onMounted(async () => {
         <div class="gap-3 grid md:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-slate-600">Provider</span>
-            <select v-model="form.asrProvider" class="admin-select">
-              <option value="">
-                请选择
-              </option>
-              <option v-for="item in asrProviderOptions" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
+            <UiSelect v-model="form.asrProvider" :options="asrProviderOptions" size="sm" aria-label="ASR Provider" class="w-full" />
           </label>
           <label class="block space-y-1">
             <span class="text-slate-600">Service URL（仅 http）</span>
@@ -571,21 +553,13 @@ onMounted(async () => {
         <div class="gap-3 grid md:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-slate-600">API Key（仅 http）</span>
-            <select v-model="form.asrApiKeyMode" class="admin-select">
-              <option value="keep">保持</option>
-              <option value="replace">替换</option>
-              <option value="clear">清空</option>
-            </select>
+            <UiSelect v-model="form.asrApiKeyMode" :options="secretModeOptions" size="sm" aria-label="ASR API Key 模式" class="w-full" />
             <input v-model="form.asrApiKey" class="admin-input" :disabled="form.asrApiKeyMode !== 'replace' || form.asrProvider === 'openai-compatible'" placeholder="仅在替换时填写">
             <span class="text-[10px] text-slate-500">已配置：{{ payload.asr.apiKeyConfigured ? '是' : '否' }}</span>
           </label>
           <label class="block space-y-1">
             <span class="text-slate-600">Webhook Secret</span>
-            <select v-model="form.asrWebhookSecretMode" class="admin-select">
-              <option value="keep">保持</option>
-              <option value="replace">替换</option>
-              <option value="clear">清空</option>
-            </select>
+            <UiSelect v-model="form.asrWebhookSecretMode" :options="secretModeOptions" size="sm" aria-label="ASR Webhook Secret 模式" class="w-full" />
             <input v-model="form.asrWebhookSecret" class="admin-input" :disabled="form.asrWebhookSecretMode !== 'replace'" placeholder="仅在替换时填写">
             <span class="text-[10px] text-slate-500">已配置：{{ payload.asr.webhookSecretConfigured ? '是' : '否' }}</span>
           </label>

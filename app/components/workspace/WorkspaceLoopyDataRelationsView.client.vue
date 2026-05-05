@@ -33,6 +33,28 @@ const detailError = ref('')
 const nodeType = ref<ProjectKnowledgeRelationNodeType | ''>('')
 const modality = ref<ProjectKnowledgeModality | 'unknown' | ''>('')
 const embeddingStatus = ref<ProjectKnowledgeEmbeddingStatus | ''>('')
+const nodeTypeOptions = [
+  { value: '', label: '全部' },
+  { value: 'source', label: 'Source' },
+  { value: 'chunk', label: 'Chunk' },
+] as const
+const modalityOptions = [
+  { value: '', label: '全部' },
+  { value: 'text', label: 'text' },
+  { value: 'image', label: 'image' },
+  { value: 'audio', label: 'audio' },
+  { value: 'video', label: 'video' },
+  { value: 'draw', label: 'draw' },
+  { value: 'unknown', label: 'unknown' },
+] as const
+const embeddingStatusOptions = [
+  { value: '', label: '全部' },
+  { value: 'native', label: 'native' },
+  { value: 'derived', label: 'derived' },
+  { value: 'fallback', label: 'fallback' },
+  { value: 'missing', label: 'missing' },
+  { value: 'failed', label: 'failed' },
+] as const
 
 const visibleNodes = computed(() => {
   const items = (payload.value?.nodes || []).slice().sort((left, right) => right.importance - left.importance)
@@ -159,34 +181,15 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
       </div>
       <label class="loopy-relations__field">
         <span>节点类型</span>
-        <select v-model="nodeType">
-          <option value="">全部</option>
-          <option value="source">Source</option>
-          <option value="chunk">Chunk</option>
-        </select>
+        <UiSelect v-model="nodeType" :options="nodeTypeOptions" size="xs" aria-label="节点类型" class="w-full" />
       </label>
       <label class="loopy-relations__field">
         <span>模态</span>
-        <select v-model="modality">
-          <option value="">全部</option>
-          <option value="text">text</option>
-          <option value="image">image</option>
-          <option value="audio">audio</option>
-          <option value="video">video</option>
-          <option value="draw">draw</option>
-          <option value="unknown">unknown</option>
-        </select>
+        <UiSelect v-model="modality" :options="modalityOptions" size="xs" aria-label="模态" class="w-full" />
       </label>
       <label class="loopy-relations__field">
         <span>Embedding 状态</span>
-        <select v-model="embeddingStatus">
-          <option value="">全部</option>
-          <option value="native">native</option>
-          <option value="derived">derived</option>
-          <option value="fallback">fallback</option>
-          <option value="missing">missing</option>
-          <option value="failed">failed</option>
-        </select>
+        <UiSelect v-model="embeddingStatus" :options="embeddingStatusOptions" size="xs" aria-label="Embedding 状态" class="w-full" />
       </label>
 
       <div class="loopy-relations__stats">

@@ -81,9 +81,6 @@ const projects = ref<Project[]>([])
 const contests = ref<Contest[]>([])
 const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
 const platformPermissions = ref<PlatformPermission[]>([])
-const platformContests = ref<Contest[]>([])
-const platformLoading = ref(false)
-const platformError = ref('')
 
 const createDialogVisible = ref(false)
 const creatingProject = ref(false)
@@ -146,8 +143,6 @@ const canManageContest = computed(() => {
   )
 })
 const canManagePricing = computed(() => platformPermissions.value.includes('pricing.write'))
-const canManageRoles = computed(() => platformPermissions.value.includes('role.assign'))
-const hasPlatformPortal = computed(() => canManageContest.value || canManagePricing.value || canManageRoles.value)
 const workspaceCanCreateProject = computed(() => {
   if (me.value?.user.isPlatformAdmin)
     return true
@@ -199,63 +194,6 @@ const activeNoticeTone = computed<'success' | 'warning'>(() => {
   return 'warning'
 })
 const shouldRenderIntegratedPanels = computed(() => !loading.value && !errorText.value)
-const portalCards = computed(() => {
-  const cards: Array<{ id: string, title: string, desc: string, to: string, icon: string }> = [
-    {
-      id: 'contest-library',
-      title: '竞赛总库',
-      desc: '搜索筛选竞赛，查看详情、赛道与评分规则。',
-      to: '/contests',
-      icon: 'trophy',
-    },
-    {
-      id: 'resource-center',
-      title: '资料中心',
-      desc: '按分类/年份/可访问性检索权威资料。',
-      to: '/resources',
-      icon: 'folder_open',
-    },
-  ]
-
-  if (canManageContest.value) {
-    cards.push({
-      id: 'contest-admin',
-      title: '赛事录入台',
-      desc: '录入赛事、赛道、时间轴、Rubric 与资料并发布。',
-      to: '/admin/contests',
-      icon: 'edit_square',
-    })
-  }
-  if (canManagePricing.value) {
-    cards.push({
-      id: 'pricing-admin',
-      title: '套餐席位计费',
-      desc: '维护套餐规则，按席位估算工作区费用。',
-      to: '/admin/billing',
-      icon: 'attach_money',
-    })
-  }
-  if (canManageTeamBilling.value && activeWorkspaceId.value) {
-    cards.push({
-      id: 'team-billing',
-      title: 'Team 结算',
-      desc: '选择 Business 套餐，确认费用并完成模拟支付。',
-      to: `/team/${activeWorkspaceId.value}/billing`,
-      icon: 'receipt_long',
-    })
-  }
-  if (canManageRoles.value) {
-    cards.push({
-      id: 'role-admin',
-      title: '平台角色分配',
-      desc: '给用户分配 contest_admin / pricing_admin 等角色。',
-      to: '/admin/roles',
-      icon: 'manage_accounts',
-    })
-  }
-
-  return cards
-})
 const teamQuickActions = computed(() => {
   const createTarget = activeWorkspaceId.value
     ? `${teamDetailPath(activeWorkspaceId.value)}?create=1`
@@ -873,38 +811,6 @@ async function loadWorkspaceBillingEstimate(workspaceId: string) {
   }
 }
 
-async function loadPlatformPanel(auth: AuthMeResult) {
-  platformLoading.value = true
-  platformError.value = ''
-
-  try {
-    platformPermissions.value = auth.user.platformPermissions || []
-
-    if (canManageContest.value) {
-      const adminContestsResponse = await unsafeFetch(endpoint('/admin/contests')) as ApiResponse<Contest[]>
-      platformContests.value = adminContestsResponse.data.slice(0, 5)
-      return
-    }
-
-    const contestsResponse = await unsafeFetch(endpoint('/contests'), {
-      query: {
-        page: 1,
-        pageSize: 5,
-        sort: 'deadline',
-      },
-    }) as ApiResponse<Contest[]>
-    platformContests.value = contestsResponse.data
-  }
-  catch (error: any) {
-    platformContests.value = []
-    platformPermissions.value = auth.user.platformPermissions || []
-    platformError.value = String(error?.data?.message || '平台能力区加载失败，请稍后重试。')
-  }
-  finally {
-    platformLoading.value = false
-  }
-}
-
 async function loadWorkspaceDashboard() {
   const workspaceId = routeWorkspaceId.value
   if (!workspaceId) {
@@ -961,11 +867,11 @@ async function loadWorkspaceDashboard() {
     }
 
     projects.value = projectsResult.value.data
+    platformPermissions.value = meResponse.data.user.platformPermissions || []
 
     await Promise.all([
       loadWorkspaceBillingEstimate(workspaceId),
       loadOverview(),
-      loadPlatformPanel(meResponse.data),
     ])
   }
   catch (error: any) {
@@ -993,7 +899,6 @@ async function loadWorkspaceDashboard() {
     contests.value = []
     workspaceBillingEstimate.value = null
     platformPermissions.value = []
-    platformContests.value = []
   }
   finally {
     loading.value = false
@@ -1064,19 +969,10 @@ onMounted(async () => {
 
     <section
       v-if="shouldRenderIntegratedPanels"
-      class="gap-5 grid grid-cols-12"
+      class="gap-5 grid grid-cols-12 items-start"
       data-testid="team-dashboard-integrated-panels"
     >
-      <div class="col-span-12 space-y-5 lg:col-span-8">
-        <DashboardPlatformPanel
-          :portal-cards="portalCards"
-          :platform-contests="platformContests"
-          :platform-permissions="platformPermissions"
-          :platform-loading="platformLoading"
-          :platform-error="platformError"
-          :has-platform-portal="hasPlatformPortal"
-        />
-
+      <div class="col-span-12 space-y-4 lg:col-span-8 xl:space-y-5">
         <div v-if="overviewError" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-xl bg-rose-50">
           {{ overviewError }}
         </div>

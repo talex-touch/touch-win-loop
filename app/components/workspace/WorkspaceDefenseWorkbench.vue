@@ -173,6 +173,11 @@ const realtimeProviderOptions = computed(() => {
   ]
 })
 
+const realtimeMediaModeOptions = [
+  { value: 'audio_video', label: '音视频理解' },
+  { value: 'audio', label: '仅音频' },
+] as const
+
 const cozeRuntimeSummary = computed(() => {
   const options = props.realtimeOptions?.coze
   if (!options?.configured)
@@ -205,15 +210,15 @@ function judgeTypeLabel(judgeType?: AiDefensePersona['judgeType']): string {
   return '自定义评委'
 }
 
-function handleRealtimeProviderChange(event: Event): void {
-  const value = String((event.target as HTMLSelectElement | null)?.value || 'qwen').trim()
+function handleRealtimeProviderChange(rawValue: unknown): void {
+  const value = String(rawValue || 'qwen').trim()
   if (value === 'coze' && props.realtimeOptions?.coze.configured === false)
     return
   emit('updateRealtimeProvider', value === 'coze' ? 'coze' : 'qwen')
 }
 
-function handleRealtimeMediaModeChange(event: Event): void {
-  const value = String((event.target as HTMLSelectElement | null)?.value || 'audio_video').trim()
+function handleRealtimeMediaModeChange(rawValue: unknown): void {
+  const value = String(rawValue || 'audio_video').trim()
   emit('updateRealtimeMediaMode', value === 'audio' ? 'audio' : 'audio_video')
 }
 
@@ -720,21 +725,15 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
         <section class="workspace-defense-workbench__realtime-controls">
           <label class="workspace-defense-workbench__field">
             <span class="workspace-defense-workbench__field-label">实时链路</span>
-            <select
-              class="workspace-defense-workbench__field-control"
-              :value="realtimeState?.provider || 'qwen'"
+            <UiSelect
+              :model-value="realtimeState?.provider || 'qwen'"
+              :options="realtimeProviderOptions"
               :disabled="realtimeSessionLocked"
+              size="sm"
+              aria-label="实时链路"
+              class="w-full"
               @change="handleRealtimeProviderChange"
-            >
-              <option
-                v-for="option in realtimeProviderOptions"
-                :key="option.value"
-                :value="option.value"
-                :disabled="option.disabled"
-              >
-                {{ option.label }}
-              </option>
-            </select>
+            />
           </label>
 
           <p
@@ -746,19 +745,15 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
           <label class="workspace-defense-workbench__field">
             <span class="workspace-defense-workbench__field-label">媒体模式</span>
-            <select
-              class="workspace-defense-workbench__field-control"
-              :value="realtimeState?.mediaMode || 'audio_video'"
+            <UiSelect
+              :model-value="realtimeState?.mediaMode || 'audio_video'"
+              :options="realtimeMediaModeOptions"
               :disabled="realtimeSessionLocked"
+              size="sm"
+              aria-label="媒体模式"
+              class="w-full"
               @change="handleRealtimeMediaModeChange"
-            >
-              <option value="audio_video">
-                音视频理解
-              </option>
-              <option value="audio">
-                仅音频
-              </option>
-            </select>
+            />
           </label>
 
           <div class="workspace-defense-workbench__toggle-row">

@@ -174,6 +174,11 @@ const exportBusy = ref(false)
 const reportError = ref('')
 
 const reportLimitOptions = [50, 100, 200, 500]
+const revenueHasPlanOptions = [
+  { value: '', label: '全部工作区' },
+  { value: 'yes', label: '已绑套餐' },
+  { value: 'no', label: '无套餐' },
+] as const
 
 let riskTimer: ReturnType<typeof setInterval> | null = null
 let meetingTimer: ReturnType<typeof setInterval> | null = null
@@ -696,6 +701,46 @@ const revenueRows = computed(() => {
   })
 })
 
+const userAccountStatusOptions = computed(() => [
+  { value: '', label: '全部账号状态' },
+  ...(users.value?.dimensions.accountStatus || []).map(item => ({
+    value: item.key,
+    label: item.label,
+  })),
+])
+
+const userPrimaryRoleOptions = computed(() => [
+  { value: '', label: '全部平台角色' },
+  ...(users.value?.dimensions.platformRole || []).map(item => ({
+    value: item.key,
+    label: item.label,
+  })),
+])
+
+const contentCategoryOptions = computed(() => [
+  { value: '', label: '全部分类' },
+  ...(content.value?.categoryDistribution || []).map(item => ({
+    value: item.key,
+    label: item.label,
+  })),
+])
+
+const contentGovernanceStatusOptions = computed(() => [
+  { value: '', label: '全部治理状态' },
+  ...(content.value?.governanceDistribution || []).map(item => ({
+    value: item.key,
+    label: item.label,
+  })),
+])
+
+const revenuePlanOptions = computed(() => [
+  { value: '', label: '全部套餐' },
+  ...(revenue.value?.planDistribution || []).map(item => ({
+    value: item.planCode,
+    label: item.planCode,
+  })),
+])
+
 const currentTabMeta = computed(() => tabs.find(item => item.key === activeTab.value) ?? tabs[0]!)
 
 const latestGeneratedAt = computed(() => {
@@ -848,6 +893,34 @@ const aiProviderLabel = computed(() => {
 const currentDatasetSchema = computed(() => {
   return reportSchema.value?.datasets.find(item => item.key === reportForm.dataset) || null
 })
+
+const reportDatasetOptions = computed(() => {
+  return (reportSchema.value?.datasets || []).map(dataset => ({
+    value: dataset.key,
+    label: dataset.label,
+  }))
+})
+
+const reportLimitSelectOptions = computed(() => {
+  return reportLimitOptions.map(item => ({
+    value: item,
+    label: String(item),
+  }))
+})
+
+const reportFilterFieldOptions = computed(() => {
+  return (currentDatasetSchema.value?.filters || []).map(field => ({
+    value: field.key,
+    label: field.label,
+  }))
+})
+
+function reportOperatorOptions(field: string) {
+  return (getReportField(field)?.operators || ['eq']).map(operator => ({
+    value: operator,
+    label: operator,
+  }))
+}
 
 function buildDefaultReportFilter(field?: AdminReportFieldOption): AdminReportFilter {
   return {
@@ -1412,22 +1485,8 @@ onBeforeUnmount(() => {
         <section class="border border-slate-200 bg-white overflow-hidden">
           <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-col gap-2 md:flex-row">
             <input v-model="userFilters.keyword" class="px-2 py-1 border border-slate-200 bg-white" placeholder="搜索用户名">
-            <select v-model="userFilters.accountStatus" class="px-2 py-1 border border-slate-200 bg-white">
-              <option value="">
-                全部账号状态
-              </option>
-              <option v-for="item in users.dimensions.accountStatus" :key="item.key" :value="item.key">
-                {{ item.label }}
-              </option>
-            </select>
-            <select v-model="userFilters.primaryRole" class="px-2 py-1 border border-slate-200 bg-white">
-              <option value="">
-                全部平台角色
-              </option>
-              <option v-for="item in users.dimensions.platformRole" :key="item.key" :value="item.key">
-                {{ item.label }}
-              </option>
-            </select>
+            <UiSelect v-model="userFilters.accountStatus" :options="userAccountStatusOptions" size="xs" aria-label="账号状态" class="min-w-36" />
+            <UiSelect v-model="userFilters.primaryRole" :options="userPrimaryRoleOptions" size="xs" aria-label="平台角色" class="min-w-36" />
           </div>
           <div class="overflow-auto">
             <table class="text-[11px] min-w-full">
@@ -1632,22 +1691,8 @@ onBeforeUnmount(() => {
 
         <section class="border border-slate-200 bg-white overflow-hidden">
           <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-col gap-2 md:flex-row">
-            <select v-model="contentFilters.category" class="px-2 py-1 border border-slate-200 bg-white">
-              <option value="">
-                全部分类
-              </option>
-              <option v-for="item in content.categoryDistribution" :key="item.key" :value="item.key">
-                {{ item.label }}
-              </option>
-            </select>
-            <select v-model="contentFilters.governanceStatus" class="px-2 py-1 border border-slate-200 bg-white">
-              <option value="">
-                全部治理状态
-              </option>
-              <option v-for="item in content.governanceDistribution" :key="item.key" :value="item.key">
-                {{ item.label }}
-              </option>
-            </select>
+            <UiSelect v-model="contentFilters.category" :options="contentCategoryOptions" size="xs" aria-label="内容分类" class="min-w-36" />
+            <UiSelect v-model="contentFilters.governanceStatus" :options="contentGovernanceStatusOptions" size="xs" aria-label="治理状态" class="min-w-36" />
           </div>
           <div class="overflow-auto">
             <table class="text-[11px] min-w-full">
@@ -1789,25 +1834,8 @@ onBeforeUnmount(() => {
 
           <div class="border border-slate-200 bg-white overflow-hidden">
             <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-col gap-2 md:flex-row">
-              <select v-model="revenueFilters.planCode" class="px-2 py-1 border border-slate-200 bg-white">
-                <option value="">
-                  全部套餐
-                </option>
-                <option v-for="item in revenue.planDistribution" :key="item.planCode" :value="item.planCode">
-                  {{ item.planCode }}
-                </option>
-              </select>
-              <select v-model="revenueFilters.hasPlan" class="px-2 py-1 border border-slate-200 bg-white">
-                <option value="">
-                  全部工作区
-                </option>
-                <option value="yes">
-                  已绑套餐
-                </option>
-                <option value="no">
-                  无套餐
-                </option>
-              </select>
+              <UiSelect v-model="revenueFilters.planCode" :options="revenuePlanOptions" size="xs" aria-label="套餐" class="min-w-32" />
+              <UiSelect v-model="revenueFilters.hasPlan" :options="revenueHasPlanOptions" size="xs" aria-label="套餐状态" class="min-w-32" />
             </div>
             <div class="overflow-auto">
               <table class="text-[11px] min-w-full">
@@ -2474,9 +2502,7 @@ onBeforeUnmount(() => {
           <div class="gap-3 grid md:grid-cols-4">
             <label class="space-y-1">
               <span class="text-[10px] text-slate-500 tracking-wider uppercase">数据集</span>
-              <select v-model="reportForm.dataset" class="px-2 py-1 border border-slate-200 bg-white w-full">
-                <option v-for="dataset in reportSchema.datasets" :key="dataset.key" :value="dataset.key">{{ dataset.label }}</option>
-              </select>
+              <UiSelect v-model="reportForm.dataset" :options="reportDatasetOptions" size="xs" aria-label="数据集" class="w-full" />
             </label>
             <label class="space-y-1">
               <span class="text-[10px] text-slate-500 tracking-wider uppercase">维度</span>
@@ -2492,9 +2518,7 @@ onBeforeUnmount(() => {
             </label>
             <label class="space-y-1">
               <span class="text-[10px] text-slate-500 tracking-wider uppercase">预览行数</span>
-              <select v-model="reportForm.limit" class="px-2 py-1 border border-slate-200 bg-white w-full">
-                <option v-for="item in reportLimitOptions" :key="item" :value="item">{{ item }}</option>
-              </select>
+              <UiSelect v-model="reportForm.limit" :options="reportLimitSelectOptions" size="xs" aria-label="预览行数" class="w-full" />
             </label>
           </div>
 
@@ -2509,16 +2533,8 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <div v-for="(filter, index) in reportFilters" :key="`${filter.field}-${index}`" class="gap-2 grid md:grid-cols-[1fr,0.8fr,1fr,auto]">
-              <select v-model="filter.field" class="px-2 py-1 border border-slate-200 bg-white" @change="syncReportDefaults()">
-                <option v-for="field in currentDatasetSchema.filters" :key="field.key" :value="field.key">
-                  {{ field.label }}
-                </option>
-              </select>
-              <select v-model="filter.operator" class="px-2 py-1 border border-slate-200 bg-white">
-                <option v-for="operator in (getReportField(filter.field)?.operators || ['eq'])" :key="operator" :value="operator">
-                  {{ operator }}
-                </option>
-              </select>
+              <UiSelect v-model="filter.field" :options="reportFilterFieldOptions" size="xs" aria-label="过滤字段" @change="syncReportDefaults()" />
+              <UiSelect v-model="filter.operator" :options="reportOperatorOptions(filter.field)" size="xs" aria-label="过滤操作符" />
               <input v-model="filter.value" class="px-2 py-1 border border-slate-200 bg-white" placeholder="条件值">
               <button type="button" class="operation-inline-button" @click="removeReportFilter(index)">
                 <span class="i-heroicons-outline-trash" />

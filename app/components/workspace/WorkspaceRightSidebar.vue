@@ -46,7 +46,7 @@ import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet
 import { buildWorkflowDraftKey } from '~/utils/workspace-drawio'
 import { buildSceneDraftKey } from '~/utils/workspace-scene'
 
-type WorkspaceDefenseSidebarAiMode = Exclude<WorkspaceAiMode, 'document_assist' | 'contextual_agent'>
+type WorkspaceDefenseSidebarAiMode = Exclude<WorkspaceAiMode, 'document_assist' | 'contextual_agent' | 'loopy_page'>
 type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
 type WorkspaceWorkbenchMode = 'project' | 'defense' | 'final_review'
 type WorkspaceRightSidebarView = 'ai' | 'comments'
@@ -655,6 +655,12 @@ const showContestExportPanel = computed(() => {
 const contestExportProfileMap = computed(() => {
   return new Map(props.contestExportProfiles.map(item => [item.id, item] as const))
 })
+const contestExportProfileOptions = computed(() => {
+  return props.contestExportProfiles.map(profile => ({
+    value: profile.id,
+    label: profile.title,
+  }))
+})
 
 const recentContestExportJobs = computed(() => props.contestExportJobs.slice(0, 4))
 
@@ -674,11 +680,10 @@ function resolveContestExportJobSummary(job: ProjectExportJob): string {
     || '默认导出'
 }
 
-function handleContestExportProfileChange(event: Event): void {
+function handleContestExportProfileValueChange(value: string | number): void {
   if (!showContestExportPanel.value)
     return
-  const target = event.target as HTMLSelectElement | null
-  emit('updateContestExportProfile', String(target?.value || '').trim())
+  emit('updateContestExportProfile', String(value || '').trim())
 }
 
 function requestRunContestBundleExport(): void {
@@ -1190,12 +1195,12 @@ function applyModeSelectValue(value: WorkspaceDefenseSidebarAiMode | WorkspacePr
     selectDefenseMode(value as WorkspaceDefenseSidebarAiMode)
 }
 
-function handleModeSelectChange(event: Event) {
-  const value = String((event.target as HTMLSelectElement).value || '').trim()
-  if (!value)
+function handleModeValueChange(value: string | number) {
+  const normalized = String(value || '').trim()
+  if (!normalized)
     return
 
-  applyModeSelectValue(value as WorkspaceDefenseSidebarAiMode | WorkspaceProjectAssistantMode)
+  applyModeSelectValue(normalized as WorkspaceDefenseSidebarAiMode | WorkspaceProjectAssistantMode)
 }
 
 function cycleEmbeddedModeByShortcut(direction: 1 | -1): void {
@@ -1774,17 +1779,32 @@ function defenseRealtimeConnectionLabel(state?: DefenseRealtimeSessionMeta['conn
   return '待机'
 }
 
-function handleDefenseRealtimeProviderChange(event: Event): void {
-  const value = String((event.target as HTMLSelectElement | null)?.value || 'qwen').trim()
+function handleDefenseRealtimeProviderChange(rawValue: unknown): void {
+  const value = String(rawValue || 'qwen').trim()
   if (value === 'coze' && props.defenseRealtimeOptions?.coze.configured === false)
     return
   emit('updateDefenseRealtimeProvider', value === 'coze' ? 'coze' : 'qwen')
 }
 
-function handleDefenseRealtimeMediaModeChange(event: Event): void {
-  const value = String((event.target as HTMLSelectElement | null)?.value || 'audio_video').trim()
+function handleDefenseRealtimeMediaModeChange(rawValue: unknown): void {
+  const value = String(rawValue || 'audio_video').trim()
   emit('updateDefenseRealtimeMediaMode', value === 'audio' ? 'audio' : 'audio_video')
 }
+
+const defenseRealtimeProviderOptions = computed(() => [
+  { value: 'qwen' as const, label: '千问' },
+  { value: 'coze' as const, label: 'Coze', disabled: props.defenseRealtimeOptions?.coze.configured === false },
+])
+const defenseRealtimeMediaModeOptions = [
+  { value: 'audio_video', label: '音视频理解' },
+  { value: 'audio', label: '仅音频' },
+] as const
+const defensePersonaJudgeTypeOptions = [
+  { value: 'technical', label: 'technical' },
+  { value: 'business', label: 'business' },
+  { value: 'expression', label: 'expression' },
+  { value: 'custom', label: 'custom' },
+] as const
 
 const defensePersonaFormVisible = ref(false)
 const defensePersonaEditingId = ref('')
@@ -2131,54 +2151,22 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
           <div class="workspace-workflow-toolbar__filters">
             <label class="workspace-workflow-toolbar__field">
               <span>图类型</span>
-              <select v-model="workflowTemplate" class="workspace-workflow-toolbar__select">
-                <option
-                  v-for="option in WORKFLOW_TEMPLATE_OPTIONS"
-                  :key="option.value"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
+              <UiSelect v-model="workflowTemplate" :options="WORKFLOW_TEMPLATE_OPTIONS" size="xs" aria-label="图类型" class="w-full" />
             </label>
 
             <label v-if="workflowTemplate === 'architecture'" class="workspace-workflow-toolbar__field">
               <span>架构视图</span>
-              <select v-model="workflowArchitectureView" class="workspace-workflow-toolbar__select">
-                <option
-                  v-for="option in WORKFLOW_ARCHITECTURE_VIEW_OPTIONS"
-                  :key="option.value"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
+              <UiSelect v-model="workflowArchitectureView" :options="WORKFLOW_ARCHITECTURE_VIEW_OPTIONS" size="xs" aria-label="架构视图" class="w-full" />
             </label>
 
             <label class="workspace-workflow-toolbar__field">
               <span>样式</span>
-              <select v-model="workflowStylePreset" class="workspace-workflow-toolbar__select">
-                <option
-                  v-for="option in WORKFLOW_STYLE_PRESET_OPTIONS"
-                  :key="option.value"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
+              <UiSelect v-model="workflowStylePreset" :options="WORKFLOW_STYLE_PRESET_OPTIONS" size="xs" aria-label="样式" class="w-full" />
             </label>
 
             <label class="workspace-workflow-toolbar__field">
               <span>布局</span>
-              <select v-model="workflowLayoutPreset" class="workspace-workflow-toolbar__select">
-                <option
-                  v-for="option in WORKFLOW_LAYOUT_PRESET_OPTIONS"
-                  :key="option.value"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
+              <UiSelect v-model="workflowLayoutPreset" :options="WORKFLOW_LAYOUT_PRESET_OPTIONS" size="xs" aria-label="布局" class="w-full" />
             </label>
           </div>
         </div>
@@ -2820,38 +2808,27 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 <div class="gap-2 grid grid-cols-2">
                   <label class="space-y-1">
                     <span class="text-[11px] text-slate-500">实时链路</span>
-                    <select
-                      class="text-[11px] text-slate-700 px-2 border border-slate-200 rounded bg-white h-8 w-full"
-                      :value="props.defenseRealtimeState?.provider || 'qwen'"
+                    <UiSelect
+                      :model-value="props.defenseRealtimeState?.provider || 'qwen'"
+                      :options="defenseRealtimeProviderOptions"
                       :disabled="defenseRealtimeSessionLocked"
+                      size="xs"
+                      aria-label="实时链路"
+                      class="w-full"
                       @change="handleDefenseRealtimeProviderChange"
-                    >
-                      <option value="qwen">
-                        千问
-                      </option>
-                      <option
-                        value="coze"
-                        :disabled="props.defenseRealtimeOptions?.coze.configured === false"
-                      >
-                        Coze
-                      </option>
-                    </select>
+                    />
                   </label>
                   <label class="space-y-1">
                     <span class="text-[11px] text-slate-500">媒体模式</span>
-                    <select
-                      class="text-[11px] text-slate-700 px-2 border border-slate-200 rounded bg-white h-8 w-full"
-                      :value="props.defenseRealtimeState?.mediaMode || 'audio_video'"
+                    <UiSelect
+                      :model-value="props.defenseRealtimeState?.mediaMode || 'audio_video'"
+                      :options="defenseRealtimeMediaModeOptions"
                       :disabled="defenseRealtimeSessionLocked"
+                      size="xs"
+                      aria-label="媒体模式"
+                      class="w-full"
                       @change="handleDefenseRealtimeMediaModeChange"
-                    >
-                      <option value="audio_video">
-                        音视频理解
-                      </option>
-                      <option value="audio">
-                        仅音频
-                      </option>
-                    </select>
+                    />
                   </label>
                 </div>
 
@@ -2995,20 +2972,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                       取消
                     </button>
                   </div>
-                  <select v-model="defensePersonaForm.judgeType" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white w-full">
-                    <option value="technical">
-                      technical
-                    </option>
-                    <option value="business">
-                      business
-                    </option>
-                    <option value="expression">
-                      expression
-                    </option>
-                    <option value="custom">
-                      custom
-                    </option>
-                  </select>
+                  <UiSelect v-model="defensePersonaForm.judgeType" :options="defensePersonaJudgeTypeOptions" size="xs" aria-label="评委类型" class="w-full" />
                   <input v-model="defensePersonaForm.name" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white w-full" placeholder="人设名称">
                   <textarea v-model="defensePersonaForm.summary" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-16 w-full resize-none" placeholder="一句话说明评委关注点" />
                   <textarea v-model="defensePersonaForm.systemPrompt" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-28 w-full resize-none" placeholder="系统提示词" />
@@ -3099,19 +3063,14 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
                 <label class="space-y-1">
                   <span class="text-[11px] text-slate-500">导出 Profile</span>
-                  <select
-                    class="text-[11px] text-slate-700 px-2 border border-slate-200 rounded bg-white h-8 w-full"
-                    :value="props.contestExportActiveProfileId"
-                    @change="handleContestExportProfileChange"
-                  >
-                    <option
-                      v-for="profile in props.contestExportProfiles"
-                      :key="profile.id"
-                      :value="profile.id"
-                    >
-                      {{ profile.title }}
-                    </option>
-                  </select>
+                  <UiSelect
+                    :model-value="props.contestExportActiveProfileId"
+                    :options="contestExportProfileOptions"
+                    size="xs"
+                    aria-label="导出 Profile"
+                    class="w-full"
+                    @change="handleContestExportProfileValueChange"
+                  />
                 </label>
 
                 <div class="gap-2 grid grid-cols-2">
@@ -3286,23 +3245,15 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                   <span class="workspace-chat-composer__mode-icon material-symbols-outlined" aria-hidden="true">
                     auto_awesome
                   </span>
-                  <select
+                  <UiSelect
                     data-testid="workspace-right-sidebar-mode-select"
                     class="workspace-mode-select workspace-mode-select--embedded"
-                    :value="modeSelectValue()"
-                    @change="handleModeSelectChange"
-                  >
-                    <option
-                      v-for="mode in props.workbenchMode === 'project' ? projectAssistantOptions : DEFENSE_MODES"
-                      :key="mode.value"
-                      :value="mode.value"
-                    >
-                      {{ mode.label }}
-                    </option>
-                  </select>
-                  <span class="workspace-chat-composer__mode-chevron material-symbols-outlined" aria-hidden="true">
-                    expand_more
-                  </span>
+                    :model-value="modeSelectValue()"
+                    :options="props.workbenchMode === 'project' ? projectAssistantOptions : DEFENSE_MODES"
+                    size="xs"
+                    aria-label="AI 模式"
+                    @change="handleModeValueChange"
+                  />
                 </label>
               </div>
               <button

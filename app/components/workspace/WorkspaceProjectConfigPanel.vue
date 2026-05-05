@@ -45,6 +45,14 @@ const levelLabels: Record<string, string> = {
   industry: '行业赛',
 }
 
+const levelOptions = [
+  { value: '', label: '级别（全部）' },
+  { value: 'national', label: 'national' },
+  { value: 'provincial', label: 'provincial' },
+  { value: 'school', label: 'school' },
+  { value: 'industry', label: 'industry' },
+] as const
+
 const filterPresets: FilterPreset[] = [
   {
     id: 'national-ai',
@@ -135,27 +143,12 @@ function applyFilterPreset(preset: FilterPreset) {
             placeholder="学科/方向"
             @input="emit('updateDiscipline', ($event.target as HTMLInputElement).value)"
           >
-          <select
-            :value="props.level"
-            class="workspace-input"
-            @change="emit('updateLevel', ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">
-              级别（全部）
-            </option>
-            <option value="national">
-              national
-            </option>
-            <option value="provincial">
-              provincial
-            </option>
-            <option value="school">
-              school
-            </option>
-            <option value="industry">
-              industry
-            </option>
-          </select>
+          <UiSelect
+            :model-value="props.level"
+            :options="levelOptions"
+            aria-label="级别"
+            @change="value => emit('updateLevel', String(value))"
+          />
           <input
             :value="props.trackType"
             class="workspace-input"

@@ -57,6 +57,44 @@ const createForm = reactive({
   assetPresetKeys: '',
 })
 
+const itemKindOptions = [
+  { value: '', label: '全部类型' },
+  { value: 'template', label: 'template' },
+  { value: 'asset', label: 'asset' },
+] as const
+
+const assetKindFilterOptions = [
+  { value: '', label: '全部素材子类' },
+  { value: 'image', label: 'image' },
+  { value: 'svg', label: 'svg' },
+  { value: 'device_shell', label: 'device_shell' },
+] as const
+
+const itemStatusOptions = [
+  { value: '', label: '全部状态' },
+  { value: 'draft', label: 'draft' },
+  { value: 'published', label: 'published' },
+  { value: 'archived', label: 'archived' },
+] as const
+
+const sourceFilterOptions = [
+  { value: '', label: '全部来源' },
+  { value: 'admin_upload', label: 'admin_upload' },
+  { value: 'design_publish', label: 'design_publish' },
+] as const
+
+const templateTargetOptions = [
+  { value: 'scene', label: 'scene' },
+  { value: 'page', label: 'page' },
+  { value: 'frame', label: 'frame' },
+] as const
+
+const assetKindOptions = [
+  { value: 'image', label: 'image' },
+  { value: 'svg', label: 'svg' },
+  { value: 'device_shell', label: 'device_shell' },
+] as const
+
 const createAssetFile = ref<File | null>(null)
 const createAssetInputRef = ref<HTMLInputElement | null>(null)
 
@@ -477,68 +515,10 @@ watch([filteredRows, pageSize], () => {
           type="search"
           placeholder="搜索标题 / slug / 摘要"
         >
-        <select
-          v-model="filters.kind"
-          class="text-sm text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-lg bg-white transition-colors focus:border-slate-300"
-        >
-          <option value="">
-            全部类型
-          </option>
-          <option value="template">
-            template
-          </option>
-          <option value="asset">
-            asset
-          </option>
-        </select>
-        <select
-          v-model="filters.assetKind"
-          class="text-sm text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-lg bg-white transition-colors focus:border-slate-300"
-        >
-          <option value="">
-            全部素材子类
-          </option>
-          <option value="image">
-            image
-          </option>
-          <option value="svg">
-            svg
-          </option>
-          <option value="device_shell">
-            device_shell
-          </option>
-        </select>
-        <select
-          v-model="filters.status"
-          class="text-sm text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-lg bg-white transition-colors focus:border-slate-300"
-        >
-          <option value="">
-            全部状态
-          </option>
-          <option value="draft">
-            draft
-          </option>
-          <option value="published">
-            published
-          </option>
-          <option value="archived">
-            archived
-          </option>
-        </select>
-        <select
-          v-model="filters.source"
-          class="text-sm text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-lg bg-white transition-colors focus:border-slate-300"
-        >
-          <option value="">
-            全部来源
-          </option>
-          <option value="admin_upload">
-            admin_upload
-          </option>
-          <option value="design_publish">
-            design_publish
-          </option>
-        </select>
+        <UiSelect v-model="filters.kind" :options="itemKindOptions" size="sm" aria-label="类型" />
+        <UiSelect v-model="filters.assetKind" :options="assetKindFilterOptions" size="sm" aria-label="素材子类" />
+        <UiSelect v-model="filters.status" :options="itemStatusOptions" size="sm" aria-label="状态" />
+        <UiSelect v-model="filters.source" :options="sourceFilterOptions" size="sm" aria-label="来源" />
       </div>
     </section>
 
@@ -697,20 +677,7 @@ watch([filteredRows, pageSize], () => {
         </div>
 
         <div v-if="createForm.mode === 'template'" class="space-y-3">
-          <select
-            v-model="createForm.templateTarget"
-            class="text-sm text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-lg bg-white w-full transition-colors focus:border-slate-300"
-          >
-            <option value="scene">
-              scene
-            </option>
-            <option value="page">
-              page
-            </option>
-            <option value="frame">
-              frame
-            </option>
-          </select>
+          <UiSelect v-model="createForm.templateTarget" :options="templateTargetOptions" size="sm" aria-label="模板目标" class="w-full" />
           <textarea
             v-model="createForm.payloadText"
             class="text-xs text-slate-100 leading-6 font-mono px-3 py-3 outline-none border border-slate-200 rounded-lg bg-slate-950 min-h-[260px] w-full transition-colors focus:border-slate-400"
@@ -719,20 +686,7 @@ watch([filteredRows, pageSize], () => {
         </div>
 
         <div v-else class="space-y-3">
-          <select
-            v-model="createForm.assetKind"
-            class="text-sm text-slate-700 px-3 py-2 outline-none border border-slate-200 rounded-lg bg-white w-full transition-colors focus:border-slate-300"
-          >
-            <option value="image">
-              image
-            </option>
-            <option value="svg">
-              svg
-            </option>
-            <option value="device_shell">
-              device_shell
-            </option>
-          </select>
+          <UiSelect v-model="createForm.assetKind" :options="assetKindOptions" size="sm" aria-label="素材类型" class="w-full" />
           <input
             ref="createAssetInputRef"
             class="text-sm text-slate-700 px-3 py-2 border border-slate-200 rounded-lg bg-white w-full"

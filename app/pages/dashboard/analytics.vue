@@ -113,6 +113,23 @@ const analyticsAssetBase = '/assets/dashboard/analytics'
 const analyticsFilterAssetUrl = `${analyticsAssetBase}/current-filter.png`
 const analyticsOverviewTrendAssetUrl = `${analyticsAssetBase}/overview-trend.png`
 
+const workspaceFilterOptions = computed(() => [
+  { label: '全部工作区', value: '' },
+  ...workspaceOptions.value,
+])
+const projectFilterOptions = computed(() => [
+  { label: '全部项目', value: '' },
+  ...projectOptions.value,
+])
+const contestFilterOptions = computed(() => [
+  { label: '全部竞赛', value: '' },
+  ...contestOptions.value,
+])
+
+function normalizeSelectValue(value: string | number) {
+  return String(value || '')
+}
+
 function metricToneClasses(tone: AnalyticsMetricCard['tone']): string {
   return `analytics-metric-card analytics-metric-card--${tone}`
 }
@@ -300,30 +317,12 @@ onMounted(() => {
           <div class="analytics-filter-row">
             <label class="analytics-select-field analytics-select-field--range">
               <span>时间范围</span>
-              <select
-                :value="filters.rangePreset"
-                @change="handleRangePresetChange(String(($event.target as HTMLSelectElement).value || ''))"
-              >
-                <option v-for="item in rangeOptions" :key="item.value" :value="item.value">
-                  {{ item.label }}
-                </option>
-              </select>
+              <UiSelect :model-value="filters.rangePreset" :options="rangeOptions" aria-label="时间范围" @change="value => handleRangePresetChange(normalizeSelectValue(value))" />
             </label>
 
             <label class="analytics-select-field analytics-select-field--workspace">
               <span>工作区</span>
-              <select
-                :value="filters.workspaceId"
-                :disabled="optionsLoading"
-                @change="handleWorkspaceChange(String(($event.target as HTMLSelectElement).value || ''))"
-              >
-                <option value="">
-                  全部工作区
-                </option>
-                <option v-for="item in workspaceOptions" :key="item.value" :value="item.value">
-                  {{ item.label }}
-                </option>
-              </select>
+              <UiSelect :model-value="filters.workspaceId" :options="workspaceFilterOptions" :disabled="optionsLoading" aria-label="工作区" @change="value => handleWorkspaceChange(normalizeSelectValue(value))" />
             </label>
 
             <details class="analytics-advanced-filter">
@@ -335,34 +334,12 @@ onMounted(() => {
               <div class="analytics-advanced-filter__content">
                 <label class="analytics-select-field">
                   <span>项目</span>
-                  <select
-                    :value="filters.projectId"
-                    :disabled="optionsLoading"
-                    @change="handleProjectChange(String(($event.target as HTMLSelectElement).value || ''))"
-                  >
-                    <option value="">
-                      全部项目
-                    </option>
-                    <option v-for="item in projectOptions" :key="item.value" :value="item.value">
-                      {{ item.label }}
-                    </option>
-                  </select>
+                  <UiSelect :model-value="filters.projectId" :options="projectFilterOptions" :disabled="optionsLoading" aria-label="项目" @change="value => handleProjectChange(normalizeSelectValue(value))" />
                 </label>
 
                 <label class="analytics-select-field">
                   <span>竞赛</span>
-                  <select
-                    :value="filters.contestId"
-                    :disabled="optionsLoading"
-                    @change="handleContestChange(String(($event.target as HTMLSelectElement).value || ''))"
-                  >
-                    <option value="">
-                      全部竞赛
-                    </option>
-                    <option v-for="item in contestOptions" :key="item.value" :value="item.value">
-                      {{ item.label }}
-                    </option>
-                  </select>
+                  <UiSelect :model-value="filters.contestId" :options="contestFilterOptions" :disabled="optionsLoading" aria-label="竞赛" @change="value => handleContestChange(normalizeSelectValue(value))" />
                 </label>
               </div>
             </details>

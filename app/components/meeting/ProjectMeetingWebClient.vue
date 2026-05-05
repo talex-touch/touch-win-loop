@@ -939,6 +939,14 @@ const canManageDefenseRealtimeSidecar = computed(() => !props.guest && isLivekit
 const defenseRealtimeProvider = computed<DefenseRealtimeProvider>(() => props.defenseRealtimeState?.provider === 'coze' ? 'coze' : 'qwen')
 const defenseRealtimeMediaMode = computed<DefenseRealtimeMediaMode>(() => props.defenseRealtimeState?.mediaMode === 'audio' ? 'audio' : 'audio_video')
 const cozeRealtimeSelectable = computed(() => props.defenseRealtimeOptions?.coze.configured !== false)
+const defenseRealtimeProviderOptions = computed(() => [
+  { value: 'qwen' as const, label: '百炼' },
+  { value: 'coze' as const, label: 'Coze', disabled: !cozeRealtimeSelectable.value },
+])
+const defenseRealtimeMediaModeOptions = [
+  { value: 'audio_video', label: '音视频理解' },
+  { value: 'audio', label: '仅音频' },
+] as const
 const defenseRealtimeLocked = computed(() => {
   const state = normalizeString(props.defenseRealtimeState?.connectionState)
   return props.defenseRealtimeState?.bootstrapState === 'bootstrapping'
@@ -1248,25 +1256,27 @@ onBeforeUnmount(() => {
           <div v-if="canManageDefenseRealtimeSidecar && !showDefenseRealtimeSidecar" class="meeting-web-client__sidecar-selects">
             <label>
               <span>实时链路</span>
-              <select
-                :value="defenseRealtimeProvider"
+              <UiSelect
+                :model-value="defenseRealtimeProvider"
+                :options="defenseRealtimeProviderOptions"
                 :disabled="defenseRealtimeLocked"
-                @change="emit('updateDefenseRealtimeProvider', (($event.target as HTMLSelectElement).value === 'coze' && cozeRealtimeSelectable ? 'coze' : 'qwen'))"
-              >
-                <option value="qwen">百炼</option>
-                <option value="coze" :disabled="!cozeRealtimeSelectable">Coze</option>
-              </select>
+                size="xs"
+                aria-label="实时链路"
+                class="w-full"
+                @change="value => emit('updateDefenseRealtimeProvider', (value === 'coze' && cozeRealtimeSelectable ? 'coze' : 'qwen'))"
+              />
             </label>
             <label>
               <span>媒体</span>
-              <select
-                :value="defenseRealtimeMediaMode"
+              <UiSelect
+                :model-value="defenseRealtimeMediaMode"
+                :options="defenseRealtimeMediaModeOptions"
                 :disabled="defenseRealtimeLocked"
-                @change="emit('updateDefenseRealtimeMediaMode', (($event.target as HTMLSelectElement).value === 'audio' ? 'audio' : 'audio_video'))"
-              >
-                <option value="audio_video">音视频理解</option>
-                <option value="audio">仅音频</option>
-              </select>
+                size="xs"
+                aria-label="媒体"
+                class="w-full"
+                @change="value => emit('updateDefenseRealtimeMediaMode', (value === 'audio' ? 'audio' : 'audio_video'))"
+              />
             </label>
           </div>
           <div class="meeting-web-client__status-list">

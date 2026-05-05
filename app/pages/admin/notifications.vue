@@ -31,6 +31,19 @@ const form = reactive({
   expiresAt: '',
 })
 
+const scopeOptions = [
+  { value: 'global', label: '全局' },
+  { value: 'workspace', label: '单 workspace' },
+] as const
+
+const workspaceSelectOptions = computed(() => [
+  { value: '', label: '请选择', disabled: true },
+  ...workspaceOptions.value.map(item => ({
+    value: item.workspace.id,
+    label: item.workspace.name,
+  })),
+])
+
 async function loadContext() {
   loading.value = true
   errorText.value = ''
@@ -118,26 +131,12 @@ onMounted(loadContext)
       <form class="p-3 gap-3 grid md:grid-cols-2" @submit.prevent="submitForm">
         <label class="block">
           <span class="text-[11px] text-slate-600 mb-1 block">受众范围</span>
-          <select v-model="form.scope" class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white w-full">
-            <option value="global">
-              全局
-            </option>
-            <option value="workspace">
-              单 workspace
-            </option>
-          </select>
+          <UiSelect v-model="form.scope" :options="scopeOptions" size="sm" aria-label="受众范围" class="w-full" />
         </label>
 
         <label v-if="form.scope === 'workspace'" class="block">
           <span class="text-[11px] text-slate-600 mb-1 block">目标 workspace</span>
-          <select v-model="form.workspaceId" class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white w-full">
-            <option value="">
-              请选择
-            </option>
-            <option v-for="item in workspaceOptions" :key="item.workspace.id" :value="item.workspace.id">
-              {{ item.workspace.name }}
-            </option>
-          </select>
+          <UiSelect v-model="form.workspaceId" :options="workspaceSelectOptions" size="sm" aria-label="目标 workspace" class="w-full" />
         </label>
 
         <label class="block md:col-span-2">
