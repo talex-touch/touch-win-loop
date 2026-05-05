@@ -66,6 +66,7 @@ const hasSummary = computed(() => {
 
 const hasLead = computed(() => Boolean(slots.lead))
 const hasAside = computed(() => Boolean(slots.aside))
+const hasDefault = computed(() => Boolean(slots.default))
 
 const noticeClass = computed(() => {
   if (props.noticeTone === 'success')
@@ -216,7 +217,7 @@ function summaryStatClass(tone: DashboardOverviewStatTone | undefined) {
       </div>
     </div>
 
-    <section v-else>
+    <section v-else-if="hasDefault">
       <slot />
     </section>
   </div>

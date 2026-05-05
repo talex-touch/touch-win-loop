@@ -3,7 +3,6 @@ import type {
   ApiResponse,
   AuthMeResult,
   Contest,
-  PlatformPermission,
   Project,
   ProjectInvitationSummary,
   ProjectMemberManagementSnapshot,
@@ -57,7 +56,6 @@ const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 const {
   feedFilter,
-  quickActions: baseQuickActions,
   visibleInsights,
   visibleCompetitions,
   skillMetrics,
@@ -80,7 +78,6 @@ const me = ref<AuthMeResult | null>(null)
 const projects = ref<Project[]>([])
 const contests = ref<Contest[]>([])
 const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
-const platformPermissions = ref<PlatformPermission[]>([])
 
 const createDialogVisible = ref(false)
 const creatingProject = ref(false)
@@ -132,17 +129,6 @@ const createDialogHelperText = computed(() => {
     : `新项目会创建到「${activeWorkspaceName.value}」项目台下，创建后可继续补充竞赛绑定、图标与详细资料。`
 })
 const activeWorkspaceRoles = computed(() => activeWorkspace.value?.workspace.roles || [])
-const canManageTeamBilling = computed(() => {
-  return me.value?.user.isPlatformAdmin
-    || activeWorkspaceRoles.value.includes('owner')
-    || activeWorkspaceRoles.value.includes('admin')
-})
-const canManageContest = computed(() => {
-  return platformPermissions.value.some(item =>
-    ['contest.read_internal', 'contest.write', 'contest.publish', 'contest.archive'].includes(item),
-  )
-})
-const canManagePricing = computed(() => platformPermissions.value.includes('pricing.write'))
 const workspaceCanCreateProject = computed(() => {
   if (me.value?.user.isPlatformAdmin)
     return true
@@ -194,47 +180,6 @@ const activeNoticeTone = computed<'success' | 'warning'>(() => {
   return 'warning'
 })
 const shouldRenderIntegratedPanels = computed(() => !loading.value && !errorText.value)
-const teamQuickActions = computed(() => {
-  const createTarget = activeWorkspaceId.value
-    ? `${teamDetailPath(activeWorkspaceId.value)}?create=1`
-    : '/team?create=1'
-
-  const items = baseQuickActions.map((item) => {
-    if (item.id !== 'report')
-      return item
-    return {
-      ...item,
-      to: createTarget,
-    }
-  })
-
-  if (canManageContest.value) {
-    items.push({
-      id: 'admin-contests',
-      label: '赛事录入',
-      icon: 'edit_note',
-      to: '/admin/contests',
-    })
-  }
-  if (canManagePricing.value) {
-    items.push({
-      id: 'admin-billing',
-      label: '席位计费',
-      icon: 'payments',
-      to: '/admin/billing',
-    })
-  }
-  if (canManageTeamBilling.value && activeWorkspaceId.value) {
-    items.push({
-      id: 'team-billing',
-      label: 'Team 结算',
-      icon: 'receipt_long',
-      to: `/team/${activeWorkspaceId.value}/billing`,
-    })
-  }
-
-  return items
-})
 const projectDetailDialogVisible = ref(false)
 const projectProfileDialogVisible = ref(false)
 const projectMembersDialogVisible = ref(false)
@@ -867,7 +812,6 @@ async function loadWorkspaceDashboard() {
     }
 
     projects.value = projectsResult.value.data
-    platformPermissions.value = meResponse.data.user.platformPermissions || []
 
     await Promise.all([
       loadWorkspaceBillingEstimate(workspaceId),
@@ -898,7 +842,6 @@ async function loadWorkspaceDashboard() {
     projects.value = []
     contests.value = []
     workspaceBillingEstimate.value = null
-    platformPermissions.value = []
   }
   finally {
     loading.value = false
@@ -941,13 +884,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div class="team-dashboard-page px-3 py-3 flex flex-col gap-4 h-full min-h-0 overflow-hidden lg:px-5 md:px-4">
     <DashboardOverviewShell
       :title="activeWorkspace?.workspace.name || 'Team 项目台'"
       description="当前 Team 的项目与配额概览。"
       :notice-text="activeNoticeText"
       :notice-tone="activeNoticeTone"
-      :loading="loading"
       :error-text="errorText"
       primary-action-label="新建项目"
       :primary-action-disabled="Boolean(createDisabledReason)"
@@ -955,24 +897,16 @@ onMounted(async () => {
       empty-action-test-id="team-dashboard-empty-create-project-button"
       overview-section-test-id="team-dashboard-overview"
       notice-test-id="team-dashboard-notice"
-      loading-key-prefix="workspace-project-skeleton"
       @primary-action="openCreateDialog"
       @retry="loadWorkspaceDashboard"
-    >
-      <TeamProjectOverview
-        :projects="projectCards"
-        :can-manage-actions="canManageProjectActions"
-        @open-project="openProject"
-        @project-action="handleProjectAction"
-      />
-    </DashboardOverviewShell>
+    />
 
     <section
       v-if="shouldRenderIntegratedPanels"
-      class="gap-5 grid grid-cols-12 items-start"
+      class="flex-1 gap-5 grid grid-cols-12 min-h-0 overflow-hidden"
       data-testid="team-dashboard-integrated-panels"
     >
-      <div class="col-span-12 space-y-4 lg:col-span-8 xl:space-y-5">
+      <div class="pr-1 col-span-12 min-h-0 overflow-y-auto space-y-4 lg:col-span-8 xl:space-y-5">
         <div v-if="overviewError" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-xl bg-rose-50">
           {{ overviewError }}
         </div>
@@ -990,16 +924,20 @@ onMounted(async () => {
             :insights="visibleInsights"
             :more-to="activeWorkspaceId ? teamDetailPath(activeWorkspaceId) : '/team'"
           />
-          <DashboardCompetitionFeed
-            v-model:active-filter="feedFilter"
-            :competitions="visibleCompetitions"
+
+          <TeamProjectOverview
+            :projects="projectCards"
+            :can-manage-actions="canManageProjectActions"
+            @open-project="openProject"
+            @project-action="handleProjectAction"
           />
         </template>
       </div>
 
-      <div class="col-span-12 lg:col-span-4">
+      <div class="col-span-12 min-h-0 lg:col-span-4 lg:h-full lg:overflow-hidden">
         <DashboardRightRail
-          :quick-actions="teamQuickActions"
+          v-model:active-feed-filter="feedFilter"
+          :competitions="visibleCompetitions"
           :skill-metrics="skillMetrics"
           :schedule-items="scheduleItems"
         />

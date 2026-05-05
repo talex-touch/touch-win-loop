@@ -69,6 +69,11 @@ const isWorkspaceFullscreen = computed(() => {
   return /^\/team\/[^/]+\/project\/[^/]+$/.test(normalizedPath)
 })
 
+const isTeamDashboardDetail = computed(() => {
+  const normalizedPath = route.path.replace(/\/+$/, '') || '/'
+  return /^\/team\/[^/]+$/.test(normalizedPath)
+})
+
 const showLoopyFloating = computed(() => {
   const normalizedPath = route.path.replace(/\/+$/, '') || '/'
   if (normalizedPath === '/dashboard')
@@ -194,7 +199,8 @@ watch(() => route.fullPath, async () => {
 
         <div
           ref="shellScrollRef"
-          class="dashboard-scrollbar flex-1 min-h-0 overflow-y-auto"
+          class="dashboard-scrollbar flex-1 min-h-0"
+          :class="isTeamDashboardDetail ? 'overflow-hidden' : 'overflow-y-auto'"
         >
           <slot />
         </div>
@@ -213,6 +219,20 @@ watch(() => route.fullPath, async () => {
   width: 100%;
   height: 100dvh;
   min-height: 0;
+}
+
+.dashboard-shell {
+  --db-bg: #f6f6f8;
+  --db-bg-alt: #f8fafc;
+  --db-border: #dbe3ef;
+  --db-border-subtle: #e5ebf3;
+  --db-muted-surface: #f8fafc;
+  --db-primary: #2454d7;
+  --db-primary-soft: #eef4ff;
+  --db-subtle: #64748b;
+  --db-surface: #ffffff;
+  --db-warning: #b45309;
+  --db-warning-soft: #fff7ed;
 }
 
 .dashboard-scrollbar {

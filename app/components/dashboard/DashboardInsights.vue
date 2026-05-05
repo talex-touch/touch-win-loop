@@ -30,11 +30,11 @@ const badgeClassMap: Record<DashboardInsight['tone'], string> = {
           </span>
           AI 智能洞察
         </h3>
-        <p class="db-muted text-sm leading-5 mt-1.5">
+        <p class="text-sm db-muted leading-5 mt-1.5">
           将当前最值得关注的趋势、项目进度与建议动作集中展示。
         </p>
       </div>
-      <NuxtLink :to="moreTo" class="db-btn db-btn-ghost db-focus-ring text-sm font-semibold px-3 py-2 border border-slate-200 rounded-md bg-white hover:bg-slate-50">
+      <NuxtLink :to="moreTo" class="text-sm db-btn-ghost font-semibold px-3 py-2 db-focus-ring border border-slate-200 rounded-md bg-white db-btn hover:bg-slate-50">
         查看全部
       </NuxtLink>
     </div>
@@ -43,19 +43,19 @@ const badgeClassMap: Record<DashboardInsight['tone'], string> = {
       <article
         v-for="index in 2"
         :key="`dashboard-insight-skeleton-${index}`"
-        class="db-panel p-4"
+        class="p-4 db-panel"
       >
         <div class="flex gap-3 items-center justify-between">
-          <div class="db-skeleton rounded-full h-7 w-24" />
-          <div class="db-skeleton rounded-full h-5 w-16" />
+          <div class="rounded-full h-7 w-24 db-skeleton" />
+          <div class="rounded-full h-5 w-16 db-skeleton" />
         </div>
-        <div class="db-skeleton mt-4 rounded-xl h-6 w-3/4" />
-        <div class="db-skeleton mt-3 rounded-xl h-[4.5rem] w-full" />
-        <div class="db-skeleton mt-4 rounded-xl h-11 w-full" />
+        <div class="mt-4 rounded-xl h-6 w-3/4 db-skeleton" />
+        <div class="mt-3 rounded-xl h-[4.5rem] w-full db-skeleton" />
+        <div class="mt-4 rounded-xl h-11 w-full db-skeleton" />
       </article>
     </div>
 
-    <div v-else-if="insights.length === 0" class="db-panel db-panel-muted text-sm text-slate-500 px-4 py-4">
+    <div v-else-if="insights.length === 0" class="text-sm text-slate-500 px-4 py-4 db-panel db-panel-muted">
       当前暂无可展示的智能洞察。
     </div>
 
@@ -63,7 +63,7 @@ const badgeClassMap: Record<DashboardInsight['tone'], string> = {
       <article
         v-for="item in insights"
         :key="item.id"
-        class="db-panel db-hover-lift group p-4 relative overflow-hidden"
+        class="group p-4 db-panel db-hover-lift relative overflow-hidden"
       >
         <div class="rounded-full bg-[rgba(36,84,215,0.08)] h-24 w-24 right-[-18px] top-[-26px] absolute blur-2xl" />
         <div class="relative">
@@ -79,18 +79,18 @@ const badgeClassMap: Record<DashboardInsight['tone'], string> = {
           <h4 class="text-base text-slate-900 leading-6 font-bold transition-colors group-hover:text-[var(--db-primary)]">
             {{ item.title }}
           </h4>
-          <p class="db-muted text-sm leading-6 mt-2">
+          <p class="text-sm db-muted leading-6 mt-2">
             {{ item.description }}
           </p>
 
-          <div class="mt-4 px-3 py-2.5 border border-[var(--db-border)] rounded-xl bg-[var(--db-bg-alt)] flex flex-wrap gap-2.5 items-center justify-between">
+          <div class="mt-4 px-3 py-2.5 border border-slate-200 rounded-xl bg-slate-50 flex flex-wrap gap-2.5 items-center justify-between">
             <span class="text-sm text-slate-600 font-medium flex gap-2 items-center">
               <span class="text-[var(--db-primary)] rounded-lg bg-white flex h-7 w-7 shadow-sm items-center justify-center">
                 <span class="material-symbols-outlined text-[15px]">{{ item.metricIcon }}</span>
               </span>
               {{ item.metricText }}
             </span>
-            <span class="db-chip db-chip-primary text-[11px] font-semibold px-2.5 py-1 rounded-md">
+            <span class="db-chip text-[11px] db-chip-primary font-semibold px-2.5 py-1 rounded-md">
               {{ item.actionText }}
             </span>
           </div>

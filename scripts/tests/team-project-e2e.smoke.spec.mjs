@@ -764,6 +764,7 @@ test.describe('Team -> Project E2E smoke', () => {
         await expect(teamOwnerUi.page.getByTestId('team-create-project-dialog')).toBeVisible()
         await teamOwnerUi.page.getByTestId('team-create-project-title-input').fill(stayCreateTitle)
         await teamOwnerUi.page.getByTestId('team-create-project-summary-input').fill('用于验证仅创建后停留在当前 Team 页。')
+        await teamOwnerUi.page.getByTestId('team-create-project-next-step-button').click()
         await teamOwnerUi.page.getByTestId('team-create-project-stay-submit-button').click()
 
         await expect(teamOwnerUi.page).toHaveURL(routePattern(`/team/${teamId}`))
@@ -802,6 +803,7 @@ test.describe('Team -> Project E2E smoke', () => {
         await expect(personalOwnerUi.page.getByTestId('team-create-project-dialog')).toBeVisible()
         await personalOwnerUi.page.getByTestId('team-create-project-title-input').fill(`Personal Second ${seed}`)
         await personalOwnerUi.page.getByTestId('team-create-project-summary-input').fill('用于验证 personal 第二个项目创建成功。')
+        await personalOwnerUi.page.getByTestId('team-create-project-next-step-button').click()
 
         await Promise.all([
           personalOwnerUi.page.waitForURL(new RegExp(`/team/${escapeRegExp(personalWorkspaceId)}/project/[^/]+(?:\\?.*)?$`)),

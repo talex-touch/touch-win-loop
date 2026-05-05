@@ -1,58 +1,33 @@
 <script setup lang="ts">
 import type {
-  DashboardQuickAction,
+  DashboardCompetition,
+  DashboardFeedFilter,
   DashboardScheduleItem,
   DashboardSkillMetric,
 } from '~/types/dashboard'
 
 withDefaults(defineProps<{
-  quickActions?: DashboardQuickAction[]
+  competitions?: DashboardCompetition[]
+  activeFeedFilter?: DashboardFeedFilter
   skillMetrics?: DashboardSkillMetric[]
   scheduleItems?: DashboardScheduleItem[]
   loading?: boolean
 }>(), {
-  quickActions: () => [],
+  competitions: () => [],
+  activeFeedFilter: 'all',
   skillMetrics: () => [],
   scheduleItems: () => [],
   loading: false,
 })
+
+const emit = defineEmits<{
+  'update:activeFeedFilter': [value: DashboardFeedFilter]
+}>()
 </script>
 
 <template>
-  <div class="col-span-12 space-y-4 lg:col-span-4 xl:space-y-5">
-    <section class="db-appear" style="animation-delay: 360ms;">
-      <div class="mb-3">
-        <p class="db-eyebrow db-eyebrow-tight">
-          Quick Actions
-        </p>
-        <h3 class="text-xl text-slate-900 tracking-[-0.03em] font-black">
-          工作台快捷访问
-        </h3>
-      </div>
-
-      <div class="gap-3 grid grid-cols-2">
-        <NuxtLink
-          v-for="item in quickActions"
-          :key="item.id"
-          :to="item.to"
-          class="db-panel db-hover-lift db-focus-ring group px-3.5 py-3"
-        >
-          <div class="text-slate-500 rounded-xl bg-[var(--db-bg)] flex h-10 w-10 transition-colors items-center justify-center group-hover:text-[var(--db-primary)]">
-            <span class="material-symbols-outlined text-[18px]">{{ item.icon }}</span>
-          </div>
-          <div class="mt-3">
-            <p class="text-sm text-slate-900 font-semibold">
-              {{ item.label }}
-            </p>
-            <p class="db-muted text-xs mt-1">
-              直达常用入口
-            </p>
-          </div>
-        </NuxtLink>
-      </div>
-    </section>
-
-    <section class="db-panel db-panel-elevated db-appear text-white px-4 py-4 overflow-hidden" style="animation-delay: 400ms; background: linear-gradient(145deg, #1f4fd3 0%, #3772ff 52%, #2aa7dc 100%);">
+  <div class="flex flex-col gap-4 col-span-12 h-full min-h-0 xl:gap-5 lg:col-span-4">
+    <section class="db-appear text-white px-4 py-4 db-panel db-panel-elevated overflow-hidden" style="animation-delay: 400ms; background: linear-gradient(145deg, #1f4fd3 0%, #3772ff 52%, #2aa7dc 100%);">
       <div class="flex gap-3 items-start justify-between">
         <div>
           <p class="text-xs text-white/70 tracking-[0.16em] font-semibold uppercase">
@@ -77,8 +52,8 @@ withDefaults(defineProps<{
           :key="`dashboard-skill-skeleton-${index}`"
           class="space-y-2"
         >
-          <div class="db-skeleton rounded-xl h-5 w-2/5" style="background: rgba(255, 255, 255, 0.18);" />
-          <div class="db-skeleton rounded-full h-2.5 w-full" style="background: rgba(255, 255, 255, 0.2);" />
+          <div class="rounded-xl h-5 w-2/5 db-skeleton" style="background: rgba(255, 255, 255, 0.18);" />
+          <div class="rounded-full h-2.5 w-full db-skeleton" style="background: rgba(255, 255, 255, 0.2);" />
         </div>
       </div>
 
@@ -98,12 +73,12 @@ withDefaults(defineProps<{
         </div>
       </div>
 
-      <button class="db-btn text-sm text-[var(--db-primary)] font-semibold mt-4 px-4 py-2.5 rounded-lg bg-white/90 w-full" type="button" title="即将开放" disabled>
+      <button class="text-sm text-[var(--db-primary)] font-semibold mt-4 px-4 py-2.5 rounded-lg bg-white/90 db-btn w-full" type="button" title="即将开放" disabled>
         查看完整画像
       </button>
     </section>
 
-    <section class="db-panel db-appear px-4 py-4" style="animation-delay: 440ms;">
+    <section class="db-appear px-4 py-4 db-panel" style="animation-delay: 440ms;">
       <div class="flex gap-3 items-center justify-between">
         <div>
           <p class="db-eyebrow db-eyebrow-tight">
@@ -113,7 +88,7 @@ withDefaults(defineProps<{
             本周日程
           </h3>
         </div>
-        <span class="db-chip db-chip-muted text-[11px] font-semibold px-2.5 py-1 rounded-md">
+        <span class="db-chip text-[11px] db-chip-muted font-semibold px-2.5 py-1 rounded-md">
           {{ scheduleItems.length }} 项
         </span>
       </div>
@@ -122,11 +97,11 @@ withDefaults(defineProps<{
         <div
           v-for="index in 3"
           :key="`dashboard-schedule-skeleton-${index}`"
-          class="db-skeleton rounded-[18px] h-16"
+          class="rounded-[18px] h-16 db-skeleton"
         />
       </div>
 
-      <div v-else-if="scheduleItems.length === 0" class="db-panel db-panel-muted text-sm text-slate-500 mt-4 px-3 py-4">
+      <div v-else-if="scheduleItems.length === 0" class="text-sm text-slate-500 mt-4 px-3 py-4 db-panel db-panel-muted">
         本周暂无关键日程提醒。
       </div>
 
@@ -134,9 +109,9 @@ withDefaults(defineProps<{
         <article
           v-for="item in scheduleItems"
           :key="item.id"
-          class="db-hover-lift px-3 py-3 border border-[var(--db-border)] rounded-xl bg-[var(--db-bg-alt)] flex gap-2.5"
+          class="px-3 py-3 border border-slate-200 db-hover-lift rounded-xl bg-slate-50 flex gap-2.5"
         >
-          <div class="px-2.5 py-1.5 border border-[var(--db-border)] rounded-lg bg-white flex shrink-0 flex-col min-w-[54px] items-center justify-center">
+          <div class="px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white flex shrink-0 flex-col min-w-[54px] items-center justify-center">
             <span class="text-[10px] text-[var(--db-subtle)] tracking-[0.12em] font-bold uppercase">{{ item.month }}</span>
             <span class="text-base text-slate-900 tracking-[-0.02em] font-black mt-1">{{ item.day }}</span>
           </div>
@@ -144,12 +119,23 @@ withDefaults(defineProps<{
             <p class="text-sm text-slate-900 leading-6 font-semibold">
               {{ item.title }}
             </p>
-            <p class="db-muted text-xs mt-1">
+            <p class="text-xs db-muted mt-1">
               {{ item.time }}
             </p>
           </div>
         </article>
       </div>
     </section>
+
+    <div class="flex-1 min-h-0">
+      <DashboardCompetitionFeed
+        class="h-full"
+        :active-filter="activeFeedFilter"
+        :competitions="competitions"
+        :loading="loading"
+        scrollable
+        @update:active-filter="emit('update:activeFeedFilter', $event)"
+      />
+    </div>
   </div>
 </template>
