@@ -473,6 +473,7 @@ export async function syncContestDerivedTimelineNodes(
 
 interface ContestRow {
   id: string
+  external_id: string | null
   name: string
   aliases: string[]
   level: ContestLevel
@@ -498,6 +499,7 @@ interface ContestRow {
 
 interface TrackRow {
   id: string
+  external_id: string | null
   contest_id: string
   name: string
   summary: string
@@ -510,6 +512,9 @@ interface TrackRow {
   award_ratio: string
   suitable_majors: string[]
   deliverable_types: string[]
+  scoring_points: string[]
+  deduction_items: string[]
+  evidence_requirements: string[]
   rubric_id: string | null
   sort_order: number
   status: ContestStatus
@@ -666,6 +671,19 @@ function normalizeStringArray(value: unknown): string[] {
   return value.map(item => normalizeString(item)).filter(Boolean)
 }
 
+function mergeExternalRefMetadata(value: unknown, externalId: string | null | undefined, aliases: string[]): Record<string, unknown> {
+  const metadata = parseResourceMetadata(value)
+  const normalizedExternalId = normalizeString(externalId)
+  if (!normalizedExternalId)
+    return metadata
+  const next = { ...metadata }
+  for (const alias of aliases) {
+    if (!normalizeString(next[alias]))
+      next[alias] = normalizedExternalId
+  }
+  return next
+}
+
 function joinUniqueStrings(values: unknown[]): string {
   const seen = new Set<string>()
   const result: string[] = []
@@ -776,6 +794,12 @@ async function assertTrackExistsForContest(db: Queryable, contestId: string, tra
 }
 
 function mapTrack(row: TrackRow): Track {
+  const metadata = mergeExternalRefMetadata(row.metadata, row.external_id, [
+    'externalId',
+    'trackExternalId',
+    'code',
+    'trackCode',
+  ])
   return {
     id: row.id,
     contestId: row.contest_id,
@@ -790,10 +814,13 @@ function mapTrack(row: TrackRow): Track {
     awardRatio: row.award_ratio,
     suitableMajors: normalizeStringArray(row.suitable_majors),
     deliverableTypes: normalizeStringArray(row.deliverable_types),
+    scoringPoints: normalizeStringArray(row.scoring_points),
+    deductionItems: normalizeStringArray(row.deduction_items),
+    evidenceRequirements: normalizeStringArray(row.evidence_requirements),
     rubricId: row.rubric_id || null,
     sortOrder: Number(row.sort_order || 0),
     status: row.status,
-    metadata: parseResourceMetadata(row.metadata),
+    metadata,
   }
 }
 
@@ -880,6 +907,12 @@ function computeSubmissionDeadline(timelines: ContestTimeline[]): string {
 
 function mapContest(row: ContestRow, tracks: Track[], timelines: ContestTimeline[]): Contest {
   const faqItems = normalizeFaqItems(row.faq_items)
+  const metadata = mergeExternalRefMetadata(row.metadata, row.external_id, [
+    'externalId',
+    'contestExternalId',
+    'code',
+    'contestCode',
+  ])
   return {
     id: row.id,
     name: row.name,
@@ -904,7 +937,7 @@ function mapContest(row: ContestRow, tracks: Track[], timelines: ContestTimeline
     faq: row.faq,
     faqItems,
     timelines,
-    metadata: parseResourceMetadata(row.metadata),
+    metadata,
   }
 }
 
@@ -1594,34 +1627,44 @@ export async function resetCatalogContestSeedState(
 async function loadContests(db: Queryable, includeInternal: boolean): Promise<ContestRow[]> {
   const result = await db.query<ContestRow>(
     `SELECT
-      id,
-      name,
-      aliases,
-      level,
-      disciplines,
-      organizer,
-      co_organizer,
-      official_url,
-      summary,
-      participant_requirements,
-      team_rule,
-      current_season,
-      status,
-      visibility,
-      hot_score,
-      keywords,
-      recommended_for,
-      faq,
-      faq_items,
-      metadata,
-      created_at::TEXT,
-      updated_at::TEXT
+      contests.id,
+      contest_ref.external_id,
+      contests.name,
+      contests.aliases,
+      contests.level,
+      contests.disciplines,
+      contests.organizer,
+      contests.co_organizer,
+      contests.official_url,
+      contests.summary,
+      contests.participant_requirements,
+      contests.team_rule,
+      contests.current_season,
+      contests.status,
+      contests.visibility,
+      contests.hot_score,
+      contests.keywords,
+      contests.recommended_for,
+      contests.faq,
+      contests.faq_items,
+      contests.metadata,
+      contests.created_at::TEXT,
+      contests.updated_at::TEXT
      FROM contests
+     LEFT JOIN LATERAL (
+       SELECT external_id
+       FROM feishu_external_refs
+       WHERE provider = 'feishu_bitable'
+         AND scope = 'contest'
+         AND entity_id = contests.id
+       ORDER BY updated_at DESC
+       LIMIT 1
+     ) contest_ref ON TRUE
      WHERE (
        $1::BOOLEAN = TRUE
        OR (
-         status = 'published'
-         AND visibility = 'public'
+         contests.status = 'published'
+         AND contests.visibility = 'public'
          AND EXISTS (
            SELECT 1
            FROM release_versions rv
@@ -1631,7 +1674,7 @@ async function loadContests(db: Queryable, includeInternal: boolean): Promise<Co
          )
        )
      )
-     ORDER BY updated_at DESC`,
+     ORDER BY contests.updated_at DESC`,
     [includeInternal],
   )
 
@@ -1644,27 +1687,44 @@ async function loadTracks(db: Queryable, contestIds: string[], includeInternal: 
 
   const result = await db.query<TrackRow>(
     `SELECT
-      id,
-      contest_id,
-      name,
-      summary,
-      cover_image_url,
-      location,
-      organizer,
-      undertaker,
-      participant_requirements,
-      team_rule,
-      award_ratio,
-      suitable_majors,
-      deliverable_types,
-      rubric_id,
-      sort_order,
-      status,
-      metadata
+      contest_tracks.id,
+      track_ref.external_id,
+      contest_tracks.contest_id,
+      contest_tracks.name,
+      contest_tracks.summary,
+      contest_tracks.cover_image_url,
+      contest_tracks.location,
+      contest_tracks.organizer,
+      contest_tracks.undertaker,
+      contest_tracks.participant_requirements,
+      contest_tracks.team_rule,
+      contest_tracks.award_ratio,
+      contest_tracks.suitable_majors,
+      contest_tracks.deliverable_types,
+      COALESCE(rubric.scoring_points, '{}'::TEXT[]) AS scoring_points,
+      COALESCE(rubric.deduction_items, '{}'::TEXT[]) AS deduction_items,
+      COALESCE(rubric.evidence_requirements, '{}'::TEXT[]) AS evidence_requirements,
+      contest_tracks.rubric_id,
+      contest_tracks.sort_order,
+      contest_tracks.status,
+      contest_tracks.metadata
      FROM contest_tracks
-     WHERE contest_id = ANY($1::TEXT[])
-       AND ($2::BOOLEAN = TRUE OR status = 'published')
-     ORDER BY sort_order ASC, created_at ASC`,
+     LEFT JOIN contest_rubrics rubric
+       ON rubric.id = contest_tracks.rubric_id
+      AND rubric.contest_id = contest_tracks.contest_id
+      AND ($2::BOOLEAN = TRUE OR rubric.status = 'published')
+     LEFT JOIN LATERAL (
+       SELECT external_id
+       FROM feishu_external_refs
+       WHERE provider = 'feishu_bitable'
+         AND scope = 'track'
+         AND entity_id = contest_tracks.id
+       ORDER BY updated_at DESC
+       LIMIT 1
+     ) track_ref ON TRUE
+     WHERE contest_tracks.contest_id = ANY($1::TEXT[])
+       AND ($2::BOOLEAN = TRUE OR contest_tracks.status = 'published')
+     ORDER BY contest_tracks.sort_order ASC, contest_tracks.created_at ASC`,
     [contestIds, includeInternal],
   )
 

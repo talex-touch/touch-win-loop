@@ -2,6 +2,7 @@ import type {
   Resource,
   ResourceAvailability,
   ResourceCategory,
+  ResourceRelation,
   ResourceSearchSort,
 } from '~~/shared/types/domain'
 import { useState } from '#imports'
@@ -47,6 +48,17 @@ export const resourceAvailabilityLabelMap: Record<ResourceAvailability, string> 
   public: '公开',
   login_required: '需登录',
   unavailable: '不可用',
+}
+
+export const resourceRelationTypeLabelMap: Record<ResourceRelation['relationType'], string> = {
+  recommended: '推荐阅读',
+  similar: '相似资料',
+  duplicate: '疑似重复',
+  complementary: '互补资料',
+}
+
+export function resolveResourceRelationTypeLabel(type: ResourceRelation['relationType'] | undefined): string {
+  return type ? resourceRelationTypeLabelMap[type] || type : '推荐资料'
 }
 
 export function useResourceCategoryLabelMap() {

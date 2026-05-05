@@ -5,10 +5,12 @@ import type {
   Resource,
   ResourceAvailability,
   ResourceCategory,
+  ResourceRelation,
   ResourceSearchSort,
 } from '~~/shared/types/domain'
 import {
   collectResourceTags,
+  resolveResourceRelationTypeLabel,
   resourceAvailabilityLabelMap,
   resourceAvailabilityOptions,
   resourceCategoryOptions,
@@ -88,6 +90,7 @@ const sort = ref<ResourceSearchSort>('relevance')
 const minQuality = ref('')
 const openingResourceId = ref('')
 const selectedResource = ref<Resource | null>(null)
+const relationNotice = ref('')
 
 const resourceModalTitleId = 'resource-library-modal-title'
 
@@ -146,6 +149,60 @@ function resolveRelatedResources(item: Resource) {
   return item.aiProfile?.relatedResources?.slice(0, 3) || []
 }
 
+function resolveRelationTypeLabel(type: ResourceRelation['relationType'] | undefined): string {
+  return resolveResourceRelationTypeLabel(type)
+}
+
+function resolveRelationCategoryLabel(relation: ResourceRelation): string {
+  return resolveCategoryLabel(relation.targetCategory)
+}
+
+function resolveRelationReason(relation: ResourceRelation): string {
+  return relation.reason || '与当前资料在主题、标签或使用阶段上存在关联。'
+}
+
+function showResourceDetail(item: Resource) {
+  relationNotice.value = ''
+  selectedResource.value = item
+}
+
+function selectRelatedResource(relation: ResourceRelation) {
+  const target = resources.value.find(item => item.id === relation.targetResourceId)
+  if (!target) {
+    relationNotice.value = '当前筛选结果暂未包含该推荐资料，可调整筛选条件后查看。'
+    return
+  }
+
+  relationNotice.value = ''
+  selectedResource.value = target
+}
+
+function filterSameTagResources(item: Resource) {
+  const tag = resolveResourceTags(item)[0] || ''
+  if (!tag) {
+    relationNotice.value = '当前资料暂无可用于筛选的 AI 标签。'
+    return
+  }
+
+  selectedTag.value = tag
+  relationNotice.value = ''
+  selectedResource.value = null
+  void loadResources()
+}
+
+function filterSameCategoryResources(item: Resource) {
+  const nextCategory = item.category || item.aiProfile?.predictedCategory || ''
+  if (!nextCategory) {
+    relationNotice.value = '当前资料暂无可用于筛选的分类。'
+    return
+  }
+
+  category.value = nextCategory
+  relationNotice.value = ''
+  selectedResource.value = null
+  void loadResources()
+}
+
 function resolveResourceTargetUrl(item: Resource): string {
   const rawUrl = item.sourceLink || item.sourceDownloadUrl || item.previewUrl || ''
   return rawUrl ? resolveApiUrl(rawUrl) : ''
@@ -170,6 +227,7 @@ function resetFilters() {
   selectedTag.value = ''
   sort.value = 'relevance'
   minQuality.value = ''
+  relationNotice.value = ''
   void loadResources()
 }
 const contestFilterOptions = computed(() => [
@@ -401,9 +459,9 @@ onMounted(async () => {
           class="resource-card"
           role="button"
           tabindex="0"
-          @click="selectedResource = item"
-          @keydown.enter.prevent="selectedResource = item"
-          @keydown.space.prevent="selectedResource = item"
+          @click="showResourceDetail(item)"
+          @keydown.enter.prevent="showResourceDetail(item)"
+          @keydown.space.prevent="showResourceDetail(item)"
         >
           <div class="resource-card__head">
             <span class="resource-card__icon">
@@ -445,7 +503,7 @@ onMounted(async () => {
               推荐 {{ item.aiProfile?.relatedResources?.length || 0 }}
             </span>
             <div class="resource-card__actions">
-              <button type="button" @click.stop="selectedResource = item">
+              <button type="button" @click.stop="showResourceDetail(item)">
                 详情
               </button>
               <button type="button" class="resource-card__primary" @click.stop="openResource(item)">
@@ -534,16 +592,37 @@ onMounted(async () => {
                   <span>{{ selectedResource.aiProfile?.relatedResources?.length || 0 }} 条</span>
                 </div>
                 <div v-if="resolveRelatedResources(selectedResource).length > 0" class="resource-detail-modal__relations">
-                  <article
+                  <button
                     v-for="relation in resolveRelatedResources(selectedResource)"
                     :key="relation.id"
+                    type="button"
+                    @click="selectRelatedResource(relation)"
                   >
-                    <h4>{{ relation.targetTitle }}</h4>
-                    <p>{{ relation.relationType }}</p>
-                  </article>
+                    <div class="resource-detail-modal__relation-head">
+                      <span>{{ resolveRelationTypeLabel(relation.relationType) }}</span>
+                      <strong>匹配度 {{ relation.weight }}</strong>
+                    </div>
+                    <h4>{{ relation.targetTitle || '未命名资料' }}</h4>
+                    <p>{{ resolveRelationReason(relation) }}</p>
+                    <div class="resource-detail-modal__relation-meta">
+                      <span>{{ resolveRelationCategoryLabel(relation) }}</span>
+                      <span>点击查看详情</span>
+                    </div>
+                  </button>
                 </div>
-                <p v-else class="resource-detail-modal__empty">
-                  暂无相关推荐。
+                <div v-else class="resource-detail-modal__empty resource-detail-modal__empty--relations">
+                  <p>暂无稳定关联，可先通过同标签或同分类继续检索。</p>
+                  <div>
+                    <button type="button" @click="filterSameTagResources(selectedResource)">
+                      查看同标签资料
+                    </button>
+                    <button type="button" @click="filterSameCategoryResources(selectedResource)">
+                      查看同分类资料
+                    </button>
+                  </div>
+                </div>
+                <p v-if="relationNotice" class="resource-detail-modal__notice">
+                  {{ relationNotice }}
                 </p>
               </section>
             </div>
@@ -1365,15 +1444,77 @@ onMounted(async () => {
   margin-top: 14px;
 }
 
-.resource-detail-modal__relations article {
+.resource-detail-modal__relations button {
+  width: 100%;
   border: 1px solid #edf1f7;
   border-radius: 12px;
   padding: 14px;
+  text-align: left;
+  color: inherit;
   background: #fbfdff;
+  cursor: pointer;
+  font: inherit;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.resource-detail-modal__relations button:hover {
+  border-color: rgba(61, 120, 232, 0.36);
+  box-shadow: 0 10px 22px rgba(36, 65, 118, 0.08);
+  transform: translateY(-1px);
+}
+
+.resource-detail-modal__relations button:focus-visible {
+  border-color: rgba(61, 120, 232, 0.72);
+  box-shadow: 0 0 0 4px rgba(61, 120, 232, 0.12);
+  outline: none;
+}
+
+.resource-detail-modal__relation-head,
+.resource-detail-modal__relation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.resource-detail-modal__relation-head span,
+.resource-detail-modal__relation-head strong,
+.resource-detail-modal__relation-meta span {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.resource-detail-modal__relation-head span {
+  color: #2563eb;
+  background: #eaf1ff;
+}
+
+.resource-detail-modal__relation-head strong {
+  color: #0f766e;
+  background: #e8fbf6;
+}
+
+.resource-detail-modal__relation-meta {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.resource-detail-modal__relation-meta span {
+  color: #66758d;
+  background: #f0f4fa;
 }
 
 .resource-detail-modal__relations h4 {
-  margin: 0;
+  margin: 10px 0 0;
   color: #172033;
   font-size: 14px;
   font-weight: 900;
@@ -1392,6 +1533,40 @@ onMounted(async () => {
   color: #8a98ad;
   font-size: 13px;
   font-weight: 700;
+}
+
+.resource-detail-modal__empty--relations p {
+  margin: 0;
+}
+
+.resource-detail-modal__empty--relations div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.resource-detail-modal__empty--relations button {
+  min-height: 30px;
+  border: 1px solid #dbe5f5;
+  border-radius: 9px;
+  padding: 0 10px;
+  color: #53647f;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.resource-detail-modal__notice {
+  margin: 12px 0 0;
+  border: 1px solid #dbe5f5;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #53647f;
+  background: #f8fbff;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .resource-detail-modal__footer {

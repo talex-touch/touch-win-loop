@@ -5,10 +5,12 @@ import type {
   Resource,
   ResourceAvailability,
   ResourceCategory,
+  ResourceRelation,
   ResourceSearchSort,
 } from '~~/shared/types/domain'
 import {
   collectResourceTags,
+  resolveResourceRelationTypeLabel,
   resourceAvailabilityLabelMap,
   resourceAvailabilityOptions,
   resourceCategoryOptions,
@@ -94,6 +96,10 @@ const queryText = ref('')
 const selectedTag = ref('')
 const sort = ref<ResourceSearchSort>('relevance')
 const minQuality = ref('')
+
+function resolveRelationTypeLabel(type: ResourceRelation['relationType'] | undefined): string {
+  return resolveResourceRelationTypeLabel(type)
+}
 
 const years = computed(() => {
   const set = new Set<number>()
@@ -375,7 +381,7 @@ onMounted(async () => {
                 :key="relation.id"
                 class="text-[11px] text-emerald-700 px-2 py-1 rounded bg-emerald-50"
               >
-                {{ relation.targetTitle }} ｜ {{ relation.relationType }}
+                {{ relation.targetTitle }} ｜ {{ resolveRelationTypeLabel(relation.relationType) }} ｜ 匹配度 {{ relation.weight }}
               </span>
             </div>
           </div>

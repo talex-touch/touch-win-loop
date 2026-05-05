@@ -146,6 +146,9 @@ export interface Track {
   awardRatio?: string
   deliverableTypes: string[]
   suitableMajors: string[]
+  evidenceRequirements?: string[]
+  scoringPoints?: string[]
+  deductionItems?: string[]
   sortOrder?: number
   status?: ContestStatus
   rubricId?: string | null
