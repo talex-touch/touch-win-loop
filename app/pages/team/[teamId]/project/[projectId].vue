@@ -12419,6 +12419,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
               <button
                 v-if="!leftSidebarCollapsed"
                 class="workspace-sidebar-resize-handle workspace-sidebar-resize-handle--left"
+                :class="{ 'workspace-sidebar-resize-handle--active': workspaceSidebarResizeState.side === 'left' }"
                 type="button"
                 aria-label="调整左侧边栏宽度"
                 title="拖拽调整左侧边栏宽度"
@@ -12686,6 +12687,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
             <button
               v-if="!rightSidebarCollapsed"
               class="workspace-sidebar-resize-handle workspace-sidebar-resize-handle--right"
+              :class="{ 'workspace-sidebar-resize-handle--active': workspaceSidebarResizeState.side === 'right' }"
               type="button"
               aria-label="调整右侧 AI 栏宽度"
               title="拖拽调整右侧 AI 栏宽度"
@@ -13322,7 +13324,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
 
 .workspace-sidebar-resize-handle:hover .workspace-sidebar-resize-handle__thumb,
 .workspace-sidebar-resize-handle:focus-visible .workspace-sidebar-resize-handle__thumb,
-.workspace-shell--resizing .workspace-sidebar-resize-handle__thumb {
+.workspace-sidebar-resize-handle--active .workspace-sidebar-resize-handle__thumb {
   background: rgba(59, 130, 246, 0.48);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
 }

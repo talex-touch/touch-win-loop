@@ -20,6 +20,7 @@ import {
   layoutDeviceArrangementItems,
   normalizeDeviceArrangementDocument,
   renderDeviceArrangementDocumentToSvg,
+  resolveDeviceArrangementPreset,
   resolveDeviceArrangementSize,
 } from '~~/shared/utils/device-arrangement-document'
 import { uploadDeviceArrangementScreenshotAsset } from '~/utils/device-arrangement-assets'
@@ -32,18 +33,23 @@ interface DeviceChoice {
   variant?: MockupProjectCatalogVariant | null
 }
 
-interface CanvasPoint {
-  x: number
-  y: number
+interface ImportedScreenshot {
+  src: string
+  previewSrc: string
+  width: number
+  height: number
+  name: string
 }
 
-interface DeviceInteractionState {
-  itemId: string
-  mode: 'move' | 'resize' | 'rotate'
-  startPoint: CanvasPoint
-  startItem: DeviceArrangementItemV1
-  startDistance: number
-  startAngle: number
+interface PreviewDeviceItem {
+  item: DeviceArrangementItemV1
+  imageSrc: string
+  shellImageSrc: string
+  rootStyle: Record<string, string>
+  frameStyle: Record<string, string>
+  screenStyle: Record<string, string>
+  shellStyle: Record<string, string>
+  mode: 'builtin' | 'external' | 'none'
 }
 
 const props = withDefaults(defineProps<{
@@ -57,10 +63,9 @@ const props = withDefaults(defineProps<{
 })
 
 const runtime = useRuntimeConfig()
-const { endpoint } = useApiEndpoint(runtime)
+const { endpoint, resolveApiUrl } = useApiEndpoint(runtime)
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const stageSheetRef = ref<HTMLElement | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const exportBusy = ref(false)
@@ -69,27 +74,50 @@ const screenshotUploadError = ref('')
 const exportError = ref('')
 const selectedItemId = ref('')
 const dragOver = ref(false)
+const activeTemplateKey = ref('')
 const savedDocumentSnapshot = ref('')
 const mockupCatalog = ref<MockupProjectCatalog | null>(null)
-const interactionState = ref<DeviceInteractionState | null>(null)
-const documentState = ref<DeviceArrangementDocumentV1>(normalizeDeviceArrangementDocument({
+const localScreenshotSrcByItemId = ref<Record<string, string>>({})
+const hydratedScreenshotSrcByItemId = ref<Record<string, string>>({})
+const documentState = ref<DeviceArrangementDocumentV1>(createAutomaticLayoutDocument({
   title: props.resourceTitle,
 }))
+let hydrationRunId = 0
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
-}
-
-function clampNumber(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
 }
 
 function cloneDocument(): DeviceArrangementDocumentV1 {
   return JSON.parse(JSON.stringify(documentState.value)) as DeviceArrangementDocumentV1
 }
 
+function resetItemManualTransform(item: DeviceArrangementItemV1): DeviceArrangementItemV1 {
+  return {
+    ...item,
+    offsetX: 0,
+    offsetY: 0,
+    scale: 1,
+    rotationOffset: 0,
+  }
+}
+
+function createAutomaticLayoutDocument(input: DeviceArrangementDocumentV1 | Record<string, unknown>, options: {
+  title?: string
+} = {}): DeviceArrangementDocumentV1 {
+  const normalized = normalizeDeviceArrangementDocument(input, {
+    title: options.title,
+    relayout: false,
+  })
+  const items = normalized.items.map(resetItemManualTransform)
+  return {
+    ...normalized,
+    items: layoutDeviceArrangementItems(items, normalized.canvas, normalized.layoutPresetKey),
+  }
+}
+
 function serializeDocument(value: DeviceArrangementDocumentV1): string {
-  return JSON.stringify(normalizeDeviceArrangementDocument(value, { relayout: false }))
+  return JSON.stringify(createAutomaticLayoutDocument(value))
 }
 
 function syncSelectedItem(preferredItemId = ''): void {
@@ -109,12 +137,9 @@ function markSaved(value = documentState.value): void {
 }
 
 function commitDocument(nextDocument: DeviceArrangementDocumentV1 | Record<string, unknown>, options: {
-  relayout?: boolean
   selectedItemId?: string
 } = {}): void {
-  documentState.value = normalizeDeviceArrangementDocument(nextDocument, {
-    relayout: options.relayout ?? false,
-  })
+  documentState.value = createAutomaticLayoutDocument(nextDocument)
   syncSelectedItem(options.selectedItemId)
 }
 
@@ -160,40 +185,68 @@ const deviceChoices = computed<DeviceChoice[]>(() => {
   })
 })
 
-const previewMarkup = computed(() => renderDeviceArrangementDocumentToSvg(documentState.value))
 const canvasWidth = computed(() => Math.max(1, documentState.value.canvas.width))
 const canvasHeight = computed(() => Math.max(1, documentState.value.canvas.height))
-const canvasViewBox = computed(() => `0 0 ${canvasWidth.value} ${canvasHeight.value}`)
 const canvasAspectRatio = computed(() => `${canvasWidth.value} / ${canvasHeight.value}`)
-const selectedItem = computed(() => {
-  return documentState.value.items.find(item => item.id === selectedItemId.value) || null
-})
 const isDirty = computed(() => {
   return savedDocumentSnapshot.value !== serializeDocument(documentState.value)
 })
-const selectedItemIndex = computed(() => {
-  return selectedItem.value
-    ? documentState.value.items.findIndex(item => item.id === selectedItem.value?.id)
-    : -1
-})
-const selectedDeviceChoice = computed(() => {
-  if (!selectedItem.value)
-    return null
-  return resolveDeviceChoice(selectedItem.value.devicePresetKey)
+const activeLayoutPreset = computed(() => {
+  return DEVICE_ARRANGEMENT_LAYOUT_PRESETS.find(item => item.key === documentState.value.layoutPresetKey)
 })
 const selectedStatusText = computed(() => {
-  if (selectedItem.value)
-    return `${selectedItem.value.name} · ${Math.round(selectedItem.value.width)}×${Math.round(selectedItem.value.height)}`
-  return documentState.value.items.length > 0 ? '选择画布上的设备继续编辑' : '导入截图后开始排布'
+  const count = documentState.value.items.length
+  if (loading.value)
+    return '加载设备画布中'
+  if (count === 0)
+    return '选择模板后，从右侧导入截图'
+  return `${count} 张截图 · ${activeLayoutPreset.value?.title || '自动排版'}`
 })
-const canMoveLayerDown = computed(() => selectedItemIndex.value > 0)
-const canMoveLayerUp = computed(() => selectedItemIndex.value >= 0 && selectedItemIndex.value < documentState.value.items.length - 1)
+const previewItems = computed<PreviewDeviceItem[]>(() => {
+  return documentState.value.items.map((item) => {
+    const preset = resolveDeviceArrangementPreset(item.devicePresetKey)
+    const screenBox = resolveItemScreenBox(item)
+    const imageSrc = resolvePreviewImageSrc(item)
+    const shellImageSrc = resolvePreviewShellImageSrc(item)
+    const frameRadiusX = toPercent(Math.max(0, preset.bezelRadius), item.width)
+    const frameRadiusY = toPercent(Math.max(0, preset.bezelRadius), item.height)
+    return {
+      item,
+      imageSrc,
+      shellImageSrc,
+      mode: item.shell.mode,
+      rootStyle: {
+        left: toPercent(item.x, canvasWidth.value),
+        top: toPercent(item.y, canvasHeight.value),
+        width: toPercent(item.width, canvasWidth.value),
+        height: toPercent(item.height, canvasHeight.value),
+        transform: `rotate(${item.rotation}deg)`,
+      },
+      frameStyle: {
+        background: item.shell.mode === 'none' ? 'transparent' : preset.background,
+        borderRadius: item.shell.mode === 'none' ? '8px' : `${frameRadiusX} / ${frameRadiusY}`,
+      },
+      screenStyle: {
+        left: toPercent(screenBox.x, item.width),
+        top: toPercent(screenBox.y, item.height),
+        width: toPercent(screenBox.width, item.width),
+        height: toPercent(screenBox.height, item.height),
+        borderRadius: `${toPercent(screenBox.radius, screenBox.width)} / ${toPercent(screenBox.radius, screenBox.height)}`,
+      },
+      shellStyle: {
+        objectFit: 'contain',
+      },
+    }
+  })
+})
 
 async function loadDocument(): Promise<void> {
   const projectId = normalizeString(props.projectId)
   const resourceId = normalizeString(props.resourceId)
-  if (!projectId || !resourceId)
+  if (!projectId || !resourceId) {
+    markSaved(documentState.value)
     return
+  }
 
   loading.value = true
   errorMessage.value = ''
@@ -206,7 +259,7 @@ async function loadDocument(): Promise<void> {
     }> | null
     if (!response.ok || !result || result.code !== 0)
       throw new Error(String(result?.message || '设备排布加载失败。'))
-    const nextDocument = normalizeDeviceArrangementDocument(result.data?.arrangement?.document || { title: props.resourceTitle }, { relayout: false })
+    const nextDocument = createAutomaticLayoutDocument(result.data?.arrangement?.document || { title: props.resourceTitle })
     commitDocument(nextDocument, { selectedItemId: nextDocument.items[0]?.id || '' })
     markSaved(nextDocument)
   }
@@ -257,7 +310,110 @@ function resolveDefaultDeviceChoice(): DeviceChoice {
   }
 }
 
-function resolveScreenshotAssetSrc(file: File, fallbackSrc: string): Promise<string> {
+function toPercent(value: number, total: number): string {
+  const denominator = Math.max(1, total)
+  return `${(value / denominator) * 100}%`
+}
+
+function resolveItemScreenBox(item: DeviceArrangementItemV1): { x: number, y: number, width: number, height: number, radius: number } {
+  const preset = resolveDeviceArrangementPreset(item.devicePresetKey)
+  if (item.shell.mode === 'none') {
+    return {
+      x: 0,
+      y: 0,
+      width: item.width,
+      height: item.height,
+      radius: 8,
+    }
+  }
+
+  const rect = item.shell.mode === 'external' ? item.shell.viewportRect : null
+  if (rect) {
+    return {
+      x: rect.x * item.width,
+      y: rect.y * item.height,
+      width: rect.width * item.width,
+      height: rect.height * item.height,
+      radius: item.shell.cornerRadius || preset.screenRadius,
+    }
+  }
+
+  const padding = Math.max(0, preset.framePadding)
+  return {
+    x: padding,
+    y: padding,
+    width: Math.max(1, item.width - padding * 2),
+    height: Math.max(1, item.height - padding * 2),
+    radius: preset.screenRadius,
+  }
+}
+
+function resolvePreviewImageSrc(item: DeviceArrangementItemV1): string {
+  return localScreenshotSrcByItemId.value[item.id]
+    || hydratedScreenshotSrcByItemId.value[item.id]
+    || item.screenshotSrc
+}
+
+function resolvePreviewShellImageSrc(item: DeviceArrangementItemV1): string {
+  const source = normalizeString(item.shell.imageSrc)
+  return source ? resolveApiUrl(source) : ''
+}
+
+function isInlineImageSrc(value: string): boolean {
+  const src = normalizeString(value)
+  return src.startsWith('data:') || src.startsWith('blob:')
+}
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('图片资源读取失败。'))
+    reader.onload = () => resolve(normalizeString(reader.result))
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function materializeImageSrc(src: string): Promise<string> {
+  const normalized = normalizeString(src)
+  if (!normalized || isInlineImageSrc(normalized))
+    return normalized
+  const response = await fetch(resolveApiUrl(normalized), {
+    credentials: 'include',
+  })
+  if (!response.ok)
+    throw new Error('图片资源读取失败。')
+  return readBlobAsDataUrl(await response.blob())
+}
+
+async function hydratePreviewImageSources(): Promise<void> {
+  if (!import.meta.client)
+    return
+  const runId = ++hydrationRunId
+  const pendingItems = documentState.value.items.filter((item) => {
+    const src = normalizeString(item.screenshotSrc)
+    return src && !isInlineImageSrc(src) && !localScreenshotSrcByItemId.value[item.id] && !hydratedScreenshotSrcByItemId.value[item.id]
+  })
+  if (pendingItems.length === 0)
+    return
+
+  const nextSources: Record<string, string> = {}
+  await Promise.all(pendingItems.map(async (item) => {
+    try {
+      nextSources[item.id] = await materializeImageSrc(item.screenshotSrc)
+    }
+    catch {
+      nextSources[item.id] = ''
+    }
+  }))
+  if (runId !== hydrationRunId)
+    return
+  hydratedScreenshotSrcByItemId.value = {
+    ...hydratedScreenshotSrcByItemId.value,
+    ...Object.fromEntries(Object.entries(nextSources).filter(([, value]) => Boolean(value))),
+  }
+}
+
+async function resolveScreenshotAssetSrc(file: File, fallbackSrc: string): Promise<string> {
   return uploadDeviceArrangementScreenshotAsset({
     endpoint,
     projectId: props.projectId,
@@ -265,21 +421,24 @@ function resolveScreenshotAssetSrc(file: File, fallbackSrc: string): Promise<str
   }).catch(() => fallbackSrc)
 }
 
-function readImageFile(file: File): Promise<{ src: string, width: number, height: number, name: string }> {
+function readImageFile(file: File): Promise<ImportedScreenshot> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onerror = () => reject(new Error('读取截图失败。'))
     reader.onload = async () => {
       try {
         const localSrc = normalizeString(reader.result)
-        const uploadedSrc = await resolveScreenshotAssetSrc(file, localSrc)
         const image = new Image()
-        image.onload = () => resolve({
-          src: uploadedSrc || localSrc,
-          width: image.naturalWidth || 0,
-          height: image.naturalHeight || 0,
-          name: file.name || '截图',
-        })
+        image.onload = async () => {
+          const uploadedSrc = await resolveScreenshotAssetSrc(file, localSrc)
+          resolve({
+            src: uploadedSrc || localSrc,
+            previewSrc: localSrc,
+            width: image.naturalWidth || 0,
+            height: image.naturalHeight || 0,
+            name: file.name || '截图',
+          })
+        }
         image.onerror = () => reject(new Error('截图解析失败。'))
         image.src = localSrc
       }
@@ -300,6 +459,7 @@ async function addScreenshotFiles(fileList: FileList | File[]): Promise<void> {
   try {
     const current = cloneDocument()
     let lastCreatedItemId = ''
+    const nextLocalSources: Record<string, string> = { ...localScreenshotSrcByItemId.value }
     for (const file of files) {
       const image = await readImageFile(file)
       const defaultChoice = resolveDefaultDeviceChoice()
@@ -315,9 +475,10 @@ async function addScreenshotFiles(fileList: FileList | File[]): Promise<void> {
         shellAssetUrl: variant?.shellAssetUrl,
       })
       current.items.push(item)
+      nextLocalSources[item.id] = image.previewSrc
       lastCreatedItemId = item.id
     }
-    current.items = layoutDeviceArrangementItems(current.items, current.canvas, current.layoutPresetKey)
+    localScreenshotSrcByItemId.value = nextLocalSources
     commitDocument(current, { selectedItemId: lastCreatedItemId })
   }
   catch (error) {
@@ -385,9 +546,7 @@ function handleDrop(event: DragEvent): void {
 }
 
 function relayoutCurrentDocument(): void {
-  const current = cloneDocument()
-  current.items = layoutDeviceArrangementItems(current.items, current.canvas, current.layoutPresetKey)
-  commitDocument(current)
+  commitDocument(cloneDocument())
 }
 
 function applyTemplate(templateKey: string): void {
@@ -404,7 +563,9 @@ function applyTemplate(templateKey: string): void {
   current.canvas.background = template.background
   current.canvas.backgroundMode = template.backgroundMode
   current.watermarkText = template.watermarkText
-  current.items = layoutDeviceArrangementItems(current.items, current.canvas, current.layoutPresetKey)
+  if (!current.exportSizePresetKeys.includes(size.sizePresetKey))
+    current.exportSizePresetKeys = [...current.exportSizePresetKeys, size.sizePresetKey]
+  activeTemplateKey.value = template.key
   commitDocument(current)
 }
 
@@ -414,20 +575,34 @@ function updateCanvasSize(sizePresetKey: DeviceArrangementExportSizePresetKey): 
   current.canvas.width = size.width
   current.canvas.height = size.height
   current.canvas.sizePresetKey = size.sizePresetKey
-  current.items = layoutDeviceArrangementItems(current.items, current.canvas, current.layoutPresetKey)
   if (!current.exportSizePresetKeys.includes(size.sizePresetKey))
     current.exportSizePresetKeys = [...current.exportSizePresetKeys, size.sizePresetKey]
+  activeTemplateKey.value = ''
   commitDocument(current)
 }
 
-function updateItem(itemId: string, patch: Partial<DeviceArrangementItemV1>, relayout = true): void {
+function updateCanvasBackground(background: string): void {
+  const current = cloneDocument()
+  current.canvas.background = background
+  activeTemplateKey.value = ''
+  commitDocument(current)
+}
+
+function updateCanvasBackgroundMode(backgroundMode: DeviceArrangementDocumentV1['canvas']['backgroundMode']): void {
+  const current = cloneDocument()
+  current.canvas.backgroundMode = backgroundMode
+  activeTemplateKey.value = ''
+  commitDocument(current)
+}
+
+function updateItem(itemId: string, patch: Partial<DeviceArrangementItemV1>): void {
   const current = cloneDocument()
   current.items = current.items.map((item) => {
     if (item.id !== itemId)
       return item
     const nextPresetKey = normalizeString(patch.devicePresetKey || item.devicePresetKey) || item.devicePresetKey
     const nextVariant = resolveVariantByPresetKey(nextPresetKey)
-    return {
+    return resetItemManualTransform({
       ...item,
       ...patch,
       devicePresetKey: nextPresetKey,
@@ -447,10 +622,8 @@ function updateItem(itemId: string, patch: Partial<DeviceArrangementItemV1>, rel
             viewportRect: null,
             presetKey: nextPresetKey,
           }),
-    }
+    })
   })
-  if (relayout)
-    current.items = layoutDeviceArrangementItems(current.items, current.canvas, current.layoutPresetKey)
   commitDocument(current, { selectedItemId: itemId })
 }
 
@@ -459,6 +632,12 @@ function removeItem(itemId: string): void {
   const removeIndex = current.items.findIndex(item => item.id === itemId)
   current.items = current.items.filter(item => item.id !== itemId)
   const nextSelectedItemId = current.items[Math.min(removeIndex, current.items.length - 1)]?.id || ''
+  const nextLocalSources = { ...localScreenshotSrcByItemId.value }
+  const nextHydratedSources = { ...hydratedScreenshotSrcByItemId.value }
+  delete nextLocalSources[itemId]
+  delete nextHydratedSources[itemId]
+  localScreenshotSrcByItemId.value = nextLocalSources
+  hydratedScreenshotSrcByItemId.value = nextHydratedSources
   commitDocument(current, { selectedItemId: nextSelectedItemId })
 }
 
@@ -467,41 +646,30 @@ function duplicateItem(itemId: string): void {
   const item = current.items.find(entry => entry.id === itemId)
   if (!item)
     return
-  const nextItem: DeviceArrangementItemV1 = {
+  const nextItem: DeviceArrangementItemV1 = resetItemManualTransform({
     ...JSON.parse(JSON.stringify(item)),
     id: `device-copy-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: `${item.name} 副本`,
-    x: item.x + 32,
-    y: item.y + 32,
-    offsetX: item.offsetX + 32,
-    offsetY: item.offsetY + 32,
-  }
+  })
   const index = current.items.findIndex(entry => entry.id === itemId)
   current.items.splice(index + 1, 0, nextItem)
+  if (localScreenshotSrcByItemId.value[itemId]) {
+    localScreenshotSrcByItemId.value = {
+      ...localScreenshotSrcByItemId.value,
+      [nextItem.id]: localScreenshotSrcByItemId.value[itemId]!,
+    }
+  }
+  if (hydratedScreenshotSrcByItemId.value[itemId]) {
+    hydratedScreenshotSrcByItemId.value = {
+      ...hydratedScreenshotSrcByItemId.value,
+      [nextItem.id]: hydratedScreenshotSrcByItemId.value[itemId]!,
+    }
+  }
   commitDocument(current, { selectedItemId: nextItem.id })
 }
 
-function moveItemLayer(itemId: string, direction: 'backward' | 'forward' | 'back' | 'front'): void {
-  const current = cloneDocument()
-  const index = current.items.findIndex(item => item.id === itemId)
-  if (index < 0)
-    return
-  const [item] = current.items.splice(index, 1)
-  if (!item)
-    return
-  if (direction === 'back') {
-    current.items.unshift(item)
-  }
-  else if (direction === 'front') {
-    current.items.push(item)
-  }
-  else {
-    const nextIndex = direction === 'forward'
-      ? Math.min(current.items.length, index + 1)
-      : Math.max(0, index - 1)
-    current.items.splice(nextIndex, 0, item)
-  }
-  commitDocument(current, { selectedItemId: itemId })
+function selectItem(itemId: string): void {
+  selectedItemId.value = itemId
 }
 
 function toggleExportSizePreset(sizePresetKey: DeviceArrangementExportSizePresetKey): void {
@@ -524,6 +692,7 @@ async function saveDocument(): Promise<void> {
   saving.value = true
   errorMessage.value = ''
   try {
+    const document = createAutomaticLayoutDocument(documentState.value)
     const response = await fetch(endpoint(`/projects/${projectId}/device-arrangements/${resourceId}`), {
       method: 'PATCH',
       credentials: 'include',
@@ -531,8 +700,8 @@ async function saveDocument(): Promise<void> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        title: documentState.value.title,
-        document: documentState.value,
+        title: document.title,
+        document,
       }),
     })
     const result = await response.json().catch(() => null) as ApiResponse<{
@@ -540,7 +709,7 @@ async function saveDocument(): Promise<void> {
     }> | null
     if (!response.ok || !result || result.code !== 0)
       throw new Error(String(result?.message || '保存失败。'))
-    const nextDocument = normalizeDeviceArrangementDocument(result.data?.arrangement?.document || documentState.value, { relayout: false })
+    const nextDocument = createAutomaticLayoutDocument(result.data?.arrangement?.document || document)
     commitDocument(nextDocument)
     markSaved(nextDocument)
   }
@@ -558,8 +727,32 @@ function buildExportDocument(sizePresetKey: DeviceArrangementExportSizePresetKey
   current.canvas.width = size.width
   current.canvas.height = size.height
   current.canvas.sizePresetKey = size.sizePresetKey
-  current.items = layoutDeviceArrangementItems(current.items, current.canvas, current.layoutPresetKey)
-  return current
+  return createAutomaticLayoutDocument(current)
+}
+
+async function buildRenderableExportDocument(sizePresetKey: DeviceArrangementExportSizePresetKey): Promise<DeviceArrangementDocumentV1> {
+  const document = buildExportDocument(sizePresetKey)
+  const items = await Promise.all(document.items.map(async (item) => {
+    const localScreenshotSrc = localScreenshotSrcByItemId.value[item.id] || hydratedScreenshotSrcByItemId.value[item.id]
+    const screenshotSrc = localScreenshotSrc || await materializeImageSrc(item.screenshotSrc).catch(() => '')
+    if (!screenshotSrc)
+      throw new Error(`截图「${item.name}」无法读取，通常是登录态图片地址不能被导出流程访问。请重新上传该截图后再导出。`)
+    const shellImageSrc = item.shell.imageSrc
+      ? await materializeImageSrc(item.shell.imageSrc).catch(() => item.shell.imageSrc || '')
+      : ''
+    return {
+      ...item,
+      screenshotSrc,
+      shell: {
+        ...item.shell,
+        imageSrc: shellImageSrc || item.shell.imageSrc,
+      },
+    }
+  }))
+  return {
+    ...document,
+    items,
+  }
 }
 
 function downloadBlobUrl(fileName: string, url: string): void {
@@ -585,18 +778,17 @@ function sanitizeFileName(value: string): string {
 }
 
 async function downloadPresetSvg(sizePresetKey: DeviceArrangementExportSizePresetKey): Promise<void> {
-  const exportDocument = buildExportDocument(sizePresetKey)
+  const exportDocument = await buildRenderableExportDocument(sizePresetKey)
   downloadSvgBlob(`${sanitizeFileName(exportDocument.title)}-${sizePresetKey}.svg`, renderDeviceArrangementDocumentToSvg(exportDocument))
 }
 
 async function downloadPresetPng(sizePresetKey: DeviceArrangementExportSizePresetKey): Promise<void> {
-  const exportDocument = buildExportDocument(sizePresetKey)
+  const exportDocument = await buildRenderableExportDocument(sizePresetKey)
   const svg = renderDeviceArrangementDocumentToSvg(exportDocument)
   const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   try {
     const image = new Image()
-    image.crossOrigin = 'anonymous'
     await new Promise<void>((resolve, reject) => {
       image.onload = () => resolve()
       image.onerror = () => reject(new Error('PNG 导出失败。'))
@@ -614,7 +806,7 @@ async function downloadPresetPng(sizePresetKey: DeviceArrangementExportSizePrese
       downloadBlobUrl(`${sanitizeFileName(exportDocument.title)}-${sizePresetKey}.png`, pngUrl)
     }
     catch {
-      throw new Error('PNG 导出被浏览器拦截，通常是截图或设备壳跨域资源未允许 Canvas 导出。请先保存为 SVG，或重新上传图片资源后再导出 PNG。')
+      throw new Error('PNG 导出被浏览器拦截，通常是截图或设备壳跨域资源未允许 Canvas 导出。请重新上传截图，或先导出 SVG。')
     }
   }
   finally {
@@ -643,139 +835,17 @@ async function downloadBatchPng(): Promise<void> {
     await downloadPresetPng(sizePresetKey)
 }
 
-function resolveCanvasPoint(event: PointerEvent): CanvasPoint {
-  const sheet = stageSheetRef.value
-  if (!sheet)
-    return { x: 0, y: 0 }
-  const rect = sheet.getBoundingClientRect()
-  const x = rect.width > 0 ? ((event.clientX - rect.left) / rect.width) * canvasWidth.value : 0
-  const y = rect.height > 0 ? ((event.clientY - rect.top) / rect.height) * canvasHeight.value : 0
-  return {
-    x: clampNumber(x, -canvasWidth.value, canvasWidth.value * 2),
-    y: clampNumber(y, -canvasHeight.value, canvasHeight.value * 2),
-  }
-}
-
-function distanceBetween(a: CanvasPoint, b: CanvasPoint): number {
-  return Math.hypot(a.x - b.x, a.y - b.y)
-}
-
-function angleBetween(a: CanvasPoint, b: CanvasPoint): number {
-  return Math.atan2(a.y - b.y, a.x - b.x) * 180 / Math.PI
-}
-
-function itemCenter(item: DeviceArrangementItemV1): CanvasPoint {
-  return {
-    x: item.x + item.width / 2,
-    y: item.y + item.height / 2,
-  }
-}
-
-function stopInteraction(): void {
-  interactionState.value = null
-  window.removeEventListener('pointermove', handleWindowPointerMove)
-  window.removeEventListener('pointerup', handleWindowPointerUp)
-}
-
-function beginItemInteraction(event: PointerEvent, item: DeviceArrangementItemV1, mode: DeviceInteractionState['mode']): void {
-  event.preventDefault()
-  event.stopPropagation()
-  selectedItemId.value = item.id
-  const startPoint = resolveCanvasPoint(event)
-  const center = itemCenter(item)
-  interactionState.value = {
-    itemId: item.id,
-    mode,
-    startPoint,
-    startItem: JSON.parse(JSON.stringify(item)) as DeviceArrangementItemV1,
-    startDistance: Math.max(1, distanceBetween(startPoint, center)),
-    startAngle: angleBetween(startPoint, center),
-  }
-  window.addEventListener('pointermove', handleWindowPointerMove)
-  window.addEventListener('pointerup', handleWindowPointerUp)
-}
-
-function handleWindowPointerMove(event: PointerEvent): void {
-  const state = interactionState.value
-  if (!state)
-    return
-  event.preventDefault()
-  const point = resolveCanvasPoint(event)
-  if (state.mode === 'move') {
-    const dx = Math.round(point.x - state.startPoint.x)
-    const dy = Math.round(point.y - state.startPoint.y)
-    updateItem(state.itemId, {
-      offsetX: state.startItem.offsetX + dx,
-      offsetY: state.startItem.offsetY + dy,
-    })
-    return
-  }
-
-  const center = itemCenter(state.startItem)
-  if (state.mode === 'resize') {
-    const nextDistance = Math.max(1, distanceBetween(point, center))
-    const nextScale = Number(clampNumber(state.startItem.scale * (nextDistance / state.startDistance), 0.25, 3).toFixed(2))
-    updateItem(state.itemId, { scale: nextScale })
-    return
-  }
-
-  const nextAngle = angleBetween(point, center)
-  const nextRotation = Math.round(clampNumber(state.startItem.rotationOffset + nextAngle - state.startAngle, -45, 45))
-  updateItem(state.itemId, { rotationOffset: nextRotation })
-}
-
-function handleWindowPointerUp(): void {
-  stopInteraction()
-}
-
-function clearSelection(): void {
-  selectedItemId.value = ''
-}
-
-function handleCanvasPointerDown(): void {
-  clearSelection()
-}
-
-function selectItem(itemId: string): void {
-  selectedItemId.value = itemId
-}
-
-function handleKeydown(event: KeyboardEvent): void {
-  const target = event.target
-  if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)
-    return
-  const item = selectedItem.value
-  if (!item)
-    return
-  if (event.key === 'Backspace' || event.key === 'Delete') {
-    event.preventDefault()
-    removeItem(item.id)
-    return
-  }
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd') {
-    event.preventDefault()
-    duplicateItem(item.id)
-    return
-  }
-  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))
-    return
-  event.preventDefault()
-  const step = event.shiftKey ? 10 : 1
-  const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
-  const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
-  updateItem(item.id, {
-    offsetX: item.offsetX + dx,
-    offsetY: item.offsetY + dy,
-  })
-}
-
 watch(() => [props.projectId, props.resourceId], () => {
   void loadDocument()
   void loadMockupCatalog()
 }, { immediate: true })
 
+watch(() => documentState.value.items.map(item => `${item.id}:${item.screenshotSrc}`).join('|'), () => {
+  void hydratePreviewImageSources()
+}, { immediate: true })
+
 onBeforeUnmount(() => {
-  stopInteraction()
+  hydrationRunId += 1
 })
 </script>
 
@@ -783,11 +853,9 @@ onBeforeUnmount(() => {
   <div
     class="workspace-device-arrangement-panel"
     data-testid="workspace-device-arrangement-panel"
-    tabindex="0"
     @dragover="handleDragOver"
     @dragleave="handleDragLeave"
     @drop="handleDrop"
-    @keydown="handleKeydown"
     @paste="handlePaste"
   >
     <aside class="workspace-device-arrangement-panel__sidebar" data-testid="workspace-device-arrangement-workbench">
@@ -807,34 +875,7 @@ onBeforeUnmount(() => {
         </span>
       </header>
 
-      <section class="workspace-device-arrangement-panel__section">
-        <div class="workspace-device-arrangement-panel__section-title">
-          截图
-        </div>
-        <button
-          class="workspace-device-arrangement-panel__dropzone"
-          :class="{ 'workspace-device-arrangement-panel__dropzone--active': dragOver }"
-          data-testid="workspace-device-arrangement-dropzone"
-          type="button"
-          @click="fileInputRef?.click()"
-        >
-          <span>上传或拖入截图</span>
-          <small>支持粘贴截图，自动进入当前画布。</small>
-        </button>
-        <input
-          ref="fileInputRef"
-          class="hidden"
-          accept="image/*"
-          multiple
-          type="file"
-          @change="handleFileInputChange"
-        >
-        <p v-if="screenshotUploadError" class="workspace-device-arrangement-panel__hint workspace-device-arrangement-panel__hint--error">
-          {{ screenshotUploadError }}
-        </p>
-      </section>
-
-      <section class="workspace-device-arrangement-panel__section">
+      <section class="workspace-device-arrangement-panel__section" data-testid="workspace-device-arrangement-template-panel">
         <div class="workspace-device-arrangement-panel__section-title">
           模板
         </div>
@@ -842,12 +883,18 @@ onBeforeUnmount(() => {
           <button
             v-for="template in DEVICE_ARRANGEMENT_TEMPLATE_PRESETS"
             :key="template.key"
-            class="workspace-device-arrangement-panel__chip"
+            class="workspace-device-arrangement-panel__template"
+            :class="{ 'workspace-device-arrangement-panel__template--active': activeTemplateKey === template.key }"
             type="button"
             @click="applyTemplate(template.key)"
           >
+            <span class="workspace-device-arrangement-panel__template-preview" :style="{ background: template.backgroundMode === 'gradient' ? `linear-gradient(135deg, ${template.background}, #fff)` : template.background }">
+              <i />
+              <i />
+              <i />
+            </span>
             <strong>{{ template.title }}</strong>
-            <span>{{ template.summary }}</span>
+            <small>{{ template.summary }}</small>
           </button>
         </div>
       </section>
@@ -857,7 +904,7 @@ onBeforeUnmount(() => {
           画布
         </div>
         <label class="workspace-device-arrangement-panel__field">
-          <span>布局</span>
+          <span>自动布局</span>
           <select v-model="documentState.layoutPresetKey" class="workspace-device-arrangement-panel__input" @change="relayoutCurrentDocument">
             <option v-for="preset in DEVICE_ARRANGEMENT_LAYOUT_PRESETS" :key="preset.key" :value="preset.key">
               {{ preset.title }}
@@ -874,11 +921,11 @@ onBeforeUnmount(() => {
         </label>
         <label class="workspace-device-arrangement-panel__field">
           <span>背景</span>
-          <input v-model="documentState.canvas.background" class="workspace-device-arrangement-panel__input" type="text">
+          <input :value="documentState.canvas.background" class="workspace-device-arrangement-panel__input" type="text" @change="updateCanvasBackground(($event.target as HTMLInputElement).value)">
         </label>
         <label class="workspace-device-arrangement-panel__field">
           <span>模式</span>
-          <select v-model="documentState.canvas.backgroundMode" class="workspace-device-arrangement-panel__input">
+          <select :value="documentState.canvas.backgroundMode" class="workspace-device-arrangement-panel__input" @change="updateCanvasBackgroundMode(($event.target as HTMLSelectElement).value as DeviceArrangementDocumentV1['canvas']['backgroundMode'])">
             <option value="solid">纯色</option>
             <option value="gradient">渐变</option>
             <option value="transparent">透明</option>
@@ -909,7 +956,7 @@ onBeforeUnmount(() => {
           </label>
         </div>
         <div class="workspace-device-arrangement-panel__actions">
-          <button class="workspace-device-arrangement-panel__button" type="button" @click="runExport(() => downloadPresetSvg(documentState.canvas.sizePresetKey))">
+          <button class="workspace-device-arrangement-panel__button" type="button" :disabled="exportBusy" @click="runExport(() => downloadPresetSvg(documentState.canvas.sizePresetKey))">
             当前 SVG
           </button>
           <button class="workspace-device-arrangement-panel__button" type="button" :disabled="exportBusy" @click="runExport(() => downloadPresetPng(documentState.canvas.sizePresetKey))">
@@ -950,64 +997,47 @@ onBeforeUnmount(() => {
         :class="{ 'workspace-device-arrangement-panel__canvas-viewport--dragover': dragOver }"
       >
         <div
-          ref="stageSheetRef"
           class="workspace-device-arrangement-panel__canvas-sheet"
           data-testid="workspace-device-arrangement-canvas-sheet"
           :style="{ aspectRatio: canvasAspectRatio }"
-          @pointerdown="handleCanvasPointerDown"
         >
-          <div class="workspace-device-arrangement-panel__canvas-render" v-html="previewMarkup" />
-          <svg
-            class="workspace-device-arrangement-panel__interaction-layer"
-            data-testid="workspace-device-arrangement-interaction-layer"
-            :viewBox="canvasViewBox"
-            preserveAspectRatio="none"
-          >
-            <g v-for="item in documentState.items" :key="item.id">
-              <rect
-                class="workspace-device-arrangement-panel__hit-area"
-                :class="{ 'workspace-device-arrangement-panel__hit-area--selected': item.id === selectedItemId }"
-                :x="item.x"
-                :y="item.y"
-                :width="item.width"
-                :height="item.height"
-                :transform="`rotate(${item.rotation} ${item.x + item.width / 2} ${item.y + item.height / 2})`"
-                @pointerdown="beginItemInteraction($event, item, 'move')"
-              />
-              <template v-if="item.id === selectedItemId">
-                <rect
-                  class="workspace-device-arrangement-panel__selection-outline"
-                  data-testid="workspace-device-arrangement-selected-outline"
-                  :x="item.x"
-                  :y="item.y"
-                  :width="item.width"
-                  :height="item.height"
-                  :transform="`rotate(${item.rotation} ${item.x + item.width / 2} ${item.y + item.height / 2})`"
-                />
-                <circle
-                  class="workspace-device-arrangement-panel__resize-handle"
-                  :cx="item.x + item.width"
-                  :cy="item.y + item.height"
-                  r="18"
-                  @pointerdown="beginItemInteraction($event, item, 'resize')"
-                />
-                <line
-                  class="workspace-device-arrangement-panel__rotate-line"
-                  :x1="item.x + item.width / 2"
-                  :y1="item.y"
-                  :x2="item.x + item.width / 2"
-                  :y2="item.y - 72"
-                />
-                <circle
-                  class="workspace-device-arrangement-panel__rotate-handle"
-                  :cx="item.x + item.width / 2"
-                  :cy="item.y - 72"
-                  r="18"
-                  @pointerdown="beginItemInteraction($event, item, 'rotate')"
-                />
-              </template>
-            </g>
-          </svg>
+          <div class="workspace-device-arrangement-panel__canvas-render">
+            <div
+              class="workspace-device-arrangement-panel__canvas-background"
+              :class="`workspace-device-arrangement-panel__canvas-background--${documentState.canvas.backgroundMode}`"
+              :style="{ '--device-arrangement-bg': documentState.canvas.background }"
+            />
+            <button
+              v-for="preview in previewItems"
+              :key="preview.item.id"
+              class="workspace-device-arrangement-panel__preview-device"
+              :class="{
+                'workspace-device-arrangement-panel__preview-device--active': preview.item.id === selectedItemId,
+                'workspace-device-arrangement-panel__preview-device--none': preview.mode === 'none',
+                'workspace-device-arrangement-panel__preview-device--external': preview.mode === 'external',
+              }"
+              :style="preview.rootStyle"
+              type="button"
+              @click="selectItem(preview.item.id)"
+            >
+              <span class="workspace-device-arrangement-panel__preview-frame" :style="preview.frameStyle">
+                <span class="workspace-device-arrangement-panel__preview-screen" :style="preview.screenStyle">
+                  <img :src="preview.imageSrc" :alt="preview.item.name" draggable="false">
+                </span>
+                <img
+                  v-if="preview.shellImageSrc"
+                  class="workspace-device-arrangement-panel__preview-shell"
+                  :src="preview.shellImageSrc"
+                  :alt="`${preview.item.name} 设备壳`"
+                  :style="preview.shellStyle"
+                  draggable="false"
+                >
+              </span>
+            </button>
+            <div v-if="documentState.watermarkText" class="workspace-device-arrangement-panel__watermark">
+              {{ documentState.watermarkText }}
+            </div>
+          </div>
           <div v-if="loading" class="workspace-device-arrangement-panel__empty">
             加载设备画布中
           </div>
@@ -1018,101 +1048,87 @@ onBeforeUnmount(() => {
             @click.stop="fileInputRef?.click()"
           >
             <strong>导入第一张截图</strong>
-            <span>上传、拖拽或粘贴图片后即可套用设备壳。</span>
+            <span>右侧上传、拖拽或粘贴图片后，模板会自动完成排版。</span>
           </button>
         </div>
       </div>
     </main>
 
-    <aside class="workspace-device-arrangement-panel__inspector">
-      <section v-if="selectedItem" class="workspace-device-arrangement-panel__section">
+    <aside class="workspace-device-arrangement-panel__inspector" data-testid="workspace-device-arrangement-image-panel">
+      <section class="workspace-device-arrangement-panel__section">
         <div class="workspace-device-arrangement-panel__section-title">
-          选中设备
+          截图
         </div>
-        <label class="workspace-device-arrangement-panel__field">
-          <span>名称</span>
-          <input :value="selectedItem.name" class="workspace-device-arrangement-panel__input" type="text" @change="updateItem(selectedItem.id, { name: ($event.target as HTMLInputElement).value }, false)">
-        </label>
-        <label class="workspace-device-arrangement-panel__field">
-          <span>设备壳</span>
-          <select
-            :value="selectedItem.devicePresetKey"
-            class="workspace-device-arrangement-panel__input"
-            @change="updateItem(selectedItem.id, { devicePresetKey: ($event.target as HTMLSelectElement).value })"
-          >
-            <option v-for="choice in deviceChoices" :key="`${choice.source}-${choice.key}`" :value="choice.key">
-              {{ choice.label }}
-            </option>
-          </select>
-          <small>{{ selectedDeviceChoice?.meta || '内置设备' }}</small>
-        </label>
-
-        <div class="workspace-device-arrangement-panel__manual-grid" data-testid="workspace-device-arrangement-manual-transform">
-          <label class="workspace-device-arrangement-panel__field">
-            <span>X</span>
-            <input :value="selectedItem.offsetX" class="workspace-device-arrangement-panel__input" type="number" @change="updateItem(selectedItem.id, { offsetX: Number(($event.target as HTMLInputElement).value || 0) })">
-          </label>
-          <label class="workspace-device-arrangement-panel__field">
-            <span>Y</span>
-            <input :value="selectedItem.offsetY" class="workspace-device-arrangement-panel__input" type="number" @change="updateItem(selectedItem.id, { offsetY: Number(($event.target as HTMLInputElement).value || 0) })">
-          </label>
-          <label class="workspace-device-arrangement-panel__field">
-            <span>缩放</span>
-            <input :value="selectedItem.scale" class="workspace-device-arrangement-panel__input" type="number" step="0.05" min="0.25" max="3" @change="updateItem(selectedItem.id, { scale: Number(($event.target as HTMLInputElement).value || 1) })">
-          </label>
-          <label class="workspace-device-arrangement-panel__field">
-            <span>旋转</span>
-            <input :value="selectedItem.rotationOffset" class="workspace-device-arrangement-panel__input" type="number" step="1" min="-45" max="45" @change="updateItem(selectedItem.id, { rotationOffset: Number(($event.target as HTMLInputElement).value || 0) })">
-          </label>
-        </div>
-
-        <div class="workspace-device-arrangement-panel__actions workspace-device-arrangement-panel__actions--grid" data-testid="workspace-device-arrangement-layer-actions">
-          <button class="workspace-device-arrangement-panel__button" type="button" :disabled="!canMoveLayerDown" @click="moveItemLayer(selectedItem.id, 'backward')">
-            后移
-          </button>
-          <button class="workspace-device-arrangement-panel__button" type="button" :disabled="!canMoveLayerUp" @click="moveItemLayer(selectedItem.id, 'forward')">
-            前移
-          </button>
-          <button class="workspace-device-arrangement-panel__button" type="button" @click="moveItemLayer(selectedItem.id, 'back')">
-            置底
-          </button>
-          <button class="workspace-device-arrangement-panel__button" type="button" @click="moveItemLayer(selectedItem.id, 'front')">
-            置顶
-          </button>
-          <button class="workspace-device-arrangement-panel__button" type="button" @click="duplicateItem(selectedItem.id)">
-            复制
-          </button>
-          <button class="workspace-device-arrangement-panel__button workspace-device-arrangement-panel__button--danger" type="button" @click="removeItem(selectedItem.id)">
-            删除
-          </button>
-        </div>
-      </section>
-
-      <section v-else class="workspace-device-arrangement-panel__section">
-        <div class="workspace-device-arrangement-panel__section-title">
-          设备项
-        </div>
-        <p class="workspace-device-arrangement-panel__hint">
-          {{ documentState.items.length ? '从列表或画布中选择一个设备。' : '当前还没有截图。' }}
+        <button
+          class="workspace-device-arrangement-panel__dropzone"
+          :class="{ 'workspace-device-arrangement-panel__dropzone--active': dragOver }"
+          data-testid="workspace-device-arrangement-dropzone"
+          type="button"
+          @click="fileInputRef?.click()"
+        >
+          <span>上传或拖入截图</span>
+          <small>支持粘贴截图，导入后自动套入当前模板。</small>
+        </button>
+        <input
+          ref="fileInputRef"
+          class="hidden"
+          accept="image/*"
+          multiple
+          type="file"
+          @change="handleFileInputChange"
+        >
+        <p v-if="screenshotUploadError" class="workspace-device-arrangement-panel__hint workspace-device-arrangement-panel__hint--error">
+          {{ screenshotUploadError }}
         </p>
       </section>
 
       <section class="workspace-device-arrangement-panel__section">
         <div class="workspace-device-arrangement-panel__section-title">
-          图层
+          图片与设备壳
         </div>
-        <div class="workspace-device-arrangement-panel__item-list">
-          <button
-            v-for="item in [...documentState.items].reverse()"
+        <p v-if="documentState.items.length === 0" class="workspace-device-arrangement-panel__hint">
+          当前还没有截图。
+        </p>
+        <div v-else class="workspace-device-arrangement-panel__image-list">
+          <article
+            v-for="(item, index) in documentState.items"
             :key="item.id"
-            class="workspace-device-arrangement-panel__item-row"
-            :class="{ 'workspace-device-arrangement-panel__item-row--active': item.id === selectedItemId }"
-            type="button"
+            class="workspace-device-arrangement-panel__image-card"
+            :class="{ 'workspace-device-arrangement-panel__image-card--active': item.id === selectedItemId }"
+            data-testid="workspace-device-arrangement-image-card"
             @click="selectItem(item.id)"
           >
-            <span>{{ item.name }}</span>
-            <small>{{ resolveDeviceChoice(item.devicePresetKey)?.label || item.devicePresetKey }}</small>
-          </button>
+            <button class="workspace-device-arrangement-panel__thumb" type="button">
+              <img :src="resolvePreviewImageSrc(item)" :alt="item.name" draggable="false">
+            </button>
+            <div class="workspace-device-arrangement-panel__image-meta">
+              <label class="workspace-device-arrangement-panel__field workspace-device-arrangement-panel__field--compact">
+                <span>图片 {{ index + 1 }}</span>
+                <input :value="item.name" class="workspace-device-arrangement-panel__input" type="text" @change="updateItem(item.id, { name: ($event.target as HTMLInputElement).value })">
+              </label>
+              <label class="workspace-device-arrangement-panel__field workspace-device-arrangement-panel__field--compact">
+                <span>设备壳</span>
+                <select
+                  :value="item.devicePresetKey"
+                  class="workspace-device-arrangement-panel__input"
+                  @change="updateItem(item.id, { devicePresetKey: ($event.target as HTMLSelectElement).value })"
+                >
+                  <option v-for="choice in deviceChoices" :key="`${choice.source}-${choice.key}`" :value="choice.key">
+                    {{ choice.label }}
+                  </option>
+                </select>
+                <small>{{ resolveDeviceChoice(item.devicePresetKey)?.meta || '内置设备' }}</small>
+              </label>
+              <div class="workspace-device-arrangement-panel__actions workspace-device-arrangement-panel__actions--compact">
+                <button class="workspace-device-arrangement-panel__button" type="button" @click.stop="duplicateItem(item.id)">
+                  复制
+                </button>
+                <button class="workspace-device-arrangement-panel__button workspace-device-arrangement-panel__button--danger" type="button" @click.stop="removeItem(item.id)">
+                  删除
+                </button>
+              </div>
+            </div>
+          </article>
         </div>
       </section>
     </aside>
@@ -1124,11 +1140,10 @@ onBeforeUnmount(() => {
   display: grid;
   height: 100%;
   min-height: 0;
-  grid-template-columns: 288px minmax(0, 1fr) 320px;
+  grid-template-columns: 288px minmax(0, 1fr) 336px;
   border: 1px solid #e5e7eb;
   background: #f6f7f9;
   color: #0f172a;
-  outline: none;
 }
 
 .workspace-device-arrangement-panel__sidebar,
@@ -1217,41 +1232,73 @@ onBeforeUnmount(() => {
   font-weight: 750;
 }
 
-.workspace-device-arrangement-panel__dropzone {
-  display: flex;
-  width: 100%;
-  min-height: 78px;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 5px;
-  border: 1px dashed #cbd5e1;
+.workspace-device-arrangement-panel__template-grid,
+.workspace-device-arrangement-panel__image-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-device-arrangement-panel__template {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
-  background: #f8fafc;
-  padding: 12px;
+  background: #fff;
+  padding: 9px;
   color: #0f172a;
   text-align: left;
 }
 
-.workspace-device-arrangement-panel__dropzone--active,
-.workspace-device-arrangement-panel__canvas-viewport--dragover {
+.workspace-device-arrangement-panel__template--active,
+.workspace-device-arrangement-panel__image-card--active {
   border-color: #2563eb;
   background: #eff6ff;
 }
 
-.workspace-device-arrangement-panel__dropzone span,
-.workspace-device-arrangement-panel__chip strong,
-.workspace-device-arrangement-panel__item-row span {
+.workspace-device-arrangement-panel__template-preview {
+  position: relative;
+  display: block;
+  height: 52px;
+  overflow: hidden;
+  border: 1px solid #dbe3ef;
+  border-radius: 6px;
+}
+
+.workspace-device-arrangement-panel__template-preview i {
+  position: absolute;
+  bottom: 9px;
+  width: 22px;
+  height: 34px;
+  border-radius: 5px;
+  background: #0f172a;
+}
+
+.workspace-device-arrangement-panel__template-preview i:nth-child(1) {
+  left: 32%;
+  transform: rotate(-8deg);
+}
+
+.workspace-device-arrangement-panel__template-preview i:nth-child(2) {
+  left: 45%;
+  height: 39px;
+}
+
+.workspace-device-arrangement-panel__template-preview i:nth-child(3) {
+  left: 58%;
+  transform: rotate(8deg);
+}
+
+.workspace-device-arrangement-panel__template strong,
+.workspace-device-arrangement-panel__dropzone span {
   overflow: hidden;
   max-width: 100%;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.workspace-device-arrangement-panel__template small,
 .workspace-device-arrangement-panel__dropzone small,
-.workspace-device-arrangement-panel__chip span,
-.workspace-device-arrangement-panel__field small,
-.workspace-device-arrangement-panel__item-row small {
+.workspace-device-arrangement-panel__field small {
   overflow: hidden;
   max-width: 100%;
   color: #64748b;
@@ -1261,22 +1308,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.workspace-device-arrangement-panel__template-grid {
-  display: grid;
-  gap: 8px;
-}
-
-.workspace-device-arrangement-panel__chip {
-  display: grid;
-  gap: 3px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #fff;
-  padding: 9px 10px;
-  color: #0f172a;
-  text-align: left;
-}
-
 .workspace-device-arrangement-panel__field {
   display: grid;
   gap: 6px;
@@ -1284,6 +1315,10 @@ onBeforeUnmount(() => {
   color: #475569;
   font-size: 12px;
   font-weight: 700;
+}
+
+.workspace-device-arrangement-panel__field--compact {
+  margin-bottom: 8px;
 }
 
 .workspace-device-arrangement-panel__input {
@@ -1331,6 +1366,28 @@ onBeforeUnmount(() => {
   color: #b91c1c;
 }
 
+.workspace-device-arrangement-panel__dropzone {
+  display: flex;
+  width: 100%;
+  min-height: 82px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 5px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+  color: #0f172a;
+  text-align: left;
+}
+
+.workspace-device-arrangement-panel__dropzone--active,
+.workspace-device-arrangement-panel__canvas-viewport--dragover {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
 .workspace-device-arrangement-panel__actions,
 .workspace-device-arrangement-panel__checkbox-list {
   display: flex;
@@ -1342,9 +1399,8 @@ onBeforeUnmount(() => {
   margin-top: 10px;
 }
 
-.workspace-device-arrangement-panel__actions--grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.workspace-device-arrangement-panel__actions--compact {
+  margin-top: 4px;
 }
 
 .workspace-device-arrangement-panel__checkbox {
@@ -1382,68 +1438,94 @@ onBeforeUnmount(() => {
 }
 
 .workspace-device-arrangement-panel__canvas-render,
-.workspace-device-arrangement-panel__interaction-layer {
+.workspace-device-arrangement-panel__canvas-background {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
+  overflow: hidden;
 }
 
-.workspace-device-arrangement-panel__canvas-render :deep(svg) {
+.workspace-device-arrangement-panel__canvas-background--solid {
+  background: var(--device-arrangement-bg, #f8fafc);
+}
+
+.workspace-device-arrangement-panel__canvas-background--gradient {
+  background: linear-gradient(135deg, var(--device-arrangement-bg, #f8fafc), #fff);
+}
+
+.workspace-device-arrangement-panel__canvas-background--transparent {
+  background-image:
+    linear-gradient(45deg, #e5e7eb 25%, transparent 25%), linear-gradient(-45deg, #e5e7eb 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e5e7eb 75%), linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+
+.workspace-device-arrangement-panel__preview-device {
+  position: absolute;
+  display: block;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  transform-origin: 50% 50%;
+}
+
+.workspace-device-arrangement-panel__preview-frame {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+}
+
+.workspace-device-arrangement-panel__preview-device--none .workspace-device-arrangement-panel__preview-frame {
+  box-shadow: none;
+}
+
+.workspace-device-arrangement-panel__preview-device--active .workspace-device-arrangement-panel__preview-frame {
+  outline: 3px solid rgba(37, 99, 235, 0.85);
+  outline-offset: 6px;
+}
+
+.workspace-device-arrangement-panel__preview-screen {
+  position: absolute;
+  display: block;
+  overflow: hidden;
+  background: #e2e8f0;
+}
+
+.workspace-device-arrangement-panel__preview-screen img,
+.workspace-device-arrangement-panel__preview-shell,
+.workspace-device-arrangement-panel__thumb img {
   display: block;
   width: 100%;
   height: 100%;
+  object-fit: cover;
 }
 
-.workspace-device-arrangement-panel__interaction-layer {
-  touch-action: none;
-}
-
-.workspace-device-arrangement-panel__hit-area {
-  cursor: move;
-  fill: transparent;
-  stroke: transparent;
-  stroke-width: 2;
-}
-
-.workspace-device-arrangement-panel__hit-area--selected {
-  fill: rgba(37, 99, 235, 0.04);
-}
-
-.workspace-device-arrangement-panel__selection-outline {
+.workspace-device-arrangement-panel__preview-shell {
+  position: absolute;
+  inset: 0;
   pointer-events: none;
-  fill: transparent;
-  stroke: #2563eb;
-  stroke-dasharray: 12 8;
-  stroke-width: 4;
 }
 
-.workspace-device-arrangement-panel__resize-handle,
-.workspace-device-arrangement-panel__rotate-handle {
-  fill: #fff;
-  stroke: #2563eb;
-  stroke-width: 4;
-}
-
-.workspace-device-arrangement-panel__resize-handle {
-  cursor: nwse-resize;
-}
-
-.workspace-device-arrangement-panel__rotate-handle {
-  cursor: grab;
-}
-
-.workspace-device-arrangement-panel__rotate-line {
-  pointer-events: none;
-  stroke: #2563eb;
-  stroke-width: 3;
+.workspace-device-arrangement-panel__watermark {
+  position: absolute;
+  right: 4%;
+  bottom: 4%;
+  color: rgba(71, 85, 105, 0.72);
+  font-size: 20px;
+  font-weight: 750;
 }
 
 .workspace-device-arrangement-panel__empty {
   position: absolute;
   inset: 50% auto auto 50%;
   display: grid;
-  width: min(320px, calc(100% - 32px));
+  width: min(340px, calc(100% - 32px));
   transform: translate(-50%, -50%);
   gap: 6px;
   border: 1px dashed #cbd5e1;
@@ -1459,32 +1541,29 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-.workspace-device-arrangement-panel__manual-grid {
+.workspace-device-arrangement-panel__image-card {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 72px minmax(0, 1fr);
   gap: 10px;
-}
-
-.workspace-device-arrangement-panel__item-list {
-  display: grid;
-  gap: 8px;
-}
-
-.workspace-device-arrangement-panel__item-row {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
-  padding: 9px 10px;
-  color: #0f172a;
-  text-align: left;
+  padding: 9px;
 }
 
-.workspace-device-arrangement-panel__item-row--active {
-  border-color: #2563eb;
-  background: #eff6ff;
+.workspace-device-arrangement-panel__thumb {
+  display: block;
+  width: 72px;
+  height: 96px;
+  overflow: hidden;
+  border: 1px solid #dbe3ef;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 0;
+}
+
+.workspace-device-arrangement-panel__image-meta {
+  min-width: 0;
 }
 
 @media (max-width: 1280px) {

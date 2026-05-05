@@ -9,7 +9,7 @@ async function loadDeviceArrangementUtils() {
   return import(pathToFileURL(DEVICE_DOCUMENT_UTILS_PATH).href)
 }
 
-it('独立设备排布文档会规范化尺寸、自由排布 transform 与导出 SVG', async () => {
+it('独立设备排布文档会规范化尺寸、自动布局与导出 SVG', async () => {
   const {
     createDeviceArrangementItem,
     normalizeDeviceArrangementDocument,
@@ -161,7 +161,7 @@ it('旧 SceneDocument 设备排布可迁移为独立 JSON 文档', async () => {
   assert.equal(document.items[0].devicePresetKey, 'iphone-16-pro')
 })
 
-it('设备排布交互后的拖拽、缩放、旋转参数会稳定进入 SVG', async () => {
+it('设备排布自动排版会忽略手动偏移并稳定进入 SVG', async () => {
   const {
     createDeviceArrangementItem,
     layoutDeviceArrangementItems,
@@ -169,25 +169,8 @@ it('设备排布交互后的拖拽、缩放、旋转参数会稳定进入 SVG', 
     renderDeviceArrangementDocumentToSvg,
   } = await loadDeviceArrangementUtils()
 
-  const baseDocument = normalizeDeviceArrangementDocument({
-    title: '交互设备排布',
-    canvas: {
-      sizePresetKey: 'square',
-      background: '#ffffff',
-      backgroundMode: 'solid',
-    },
-    layoutPresetKey: 'solo',
-    items: [
-      createDeviceArrangementItem({
-        id: 'interactive-phone',
-        name: '交互截图',
-        screenshotSrc: '/mock/home.png',
-        devicePresetKey: 'iphone-16-pro',
-      }),
-    ],
-  })
   const document = normalizeDeviceArrangementDocument({
-    title: '交互设备排布',
+    title: '自动排版设备排布',
     canvas: {
       sizePresetKey: 'square',
       background: '#ffffff',
@@ -196,14 +179,14 @@ it('设备排布交互后的拖拽、缩放、旋转参数会稳定进入 SVG', 
     layoutPresetKey: 'solo',
     items: [
       createDeviceArrangementItem({
-        id: 'interactive-phone',
-        name: '交互截图',
+        id: 'auto-phone',
+        name: '自动截图',
         screenshotSrc: '/mock/home.png',
         devicePresetKey: 'iphone-16-pro',
-        offsetX: 96,
-        offsetY: -48,
-        scale: 1.35,
-        rotationOffset: -12,
+        offsetX: 0,
+        offsetY: 0,
+        scale: 1,
+        rotationOffset: 0,
       }),
     ],
   })
@@ -213,15 +196,15 @@ it('设备排布交互后的拖拽、缩放、旋转参数会稳定进入 SVG', 
     items: [item],
   }, { relayout: false })
 
-  assert.equal(nextDocument.items[0].offsetX, 96)
-  assert.equal(nextDocument.items[0].offsetY, -48)
-  assert.equal(nextDocument.items[0].scale, 1.35)
-  assert.equal(nextDocument.items[0].rotationOffset, -12)
-  assert.ok(nextDocument.items[0].width > baseDocument.items[0].width)
-  assert.ok(nextDocument.items[0].rotation < 0)
+  assert.equal(nextDocument.items[0].offsetX, 0)
+  assert.equal(nextDocument.items[0].offsetY, 0)
+  assert.equal(nextDocument.items[0].scale, 1)
+  assert.equal(nextDocument.items[0].rotationOffset, 0)
+  assert.ok(nextDocument.items[0].x > 0)
+  assert.ok(nextDocument.items[0].y > 0)
 
   const svg = renderDeviceArrangementDocumentToSvg(nextDocument)
-  assert.match(svg, /interactive-phone/)
-  assert.match(svg, /rotate\(-12 /)
+  assert.match(svg, /auto-phone/)
+  assert.match(svg, /rotate\(0 /)
   assert.match(svg, /\/mock\/home\.png/)
 })
