@@ -28,6 +28,7 @@ import type {
   AdminUserSegmentRow,
   AdminUserSegmentSnapshot,
 } from '~~/shared/types/admin-operations'
+import { generateProjectExportPdfBuffer } from '~~/server/services/project/project-export-pdf'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import { getProjectDocumentPreviewWorkerState } from '~~/server/utils/project-document-preview-worker-state'
 import { getProjectKnowledgeWorkerState } from '~~/server/utils/project-knowledge-worker-state'
@@ -397,6 +398,24 @@ function buildCsvFromResult(result: AdminReportResult): string {
     lines.push(result.columns.map(column => escapeCsvCell(row[column.key] ?? null)).join(','))
   }
   return `\uFEFF${lines.join('\n')}`
+}
+
+function buildAdminReportPdfBody(result: AdminReportResult): string {
+  const headers = result.columns.map(column => column.label).join(' / ')
+  const rows = result.rows.map((row, index) => {
+    const cells = result.columns
+      .map(column => `${column.label}：${String(row[column.key] ?? '-')}`)
+      .join('；')
+    return `${index + 1}. ${cells}`
+  })
+  return [
+    `数据集：${result.dataset}`,
+    `生成时间：${result.generatedAt}`,
+    `总分组数：${result.total}`,
+    `字段：${headers || '无'}`,
+    '',
+    rows.join('\n') || '暂无数据。',
+  ].join('\n')
 }
 
 function classifyWorkspaceParticipation(workspaceCount: number): string {
@@ -2174,5 +2193,26 @@ export async function exportAdminOperationsReportCsv(
   return {
     fileName: `admin-operations-${result.dataset}-${new Date().toISOString().slice(0, 10)}.csv`,
     csv: buildCsvFromResult(result),
+  }
+}
+
+export async function exportAdminOperationsReportPdf(
+  db: Queryable,
+  input: AdminReportQuery,
+  event?: H3Event,
+): Promise<{ fileName: string, pdf: Buffer }> {
+  const result = await queryAdminOperationsReport(db, input, event)
+  return {
+    fileName: `admin-operations-${result.dataset}-${new Date().toISOString().slice(0, 10)}.pdf`,
+    pdf: generateProjectExportPdfBuffer({
+      title: `WinLoop 运营报表 · ${result.dataset}`,
+      summary: `共 ${result.total} 组数据，当前导出 ${result.rows.length} 行预览结果。`,
+      sections: [
+        {
+          title: '报表结果',
+          body: buildAdminReportPdfBody(result),
+        },
+      ],
+    }),
   }
 }

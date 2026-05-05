@@ -10,6 +10,8 @@ const WORKSPACE_METAK_UTIL_FILE = resolve(process.cwd(), 'app/utils/workspace-me
 const FINAL_REVIEW_WORKBENCH_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceFinalReviewWorkbench.vue')
 const FINAL_REVIEW_MATERIALS_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceFinalReviewMaterialsDrawer.vue')
 const FINAL_REVIEW_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceFinalReviewSidebar.vue')
+const WORKSPACE_RIGHT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceRightSidebar.vue')
+const ISSUE_REPORT_EXPORT_API_FILE = resolve(process.cwd(), 'server/api/projects/[id]/issues/[reportId]/export.get.ts')
 const PROJECT_WORKSPACE_VIEW_STORE_FILE = resolve(process.cwd(), 'server/utils/project-workspace-view-store.ts')
 const PROJECT_WORKSPACE_VIEW_STORE_MODULE = pathToFileURL(PROJECT_WORKSPACE_VIEW_STORE_FILE).href
 
@@ -125,6 +127,30 @@ it('终审主区、资料抽屉和终审助手组件已按新语义拆出', asyn
   assert.match(sidebarSource, /props\.aiDisabledReason \|\| '当前 AI 未配置，已禁用终审助手。请先在后台完成模型与密钥配置。'/, '终审助手未展示 AI 未配置原因')
   assert.match(sidebarSource, /:disabled="props\.chatLoading \|\| !props\.aiEnabled"/, '终审助手发送按钮未在 AI 未配置时禁用')
   assert.doesNotMatch(sidebarSource, /chatSessions|update:aiMode/, '终审助手仍暴露普通会话列表或模式切换入口')
+})
+
+it('终审评审报告导出支持 Markdown 和 PDF，并保留计费审计', async () => {
+  const [workspaceSource, sidebarSource, apiSource] = await Promise.all([
+    readFile(WORKSPACE_DETAIL_FILE, 'utf8'),
+    readFile(WORKSPACE_RIGHT_SIDEBAR_FILE, 'utf8'),
+    readFile(ISSUE_REPORT_EXPORT_API_FILE, 'utf8'),
+  ])
+
+  assert.match(sidebarSource, /'exportIssueReport': \[payload: \{ reportId: string, format: 'markdown' \| 'pdf'/, '终审助手导出事件未携带格式')
+  assert.match(sidebarSource, /requestExportIssueReport\('markdown'\)/, '终审助手缺少 Markdown 导出动作')
+  assert.match(sidebarSource, /requestExportIssueReport\('pdf'\)/, '终审助手缺少 PDF 导出动作')
+  assert.match(sidebarSource, /requestExportIssueReport\('pdf', 'inline'\)/, '终审助手缺少 PDF 预览动作')
+  assert.match(sidebarSource, /预览 PDF/, '终审助手缺少 PDF 预览按钮文案')
+  assert.match(workspaceSource, /async function exportIssueReport\(payload: \{ reportId: string, format\?: 'markdown' \| 'pdf'/, '项目页导出处理未接收格式 payload')
+  assert.match(workspaceSource, /format === 'pdf'\s+\? toIssueReportPdfFileName/, '项目页 PDF 导出未使用 PDF 文件名')
+  assert.match(workspaceSource, /format=pdf|format,\s+disposition/, '项目页未向导出接口传递格式参数')
+  assert.match(workspaceSource, /window\.open\(previewUrl, '_blank', 'noopener,noreferrer'\)/, '项目页未用新窗口预览 inline PDF')
+  assert.match(workspaceSource, /评审报告 PDF 预览已生成。/, '项目页缺少 PDF 预览成功状态')
+  assert.match(apiSource, /generateProjectExportPdfBuffer/, '评审报告 PDF 未复用现有 PDF 生成器')
+  assert.match(apiSource, /normalizeFormat\(query\.format\)/, '评审报告导出接口未按 query format 区分导出格式')
+  assert.match(apiSource, /application\/pdf/, '评审报告导出接口未设置 PDF Content-Type')
+  assert.match(apiSource, /format: exportFormat/, '评审报告导出计费审计未记录导出格式')
+  assert.match(apiSource, /text\/markdown; charset=utf-8/, '评审报告 Markdown 导出兼容路径丢失')
 })
 
 it('终审资料抽屉在已有数据时只显示轻量 refreshing，不再用 loading 替换主列表', async () => {

@@ -296,7 +296,7 @@ const emit = defineEmits<{
   'interruptDefenseRealtime': []
   'reconnectDefenseRealtime': []
   'submitIssueReport': [reportId: string]
-  'exportIssueReport': [reportId: string]
+  'exportIssueReport': [payload: { reportId: string, format: 'markdown' | 'pdf', disposition?: 'attachment' | 'inline' }]
   'updateContestExportProfile': [profileId: string]
   'runContestBundleExport': []
   'retryContestBundleExport': [jobId: string]
@@ -340,6 +340,11 @@ const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label:
     icon: 'lightbulb',
     label: '选题助手',
     prefixes: ['选题助手'],
+  },
+  loopy_page: {
+    icon: 'smart_toy',
+    label: 'Loopy',
+    prefixes: ['Loopy'],
   },
   dialog_ask: {
     icon: 'chat',
@@ -1890,11 +1895,11 @@ function requestSubmitIssueReport() {
   emit('submitIssueReport', reportId)
 }
 
-function requestExportIssueReport() {
+function requestExportIssueReport(format: 'markdown' | 'pdf', disposition: 'attachment' | 'inline' = 'attachment') {
   const reportId = String(props.issueReport?.id || '').trim()
   if (!reportId || props.issueReportExporting)
     return
-  emit('exportIssueReport', reportId)
+  emit('exportIssueReport', { reportId, format, disposition })
 }
 
 function handleChatComposerKeydown(event: KeyboardEvent): void {
@@ -2714,9 +2719,25 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                     class="workspace-issue-report-btn workspace-issue-report-btn--ghost"
                     type="button"
                     :disabled="issueReportExporting"
-                    @click="requestExportIssueReport"
+                    @click="requestExportIssueReport('markdown')"
                   >
                     {{ issueReportExporting ? '导出中...' : '导出 Markdown' }}
+                  </button>
+                  <button
+                    class="workspace-issue-report-btn workspace-issue-report-btn--ghost"
+                    type="button"
+                    :disabled="issueReportExporting"
+                    @click="requestExportIssueReport('pdf')"
+                  >
+                    {{ issueReportExporting ? '导出中...' : '导出 PDF' }}
+                  </button>
+                  <button
+                    class="workspace-issue-report-btn workspace-issue-report-btn--ghost"
+                    type="button"
+                    :disabled="issueReportExporting"
+                    @click="requestExportIssueReport('pdf', 'inline')"
+                  >
+                    {{ issueReportExporting ? '生成中...' : '预览 PDF' }}
                   </button>
                 </div>
               </div>

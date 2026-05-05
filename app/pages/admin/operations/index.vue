@@ -38,7 +38,7 @@ const tabs: Array<{ key: AdminOperationsTab, label: string, summary: string, ico
   { key: 'efficiency', label: '效能', summary: 'Worker、同步与 AI 使用效能', icon: 'i-heroicons-outline-cpu-chip' },
   { key: 'meeting', label: '会议', summary: 'LiveKit、Egress、机器与带宽监控', icon: 'i-heroicons-outline-video-camera' },
   { key: 'risks', label: '风险', summary: '准实时轮询风险监控与告警', icon: 'i-heroicons-outline-exclamation-triangle' },
-  { key: 'reports', label: '报表', summary: '零代码临时报表与 CSV 导出', icon: 'i-heroicons-outline-document-chart-bar' },
+  { key: 'reports', label: '报表', summary: '零代码临时报表与 CSV/PDF 导出', icon: 'i-heroicons-outline-document-chart-bar' },
 ]
 
 type OperationCardTone = 'info' | 'success' | 'warning' | 'danger' | 'neutral'
@@ -108,6 +108,7 @@ const risks = ref<AdminRiskSnapshot | null>(null)
 const aiAnalysis = ref<AdminOperationsAiAnalysisSnapshot | null>(null)
 const reportSchema = ref<AdminReportSchema | null>(null)
 const reportPreview = ref<AdminReportResult | null>(null)
+const reportPdfPreviewUrl = ref('')
 const aiAnalysisLoading = ref(false)
 const aiAnalysisRunning = ref(false)
 const aiAnalysisError = ref('')
@@ -171,6 +172,7 @@ const reportForm = reactive({
 const reportFilters = ref<AdminReportFilter[]>([])
 const reportBusy = ref(false)
 const exportBusy = ref(false)
+const pdfPreviewBusy = ref(false)
 const reportError = ref('')
 
 const reportLimitOptions = [50, 100, 200, 500]
@@ -995,6 +997,13 @@ function buildReportPayload(): AdminReportQuery {
   }
 }
 
+function revokeReportPdfPreview() {
+  if (!import.meta.client || !reportPdfPreviewUrl.value)
+    return
+  window.URL.revokeObjectURL(reportPdfPreviewUrl.value)
+  reportPdfPreviewUrl.value = ''
+}
+
 async function queryReport() {
   if (!currentDatasetSchema.value)
     return
@@ -1023,7 +1032,7 @@ async function exportReport() {
   exportBusy.value = true
   reportError.value = ''
   try {
-    const response = await fetch(endpoint('/admin/operations/reports/export'), {
+    const response = await fetch(endpoint('/admin/operations/reports/export?format=csv'), {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -1060,6 +1069,87 @@ async function exportReport() {
   }
 }
 
+async function previewReportPdf() {
+  if (!currentDatasetSchema.value || !import.meta.client)
+    return
+  pdfPreviewBusy.value = true
+  reportError.value = ''
+  try {
+    const response = await fetch(endpoint('/admin/operations/reports/export?format=pdf&disposition=inline'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(buildReportPayload()),
+    })
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => null)
+      const error = new Error(String(errorPayload?.message || 'PDF 预览失败')) as Error & {
+        statusCode?: number
+        data?: unknown
+      }
+      error.statusCode = response.status
+      error.data = errorPayload
+      throw error
+    }
+    const blob = await response.blob()
+    revokeReportPdfPreview()
+    reportPdfPreviewUrl.value = window.URL.createObjectURL(blob)
+  }
+  catch (error: any) {
+    if (await redirectOnAuthFailure(error))
+      return
+    reportError.value = String(error?.message || 'PDF 预览失败。')
+  }
+  finally {
+    pdfPreviewBusy.value = false
+  }
+}
+
+async function exportReportPdf() {
+  if (!currentDatasetSchema.value || !import.meta.client)
+    return
+  exportBusy.value = true
+  reportError.value = ''
+  try {
+    const response = await fetch(endpoint('/admin/operations/reports/export?format=pdf'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(buildReportPayload()),
+    })
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => null)
+      const error = new Error(String(errorPayload?.message || 'PDF 导出失败')) as Error & {
+        statusCode?: number
+        data?: unknown
+      }
+      error.statusCode = response.status
+      error.data = errorPayload
+      throw error
+    }
+    const blob = await response.blob()
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `admin-operations-${reportForm.dataset}.pdf`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(link.href)
+  }
+  catch (error: any) {
+    if (await redirectOnAuthFailure(error))
+      return
+    reportError.value = String(error?.message || 'PDF 导出失败。')
+  }
+  finally {
+    exportBusy.value = false
+  }
+}
+
 watch(activeTab, (tab) => {
   void ensureTabLoaded(tab)
   syncPolling()
@@ -1067,6 +1157,7 @@ watch(activeTab, (tab) => {
 
 watch(() => reportForm.dataset, () => {
   reportPreview.value = null
+  revokeReportPdfPreview()
   syncReportDefaults(true)
 })
 
@@ -1076,6 +1167,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  revokeReportPdfPreview()
   if (riskTimer)
     clearInterval(riskTimer)
   if (meetingTimer)
@@ -2552,10 +2644,29 @@ onBeforeUnmount(() => {
               <span class="i-heroicons-outline-arrow-down-tray" />
               {{ exportBusy ? '导出中...' : '导出 CSV' }}
             </button>
+            <button type="button" class="operation-inline-button" :disabled="pdfPreviewBusy" @click="previewReportPdf">
+              <span class="i-heroicons-outline-eye" />
+              {{ pdfPreviewBusy ? '生成中...' : '预览 PDF' }}
+            </button>
+            <button type="button" class="operation-inline-button" :disabled="exportBusy" @click="exportReportPdf">
+              <span class="i-heroicons-outline-document-arrow-down" />
+              {{ exportBusy ? '导出中...' : '导出 PDF' }}
+            </button>
           </div>
           <p v-if="reportError" class="text-rose-700">
             {{ reportError }}
           </p>
+        </section>
+
+        <section v-if="reportPdfPreviewUrl" class="operation-report-pdf-preview">
+          <div class="operation-report-pdf-preview__head">
+            PDF Preview
+          </div>
+          <iframe
+            class="operation-report-pdf-preview__frame"
+            :src="reportPdfPreviewUrl"
+            title="运营报表 PDF 预览"
+          />
         </section>
 
         <section v-if="reportPreview" class="border border-slate-200 bg-white overflow-hidden">
@@ -2778,6 +2889,32 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 14px;
+}
+
+.operation-report-pdf-preview {
+  overflow: hidden;
+  border: 1px solid #e1eaf5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.operation-report-pdf-preview__head {
+  border-bottom: 1px solid #e1eaf5;
+  padding: 8px 12px;
+  background: #f8fbff;
+  color: #5f7189;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.operation-report-pdf-preview__frame {
+  display: block;
+  width: 100%;
+  height: 560px;
+  border: 0;
+  background: #f8fafc;
 }
 
 .operation-section-title {

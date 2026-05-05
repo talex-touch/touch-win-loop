@@ -27,12 +27,19 @@ it('运营管控页面固定八个 tab 并基于 query tab 切换', async () => 
   assert.match(source, /route\.query\.tab/, '运营管控页面未基于 tab query 驱动当前视图')
 })
 
-it('风险页开启 30 秒轮询且报表页支持 CSV 导出', async () => {
+it('风险页开启 30 秒轮询且报表页支持 CSV/PDF 导出与 PDF 预览', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
   assert.match(source, /RISK_POLLING_INTERVAL_MS = 30_000/, '风险页未固化 30 秒轮询间隔')
   assert.match(source, /setInterval\(\(\) => \{\s+void loadRisks\(true\)\s+\}, RISK_POLLING_INTERVAL_MS\)/, '风险页未对 risks 接口开启轮询刷新')
   assert.match(source, /\/admin\/operations\/reports\/query/, '报表页未接入 query 接口')
   assert.match(source, /\/admin\/operations\/reports\/export/, '报表页未接入 export 接口')
+  assert.match(source, /reportPdfPreviewUrl/, '报表页缺少 PDF 预览 URL 状态')
+  assert.match(source, /async function previewReportPdf\(\)/, '报表页缺少 PDF 预览动作')
+  assert.match(source, /format=pdf&disposition=inline/, '报表页 PDF 预览未请求 inline PDF')
+  assert.match(source, /async function exportReportPdf\(\)/, '报表页缺少 PDF 导出动作')
+  assert.match(source, /operation-report-pdf-preview__frame/, '报表页缺少内嵌 PDF 预览 iframe')
+  assert.match(source, /预览 PDF/, '报表页缺少 PDF 预览按钮文案')
+  assert.match(source, /导出 PDF/, '报表页缺少 PDF 导出按钮文案')
 })
 
 it('会议运行时页接入监控接口并开启 30 秒轮询', async () => {

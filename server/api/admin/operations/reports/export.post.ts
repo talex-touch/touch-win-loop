@@ -1,6 +1,6 @@
 import type { AdminReportQuery } from '~~/shared/types/admin-operations'
 import { setHeader, setResponseStatus } from 'h3'
-import { exportAdminOperationsReportCsv } from '~~/server/utils/admin-operations-store'
+import { exportAdminOperationsReportCsv, exportAdminOperationsReportPdf } from '~~/server/utils/admin-operations-store'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
@@ -25,7 +25,17 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
+    const query = getQuery(event)
+    const format = String(query.format || '').trim().toLowerCase() === 'pdf' ? 'pdf' : 'csv'
+    const disposition = String(query.disposition || '').trim().toLowerCase() === 'inline' ? 'inline' : 'attachment'
     const body = await readBody<AdminReportQuery>(event)
+    if (format === 'pdf') {
+      const exported = await withClient(event, async db => exportAdminOperationsReportPdf(db, body, event))
+      setHeader(event, 'Content-Type', 'application/pdf')
+      setHeader(event, 'Content-Disposition', `${disposition}; filename="${exported.fileName}"`)
+      return exported.pdf
+    }
+
     const exported = await withClient(event, async db => exportAdminOperationsReportCsv(db, body, event))
     setHeader(event, 'Content-Type', 'text/csv; charset=utf-8')
     setHeader(event, 'Content-Disposition', `attachment; filename="${exported.fileName}"`)

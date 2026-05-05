@@ -543,6 +543,13 @@ function toIssueReportMarkdownFileName(title: string): string {
   return `${normalized || 'issue-report'}.md`
 }
 
+function toIssueReportPdfFileName(title: string): string {
+  const normalized = String(title || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+  return `${normalized || 'issue-report'}.pdf`
+}
+
 function triggerBrowserDownloadFromBlob(blob: Blob, fileName: string): void {
   if (!import.meta.client)
     return
@@ -6643,15 +6650,21 @@ async function submitIssueReport(reportId: string) {
   }
 }
 
-async function exportIssueReport(reportId: string) {
+async function exportIssueReport(payload: { reportId: string, format?: 'markdown' | 'pdf', disposition?: 'attachment' | 'inline' }) {
   const projectId = String(activeProjectId.value || '').trim()
-  const normalizedReportId = String(reportId || '').trim()
+  const normalizedReportId = String(payload?.reportId || '').trim()
   if (!projectId || !normalizedReportId || issueReportExporting.value || !import.meta.client)
     return
 
+  const format = payload?.format === 'pdf' ? 'pdf' : 'markdown'
+  const disposition = payload?.disposition === 'inline' ? 'inline' : 'attachment'
   issueReportExporting.value = true
   try {
-    const response = await fetch(endpoint(`/projects/${projectId}/issues/${normalizedReportId}/export`), {
+    const query = new URLSearchParams({
+      format,
+      disposition,
+    })
+    const response = await fetch(endpoint(`/projects/${projectId}/issues/${normalizedReportId}/export?${query.toString()}`), {
       credentials: 'include',
     })
 
@@ -6673,11 +6686,21 @@ async function exportIssueReport(reportId: string) {
 
     const blob = await response.blob()
     const report = projectIssueReports.value.find(item => item.id === normalizedReportId) || latestIssueReport.value
+    if (format === 'pdf' && disposition === 'inline') {
+      const previewUrl = window.URL.createObjectURL(blob)
+      window.open(previewUrl, '_blank', 'noopener,noreferrer')
+      window.setTimeout(() => window.URL.revokeObjectURL(previewUrl), 60_000)
+      statusLine.value = '评审报告 PDF 预览已生成。'
+      return
+    }
+
     triggerBrowserDownloadFromBlob(
       blob,
-      toIssueReportMarkdownFileName(report?.title || 'issue-report'),
+      format === 'pdf'
+        ? toIssueReportPdfFileName(report?.title || 'issue-report')
+        : toIssueReportMarkdownFileName(report?.title || 'issue-report'),
     )
-    statusLine.value = '评审报告已导出。'
+    statusLine.value = format === 'pdf' ? '评审报告 PDF 已导出。' : '评审报告已导出。'
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '导出评审报告失败，请稍后重试。')
