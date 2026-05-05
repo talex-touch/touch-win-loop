@@ -160,3 +160,68 @@ it('旧 SceneDocument 设备排布可迁移为独立 JSON 文档', async () => {
   assert.equal(document.items[0].shell.assetId, 'shell-1')
   assert.equal(document.items[0].devicePresetKey, 'iphone-16-pro')
 })
+
+it('设备排布交互后的拖拽、缩放、旋转参数会稳定进入 SVG', async () => {
+  const {
+    createDeviceArrangementItem,
+    layoutDeviceArrangementItems,
+    normalizeDeviceArrangementDocument,
+    renderDeviceArrangementDocumentToSvg,
+  } = await loadDeviceArrangementUtils()
+
+  const baseDocument = normalizeDeviceArrangementDocument({
+    title: '交互设备排布',
+    canvas: {
+      sizePresetKey: 'square',
+      background: '#ffffff',
+      backgroundMode: 'solid',
+    },
+    layoutPresetKey: 'solo',
+    items: [
+      createDeviceArrangementItem({
+        id: 'interactive-phone',
+        name: '交互截图',
+        screenshotSrc: '/mock/home.png',
+        devicePresetKey: 'iphone-16-pro',
+      }),
+    ],
+  })
+  const document = normalizeDeviceArrangementDocument({
+    title: '交互设备排布',
+    canvas: {
+      sizePresetKey: 'square',
+      background: '#ffffff',
+      backgroundMode: 'solid',
+    },
+    layoutPresetKey: 'solo',
+    items: [
+      createDeviceArrangementItem({
+        id: 'interactive-phone',
+        name: '交互截图',
+        screenshotSrc: '/mock/home.png',
+        devicePresetKey: 'iphone-16-pro',
+        offsetX: 96,
+        offsetY: -48,
+        scale: 1.35,
+        rotationOffset: -12,
+      }),
+    ],
+  })
+  const [item] = layoutDeviceArrangementItems(document.items, document.canvas, document.layoutPresetKey)
+  const nextDocument = normalizeDeviceArrangementDocument({
+    ...document,
+    items: [item],
+  }, { relayout: false })
+
+  assert.equal(nextDocument.items[0].offsetX, 96)
+  assert.equal(nextDocument.items[0].offsetY, -48)
+  assert.equal(nextDocument.items[0].scale, 1.35)
+  assert.equal(nextDocument.items[0].rotationOffset, -12)
+  assert.ok(nextDocument.items[0].width > baseDocument.items[0].width)
+  assert.ok(nextDocument.items[0].rotation < 0)
+
+  const svg = renderDeviceArrangementDocumentToSvg(nextDocument)
+  assert.match(svg, /interactive-phone/)
+  assert.match(svg, /rotate\(-12 /)
+  assert.match(svg, /\/mock\/home\.png/)
+})
