@@ -36,6 +36,9 @@ export interface PlatformMeetingRuntimeOverrides {
     batchSize?: number
     maxAttempts?: number
   }
+  monitoring?: {
+    prometheusBaseUrl?: string
+  }
   updatedAt?: string
   updatedByUserId?: string
 }
@@ -44,6 +47,7 @@ export interface MeetingSettingsConfigSource {
   rtc: 'default' | 'override'
   asr: 'default' | 'override'
   worker: 'default' | 'override'
+  monitoring: 'default' | 'override'
 }
 
 const DEFAULT_MEETING_ROOM_PREFIX = 'winloop'
@@ -179,6 +183,18 @@ function normalizeWorkerSection(raw: unknown): PlatformMeetingRuntimeOverrides['
   return Object.keys(output).length > 0 ? output : undefined
 }
 
+function normalizeMonitoringSection(raw: unknown): PlatformMeetingRuntimeOverrides['monitoring'] {
+  const source = parseJsonObject(raw)
+  if (Object.keys(source).length === 0)
+    return undefined
+
+  const output: NonNullable<PlatformMeetingRuntimeOverrides['monitoring']> = {}
+  if (hasOwn(source, 'prometheusBaseUrl'))
+    output.prometheusBaseUrl = trimTrailingSlash(source.prometheusBaseUrl)
+
+  return Object.keys(output).length > 0 ? output : undefined
+}
+
 export function invalidatePlatformMeetingOverridesCache(): void {
   const cache = getCachedMeetingOverridesState()
   cache.expiresAt = 0
@@ -191,6 +207,7 @@ export function normalizePlatformMeetingRuntimeOverrides(raw: unknown): Platform
     rtc: normalizeRtcSection(source.rtc),
     asr: normalizeAsrSection(source.asr),
     worker: normalizeWorkerSection(source.worker),
+    monitoring: normalizeMonitoringSection(source.monitoring),
     updatedAt: hasOwn(source, 'updatedAt') ? toText(source.updatedAt) : '',
     updatedByUserId: hasOwn(source, 'updatedByUserId') ? toText(source.updatedByUserId) : '',
   }
@@ -201,6 +218,8 @@ export function normalizePlatformMeetingRuntimeOverrides(raw: unknown): Platform
     delete normalized.asr
   if (!normalized.worker)
     delete normalized.worker
+  if (!normalized.monitoring)
+    delete normalized.monitoring
   if (!normalized.updatedAt)
     delete normalized.updatedAt
   if (!normalized.updatedByUserId)
@@ -356,6 +375,12 @@ export function applyPlatformMeetingRuntimeOverrides(
       next.meeting.worker.maxAttempts = Math.round(clamp(worker.maxAttempts, next.meeting.worker.maxAttempts, 1, 20))
   }
 
+  const monitoring = overrides.monitoring
+  if (monitoring) {
+    if (monitoring.prometheusBaseUrl !== undefined)
+      next.meeting.monitoring.prometheusBaseUrl = monitoring.prometheusBaseUrl
+  }
+
   return next
 }
 
@@ -364,6 +389,7 @@ export function getMeetingSettingsConfigSource(overrides: PlatformMeetingRuntime
     rtc: hasSectionOverrides(overrides.rtc as Record<string, unknown> | undefined) ? 'override' : 'default',
     asr: hasSectionOverrides(overrides.asr as Record<string, unknown> | undefined) ? 'override' : 'default',
     worker: hasSectionOverrides(overrides.worker as Record<string, unknown> | undefined) ? 'override' : 'default',
+    monitoring: hasSectionOverrides(overrides.monitoring as Record<string, unknown> | undefined) ? 'override' : 'default',
   }
 }
 

@@ -179,6 +179,17 @@ db_client_psql() {
     "$WINLOOP_PG_URL"
 }
 
+db_client_psql_query() {
+  docker run --rm \
+    --network "$DB_MIGRATION_NETWORK" \
+    --entrypoint psql \
+    -e PGAPPNAME=winloop-deploy-config \
+    -e PGCONNECT_TIMEOUT=10 \
+    "$DB_MIGRATION_CLIENT_IMAGE" \
+    "$@" \
+    "$WINLOOP_PG_URL"
+}
+
 run_db_migrations() {
   local migration_dir=""
   local file=""
@@ -211,7 +222,7 @@ run_db_migrations() {
   log "DB migration network: $DB_MIGRATION_NETWORK"
   log "DB migration files: ${DB_MIGRATION_FILE_PATHS[*]}"
 
-  db_client_psql -v ON_ERROR_STOP=1 -Atqc "
+  db_client_psql_query -v ON_ERROR_STOP=1 -Atqc "
     CREATE TABLE IF NOT EXISTS migrations_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -248,6 +259,104 @@ run_db_migrations() {
     "
     log "DB migration applied: $migration_key"
   done
+}
+
+sync_meeting_runtime_system_config() {
+  local public_base_url=""
+  local livekit_server_url=""
+  local payload=""
+  local payload_sql=""
+
+  if [[ "$MEETING_STACK_ENABLED" != "true" ]]; then
+    return 0
+  fi
+
+  if [[ -z "${WINLOOP_PG_URL:-}" ]]; then
+    log "Meeting system config skipped: WINLOOP_PG_URL is empty"
+    return 0
+  fi
+
+  public_base_url="${WINLOOP_PUBLIC_BASE_URL:-}"
+  if [[ -n "$public_base_url" ]]; then
+    livekit_server_url="${public_base_url%/}:${MEETING_LIVEKIT_HTTP_PORT}"
+  else
+    livekit_server_url="http://127.0.0.1:${MEETING_LIVEKIT_HTTP_PORT}"
+  fi
+
+  payload="$(python3 - "$DEPLOY_ENV" "$livekit_server_url" "$MEETING_LIVEKIT_API_KEY" "$MEETING_LIVEKIT_API_SECRET" "http://meeting-prometheus:9090" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+env, server_url, api_key, api_secret, prometheus_url = sys.argv[1:6]
+room_prefix = f"{env}-winloop"
+payload = {
+    "rtc": {
+        "provider": "livekit",
+        "serverUrl": server_url.rstrip("/"),
+        "apiKey": api_key,
+        "apiSecret": api_secret,
+        "roomPrefix": room_prefix,
+    },
+    "worker": {
+        "enabled": True,
+        "intervalMs": 5000,
+        "batchSize": 6,
+        "maxAttempts": 5,
+    },
+    "monitoring": {
+        "prometheusBaseUrl": prometheus_url.rstrip("/"),
+    },
+    "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "updatedByUserId": "jenkins-deploy",
+}
+print(json.dumps(payload, ensure_ascii=False))
+PY
+)"
+  payload_sql="$(escape_sql_literal "$payload")"
+
+  db_client_psql_query -v ON_ERROR_STOP=1 -Atqc "
+    CREATE TABLE IF NOT EXISTS migrations_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    WITH incoming AS (
+      SELECT '${payload_sql}'::jsonb AS value
+    ),
+    current AS (
+      SELECT COALESCE((SELECT value::jsonb FROM migrations_meta WHERE key = 'platform_meeting_runtime_overrides.v1'), '{}'::jsonb) AS value
+    ),
+    merged AS (
+      SELECT
+        jsonb_strip_nulls(
+          jsonb_build_object(
+            'rtc', jsonb_strip_nulls(jsonb_build_object(
+              'provider', incoming.value #> '{rtc,provider}',
+              'serverUrl', incoming.value #> '{rtc,serverUrl}',
+              'apiKey', COALESCE(NULLIF(current.value #> '{rtc,apiKey}', '""'::jsonb), incoming.value #> '{rtc,apiKey}'),
+              'apiSecret', COALESCE(NULLIF(current.value #> '{rtc,apiSecret}', '""'::jsonb), incoming.value #> '{rtc,apiSecret}'),
+              'embedBaseUrl', NULLIF(current.value #> '{rtc,embedBaseUrl}', '""'::jsonb),
+              'webhookSecret', NULLIF(current.value #> '{rtc,webhookSecret}', '""'::jsonb),
+              'roomPrefix', incoming.value #> '{rtc,roomPrefix}'
+            )),
+            'asr', NULLIF(current.value->'asr', 'null'::jsonb),
+            'worker', incoming.value->'worker',
+            'monitoring', incoming.value->'monitoring',
+            'updatedAt', incoming.value->'updatedAt',
+            'updatedByUserId', incoming.value->'updatedByUserId'
+          )
+        ) AS value
+      FROM incoming, current
+    )
+    INSERT INTO migrations_meta (key, value, updated_at)
+    SELECT 'platform_meeting_runtime_overrides.v1', merged.value::text, NOW()
+    FROM merged
+    ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value,
+        updated_at = EXCLUDED.updated_at;
+  "
+  log "Meeting system config synced: platform_meeting_runtime_overrides.v1"
 }
 
 check_health() {
@@ -770,12 +879,6 @@ OVERRIDE_FILE="$(mktemp)"
 
 write_override() {
   local target_image_ref="$1"
-  local meeting_runtime_env=""
-  if [[ "${MEETING_STACK_ENABLED:-false}" == "true" ]]; then
-    meeting_runtime_env="
-      WINLOOP_MEETING_RTC_API_KEY: ${MEETING_LIVEKIT_API_KEY}
-      WINLOOP_MEETING_RTC_API_SECRET: ${MEETING_LIVEKIT_API_SECRET}"
-  fi
 
   cat > "$OVERRIDE_FILE" <<EOF_OVERRIDE
 services:
@@ -783,7 +886,7 @@ services:
     image: ${target_image_ref}
     environment:
       WINLOOP_BUILD_VERSION: ${BUILD_VERSION}
-      WINLOOP_BUILD_COMMIT_SHA: ${BUILD_COMMIT_SHA}${meeting_runtime_env}
+      WINLOOP_BUILD_COMMIT_SHA: ${BUILD_COMMIT_SHA}
 EOF_OVERRIDE
 }
 
@@ -802,6 +905,7 @@ compose_with_override pull "$SERVICE_NAME"
 
 REPORT_STAGE="migrate"
 run_db_migrations
+sync_meeting_runtime_system_config
 
 REPORT_STAGE="deploy"
 if [[ "$FORCE_RECREATE" == "true" ]]; then

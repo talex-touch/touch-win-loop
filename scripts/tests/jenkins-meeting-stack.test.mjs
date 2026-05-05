@@ -52,7 +52,7 @@ describe('jenkins staging meeting stack', () => {
     assert.match(source, /compose_with_meeting_profiles up -d/, '部署流程未启动会议 profile 服务')
   })
 
-  it('examples document staging defaults and the app-to-Prometheus runtime URL', async () => {
+  it('examples document staging defaults and keep meeting runtime out of env files', async () => {
     const deployEnv = await readFile(DEPLOY_ENV_EXAMPLE, 'utf8')
     const runtimeEnv = await readFile(RUNTIME_ENV_EXAMPLE, 'utf8')
     const readme = await readFile(README_FILE, 'utf8')
@@ -61,13 +61,21 @@ describe('jenkins staging meeting stack', () => {
     assert.match(deployEnv, /^MEETING_EGRESS_ENABLED=false$/m, 'deploy.env.example 未保持 Egress 默认关闭')
     assert.match(deployEnv, /^MEETING_LIVEKIT_HTTP_PORT=17880$/m, 'deploy.env.example 缺少 LiveKit HTTP 高位默认端口')
     assert.match(deployEnv, /^MEETING_LIVEKIT_RTC_UDP_RANGE=51000-51100$/m, 'deploy.env.example 缺少 LiveKit UDP 高位默认端口段')
-    assert.match(runtimeEnv, /^WINLOOP_MEETING_RTC_PROVIDER=livekit$/m, '.env.runtime.example 未配置 livekit provider')
-    assert.match(runtimeEnv, /^WINLOOP_MEETING_RTC_SERVER_URL=http:\/\/staging\.example\.com:17880$/m, '.env.runtime.example 未跟随 LiveKit HTTP 高位默认端口')
-    assert.match(runtimeEnv, /^WINLOOP_MEETING_RTC_ROOM_PREFIX=staging-winloop$/m, '.env.runtime.example 未配置 staging 房间前缀')
-    assert.match(runtimeEnv, /^WINLOOP_MEETING_MONITORING_PROMETHEUS_BASE_URL=http:\/\/meeting-prometheus:9090$/m, '.env.runtime.example 未配置容器网络内 Prometheus 地址')
+    assert.doesNotMatch(runtimeEnv, /^WINLOOP_MEETING_/m, '.env.runtime.example 不应再包含会议运行时变量')
     assert.match(readme, /标准 staging 部署会同时启动 LiveKit、meeting Redis、Prometheus、node-exporter、cAdvisor/, 'README 未说明标准 staging 自动启动会议监控栈')
+    assert.match(readme, /platform_meeting_runtime_overrides\.v1/, 'README 未说明会议配置写入系统配置')
+    assert.match(readme, /WINLOOP_MEETING_\*/, 'README 未说明不再使用会议 env 变量')
     assert.doesNotMatch(deployEnv, /^MEETING_PROMETHEUS_HOST_PORT=/m, 'deploy.env.example 不应默认发布 Prometheus 宿主端口')
     assert.match(readme, /LiveKit 默认暴露宿主 `17880\/tcp`、`17881\/tcp`、`51000-51100\/udp`/, 'README 未说明 LiveKit staging 高位默认端口')
     assert.match(readme, /Prometheus 默认不发布宿主端口，仅通过容器网络 `meeting-prometheus:9090` 访问/, 'README 未说明 Prometheus 容器网络访问边界')
+  })
+
+  it('deploy script syncs built-in meeting stack details into system config without app env injection', async () => {
+    const source = await readFile(DEPLOY_SCRIPT, 'utf8')
+
+    assert.match(source, /sync_meeting_runtime_system_config\(\)/, '部署脚本未同步会议系统配置')
+    assert.match(source, /platform_meeting_runtime_overrides\.v1/, '部署脚本未写入会议系统配置 key')
+    assert.match(source, /http:\/\/meeting-prometheus:9090/, '部署脚本未写入容器网络 Prometheus URL')
+    assert.doesNotMatch(source, /WINLOOP_MEETING_RTC_API_KEY|WINLOOP_MEETING_RTC_API_SECRET/, '部署脚本不应再向应用容器注入会议密钥 env')
   })
 })

@@ -21,7 +21,7 @@ interface ContestVisual {
 type ContestDetailTab = 'participation' | 'resources' | 'faq'
 type ContestDetailNavItem
   = | { type: 'tab', id: ContestDetailTab, label: string, icon: string }
-    | { type: 'track', id: string, label: string, icon: string }
+    | { type: 'track', id: string, label: string, icon: string, years: number[] }
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
@@ -147,17 +147,42 @@ const selectedContestTrack = computed(() => {
     || null
 })
 
+const selectedTrackTimelines = computed(() => {
+  return selectedContestTrack.value ? resolveTrackTimelines(selectedContestTrack.value) : []
+})
+
+const selectedTrackResources = computed(() => {
+  if (!selectedContest.value || !selectedContestTrack.value)
+    return []
+  return resolveTrackResources(selectedContest.value, selectedContestTrack.value)
+})
+
+const selectedTrackFaqItems = computed(() => {
+  if (!selectedContest.value || !selectedContestTrack.value)
+    return []
+  return resolveTrackFaqItems(selectedContest.value, selectedContestTrack.value)
+})
+
 const contestDetailNavItems = computed<ContestDetailNavItem[]>(() => {
   const trackItems = (selectedContest.value?.tracks || []).map(track => ({
     type: 'track' as const,
     id: track.id,
     label: resolveText(track.name, '未命名赛道'),
     icon: 'i-heroicons-outline-rectangle-stack',
+    years: resolveTrackYears(track),
   }))
   return [
     ...contestDetailTabs.map(tab => ({ type: 'tab' as const, ...tab })),
     ...trackItems,
   ]
+})
+
+const contestDetailTabNavItems = computed(() => {
+  return contestDetailNavItems.value.filter((item): item is Extract<ContestDetailNavItem, { type: 'tab' }> => item.type === 'tab')
+})
+
+const contestDetailTrackNavItems = computed(() => {
+  return contestDetailNavItems.value.filter((item): item is Extract<ContestDetailNavItem, { type: 'track' }> => item.type === 'track')
 })
 
 async function loadContests(page = currentPage.value) {
@@ -273,6 +298,30 @@ function formatRegistrationWindow(value: string | undefined) {
   return `${formatDateToken(dates[0])} - ${formatDateToken(dates[1])}`
 }
 
+function formatTimelineRange(item: { startAt?: string | null, endAt?: string | null }) {
+  const start = item.startAt ? String(item.startAt).slice(0, 10) : ''
+  const end = item.endAt ? String(item.endAt).slice(0, 10) : ''
+  if (start && end)
+    return `${start} ~ ${end}`
+  if (end)
+    return `~ ${end}`
+  return start ? `${start} ~` : '时间待补充'
+}
+
+function resolveTimelineLabel(nodeType: string | undefined, label?: string) {
+  const direct = String(label || '').trim()
+  if (direct)
+    return direct
+  const labels: Record<string, string> = {
+    registration: '报名节点',
+    submission: '提交截止',
+    preliminary: '初赛',
+    final: '决赛',
+    other: '其他节点',
+  }
+  return labels[String(nodeType || '')] || '时间节点'
+}
+
 function resolveRegistrationWindow(contest: Contest) {
   const direct = String(contest.registrationWindow || '').trim()
   if (direct)
@@ -326,9 +375,61 @@ function resolveTrackPopoverItems(contest: Contest) {
     id: track.id,
     name: resolveText(track.name, '未命名赛道'),
     summary: resolveText(track.summary, '暂无赛道说明。'),
+    years: resolveTrackYears(track),
     deliverables: resolveTextList(track.deliverableTypes, '交付物待补充'),
     majors: resolveTextList(track.suitableMajors, '适配专业待补充'),
   }))
+}
+
+function resolveTrackTimelines(track: Contest['tracks'][number]) {
+  return [...(track.timelines || [])]
+    .filter(item => Number(item.year || 0) >= 1900 || item.startAt || item.endAt)
+    .sort((left, right) => Number(right.year || 0) - Number(left.year || 0))
+}
+
+function resolveTrackYears(track: Contest['tracks'][number]) {
+  const fromTrack = (track.years || []).map(item => Number(item || 0))
+  const fromTimelines = (track.timelines || []).map(item => Number(item.year || 0))
+  const fromMetadata = Number(track.metadata?.year || track.metadata?.trackYear || 0)
+  return [...new Set([...fromTrack, ...fromTimelines, fromMetadata].filter(year => Number.isFinite(year) && year >= 1900))]
+    .sort((left, right) => right - left)
+}
+
+function formatTrackYears(track: Contest['tracks'][number]) {
+  const years = resolveTrackYears(track)
+  return years.length > 0 ? years.join(' / ') : '年份待补充'
+}
+
+function resolveTrackResources(contest: Contest, track: Contest['tracks'][number]) {
+  const trackResources = track.resources || []
+  const contestResources = (contest.resources || []).filter((resource) => {
+    const trackId = String(resource.metadata?.trackId || '').trim()
+    return !trackId || trackId === track.id
+  })
+  const seen = new Set<string>()
+  return [...trackResources, ...contestResources].filter((resource) => {
+    const key = resource.id || `${resource.title}:${resource.sourceLink}`
+    if (seen.has(key))
+      return false
+    seen.add(key)
+    return true
+  })
+}
+
+function resolveTrackFaqItems(contest: Contest, track: Contest['tracks'][number]) {
+  const trackFaqItems = track.faqItems || []
+  const contestFaqItems = (contest.faqItems || []).filter((item) => {
+    const trackId = String(item.trackId || '').trim()
+    return !trackId || trackId === track.id
+  })
+  const seen = new Set<string>()
+  return [...trackFaqItems, ...contestFaqItems].filter((item) => {
+    const key = item.id || item.question
+    if (seen.has(key))
+      return false
+    seen.add(key)
+    return true
+  })
 }
 
 function openContestModal(contest: Contest) {
@@ -579,6 +680,7 @@ onBeforeUnmount(() => {
                     class="contest-card__track-popover-item"
                   >
                     <span class="contest-card__track-popover-name">{{ track.name }}</span>
+                    <span class="contest-card__track-popover-year">{{ track.years.length ? track.years.join(' / ') : '年份待补充' }}</span>
                     <span class="contest-card__track-popover-summary">{{ track.summary }}</span>
                     <span class="contest-card__track-popover-meta">
                       <span>交付物：{{ track.deliverables }}</span>
@@ -726,21 +828,42 @@ onBeforeUnmount(() => {
 
               <section class="contest-detail-modal__tab-shell">
                 <nav class="contest-detail-modal__tabs" aria-label="赛事详情切换">
-                  <button
-                    v-for="item in contestDetailNavItems"
-                    :key="`${item.type}-${item.id}`"
-                    type="button"
-                    class="contest-detail-modal__nav-item"
-                    :class="[
-                      `contest-detail-modal__nav-item--${item.type}`,
-                      { 'is-active': isContestNavItemActive(item) },
-                    ]"
-                    :aria-current="isContestNavItemActive(item) ? 'page' : undefined"
-                    @click="selectContestNavItem(item)"
-                  >
-                    <span :class="item.icon" />
-                    {{ item.label }}
-                  </button>
+                  <div class="contest-detail-modal__nav-group">
+                    <span class="contest-detail-modal__nav-heading">赛事信息</span>
+                    <button
+                      v-for="item in contestDetailTabNavItems"
+                      :key="`${item.type}-${item.id}`"
+                      type="button"
+                      class="contest-detail-modal__nav-item"
+                      :class="[
+                        `contest-detail-modal__nav-item--${item.type}`,
+                        { 'is-active': isContestNavItemActive(item) },
+                      ]"
+                      :aria-current="isContestNavItemActive(item) ? 'page' : undefined"
+                      @click="selectContestNavItem(item)"
+                    >
+                      <span :class="item.icon" />
+                      {{ item.label }}
+                    </button>
+                  </div>
+                  <div class="contest-detail-modal__nav-group">
+                    <span class="contest-detail-modal__nav-heading">赛道</span>
+                    <button
+                      v-for="item in contestDetailTrackNavItems"
+                      :key="`${item.type}-${item.id}`"
+                      type="button"
+                      class="contest-detail-modal__nav-item contest-detail-modal__nav-item--track"
+                      :class="{ 'is-active': isContestNavItemActive(item) }"
+                      :aria-current="isContestNavItemActive(item) ? 'page' : undefined"
+                      @click="selectContestNavItem(item)"
+                    >
+                      <span :class="item.icon" />
+                      <span class="contest-detail-modal__nav-copy">
+                        <strong>{{ item.label }}</strong>
+                        <small>{{ item.years.length ? item.years.join(' / ') : '年份待补充' }}</small>
+                      </span>
+                    </button>
+                  </div>
                 </nav>
 
                 <div class="contest-detail-modal__tab-panel" role="tabpanel">
@@ -818,12 +941,16 @@ onBeforeUnmount(() => {
                   <section v-else class="contest-detail-modal__section">
                     <div class="contest-detail-modal__section-head">
                       <h3>赛道细节</h3>
-                      <span>{{ selectedContestTrack?.name || '未选择赛道' }}</span>
+                      <span>{{ selectedContestTrack ? formatTrackYears(selectedContestTrack) : '未选择赛道' }}</span>
                     </div>
                     <article v-if="selectedContestTrack" class="contest-detail-modal__track-detail">
                       <h4>{{ selectedContestTrack.name }}</h4>
                       <p>{{ resolveText(selectedContestTrack.summary, '暂无赛道说明。') }}</p>
                       <dl class="contest-detail-modal__info contest-detail-modal__info--compact">
+                        <div>
+                          <dt>适用年份</dt>
+                          <dd>{{ formatTrackYears(selectedContestTrack) }}</dd>
+                        </div>
                         <div>
                           <dt>主办方</dt>
                           <dd>{{ resolveText(selectedContestTrack.organizer) }}</dd>
@@ -845,6 +972,56 @@ onBeforeUnmount(() => {
                           <dd>{{ resolveTextList(selectedContestTrack.suitableMajors) }}</dd>
                         </div>
                       </dl>
+
+                      <div class="contest-detail-modal__subsection">
+                        <div class="contest-detail-modal__section-head">
+                          <h4>时间节点</h4>
+                          <span>{{ selectedTrackTimelines.length }} 条</span>
+                        </div>
+                        <div v-if="selectedTrackTimelines.length" class="contest-detail-modal__timeline-list">
+                          <article v-for="item in selectedTrackTimelines" :key="item.id">
+                            <span>{{ item.year || '年份待补充' }}</span>
+                            <strong>{{ resolveTimelineLabel(item.nodeType, item.businessNodeLabel) }}</strong>
+                            <p>{{ formatTimelineRange(item) }}</p>
+                          </article>
+                        </div>
+                        <p v-else class="contest-detail-modal__empty">
+                          暂无赛道时间节点，待补充。
+                        </p>
+                      </div>
+
+                      <div class="contest-detail-modal__subsection">
+                        <div class="contest-detail-modal__section-head">
+                          <h4>相关资料</h4>
+                          <span>{{ selectedTrackResources.length }} 条</span>
+                        </div>
+                        <div v-if="selectedTrackResources.length" class="contest-detail-modal__resources contest-detail-modal__resources--compact">
+                          <article v-for="resource in selectedTrackResources" :key="resource.id || resource.title">
+                            <h4>{{ resource.title }}</h4>
+                            <p>{{ resource.summary || resource.content || resource.sourceLink || '暂无资料说明。' }}</p>
+                            <a v-if="resource.sourceLink" :href="resource.sourceLink" target="_blank" rel="noreferrer">打开链接</a>
+                          </article>
+                        </div>
+                        <p v-else class="contest-detail-modal__empty">
+                          暂无赛道相关资料，待补充。
+                        </p>
+                      </div>
+
+                      <div class="contest-detail-modal__subsection">
+                        <div class="contest-detail-modal__section-head">
+                          <h4>常见疑问</h4>
+                          <span>{{ selectedTrackFaqItems.length }} 条</span>
+                        </div>
+                        <div v-if="selectedTrackFaqItems.length" class="contest-detail-modal__faq contest-detail-modal__faq--compact">
+                          <article v-for="item in selectedTrackFaqItems" :key="item.id || item.question">
+                            <h4>{{ item.question }}</h4>
+                            <p>{{ item.answer || '待补充' }}</p>
+                          </article>
+                        </div>
+                        <p v-else class="contest-detail-modal__empty">
+                          暂无赛道常见疑问，待补充。
+                        </p>
+                      </div>
                     </article>
                     <p v-else class="contest-detail-modal__empty">
                       暂无赛道，待补充。
@@ -1487,6 +1664,16 @@ onBeforeUnmount(() => {
   line-height: 1.35;
 }
 
+.contest-card__track-popover-year {
+  width: fit-content;
+  border-radius: 5px;
+  padding: 2px 6px;
+  color: #3f5f96;
+  background: #eef4ff;
+  font-size: 11px;
+  font-weight: 850;
+}
+
 .contest-card__track-popover-summary {
   display: -webkit-box;
   overflow: hidden;
@@ -1942,11 +2129,23 @@ onBeforeUnmount(() => {
 .contest-detail-modal__tabs {
   display: grid;
   align-content: start;
-  gap: 4px;
+  gap: 14px;
   border: 1px solid #e8edf7;
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 10px;
-  background: #f8fbff;
+  background: #fff;
+}
+
+.contest-detail-modal__nav-group {
+  display: grid;
+  gap: 4px;
+}
+
+.contest-detail-modal__nav-heading {
+  padding: 0 8px 4px;
+  color: #9aa7bb;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .contest-detail-modal__nav-item {
@@ -1956,7 +2155,7 @@ onBeforeUnmount(() => {
   justify-content: flex-start;
   gap: 8px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 7px;
   padding: 0 12px;
   color: #687995;
   background: transparent;
@@ -1976,9 +2175,10 @@ onBeforeUnmount(() => {
 }
 
 .contest-detail-modal__nav-item--track {
-  min-height: 34px;
-  margin-left: 18px;
-  padding-left: 10px;
+  min-height: 44px;
+  align-items: flex-start;
+  margin-left: 0;
+  padding: 7px 10px;
   color: #71819a;
   font-size: 12px;
   font-weight: 850;
@@ -1987,6 +2187,33 @@ onBeforeUnmount(() => {
 .contest-detail-modal__nav-item--track > span {
   width: 15px;
   height: 15px;
+  margin-top: 2px;
+}
+
+.contest-detail-modal__nav-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.contest-detail-modal__nav-copy strong,
+.contest-detail-modal__nav-copy small {
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contest-detail-modal__nav-copy strong {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.contest-detail-modal__nav-copy small {
+  color: #98a6b9;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .contest-detail-modal__nav-item:hover {
@@ -1997,7 +2224,7 @@ onBeforeUnmount(() => {
 .contest-detail-modal__nav-item.is-active {
   color: #1e5fd8;
   border-color: #c8d9fb;
-  background: #fff;
+  background: #f3f7ff;
 }
 
 .contest-detail-modal__tab-panel {
@@ -2126,11 +2353,16 @@ onBeforeUnmount(() => {
   margin-top: 12px;
 }
 
+.contest-detail-modal__resources--compact,
+.contest-detail-modal__faq--compact {
+  margin-top: 8px;
+}
+
 .contest-detail-modal__resources article,
 .contest-detail-modal__faq article,
 .contest-detail-modal__track-detail {
   border: 1px solid #edf1f7;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 12px;
   background: #fbfdff;
 }
@@ -2168,6 +2400,55 @@ onBeforeUnmount(() => {
 
 .contest-detail-modal__info--compact {
   margin-top: 12px;
+}
+
+.contest-detail-modal__subsection {
+  border-top: 1px solid #edf1f7;
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.contest-detail-modal__subsection h4 {
+  margin: 0;
+  color: #172033;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.contest-detail-modal__timeline-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.contest-detail-modal__timeline-list article {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 150px) minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fbfdff;
+}
+
+.contest-detail-modal__timeline-list span {
+  color: #3f5f96;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.contest-detail-modal__timeline-list strong {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.contest-detail-modal__timeline-list p {
+  margin: 0;
+  color: #61718a;
+  font-size: 12px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
 }
 
 .contest-detail-modal__empty {

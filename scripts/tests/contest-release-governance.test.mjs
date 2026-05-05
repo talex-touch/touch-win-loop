@@ -237,14 +237,21 @@ describe('赛事版本流与前台可见性收口', () => {
     assert.match(listPageSource, /缺失项 <strong>\{\{\s*resolveMissingFieldCount\(contest\)\s*\}\}<\/strong>/, '公开赛事列表缺失统计应使用可解释的缺失项文案')
     assert.match(listPageSource, /resolveMissingFields\(contest\)/, '公开赛事列表缺失统计应展示具体缺失字段')
     assert.match(listPageSource, /resolveTrackPopoverItems\(contest\)/, '公开赛事列表赛道数量应提供赛道详情 popover 数据')
+    assert.match(listPageSource, /contest-card__track-popover-year/, '公开赛事列表赛道详情 popover 应展示赛道年份')
     assert.match(listPageSource, /class="contest-card__track-popover-summary"/, '公开赛事列表赛道详情 popover 应展示赛道简介')
     assert.match(listPageSource, /交付物：\{\{\s*track\.deliverables\s*\}\}/, '公开赛事列表赛道详情 popover 应展示赛道交付物')
     assert.match(listPageSource, /适配专业：\{\{\s*track\.majors\s*\}\}/, '公开赛事列表赛道详情 popover 应展示适配专业')
     assert.match(listPageSource, /contestDetailTabs[\s\S]*参赛信息[\s\S]*相关资料[\s\S]*常见疑问/, '公开赛事弹窗左侧树应包含参赛信息、相关资料和常见疑问')
+    assert.match(listPageSource, /contestDetailTrackNavItems/, '公开赛事弹窗左侧 tree 应单独渲染赛道子项')
     assert.match(listPageSource, /selectedContestDetailTab === 'participation'/, '公开赛事弹窗参赛信息应由内部 tab 控制')
     assert.match(listPageSource, /contestDetailNavItems[\s\S]*type: 'track'/, '公开赛事弹窗左侧树应把赛道放到下方子项')
     assert.match(listPageSource, /selectContestTrack\(trackId: string\)/, '公开赛事弹窗应支持点击某个赛道后展示对应信息')
     assert.match(listPageSource, /resolveText\(selectedContestTrack\.organizer\)/, '公开赛事弹窗赛道详情应展示赛道主办方')
+    assert.match(listPageSource, /formatTrackYears\(selectedContestTrack\)/, '公开赛事弹窗赛道详情应展示赛道年份')
+    assert.match(listPageSource, /selectedTrackTimelines/, '公开赛事弹窗赛道详情应展示赛道时间线')
+    assert.match(listPageSource, /resolveTrackYears\(track: Contest\['tracks'\]\[number\]\)/, '公开赛事页赛道年份应从 track years、track timelines 和 metadata 聚合')
+    assert.match(listPageSource, /selectedTrackResources/, '公开赛事弹窗赛道详情应展示按赛道匹配的资料')
+    assert.match(listPageSource, /selectedTrackFaqItems/, '公开赛事弹窗赛道详情应展示按赛道匹配的 FAQ')
     assert.doesNotMatch(listPageSource, /<dt>主办方<\/dt>[\s\S]*selectedContest\.organizer/, '公开赛事弹窗参赛信息不应继续展示竞赛主办方')
     assert.match(listPageSource, /selectedContestDetailTab === 'resources'[\s\S]*相关资料/, '公开赛事弹窗应提供相关资料视图')
     assert.match(listPageSource, /selectedContestDetailTab === 'faq'[\s\S]*常见疑问/, '公开赛事弹窗应提供常见疑问视图')
@@ -306,6 +313,30 @@ describe('赛事版本流与前台可见性收口', () => {
 
     assert.match(schemaSource, /DROP CONSTRAINT IF EXISTS contest_tracks_contest_id_name_key/, '启动迁移未移除旧赛道名称唯一约束')
     assert.doesNotMatch(schemaSource, /UNIQUE\s*\(\s*contest_id\s*,\s*name\s*\)/, 'contest_tracks 不应继续限制同一赛事下赛道名称唯一')
+  })
+
+  it('赛事核心表补充 metadata 扩展位并新增独立 FAQ 表', async () => {
+    const [schemaSource, typeSource, releaseStoreSource, contestStoreSource] = await Promise.all([
+      readSource('server/database/bootstrap/schema.ts'),
+      readSource('shared/types/domain-legacy.ts'),
+      readSource('server/utils/release-store.ts'),
+      readSource('server/utils/contest-store.ts'),
+    ])
+
+    for (const tableName of ['contests', 'contest_tracks', 'contest_timelines', 'contest_track_timelines']) {
+      assert.match(schemaSource, new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\([\\s\\S]*metadata JSONB NOT NULL DEFAULT '\\{\\}'::JSONB`), `${tableName} 缺少 metadata JSONB 默认值`)
+      assert.match(schemaSource, new RegExp(`ALTER TABLE ${tableName}[\\s\\S]*ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '\\{\\}'::JSONB`), `${tableName} 启动迁移缺少 metadata 补列`)
+    }
+    assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS contest_faq_items \([\s\S]*contest_id TEXT NOT NULL REFERENCES contests\(id\)[\s\S]*track_id TEXT REFERENCES contest_tracks\(id\)[\s\S]*year INTEGER[\s\S]*question TEXT NOT NULL[\s\S]*answer TEXT NOT NULL[\s\S]*metadata JSONB NOT NULL DEFAULT '\{\}'::JSONB/, 'schema 缺少 contest_faq_items 独立表')
+    assert.match(schemaSource, /idx_contest_faq_items_contest_track_year/, 'FAQ 独立表缺少 contest + track + year 查询索引')
+    assert.match(typeSource, /export interface ContestFaqItem \{[\s\S]*trackId\?: string \| null[\s\S]*year\?: number \| null[\s\S]*metadata\?: Record<string, unknown>/, '共享类型未声明结构化 FAQ 字段')
+    assert.match(typeSource, /export interface ContestReleaseSnapshot \{[\s\S]*faqItems: ContestReleaseFaqSnapshot\[\]/, 'release snapshot 未包含 FAQ 快照')
+    assert.match(releaseStoreSource, /scope IN \('track', 'track_timeline', 'resource', 'faq'\)/, 'release scoped refs 未纳入 FAQ')
+    assert.match(releaseStoreSource, /const activeFaqExternalIds = new Set\(snapshot\.faqItems\.map/, '发布链路未按 FAQ 快照维护独立 FAQ 表')
+    assert.match(contestStoreSource, /export async function createAdminContestFaqItem/, 'contest-store 缺少 FAQ 创建函数')
+    assert.match(contestStoreSource, /export async function patchAdminContestFaqItem/, 'contest-store 缺少 FAQ 更新函数')
+    assert.match(contestStoreSource, /loadContestFaqItems/, '公开读取未加载独立 FAQ 表')
+    assert.match(contestStoreSource, /faqByTrackId/, '公开读取未把 FAQ 按赛道关联')
   })
 
   it('发布审批队列统计使用全量口径，不受当前列表 limit 截断', async () => {

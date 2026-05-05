@@ -32,6 +32,9 @@ export interface MeetingProvidersMutationBody {
     batchSize?: number
     maxAttempts?: number
   }
+  monitoring?: {
+    prometheusBaseUrl?: string
+  }
 }
 
 export interface MeetingProvidersPayload {
@@ -55,6 +58,9 @@ export interface MeetingProvidersPayload {
     intervalMs: number
     batchSize: number
     maxAttempts: number
+  }
+  monitoring: {
+    prometheusBaseUrl: string
   }
   health: {
     ready: boolean
@@ -130,6 +136,7 @@ export function applyMeetingProvidersMutation(
   const rtcBody = body?.rtc && typeof body.rtc === 'object' ? body.rtc as Record<string, unknown> : null
   const asrBody = body?.asr && typeof body.asr === 'object' ? body.asr as Record<string, unknown> : null
   const workerBody = body?.worker && typeof body.worker === 'object' ? body.worker as Record<string, unknown> : null
+  const monitoringBody = body?.monitoring && typeof body.monitoring === 'object' ? body.monitoring as Record<string, unknown> : null
   const next = normalizePlatformMeetingRuntimeOverrides(existing)
 
   if (rtcBody) {
@@ -199,6 +206,13 @@ export function applyMeetingProvidersMutation(
     next.worker = worker
   }
 
+  if (monitoringBody) {
+    const monitoring = { ...(next.monitoring || {}) }
+    if (hasOwn(monitoringBody, 'prometheusBaseUrl'))
+      monitoring.prometheusBaseUrl = String(monitoringBody.prometheusBaseUrl || '').trim()
+    next.monitoring = monitoring
+  }
+
   return normalizePlatformMeetingRuntimeOverrides(next)
 }
 
@@ -232,6 +246,9 @@ export function buildMeetingProvidersPayload(input: {
       intervalMs: input.runtime.meeting.worker.intervalMs,
       batchSize: input.runtime.meeting.worker.batchSize,
       maxAttempts: input.runtime.meeting.worker.maxAttempts,
+    },
+    monitoring: {
+      prometheusBaseUrl: input.runtime.meeting.monitoring.prometheusBaseUrl,
     },
     health: {
       ready: rtcIssues.length === 0 && asrIssues.length === 0,

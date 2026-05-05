@@ -111,6 +111,7 @@ MEETING_LIVEKIT_RTC_UDP_RANGE=51000-51100
 - `DB_MIGRATION_*` 为可选项；默认会自动发现远端工作区里的 `scripts/migrations/*.sql`
 - 迁移不会参与自动回滚，因此所有上线 SQL 必须保持向后兼容或显式幂等
 - `MEETING_STACK_ENABLED=true` 时，标准 staging 部署会同时启动 LiveKit、meeting Redis、Prometheus、node-exporter、cAdvisor
+- 启用内置会议栈时，部署脚本会把 LiveKit 与 Prometheus 默认连接信息同步到系统配置 `platform_meeting_runtime_overrides.v1`
 - `MEETING_EGRESS_ENABLED=false` 是首轮默认值；录制压测阶段再打开 Egress profile
 - LiveKit 默认暴露宿主 `17880/tcp`、`17881/tcp`、`51000-51100/udp`，容器内 HTTP 仍为 `livekit:7880`；staging 旧默认 `7880/tcp`、`7881/tcp`、`50000-50100/udp` 会在部署时自动迁移到新默认，避免和宿主现有 LiveKit 冲突
 - Prometheus 默认不发布宿主端口，仅通过容器网络 `meeting-prometheus:9090` 访问
@@ -131,12 +132,11 @@ production 只需要改成独立的：
 - `WINLOOP_PUBLIC_BASE_URL`
 - `WINLOOP_API_BASE_URL`
 - `WINLOOP_ONLYOFFICE_ENDPOINT` / `WINLOOP_ONLYOFFICE_JWT_SECRET`（如果启用再配）
-- `WINLOOP_MEETING_RTC_SERVER_URL`（使用内置 LiveKit 时应指向真实 staging 域名与 `MEETING_LIVEKIT_HTTP_PORT`，默认端口 `17880`）
-- `WINLOOP_MEETING_MONITORING_PROMETHEUS_BASE_URL`（staging 默认 `http://meeting-prometheus:9090`）
 - `WINLOOP_SENTRY_DSN` / `WINLOOP_SENTRY_ENVIRONMENT`（如果启用 Sentry 再配）
 
 `WINLOOP_PUBLIC_BASE_URL` 是 Jenkins 发布通知里“环境访问 / 访问地址”的唯一来源，staging 与 production 必须分别配置为真实可访问的公网地址。未配置时不影响发布，但飞书通知不会展示访问地址。
 
+会议 RTC / ASR / worker / monitoring 配置属于系统配置，不再允许通过 `.env.runtime` 的 `WINLOOP_MEETING_*` 变量维护。标准 staging 内置会议栈会在部署时写入 `platform_meeting_runtime_overrides.v1`；手工调整请进入后台 `/admin/meeting-providers`。
 资源回收 worker 参数已改为后台 UI 管理，不再通过 `.env.runtime` 配置。
 Sentry 未配置时应用仍可正常运行，只是不启用错误上报。
 

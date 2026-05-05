@@ -29,6 +29,9 @@ interface MeetingProvidersPayload {
     batchSize: number
     maxAttempts: number
   }
+  monitoring: {
+    prometheusBaseUrl: string
+  }
   health: {
     ready: boolean
     rtcIssues: string[]
@@ -49,6 +52,7 @@ interface MeetingProvidersPayload {
     rtc: 'default' | 'override'
     asr: 'default' | 'override'
     worker: 'default' | 'override'
+    monitoring: 'default' | 'override'
   }
 }
 
@@ -102,6 +106,7 @@ const form = reactive({
   workerIntervalMs: 5000,
   workerBatchSize: 6,
   workerMaxAttempts: 5,
+  monitoringPrometheusBaseUrl: '',
 })
 
 const rtcProviderOptions = [
@@ -176,6 +181,7 @@ function applyPayload(nextPayload: MeetingProvidersPayload): void {
   form.workerIntervalMs = Number(nextPayload.worker.intervalMs || 5000)
   form.workerBatchSize = Number(nextPayload.worker.batchSize || 6)
   form.workerMaxAttempts = Number(nextPayload.worker.maxAttempts || 5)
+  form.monitoringPrometheusBaseUrl = nextPayload.monitoring.prometheusBaseUrl || ''
 }
 
 function resetTestState(): void {
@@ -210,6 +216,9 @@ function buildRequestBody() {
       intervalMs: Number(form.workerIntervalMs || 5000),
       batchSize: Number(form.workerBatchSize || 6),
       maxAttempts: Number(form.workerMaxAttempts || 5),
+    },
+    monitoring: {
+      prometheusBaseUrl: form.monitoringPrometheusBaseUrl,
     },
   }
 }
@@ -593,6 +602,24 @@ onMounted(async () => {
             <a-input-number v-model="form.workerMaxAttempts" :min="1" :max="20" size="small" />
           </label>
         </div>
+      </section>
+
+      <section class="p-3 border border-slate-200 bg-white space-y-3">
+        <div class="flex gap-3 items-center justify-between">
+          <h2 class="text-[12px] text-slate-900 font-bold m-0">
+            会议监控
+          </h2>
+          <a-tag size="small" :color="payload.configSource.monitoring === 'override' ? 'green' : 'gray'">
+            {{ configSourceLabel(payload.configSource.monitoring) }}
+          </a-tag>
+        </div>
+        <label class="block space-y-1">
+          <span class="text-slate-600">Prometheus Base URL</span>
+          <input v-model="form.monitoringPrometheusBaseUrl" class="admin-input" placeholder="http://meeting-prometheus:9090">
+        </label>
+        <p class="text-[10px] text-slate-500 m-0">
+          标准 staging 内置会议栈使用容器网络地址 `http://meeting-prometheus:9090`；该值保存到系统配置，不再从 `.env.runtime` 读取。
+        </p>
       </section>
 
       <section class="p-3 border border-slate-200 bg-white">
