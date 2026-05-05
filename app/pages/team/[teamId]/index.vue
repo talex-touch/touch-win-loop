@@ -3,6 +3,7 @@ import type {
   ApiResponse,
   AuthMeResult,
   Contest,
+  ContestDetailPayload,
   Project,
   ProjectInvitationSummary,
   ProjectMemberManagementSnapshot,
@@ -13,6 +14,11 @@ import type {
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import type { TeamProjectCardItem } from '~/composables/team-ui'
+import type {
+  DashboardCompetition,
+  DashboardCompetitionTone,
+  DashboardScheduleItem,
+} from '~/types/dashboard'
 import type { WorkspaceProjectCommonForm } from '~/types/workspace'
 import { Message } from '@arco-design/web-vue'
 import {
@@ -55,13 +61,30 @@ const route = useRoute()
 const {
   feedFilter,
   visibleInsights,
-  visibleCompetitions,
   skillMetrics,
-  scheduleItems,
   overviewLoading,
   overviewError,
   loadOverview,
 } = useDashboardWorkspace()
+
+type ContestTimelineItem = NonNullable<Contest['timelines']>[number]
+type ContestResourceItem = NonNullable<Contest['resources']>[number]
+
+type TeamScheduleCandidate = DashboardScheduleItem & {
+  isFuture: boolean
+  sortTime: number
+}
+
+const PLACEHOLDER_CONTEST_IDS = new Set(['quick_draft'])
+const TIMELINE_NODE_LABELS: Record<string, string> = {
+  registration: '报名',
+  submission: '提交',
+  preliminary: '初赛',
+  final: '决赛',
+  other: '时间节点',
+}
+const TEAM_CONTEST_TONES: DashboardCompetitionTone[] = ['blue', 'violet', 'amber']
+const TEAM_CONTEST_ICONS = ['event_available', 'campaign', 'flag', 'rule']
 
 const routeWorkspaceId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>
@@ -75,6 +98,7 @@ const joinedNoticeText = ref('')
 const me = ref<AuthMeResult | null>(null)
 const projects = ref<Project[]>([])
 const contests = ref<Contest[]>([])
+const boundContestDetailMap = ref<Record<string, Contest>>({})
 const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
 
 const createDialogVisible = ref(false)
@@ -138,6 +162,94 @@ const projectCards = computed<TeamProjectCardItem[]>(() => {
   return projects.value
     .filter(item => resolveProjectTeamId(item) === workspaceId)
     .map(item => buildTeamProjectCard(item, contestNameMap.value, activeWorkspace.value || undefined))
+})
+
+const workspaceProjects = computed(() => {
+  const workspaceId = activeWorkspaceId.value
+  if (!workspaceId)
+    return []
+  return projects.value.filter(item => resolveProjectTeamId(item) === workspaceId)
+})
+
+const boundContestIds = computed(() => {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const project of workspaceProjects.value) {
+    for (const contestId of resolveProjectBoundContestIds(project)) {
+      if (seen.has(contestId))
+        continue
+      seen.add(contestId)
+      result.push(contestId)
+    }
+  }
+  return result
+})
+
+const boundContests = computed(() => {
+  const contestMap = new Map(contests.value.map(item => [item.id, item]))
+  for (const contest of Object.values(boundContestDetailMap.value))
+    contestMap.set(contest.id, contest)
+
+  return boundContestIds.value
+    .map(contestId => contestMap.get(contestId))
+    .filter((contest): contest is Contest => Boolean(contest))
+})
+
+const teamScheduleItems = computed<DashboardScheduleItem[]>(() => {
+  const candidates: TeamScheduleCandidate[] = []
+  for (const contest of boundContests.value) {
+    for (const timeline of contest.timelines || []) {
+      const candidate = createTimelineScheduleCandidate(contest, timeline)
+      if (candidate)
+        candidates.push(candidate)
+    }
+
+    if (!contest.timelines?.length) {
+      const fallback = createContestDeadlineScheduleCandidate(contest)
+      if (fallback)
+        candidates.push(fallback)
+    }
+  }
+
+  return candidates
+    .sort((left, right) => {
+      if (left.isFuture !== right.isFuture)
+        return left.isFuture ? -1 : 1
+      return left.isFuture ? left.sortTime - right.sortTime : right.sortTime - left.sortTime
+    })
+    .slice(0, 6)
+    .map(item => ({
+      id: item.id,
+      month: item.month,
+      day: item.day,
+      title: item.title,
+      time: item.time,
+    }))
+})
+
+const teamCompetitions = computed<DashboardCompetition[]>(() => {
+  return boundContests.value.map((contest, index) => {
+    const timeline = resolveContestPrimaryTimeline(contest)
+    const notice = resolveLatestPolicyNotice(contest)
+    const status = resolveContestFeedStatus(contest, timeline)
+    return {
+      id: contest.id,
+      title: contest.name,
+      level: contest.level,
+      stage: resolveContestFeedStage(timeline, notice),
+      status,
+      deadline: resolveContestFeedDeadline(contest, timeline, notice),
+      icon: TEAM_CONTEST_ICONS[index % TEAM_CONTEST_ICONS.length]!,
+      tone: TEAM_CONTEST_TONES[index % TEAM_CONTEST_TONES.length]!,
+      actionText: '查看详情',
+    }
+  })
+})
+
+const visibleTeamCompetitions = computed(() => {
+  if (feedFilter.value === 'all')
+    return teamCompetitions.value
+  return teamCompetitions.value.filter(item => item.status === feedFilter.value)
 })
 
 const remainingProjectSlots = computed(() => {
@@ -263,6 +375,235 @@ function projectSourceLabel(source: Project['source']): string {
   if (source === 'chat')
     return 'Loopy 对话创建'
   return '表单创建'
+}
+
+function normalizeContestBindingId(value: unknown): string {
+  const contestId = String(value || '').trim()
+  if (!contestId || PLACEHOLDER_CONTEST_IDS.has(contestId))
+    return ''
+  return contestId
+}
+
+function resolveProjectBoundContestIds(project: Pick<Project, 'contestId' | 'contestIds'>): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  const append = (value: unknown) => {
+    const contestId = normalizeContestBindingId(value)
+    if (!contestId || seen.has(contestId))
+      return
+    seen.add(contestId)
+    result.push(contestId)
+  }
+
+  for (const contestId of project.contestIds || [])
+    append(contestId)
+  append(project.contestId)
+
+  return result
+}
+
+function parseDashboardDate(value?: string | null): Date | null {
+  const text = String(value || '').trim()
+  if (!text)
+    return null
+
+  const normalized = text.includes('T') ? text : `${text}T00:00:00+08:00`
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime()))
+    return null
+  return date
+}
+
+function formatDashboardDate(value?: string | null): string {
+  const date = parseDashboardDate(value)
+  if (!date)
+    return String(value || '').trim() || '时间待公布'
+
+  return date.toLocaleDateString('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: 'Asia/Shanghai',
+  })
+}
+
+function resolveScheduleDateParts(value?: string | null): { month: string, day: string } {
+  const date = parseDashboardDate(value)
+  if (!date)
+    return { month: '--', day: '--' }
+
+  return {
+    month: date.toLocaleString('zh-CN', { month: 'short', timeZone: 'Asia/Shanghai' }),
+    day: date.toLocaleString('zh-CN', { day: '2-digit', timeZone: 'Asia/Shanghai' }),
+  }
+}
+
+function resolveTimelineLabel(timeline: ContestTimelineItem): string {
+  return String(timeline.businessNodeLabel || '').trim()
+    || TIMELINE_NODE_LABELS[timeline.nodeType]
+    || '时间节点'
+}
+
+function resolveTimelineDateValue(timeline: ContestTimelineItem): string {
+  return String(timeline.endAt || timeline.startAt || '').trim()
+}
+
+function resolveTimelineDateRange(timeline: ContestTimelineItem): string {
+  const start = formatDashboardDate(timeline.startAt)
+  const end = formatDashboardDate(timeline.endAt)
+
+  if (timeline.startAt && timeline.endAt && start !== end)
+    return `${start} - ${end}`
+  if (timeline.endAt)
+    return `${end} 截止`
+  if (timeline.startAt)
+    return `${start} 开始`
+  return '时间待公布'
+}
+
+function truncateDashboardText(value: string, maxLength = 42): string {
+  const text = String(value || '').trim()
+  if (text.length <= maxLength)
+    return text
+  return `${text.slice(0, maxLength)}...`
+}
+
+function createTimelineScheduleCandidate(contest: Contest, timeline: ContestTimelineItem): TeamScheduleCandidate | null {
+  const dateValue = resolveTimelineDateValue(timeline)
+  const date = parseDashboardDate(dateValue)
+  if (!date)
+    return null
+
+  const dateParts = resolveScheduleDateParts(dateValue)
+  const label = resolveTimelineLabel(timeline)
+  const note = truncateDashboardText(timeline.note || '', 36)
+  const time = note ? `${resolveTimelineDateRange(timeline)} · ${note}` : resolveTimelineDateRange(timeline)
+  const sortTime = date.getTime()
+
+  return {
+    id: `contest-timeline-${contest.id}-${timeline.id}`,
+    month: dateParts.month,
+    day: dateParts.day,
+    title: `${contest.name} · ${label}`,
+    time,
+    isFuture: sortTime >= Date.now(),
+    sortTime,
+  }
+}
+
+function createContestDeadlineScheduleCandidate(contest: Contest): TeamScheduleCandidate | null {
+  const date = parseDashboardDate(contest.submissionDeadline)
+  if (!date)
+    return null
+
+  const dateParts = resolveScheduleDateParts(contest.submissionDeadline)
+  const sortTime = date.getTime()
+  return {
+    id: `contest-deadline-${contest.id}`,
+    month: dateParts.month,
+    day: dateParts.day,
+    title: `${contest.name} · 提交截止`,
+    time: `${formatDashboardDate(contest.submissionDeadline)} 23:59`,
+    isFuture: sortTime >= Date.now(),
+    sortTime,
+  }
+}
+
+function resolveLatestPolicyNotice(contest: Contest): ContestResourceItem | null {
+  const notices = (contest.resources || [])
+    .filter(item => item.category === 'policy_notice')
+    .sort((left, right) => {
+      const rightTime = parseDashboardDate(right.updatedAt || right.createdAt)?.getTime() || Number(right.year || 0)
+      const leftTime = parseDashboardDate(left.updatedAt || left.createdAt)?.getTime() || Number(left.year || 0)
+      return rightTime - leftTime
+    })
+
+  return notices[0] || null
+}
+
+function resolveContestPrimaryTimeline(contest: Contest): ContestTimelineItem | null {
+  const timelineWithDates = (contest.timelines || [])
+    .map(item => ({
+      item,
+      startTime: parseDashboardDate(item.startAt)?.getTime() || 0,
+      endTime: parseDashboardDate(item.endAt)?.getTime() || 0,
+      sortTime: parseDashboardDate(resolveTimelineDateValue(item))?.getTime() || 0,
+    }))
+    .filter(item => item.sortTime > 0)
+
+  if (timelineWithDates.length === 0)
+    return null
+
+  const now = Date.now()
+  const current = timelineWithDates
+    .filter(item => (item.startTime || item.sortTime) <= now && (item.endTime || item.sortTime) >= now)
+    .sort((left, right) => left.sortTime - right.sortTime)[0]
+  if (current)
+    return current.item
+
+  const upcoming = timelineWithDates
+    .filter(item => item.sortTime >= now)
+    .sort((left, right) => left.sortTime - right.sortTime)[0]
+  if (upcoming)
+    return upcoming.item
+
+  const [latest] = timelineWithDates
+    .sort((left, right) => right.sortTime - left.sortTime)
+  return latest
+    ? latest.item
+    : null
+}
+
+function resolveContestFeedStatus(contest: Contest, timeline: ContestTimelineItem | null): DashboardCompetition['status'] {
+  if (timeline) {
+    const start = parseDashboardDate(timeline.startAt)?.getTime() || 0
+    const end = parseDashboardDate(timeline.endAt)?.getTime() || 0
+    const target = parseDashboardDate(resolveTimelineDateValue(timeline))?.getTime() || 0
+    const now = Date.now()
+
+    if ((start || target) > now)
+      return 'upcoming'
+    if (!end || end >= now)
+      return 'ongoing'
+  }
+
+  const deadline = parseDashboardDate(contest.submissionDeadline)?.getTime() || 0
+  if (deadline > Date.now())
+    return 'ongoing'
+  return 'upcoming'
+}
+
+function resolveContestFeedStage(timeline: ContestTimelineItem | null, notice: ContestResourceItem | null): string {
+  if (notice)
+    return '公告更新'
+  if (timeline)
+    return resolveTimelineLabel(timeline)
+  return '已绑定'
+}
+
+function resolveContestFeedDeadline(
+  contest: Contest,
+  timeline: ContestTimelineItem | null,
+  notice: ContestResourceItem | null,
+): string {
+  if (notice)
+    return `最新公告：${truncateDashboardText(notice.title || notice.summary || '政策通知', 36)}`
+  if (timeline)
+    return `时间节点：${resolveTimelineDateRange(timeline)}`
+  if (contest.submissionDeadline)
+    return `提交截止：${contest.submissionDeadline}`
+  if (contest.registrationWindow)
+    return `报名窗口：${contest.registrationWindow}`
+  return '时间待公布'
+}
+
+function mergeContestDetailPayload(detail: ContestDetailPayload): Contest {
+  return {
+    ...detail.contest,
+    timelines: detail.timelines?.length ? detail.timelines : detail.contest.timelines,
+    resources: detail.resources || detail.contest.resources,
+    faqItems: detail.faqItems || detail.contest.faqItems,
+  }
 }
 
 function projectMemberRoleLabel(role: ProjectMemberRole): string {
@@ -727,6 +1068,54 @@ async function loadWorkspaceBillingEstimate(workspaceId: string) {
   }
 }
 
+async function loadBoundContestDetails(workspaceId: string) {
+  const contestIds = boundContestIds.value
+  if (contestIds.length === 0) {
+    boundContestDetailMap.value = {}
+    return
+  }
+
+  const contestById = new Map(contests.value.map(item => [item.id, item]))
+  const missingContestIds = contestIds.filter((contestId) => {
+    const contest = contestById.get(contestId)
+    return !contest || !contest.timelines?.length || !contest.resources?.length
+  })
+
+  if (missingContestIds.length === 0) {
+    boundContestDetailMap.value = {}
+    return
+  }
+
+  const detailResults = await Promise.allSettled(
+    missingContestIds.map(contestId =>
+      unsafeFetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${encodeURIComponent(contestId)}`)),
+    ),
+  )
+
+  if (activeWorkspaceId.value !== workspaceId)
+    return
+
+  const nextDetailMap: Record<string, Contest> = {}
+  detailResults.forEach((result, index) => {
+    const contestId = missingContestIds[index]
+    if (!contestId)
+      return
+
+    if (result.status === 'fulfilled') {
+      nextDetailMap[contestId] = mergeContestDetailPayload(result.value.data)
+      return
+    }
+
+    console.error('[team-dashboard] load bound contest detail failed', {
+      workspaceId,
+      contestId,
+      error: result.reason,
+    })
+  })
+
+  boundContestDetailMap.value = nextDetailMap
+}
+
 async function loadWorkspaceDashboard() {
   const workspaceId = routeWorkspaceId.value
   if (!workspaceId) {
@@ -788,6 +1177,7 @@ async function loadWorkspaceDashboard() {
       loadWorkspaceBillingEstimate(workspaceId),
       loadOverview(),
     ])
+    await loadBoundContestDetails(workspaceId)
   }
   catch (error: any) {
     const info = resolveAuthRequestErrorInfo(error)
@@ -812,6 +1202,7 @@ async function loadWorkspaceDashboard() {
     )
     projects.value = []
     contests.value = []
+    boundContestDetailMap.value = {}
     workspaceBillingEstimate.value = null
   }
   finally {
@@ -908,9 +1299,9 @@ onMounted(async () => {
       <div class="col-span-12 min-h-0 lg:col-span-4 lg:h-full lg:overflow-hidden">
         <DashboardRightRail
           v-model:active-feed-filter="feedFilter"
-          :competitions="visibleCompetitions"
+          :competitions="visibleTeamCompetitions"
           :skill-metrics="skillMetrics"
-          :schedule-items="scheduleItems"
+          :schedule-items="teamScheduleItems"
         />
       </div>
     </section>

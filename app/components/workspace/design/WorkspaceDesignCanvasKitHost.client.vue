@@ -4909,9 +4909,6 @@ function handleKeydown(event: KeyboardEvent): void {
             <p class="text-lg text-slate-900 font-semibold mt-3">
               当前页面还没有可渲染的 Frame
             </p>
-            <p class="text-sm text-slate-500 leading-6 mt-2">
-              这一版 host 已脱离 Vue Flow，后续会在这里补独立图元编辑和客户端导出。
-            </p>
           </div>
         </div>
       </div>

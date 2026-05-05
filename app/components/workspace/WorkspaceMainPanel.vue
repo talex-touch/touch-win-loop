@@ -1367,6 +1367,18 @@ const activeDeviceArrangementResourceId = computed(() => {
     : ''
 })
 const isActiveDeviceArrangementResource = computed(() => Boolean(activeDeviceArrangementResourceId.value))
+const deviceArrangementSaveState = ref({ dirty: false, saving: false, blocked: false })
+const breadcrumbSaveState = computed(() => {
+  if (!isActiveDeviceArrangementResource.value)
+    return null
+  if (deviceArrangementSaveState.value.blocked)
+    return { label: '已占用', tone: 'blocked' }
+  if (deviceArrangementSaveState.value.saving)
+    return { label: '保存中', tone: 'saving' }
+  if (deviceArrangementSaveState.value.dirty)
+    return { label: '未保存', tone: 'dirty' }
+  return { label: '已保存', tone: 'saved' }
+})
 
 const breadcrumbItems = computed(() => {
   if (activeResourceTab.value) {
@@ -2188,6 +2200,14 @@ function onCollabDrawModelUpdate(value: string): void {
   emit('update:collabDrawValue', value)
 }
 
+function onDeviceArrangementSaveStateChange(payload: { dirty: boolean, saving: boolean, blocked?: boolean }): void {
+  deviceArrangementSaveState.value = {
+    dirty: Boolean(payload.dirty),
+    saving: Boolean(payload.saving),
+    blocked: Boolean(payload.blocked),
+  }
+}
+
 function onCollabCursorUpdate(value: { cursorX?: number, cursorY?: number }): void {
   emit('updateCollabCursor', value)
 }
@@ -2504,6 +2524,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :can-close-other-tabs="openTabs.length > 1"
         :can-close-all-tabs="openTabs.length > 0"
         :breadcrumb-items="breadcrumbItems"
+        :breadcrumb-save-state="breadcrumbSaveState"
         :collab-presence-users="showBreadcrumbPresence ? collabPresenceUsers : []"
         @activate-tab="activateTab($event as WorkspaceMainTabId)"
         @close-tab="closeTab($event as WorkspaceMainTabId)"
@@ -3133,6 +3154,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :project-id="props.activeProjectId"
         :resource-id="activeDeviceArrangementResourceId"
         :resource-title="activeResource?.title || '设备排布'"
+        @save-state-change="onDeviceArrangementSaveStateChange"
       />
 
       <WorkspaceResourcePreviewTab

@@ -6485,7 +6485,7 @@ async function downloadDefaultPng(): Promise<void> {
     >
       <template #left>
         <WLDesignContainer
-          class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-sidebar-panel max-h-[min(72vh,820px)] w-full self-start"
+          class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-sidebar-panel h-full max-h-[min(72vh,820px)] min-h-0 w-full self-start"
           :data-collapsed="sidebarCollapsed ? 'true' : 'false'"
           :scrollable="!sidebarCollapsed"
           :padding="activeSidebarTab === 'frames' ? 'sm' : 'md'"
@@ -7339,7 +7339,7 @@ async function downloadDefaultPng(): Promise<void> {
           class="workspace-design-inspector-host flex h-full min-h-0 w-full items-stretch justify-end overflow-hidden"
         >
           <WLDesignContainer
-            class="workspace-design-inspector-panel h-full min-h-0 max-h-full w-full workspace-design-floating-panel workspace-design-glass-panel"
+            class="workspace-design-inspector-panel workspace-design-floating-panel workspace-design-glass-panel h-full max-h-full min-h-0 w-full"
             :data-collapsed="inspectorCollapsed ? 'true' : 'false'"
             :scrollable="!inspectorCollapsed"
             title=""
@@ -8732,6 +8732,10 @@ async function downloadDefaultPng(): Promise<void> {
 
 .workspace-design-panel :deep(.workspace-design-sidebar-panel) {
   transform-origin: top left;
+}
+
+.workspace-design-panel :deep(.wl-design-layout__dock--left .wl-design-layout__dock-inner) {
+  height: 100%;
 }
 
 .workspace-design-panel

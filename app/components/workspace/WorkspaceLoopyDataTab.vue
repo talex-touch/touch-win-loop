@@ -32,36 +32,31 @@ const emit = defineEmits<{
 
 const currentView = ref<LoopyWorkbenchView>('overview')
 
-const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, description: string }> = [
+const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string }> = [
   {
     id: 'overview',
     label: '主视图',
     icon: 'space_dashboard',
-    description: '数据中心主工作面',
   },
   {
     id: 'health',
     label: '索引健康',
     icon: 'monitor_heart',
-    description: '查看完整索引状态与失败项',
   },
   {
     id: 'relations',
     label: '关系探索',
     icon: 'account_tree',
-    description: '查看 source / chunk 关系图',
   },
   {
     id: 'semantic',
     label: '语义空间',
     icon: 'scatter_plot',
-    description: '查看 Embedding 空间分布',
   },
   {
     id: 'workflows',
     label: '智能工作流',
     icon: 'account_tree',
-    description: '保存、运行并继续项目内 workflow',
   },
 ]
 </script>
@@ -71,29 +66,7 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, des
     data-testid="workspace-project-knowledge-index"
     class="loopy-workbench"
   >
-    <WorkspaceLoopyDataOverviewView
-      v-if="currentView === 'overview'"
-      :active-project="props.activeProject"
-      :active-project-id="props.activeProjectId"
-      :dashboard="props.dashboard"
-      :loading="props.loading"
-      :error="props.error"
-      :reindexing-target="props.reindexingTarget"
-      @reload="emit('reload')"
-      @reindex-project-knowledge="emit('reindexProjectKnowledge', $event)"
-    />
-
     <header class="loopy-workbench__toolbar">
-      <div class="loopy-workbench__toolbar-copy">
-        <span class="loopy-workbench__eyebrow">Loopy Data Views</span>
-        <h2 class="loopy-workbench__title">
-          {{ currentView === 'overview' ? '继续深入分析' : '切换细化视图' }}
-        </h2>
-        <p class="loopy-workbench__subtitle">
-          主视图负责落地与字段映射，下面三个细化视图继续承接索引健康、关系探索与语义空间。
-        </p>
-      </div>
-
       <div class="loopy-workbench__switcher" role="tablist" aria-label="Loopy 数据视图切换">
         <button
           v-for="item in viewMeta"
@@ -106,13 +79,22 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, des
           @click="currentView = item.id"
         >
           <span class="material-symbols-outlined loopy-workbench__switch-icon">{{ item.icon }}</span>
-          <span class="loopy-workbench__switch-copy">
-            <strong>{{ item.label }}</strong>
-            <small>{{ item.description }}</small>
-          </span>
+          <span class="loopy-workbench__switch-label">{{ item.label }}</span>
         </button>
       </div>
     </header>
+
+    <WorkspaceLoopyDataOverviewView
+      v-if="currentView === 'overview'"
+      :active-project="props.activeProject"
+      :active-project-id="props.activeProjectId"
+      :dashboard="props.dashboard"
+      :loading="props.loading"
+      :error="props.error"
+      :reindexing-target="props.reindexingTarget"
+      @reload="emit('reload')"
+      @reindex-project-knowledge="emit('reindexProjectKnowledge', $event)"
+    />
 
     <WorkspaceLoopyDataHealthView
       v-if="currentView === 'health'"
@@ -152,139 +134,94 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string, des
 .loopy-workbench {
   display: flex;
   flex-direction: column;
-  gap: var(--wl-wb-gap-5, 14px);
+  gap: var(--wl-wb-gap-3, 10px);
 }
 
 .loopy-workbench__toolbar {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--wl-wb-gap-4, 12px);
-}
-
-.loopy-workbench__toolbar-copy {
+  align-items: center;
+  justify-content: flex-start;
   min-width: 0;
-}
-
-.loopy-workbench__eyebrow {
-  display: inline-block;
-  color: #7a8faa;
-  font-size: var(--wl-wb-caption-size, 11px);
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.loopy-workbench__title {
-  margin: var(--wl-wb-gap-2, 8px) 0 0;
-  color: #14253a;
-  font-size: var(--wl-wb-panel-title-size, 16px);
-  font-weight: 900;
-}
-
-.loopy-workbench__subtitle {
-  max-width: 620px;
-  margin: var(--wl-wb-gap-2, 8px) 0 0;
-  color: #607694;
-  font-size: var(--wl-wb-caption-size, 11px);
-  line-height: 1.55;
+  gap: var(--wl-wb-gap-2, 8px);
 }
 
 .loopy-workbench__switcher {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--wl-wb-gap-2, 8px);
+  display: inline-flex;
+  max-width: 100%;
+  gap: 3px;
+  overflow-x: auto;
+  padding: 3px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(238, 244, 252, 0.76);
+  box-shadow: inset 0 0 0 1px rgba(214, 225, 240, 0.68);
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+}
+
+.loopy-workbench__switcher::-webkit-scrollbar {
+  display: none;
 }
 
 .loopy-workbench__switch {
   display: inline-flex;
   align-items: center;
-  gap: var(--wl-wb-gap-3, 10px);
-  min-height: calc(var(--wl-wb-control-height, 34px) + 12px);
-  min-width: 142px;
-  padding: var(--wl-wb-gap-3, 10px) var(--wl-wb-control-padding-x, 14px);
-  border: 1px solid #d9e5f3;
-  border-radius: var(--wl-wb-card-radius, 12px);
-  background: rgba(255, 255, 255, 0.82);
+  flex: 0 0 auto;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: #4f6788;
-  text-align: left;
+  text-align: center;
+  white-space: nowrap;
   box-shadow: none;
   transition:
-    border-color 0.18s ease,
     background-color 0.18s ease,
-    color 0.18s ease;
+    box-shadow 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
 }
 
 .loopy-workbench__switch:hover {
-  border-color: rgba(127, 155, 207, 0.82);
-  background: rgba(248, 251, 255, 0.96);
+  background: rgba(255, 255, 255, 0.72);
+  transform: translateY(-1px);
 }
 
 .loopy-workbench__switch[data-active='true'] {
-  border-color: rgba(36, 92, 255, 0.26);
-  background: rgba(36, 92, 255, 0.08);
+  background: #ffffff;
   color: #173567;
+  box-shadow: 0 1px 7px rgba(26, 47, 83, 0.11);
+}
+
+.loopy-workbench__switch:focus-visible {
+  outline: 2px solid rgba(36, 92, 255, 0.28);
+  outline-offset: 2px;
 }
 
 .loopy-workbench__switch-icon {
-  font-size: 18px;
+  font-size: 16px;
 }
 
-.loopy-workbench__switch-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.loopy-workbench__switch-copy strong {
-  font-size: var(--wl-wb-body-size, 13px);
+.loopy-workbench__switch-label {
+  font-size: var(--wl-wb-label-size, 12px);
   font-weight: 800;
 }
 
-.loopy-workbench__switch-copy small {
-  color: #7186a4;
-  font-size: 10px;
-  line-height: 1.45;
-}
-
 @media (max-width: 1240px) {
-  .loopy-workbench__toolbar {
-    flex-direction: column;
-  }
-
   .loopy-workbench__switcher {
-    justify-content: flex-start;
-  }
-}
-
-@media (max-width: 780px) {
-  .loopy-workbench__switch {
     width: 100%;
   }
 }
 
-:global(html.dark) .loopy-workbench__eyebrow {
-  color: #8fa7c5;
-}
-
-:global(html.dark) .loopy-workbench__title {
-  color: #edf4ff;
-}
-
-:global(html.dark) .loopy-workbench__subtitle,
-:global(html.dark) .loopy-workbench__switch-copy small {
-  color: #aec1dc;
-}
-
-:global(html.dark) .loopy-workbench__switch {
+:global(html.dark) .loopy-workbench__switcher {
   border-color: rgba(82, 101, 130, 0.82);
   background: rgba(17, 25, 39, 0.72);
-  color: #dfe9f8;
+  box-shadow: inset 0 0 0 1px rgba(82, 101, 130, 0.7);
 }
 
 :global(html.dark) .loopy-workbench__switch[data-active='true'] {
-  border-color: rgba(77, 126, 255, 0.4);
   background: rgba(36, 92, 255, 0.18);
   color: #f2f7ff;
 }

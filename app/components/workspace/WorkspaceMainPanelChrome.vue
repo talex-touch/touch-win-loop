@@ -10,6 +10,11 @@ interface WorkspaceMainPanelTabItem {
   closeable: boolean
 }
 
+interface BreadcrumbSaveState {
+  label: string
+  tone: 'blocked' | 'dirty' | 'saved' | 'saving'
+}
+
 const props = withDefaults(defineProps<{
   openTabs?: WorkspaceMainPanelTabItem[]
   activeTabId?: string
@@ -23,6 +28,7 @@ const props = withDefaults(defineProps<{
   canCloseOtherTabs?: boolean
   canCloseAllTabs?: boolean
   breadcrumbItems?: string[]
+  breadcrumbSaveState?: BreadcrumbSaveState | null
   collabPresenceUsers?: WorkspaceCollabPresenceUser[]
 }>(), {
   openTabs: () => [],
@@ -37,6 +43,7 @@ const props = withDefaults(defineProps<{
   canCloseOtherTabs: false,
   canCloseAllTabs: false,
   breadcrumbItems: () => [],
+  breadcrumbSaveState: null,
   collabPresenceUsers: () => [],
 })
 
@@ -63,7 +70,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="flex w-full min-w-0 flex-col">
+  <div class="flex flex-col min-w-0 w-full">
     <WorkspaceTabStrip
       :open-tabs="props.openTabs"
       :active-tab-id="props.activeTabId"
@@ -90,11 +97,21 @@ const emit = defineEmits<{
       @drag-end="emit('dragEnd')"
     />
 
-    <div class="workspace-main-breadcrumb text-slate-400 border-b border-slate-200 bg-white flex w-full min-w-0 items-center justify-between gap-2">
-      <div class="workspace-main-breadcrumb__scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden">
+    <div class="workspace-main-breadcrumb text-slate-400 border-b border-slate-200 bg-white flex gap-2 min-w-0 w-full items-center justify-between">
+      <div class="workspace-main-breadcrumb__scroll flex flex-1 gap-1.5 min-w-0 items-center overflow-x-auto overflow-y-hidden">
         <template v-for="(item, index) in props.breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
-          <span class="truncate" :class="index === props.breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
-            {{ item }}
+          <span class="workspace-main-breadcrumb__item-wrap">
+            <span class="truncate" :class="index === props.breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
+              {{ item }}
+            </span>
+            <span
+              v-if="index === props.breadcrumbItems.length - 1 && props.breadcrumbSaveState"
+              class="workspace-main-breadcrumb__save-state"
+              :class="`workspace-main-breadcrumb__save-state--${props.breadcrumbSaveState.tone}`"
+              data-testid="workspace-main-breadcrumb-save-state"
+            >
+              {{ props.breadcrumbSaveState.label }}
+            </span>
           </span>
           <span v-if="index < props.breadcrumbItems.length - 1" class="material-symbols-outlined text-[12px]">chevron_right</span>
         </template>
@@ -119,6 +136,47 @@ const emit = defineEmits<{
 
 .workspace-main-breadcrumb__scroll::-webkit-scrollbar {
   display: none;
+}
+
+.workspace-main-breadcrumb__item-wrap {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-main-breadcrumb__save-state {
+  flex: 0 0 auto;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.workspace-main-breadcrumb__save-state--dirty {
+  border-color: #f59e0b;
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.workspace-main-breadcrumb__save-state--blocked {
+  border-color: #fbbf24;
+  color: #a16207;
+  background: #fefce8;
+}
+
+.workspace-main-breadcrumb__save-state--saving {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.workspace-main-breadcrumb__save-state--saved {
+  border-color: #bbf7d0;
+  color: #15803d;
+  background: #f0fdf4;
 }
 
 .workspace-main-breadcrumb {
