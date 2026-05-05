@@ -7,6 +7,7 @@ interface DeviceArrangementScreenshotUploadResult {
 interface UploadDeviceArrangementScreenshotInput {
   endpoint: (path: string) => string
   projectId: string
+  parentResourceId?: string
   file: File
 }
 
@@ -18,6 +19,7 @@ export async function uploadDeviceArrangementScreenshotAsset(
   input: UploadDeviceArrangementScreenshotInput,
 ): Promise<string> {
   const projectId = normalizeString(input.projectId)
+  const parentResourceId = normalizeString(input.parentResourceId)
   if (!projectId)
     return ''
 
@@ -25,6 +27,8 @@ export async function uploadDeviceArrangementScreenshotAsset(
   formData.set('category', 'templates')
   formData.set('accessLevel', 'login_required')
   formData.set('title', input.file.name || 'device-arrangement-screenshot')
+  if (parentResourceId)
+    formData.set('parentResourceId', parentResourceId)
   formData.append('file', input.file)
 
   const response = await fetch(input.endpoint(`/projects/${projectId}/resources/upload`), {

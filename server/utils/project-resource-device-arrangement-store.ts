@@ -46,6 +46,47 @@ interface DeviceArrangementRow extends DeviceArrangementResourceRow {
   arrangement_updated_at: string
 }
 
+export interface DeviceArrangementEditLockPayload {
+  userId: string
+  username: string
+  sessionId: string
+  acquiredAt: string
+  heartbeatAt: string
+  expiresAt: string
+}
+
+interface DeviceArrangementLockResourceRow {
+  metadata: Record<string, unknown> | string | null
+}
+
+const DEVICE_ARRANGEMENT_LOCK_METADATA_KEY = 'deviceArrangementLock'
+const DEVICE_ARRANGEMENT_LOCK_TTL_MS = 90_000
+
+export class DeviceArrangementLockConflictError extends Error {
+  lock: DeviceArrangementEditLockPayload
+
+  constructor(lock: DeviceArrangementEditLockPayload) {
+    super('DEVICE_ARRANGEMENT_LOCKED')
+    this.name = 'DeviceArrangementLockConflictError'
+    this.lock = lock
+  }
+}
+
+export class DeviceArrangementLockRequiredError extends Error {
+  constructor() {
+    super('DEVICE_ARRANGEMENT_LOCK_REQUIRED')
+    this.name = 'DeviceArrangementLockRequiredError'
+  }
+}
+
+export function isDeviceArrangementLockConflictError(error: unknown): error is DeviceArrangementLockConflictError {
+  return error instanceof DeviceArrangementLockConflictError
+}
+
+export function isDeviceArrangementLockRequiredError(error: unknown): error is DeviceArrangementLockRequiredError {
+  return error instanceof DeviceArrangementLockRequiredError
+}
+
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
@@ -69,6 +110,58 @@ function normalizeRecord(value: unknown): Record<string, unknown> {
 function parseRevision(value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.max(1, Math.trunc(parsed)) : 1
+}
+
+function normalizeLockPayload(value: unknown): DeviceArrangementEditLockPayload | null {
+  const record = normalizeRecord(value)
+  const userId = normalizeString(record.userId)
+  const username = normalizeString(record.username)
+  const sessionId = normalizeString(record.sessionId)
+  const acquiredAt = normalizeString(record.acquiredAt)
+  const heartbeatAt = normalizeString(record.heartbeatAt)
+  const expiresAt = normalizeString(record.expiresAt)
+  if (!userId || !sessionId || !expiresAt)
+    return null
+  return {
+    userId,
+    username,
+    sessionId,
+    acquiredAt: acquiredAt || heartbeatAt || new Date(0).toISOString(),
+    heartbeatAt: heartbeatAt || acquiredAt || new Date(0).toISOString(),
+    expiresAt,
+  }
+}
+
+function readDeviceArrangementLock(metadata: Record<string, unknown>): DeviceArrangementEditLockPayload | null {
+  return normalizeLockPayload(metadata[DEVICE_ARRANGEMENT_LOCK_METADATA_KEY])
+}
+
+function isLockActive(lock: DeviceArrangementEditLockPayload | null, nowMs = Date.now()): lock is DeviceArrangementEditLockPayload {
+  if (!lock)
+    return false
+  const expiresAtMs = Date.parse(lock.expiresAt)
+  return Number.isFinite(expiresAtMs) && expiresAtMs > nowMs
+}
+
+function createDeviceArrangementLock(input: {
+  actorUserId: string
+  actorUsername: string
+  sessionId: string
+  previousLock?: DeviceArrangementEditLockPayload | null
+  now?: Date
+}): DeviceArrangementEditLockPayload {
+  const now = input.now || new Date()
+  const nowIso = now.toISOString()
+  return {
+    userId: input.actorUserId,
+    username: normalizeString(input.actorUsername) || input.actorUserId,
+    sessionId: input.sessionId,
+    acquiredAt: input.previousLock?.userId === input.actorUserId && input.previousLock.acquiredAt
+      ? input.previousLock.acquiredAt
+      : nowIso,
+    heartbeatAt: nowIso,
+    expiresAt: new Date(now.getTime() + DEVICE_ARRANGEMENT_LOCK_TTL_MS).toISOString(),
+  }
 }
 
 function mapResource(row: DeviceArrangementResourceRow): Resource {
@@ -212,11 +305,166 @@ async function selectDeviceArrangement(db: Queryable, input: { projectId: string
   return result.rows[0] ? mapArrangement(result.rows[0]) : null
 }
 
+async function selectDeviceArrangementLockResource(
+  db: Queryable,
+  input: { projectId: string, resourceId: string },
+): Promise<DeviceArrangementLockResourceRow | null> {
+  const result = await db.query<DeviceArrangementLockResourceRow>(
+    `SELECT pr.metadata
+     FROM project_resources pr
+     JOIN project_resource_device_arrangements pda
+       ON pda.resource_id = pr.id
+      AND pda.project_id = pr.project_id
+     WHERE pr.project_id = $1
+       AND pr.id = $2
+       AND pr.status = 'active'
+     LIMIT 1
+     FOR UPDATE OF pr`,
+    [input.projectId, input.resourceId],
+  )
+  return result.rows[0] || null
+}
+
+async function writeDeviceArrangementLockMetadata(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    metadata: Record<string, unknown>
+  },
+): Promise<void> {
+  await db.query(
+    `UPDATE project_resources
+     SET metadata = $3::JSONB
+     WHERE project_id = $1
+       AND id = $2`,
+    [input.projectId, input.resourceId, JSON.stringify(input.metadata)],
+  )
+}
+
+async function lockDeviceArrangementForEditing(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    actorUsername: string
+    sessionId: string
+    requireExistingLock?: boolean
+  },
+): Promise<DeviceArrangementEditLockPayload> {
+  const row = await selectDeviceArrangementLockResource(db, input)
+  if (!row)
+    throw new Error('DEVICE_ARRANGEMENT_NOT_FOUND')
+
+  const metadata = normalizeRecord(row.metadata)
+  const existingLock = readDeviceArrangementLock(metadata)
+  if (isLockActive(existingLock) && existingLock.userId !== input.actorUserId)
+    throw new DeviceArrangementLockConflictError(existingLock)
+
+  if (
+    input.requireExistingLock
+    && (
+      !isLockActive(existingLock)
+      || existingLock.userId !== input.actorUserId
+      || existingLock.sessionId !== input.sessionId
+    )
+  ) {
+    throw new DeviceArrangementLockRequiredError()
+  }
+
+  const nextLock = createDeviceArrangementLock({
+    actorUserId: input.actorUserId,
+    actorUsername: input.actorUsername,
+    sessionId: input.sessionId,
+    previousLock: existingLock,
+  })
+  metadata[DEVICE_ARRANGEMENT_LOCK_METADATA_KEY] = nextLock
+  await writeDeviceArrangementLockMetadata(db, {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+    metadata,
+  })
+  return nextLock
+}
+
 export async function getProjectDeviceArrangement(
   db: Queryable,
   input: { projectId: string, resourceId: string },
 ): Promise<{ resource: Resource, arrangement: DeviceArrangementPersistedPayload } | null> {
   return selectDeviceArrangement(db, input)
+}
+
+export async function acquireProjectDeviceArrangementEditLock(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    actorUsername: string
+    sessionId: string
+  },
+): Promise<{ resource: Resource, arrangement: DeviceArrangementPersistedPayload, editLock: DeviceArrangementEditLockPayload }> {
+  const editLock = await lockDeviceArrangementForEditing(db, input)
+  const arrangement = await selectDeviceArrangement(db, input)
+  if (!arrangement)
+    throw new Error('DEVICE_ARRANGEMENT_NOT_FOUND')
+  return { ...arrangement, editLock }
+}
+
+export async function refreshProjectDeviceArrangementEditLock(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    actorUsername: string
+    sessionId: string
+  },
+): Promise<DeviceArrangementEditLockPayload> {
+  return lockDeviceArrangementForEditing(db, input)
+}
+
+export async function ensureProjectDeviceArrangementEditLock(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    actorUsername: string
+    sessionId: string
+  },
+): Promise<DeviceArrangementEditLockPayload> {
+  return lockDeviceArrangementForEditing(db, {
+    ...input,
+    requireExistingLock: true,
+  })
+}
+
+export async function releaseProjectDeviceArrangementEditLock(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    sessionId: string
+  },
+): Promise<void> {
+  const row = await selectDeviceArrangementLockResource(db, input)
+  if (!row)
+    return
+
+  const metadata = normalizeRecord(row.metadata)
+  const existingLock = readDeviceArrangementLock(metadata)
+  if (!existingLock || existingLock.userId !== input.actorUserId || existingLock.sessionId !== input.sessionId)
+    return
+
+  delete metadata[DEVICE_ARRANGEMENT_LOCK_METADATA_KEY]
+  await writeDeviceArrangementLockMetadata(db, {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+    metadata,
+  })
 }
 
 export async function createProjectDeviceArrangement(
