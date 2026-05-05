@@ -400,6 +400,52 @@ async function pollMeetingDetail(api, projectId, meetingId, timeoutMs = 90000) {
   return lastDetail
 }
 
+async function chooseUiSelectOption(page, root, label, optionNames) {
+  const candidates = Array.isArray(optionNames) ? optionNames : [optionNames]
+  const trigger = root.getByRole('button', { name: label }).first()
+  await trigger.waitFor({ timeout: 30000 })
+  await trigger.click()
+
+  for (const optionName of candidates) {
+    const option = page.getByRole('option', { name: optionName, exact: true }).first()
+    if (await option.count()) {
+      await option.click()
+      return
+    }
+  }
+
+  for (const optionName of candidates) {
+    const option = page.locator('.ui-select__option').filter({ hasText: optionName }).first()
+    if (await option.count()) {
+      await option.click()
+      return
+    }
+  }
+
+  throw new Error(`未找到 ${label} 选项：${candidates.join(' / ')}`)
+}
+
+async function enableMeetingToggle(meetingClient, toggle, enabledText, timeoutMs = 10000) {
+  await toggle.waitFor({ timeout: 15000 })
+
+  const beforeText = String(await meetingClient.textContent().catch(() => '') || '')
+  if (beforeText.includes(enabledText))
+    return true
+
+  await toggle.click().catch(() => undefined)
+
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const text = String(await meetingClient.textContent().catch(() => '') || '')
+    const label = String(await toggle.textContent().catch(() => '') || '')
+    if (text.includes(enabledText) || label.includes('关闭'))
+      return true
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  }
+
+  return false
+}
+
 async function convertVideoToMp4(inputPath, outputPath) {
   await runCommandCapture(
     'ffmpeg',
@@ -629,8 +675,8 @@ async function main() {
     await page.waitForTimeout(1500)
 
     const defenseRealtimeControls = page.locator('.workspace-defense-workbench__realtime-controls')
-    await defenseRealtimeControls.locator('select').nth(0).selectOption('qwen')
-    await defenseRealtimeControls.locator('select').nth(1).selectOption('audio_video')
+    await chooseUiSelectOption(page, defenseRealtimeControls, '实时链路', '千问')
+    await chooseUiSelectOption(page, defenseRealtimeControls, '媒体模式', ['音视频理解', '音频 + 视频'])
     await page.waitForTimeout(500)
 
     const defenseCreateResponsePromise = page.waitForResponse((response) => {
@@ -692,21 +738,8 @@ async function main() {
     results.meetingClientText = sanitizeLongText(await meetingClient.textContent())
 
     if (results.meetingConnected) {
-      await micToggle.waitFor({ timeout: 15000 })
-      const micLabel = String(await micToggle.textContent() || '')
-      if (micLabel.includes('开启')) {
-        await micToggle.click()
-        await meetingClient.getByRole('button', { name: '关闭麦克风' }).waitFor({ timeout: 10000 })
-      }
-      results.micEnabled = true
-
-      await cameraToggle.waitFor({ timeout: 15000 })
-      const cameraLabel = String(await cameraToggle.textContent() || '')
-      if (cameraLabel.includes('开启')) {
-        await cameraToggle.click()
-        await meetingClient.getByRole('button', { name: '关闭摄像头' }).waitFor({ timeout: 10000 })
-      }
-      results.cameraEnabled = true
+      results.micEnabled = await enableMeetingToggle(meetingClient, micToggle, '麦克风开启')
+      results.cameraEnabled = await enableMeetingToggle(meetingClient, cameraToggle, '视频开启')
       await page.waitForTimeout(15000)
     }
 
@@ -815,6 +848,25 @@ async function main() {
     await page.goto(pathToFileURL(finalSummaryPath).toString())
     await page.waitForTimeout(5000)
     await page.screenshot({ path: screenshotPaths.finalSummary, fullPage: true })
+
+    const unmetChecks = []
+    if (results.defenseRealtimeBlocked)
+      unmetChecks.push('答辩 realtime provider bootstrap 被配置阻塞')
+    if (!results.meetingCreated)
+      unmetChecks.push('LiveKit 会议未创建')
+    if (!results.meetingConnected)
+      unmetChecks.push('LiveKit 会议客户端未连接')
+    if (!results.micEnabled || !results.cameraEnabled)
+      unmetChecks.push(`本地媒体未全部开启 mic=${results.micEnabled} camera=${results.cameraEnabled}`)
+    if (!results.captionObserved)
+      unmetChecks.push('未观察到实时字幕回流')
+    if (!results.notesResourceId)
+      unmetChecks.push('会议纪要资源未生成')
+    if (!results.recordingResourceId)
+      unmetChecks.push(`会议录制资源未完成 recordingStatus=${results.recordingStatus || 'unknown'}`)
+
+    if (unmetChecks.length > 0)
+      throw new Error(`端到端验收未完全通过：${unmetChecks.join('；')}`)
   }
   catch (error) {
     finalError = error
