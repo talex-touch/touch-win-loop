@@ -1,11 +1,14 @@
 import type {
+  AiAssistantOptions,
   AiChatMessage,
   AiChatSession,
   AiWorkspaceResult,
+  AiWorkspaceRequest,
   AiWorkspaceStreamEvent,
   AiWorkspaceStreamEventType,
   ApiResponse,
   ChatMessage,
+  WorkspaceAiMode,
 } from '~~/shared/types/domain'
 
 function normalizeText(value: unknown): string {
@@ -53,6 +56,9 @@ function toModelMessages(messages: ChatMessage[]): ChatMessage[] {
 export function useLoopyDialog(input: {
   getGreeting: () => string
   getSessionTitle: () => string
+  mode?: WorkspaceAiMode
+  getAiOptions?: () => Partial<AiAssistantOptions>
+  getContext?: () => Partial<NonNullable<AiWorkspaceRequest['context']>>
 }) {
   const runtime = useRuntimeConfig()
   const { endpoint } = useApiEndpoint(runtime)
@@ -66,6 +72,7 @@ export function useLoopyDialog(input: {
   const chatLoading = ref(false)
   const statusText = ref('')
   const errorText = ref('')
+  const chatMode = computed<WorkspaceAiMode>(() => input.mode || 'dialog_ask')
 
   const showSuggestions = computed(() => {
     return !chatLoading.value
@@ -105,7 +112,7 @@ export function useLoopyDialog(input: {
 
     try {
       const response = await fetch(
-        String(endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions/${normalizedSessionId}/messages?limit=200&projectId=&mode=dialog_ask`)),
+        String(endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions/${normalizedSessionId}/messages?limit=200&projectId=&mode=${chatMode.value}`)),
         {
           credentials: 'include',
         },
@@ -147,7 +154,7 @@ export function useLoopyDialog(input: {
         },
         body: JSON.stringify({
           projectId: '',
-          mode: 'dialog_ask',
+          mode: chatMode.value,
           title: preferredTitle || input.getSessionTitle(),
         }),
       })
@@ -176,7 +183,7 @@ export function useLoopyDialog(input: {
     errorText.value = ''
     try {
       const response = await fetch(
-        String(endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions?limit=30&projectId=&mode=dialog_ask`)),
+        String(endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions?limit=30&projectId=&mode=${chatMode.value}`)),
         {
           credentials: 'include',
         },
@@ -256,6 +263,7 @@ export function useLoopyDialog(input: {
 
     errorText.value = ''
     statusText.value = ''
+    const extraContext = input.getContext?.() || {}
 
     if (!activeSessionId.value) {
       const createdId = await createSession()
@@ -297,11 +305,14 @@ export function useLoopyDialog(input: {
           teamId: normalizedWorkspaceId,
           workspaceId: normalizedWorkspaceId,
           sessionId: activeSessionId.value || undefined,
-          mode: 'dialog_ask',
+          mode: chatMode.value,
           messages: toModelMessages(pendingMessages),
+          aiOptions: input.getAiOptions?.() || {},
           context: {
+            ...extraContext,
             teamId: normalizedWorkspaceId,
             workspaceId: normalizedWorkspaceId,
+            projectId: normalizeText(extraContext.projectId),
           },
         }),
       })

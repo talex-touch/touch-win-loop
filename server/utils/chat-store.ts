@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 const CHAT_SESSION_MODE_SET = new Set<WorkspaceAiMode>([
   'dialog_ask',
+  'loopy_page',
   'auto_optimize',
   'issue_discovery',
   'defense',
@@ -84,7 +85,7 @@ function isStrictScopeSatisfied(
     return true
   if (!hasModeFilter)
     return false
-  if (normalizedMode === 'dialog_ask')
+  if (normalizedMode === 'dialog_ask' || normalizedMode === 'loopy_page')
     return true
   return Boolean(normalizedProjectId)
 }

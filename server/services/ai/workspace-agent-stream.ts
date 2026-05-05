@@ -8,7 +8,7 @@ import type {
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
 
-export type WorkspaceSupportedMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'document_assist' | 'contextual_agent'
+export type WorkspaceSupportedMode = 'dialog_ask' | 'loopy_page' | 'auto_optimize' | 'issue_discovery' | 'document_assist' | 'contextual_agent'
 
 export interface WorkspaceAiChangeDraft {
   changeType: AiProjectChangeType

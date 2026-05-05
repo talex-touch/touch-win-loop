@@ -50,6 +50,7 @@ import { createWorkspaceStreamSystemChatMessage } from '~~/shared/utils/workspac
 
 const ALLOWED_MODES: WorkspaceAiMode[] = [
   'dialog_ask',
+  'loopy_page',
   'auto_optimize',
   'issue_discovery',
   'document_assist',
@@ -205,7 +206,7 @@ function resolveInitialSessionTitle(
   contestName: string,
   trackName: string,
 ): string {
-  if (mode === 'dialog_ask')
+  if (mode === 'dialog_ask' || mode === 'loopy_page')
     return '新对话'
   return buildSessionTitle(mode, contestName, trackName)
 }
@@ -218,7 +219,7 @@ function resolvePersistedSessionTitle(input: {
   trackName: string
   assistantLabel?: string
 }): string | undefined {
-  if (input.mode === 'dialog_ask') {
+  if (input.mode === 'dialog_ask' || input.mode === 'loopy_page') {
     if (input.initialMessageCount > 0)
       return undefined
     return buildDialogSessionTitleFromMessage(input.latestUserMessage)
@@ -272,6 +273,9 @@ function summarizeProjectSettings(snapshot: Awaited<ReturnType<typeof getProject
 }
 
 function buildWorkspaceBootstrapProgressMessage(request: AiWorkspaceRequest): string {
+  if (request.mode === 'loopy_page')
+    return '正在读取当前工作空间上下文...'
+
   const projectTitle = toText(request.context?.projectTitle)
   const resourceTitle = toText(request.context?.resourceTitle)
 
@@ -411,7 +415,7 @@ export default defineEventHandler(async (event) => {
     )
   }
 
-  if (!request.projectId && request.mode !== 'dialog_ask') {
+  if (!request.projectId && request.mode !== 'dialog_ask' && request.mode !== 'loopy_page') {
     setResponseStatus(event, 400)
     return fail('除对话询问外，工作台 AI 调用必须传 projectId。', {
       startedAt,
@@ -456,7 +460,7 @@ export default defineEventHandler(async (event) => {
           sessionId: request.sessionId,
           projectId: scopeProjectId,
           mode: scopeMode,
-          strictScope: Boolean(scopeProjectId),
+          strictScope: true,
         })
       : null
 
@@ -631,6 +635,12 @@ export default defineEventHandler(async (event) => {
               projectId: request.projectId,
             })
           : []
+        const pageContextLines = request.mode === 'loopy_page'
+          ? [
+              request.context?.projectTitle ? `当前选中项目：${request.context.projectTitle}` : '',
+              request.context?.resourceTitle ? `当前选中资料：${request.context.resourceTitle}` : '',
+            ].filter(Boolean)
+          : []
         const knowledgeContext = await buildProjectKnowledgeLocalContext(db, {
           projectId: request.projectId || '',
           query: latestUserMessage,
@@ -653,6 +663,7 @@ export default defineEventHandler(async (event) => {
           projectSettingsSummary: summarizeProjectSettings(projectSettings),
           projectOutlineSummary: summarizeOutline(projectOutline),
           resourceSummary: [
+            ...pageContextLines,
             knowledgeContext.summaryText,
             summarizeCompetitionLoop(competitionLoop),
           ].filter(Boolean).join('\n\n'),

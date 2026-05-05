@@ -3505,7 +3505,7 @@ export interface AiProjectChatResult {
   sessionId?: string
 }
 
-export type WorkspaceAiMode = 'dialog_ask' | 'contextual_agent' | 'auto_optimize' | 'issue_discovery' | 'defense' | 'document_assist'
+export type WorkspaceAiMode = 'dialog_ask' | 'loopy_page' | 'contextual_agent' | 'auto_optimize' | 'issue_discovery' | 'defense' | 'document_assist'
 export type WorkspaceAiAssistantPreset = 'default' | 'document' | 'prototype' | 'design'
 export type WorkspaceContextualAssistantKey = 'agent_doc' | 'agent_proto' | 'design_assistant'
 export type WorkspaceAiInteractionIntent = 'context_chat' | 'draft_action'
@@ -4236,7 +4236,7 @@ export type AiWorkflowContextSource
     | 'resource.selection'
     | 'session.memory'
 export type AiWorkflowStepType = 'prompt' | 'tool' | 'agent'
-export type AiWorkflowAgentMode = Exclude<WorkspaceAiMode, 'defense'>
+export type AiWorkflowAgentMode = Exclude<WorkspaceAiMode, 'defense' | 'loopy_page'>
 export type AiWorkflowRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'needs_review'
 export type AiWorkflowRunStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'needs_review' | 'skipped'
 

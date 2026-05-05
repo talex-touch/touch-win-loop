@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ApiResponse, AuthMeResult, WorkspaceWithQuota } from '~~/shared/types/domain'
+import type { AiAssistantOptions, ApiResponse, AuthMeResult, Project, Resource, WorkspaceWithQuota } from '~~/shared/types/domain'
 import { resolveWorkspaceStreamSystemMessageView } from '~~/shared/utils/workspace-ai-stream'
 import { resolveWorkspaceOptions } from '~/composables/team-ui'
 import { readActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
@@ -18,9 +18,38 @@ const authApiFetch = useAuthApiFetch()
 const loading = ref(true)
 const errorText = ref('')
 const workspaceOptions = ref<WorkspaceWithQuota[]>([])
+const projects = ref<Project[]>([])
 const messageScrollRef = ref<HTMLDivElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
+const attachmentInputRef = ref<HTMLInputElement | null>(null)
 const hasAvailableWorkspace = computed(() => workspaceOptions.value.length > 0)
+
+type ComposerQuickActionId = 'attachment' | 'knowledge' | 'command'
+type ComposerPanelId = 'knowledge' | 'command' | 'speed' | ''
+type ResourceSearchScope = 'platform' | 'project'
+type AiSpeedId = 'fast' | 'balanced' | 'deep'
+
+interface LoopySelectedResourceContext {
+  id: string
+  title: string
+  scope: ResourceSearchScope
+  projectId: string
+}
+
+const activeComposerPanel = ref<ComposerPanelId>('')
+const selectedLoopyProjectId = ref('')
+const selectedResourceContext = ref<LoopySelectedResourceContext | null>(null)
+const projectsLoading = ref(false)
+const resourcesLoading = ref(false)
+const resourceErrorText = ref('')
+const resourceSearchScope = ref<ResourceSearchScope>('platform')
+const resourceSearchQuery = ref('')
+const platformResourceResults = ref<Resource[]>([])
+const projectResourceResults = ref<Resource[]>([])
+const selectedAiSpeed = ref<AiSpeedId>('fast')
+
+let resourceSearchTimer: ReturnType<typeof setTimeout> | null = null
+let resourceSearchSeq = 0
 
 const suggestionPrompts = [
   {
@@ -40,6 +69,59 @@ const suggestionPrompts = [
     icon: 'frame_inspect',
   },
 ]
+
+const aiSpeedOptions: Array<{
+  id: AiSpeedId
+  label: string
+  description: string
+  temperature: number
+}> = [
+  {
+    id: 'fast',
+    label: '快速',
+    description: '回答更直接，适合快速确认。',
+    temperature: 0.2,
+  },
+  {
+    id: 'balanced',
+    label: '均衡',
+    description: '兼顾结构和发散。',
+    temperature: 0.35,
+  },
+  {
+    id: 'deep',
+    label: '深入',
+    description: '更偏分析和方案展开。',
+    temperature: 0.5,
+  },
+]
+
+const commandItems = [
+  {
+    id: 'workspace-brief',
+    label: '工作空间简报',
+    description: '汇总当前空间最重要的问题和下一步。',
+    prompt: '请基于当前工作空间，输出一份简洁的推进简报，包含重点事项、风险和下一步。',
+  },
+  {
+    id: 'project-plan',
+    label: '项目推进计划',
+    description: '围绕选中项目生成可执行计划。',
+    prompt: '请结合我选中的项目，给出一个下一阶段推进计划，按优先级列出行动项。',
+  },
+  {
+    id: 'resource-scan',
+    label: '资料线索梳理',
+    description: '围绕选中资料提炼证据和缺口。',
+    prompt: '请围绕我选中的资料，提炼关键证据、可引用结论和仍缺少的信息。',
+  },
+  {
+    id: 'question-list',
+    label: '追问清单',
+    description: '生成接下来该问 Loopy 的问题。',
+    prompt: '请根据当前上下文生成一组高价值追问，按信息增益从高到低排序。',
+  },
+] as const
 
 function formatSessionTitle(title: string | null | undefined): string {
   const normalizedTitle = String(title || '').trim()
@@ -134,6 +216,23 @@ function resolveLoopySystemMessageIcon(message: { role: 'system' | 'assistant' |
 }
 
 const loopyState = useLoopyDialog({
+  mode: 'loopy_page',
+  getAiOptions: () => {
+    const option = aiSpeedOptions.find(item => item.id === selectedAiSpeed.value) || aiSpeedOptions[0]
+    return {
+      temperature: option.temperature,
+    } satisfies Partial<AiAssistantOptions>
+  },
+  getContext: () => {
+    const project = projects.value.find(item => item.id === selectedLoopyProjectId.value) || null
+    const selectedResource = selectedResourceContext.value
+    return {
+      projectId: '',
+      projectTitle: project?.title || '',
+      resourceId: selectedResource?.id || '',
+      resourceTitle: selectedResource?.title || '',
+    }
+  },
   getGreeting: () => {
     if (!hasAvailableWorkspace.value)
       return '当前没有可用工作区，暂时无法开始对话。'
@@ -208,24 +307,50 @@ const showSuggestionCards = computed(() => {
   return Boolean(loopySelectedWorkspaceId.value) && loopyShowSuggestions.value
 })
 
+const selectedLoopyProject = computed(() => {
+  return projects.value.find(item => item.id === selectedLoopyProjectId.value) || null
+})
+
+const selectedAiSpeedOption = computed(() => {
+  return aiSpeedOptions.find(item => item.id === selectedAiSpeed.value) || aiSpeedOptions[0]
+})
+
+const visibleResourceResults = computed(() => {
+  if (resourceSearchScope.value === 'platform')
+    return platformResourceResults.value
+
+  const keyword = resourceSearchQuery.value.trim().toLowerCase()
+  const resources = projectResourceResults.value
+  if (!keyword)
+    return resources.slice(0, 12)
+
+  return resources
+    .filter((resource) => {
+      return [
+        resource.title,
+        resource.summary,
+        resource.type,
+        resource.category,
+      ].some(value => String(value || '').toLowerCase().includes(keyword))
+    })
+    .slice(0, 12)
+})
+
 const composerQuickActions = [
   {
     id: 'attachment',
     label: '附件',
     icon: 'attach_file',
-    prefix: '请结合附件内容回答：',
   },
   {
     id: 'knowledge',
     label: '@ 资料',
     icon: 'alternate_email',
-    prefix: '@资料 ',
   },
   {
     id: 'command',
     label: '/ 命令',
     icon: 'terminal',
-    prefix: '/ ',
   },
 ] as const
 
@@ -235,23 +360,204 @@ function focusComposer() {
   })
 }
 
-function applyComposerAction(prefix: string) {
-  if (!loopySelectedWorkspaceId.value)
-    return
+function compactText(value: unknown, maxLength = 120): string {
+  const compact = String(value || '').replace(/\s+/g, ' ').trim()
+  if (compact.length <= maxLength)
+    return compact
+  return `${compact.slice(0, maxLength)}…`
+}
 
-  const normalizedPrefix = String(prefix || '')
-  if (!normalizedPrefix.trim()) {
-    focusComposer()
+function appendComposerText(text: string) {
+  const normalizedText = String(text || '').trim()
+  if (!normalizedText)
     return
-  }
-
   const current = String(loopyChatInput.value || '')
   const nextValue = current.trim()
-    ? `${current.trimEnd()} ${normalizedPrefix}`
-    : normalizedPrefix
+    ? `${current.trimEnd()} ${normalizedText}`
+    : normalizedText
 
   loopyChatInput.value = nextValue
   focusComposer()
+}
+
+function closeComposerPanel() {
+  activeComposerPanel.value = ''
+}
+
+function toggleComposerPanel(panel: ComposerPanelId) {
+  if (!loopySelectedWorkspaceId.value)
+    return
+
+  activeComposerPanel.value = activeComposerPanel.value === panel ? '' : panel
+}
+
+function handleQuickAction(actionId: ComposerQuickActionId) {
+  if (!loopySelectedWorkspaceId.value)
+    return
+
+  if (actionId === 'attachment') {
+    closeComposerPanel()
+    attachmentInputRef.value?.click()
+    return
+  }
+
+  toggleComposerPanel(actionId)
+}
+
+function resolveResourceMeta(resource: Resource): string {
+  return [
+    resource.type,
+    resource.year ? `${resource.year}` : '',
+    resource.category,
+  ].filter(Boolean).join(' · ')
+}
+
+async function loadProjectsForWorkspace(workspaceId: string) {
+  const normalizedWorkspaceId = String(workspaceId || '').trim()
+  projects.value = []
+  selectedLoopyProjectId.value = ''
+  projectResourceResults.value = []
+  selectedResourceContext.value = null
+  if (!normalizedWorkspaceId)
+    return
+
+  projectsLoading.value = true
+  try {
+    const response = await authApiFetch<ApiResponse<Project[]>>(`/projects?teamId=${encodeURIComponent(normalizedWorkspaceId)}`)
+    projects.value = response.data || []
+  }
+  catch (error: any) {
+    resourceErrorText.value = resolveAuthDisplayMessage(error, '项目列表加载失败，请稍后重试。')
+  }
+  finally {
+    projectsLoading.value = false
+  }
+}
+
+function ensureSelectedProject(): Project | null {
+  const current = selectedLoopyProject.value
+  if (current)
+    return current
+  const firstProject = projects.value[0] || null
+  if (firstProject)
+    selectedLoopyProjectId.value = firstProject.id
+  return firstProject
+}
+
+async function loadResourceResults() {
+  if (activeComposerPanel.value !== 'knowledge' || !loopySelectedWorkspaceId.value)
+    return
+
+  const currentSeq = ++resourceSearchSeq
+  resourcesLoading.value = true
+  resourceErrorText.value = ''
+
+  try {
+    if (resourceSearchScope.value === 'platform') {
+      const query = new URLSearchParams({
+        sort: 'relevance',
+      })
+      if (resourceSearchQuery.value.trim())
+        query.set('q', resourceSearchQuery.value.trim())
+      const response = await authApiFetch<ApiResponse<Resource[]>>(`/resources?${query.toString()}`)
+      if (currentSeq === resourceSearchSeq)
+        platformResourceResults.value = (response.data || []).slice(0, 12)
+      return
+    }
+
+    const project = ensureSelectedProject()
+    if (!project) {
+      projectResourceResults.value = []
+      return
+    }
+
+    const response = await authApiFetch<ApiResponse<Resource[]>>(`/projects/${encodeURIComponent(project.id)}/resources`)
+    if (currentSeq === resourceSearchSeq)
+      projectResourceResults.value = response.data || []
+  }
+  catch (error: any) {
+    if (currentSeq === resourceSearchSeq)
+      resourceErrorText.value = resolveAuthDisplayMessage(error, '资料加载失败，请稍后重试。')
+  }
+  finally {
+    if (currentSeq === resourceSearchSeq)
+      resourcesLoading.value = false
+  }
+}
+
+function scheduleResourceSearch() {
+  if (resourceSearchTimer)
+    clearTimeout(resourceSearchTimer)
+  resourceSearchTimer = setTimeout(() => {
+    void loadResourceResults()
+  }, 220)
+}
+
+function changeResourceScope(scope: ResourceSearchScope) {
+  resourceSearchScope.value = scope
+  if (scope === 'project')
+    ensureSelectedProject()
+}
+
+function selectProjectForResource(project: Project) {
+  selectedLoopyProjectId.value = project.id
+  resourceSearchScope.value = 'project'
+}
+
+function selectResourceContext(resource: Resource) {
+  const scope = resourceSearchScope.value
+  selectedResourceContext.value = {
+    id: resource.id,
+    title: resource.title,
+    scope,
+    projectId: scope === 'project' ? selectedLoopyProjectId.value : '',
+  }
+  appendComposerText(`@${scope === 'platform' ? '平台资料' : '项目资料'}「${resource.title}」（ID: ${resource.id}）${resource.summary ? `：${compactText(resource.summary)}` : ''}`)
+  closeComposerPanel()
+}
+
+function applyCommandPrompt(prompt: string) {
+  appendComposerText(prompt)
+  closeComposerPanel()
+}
+
+function selectAiSpeed(speedId: AiSpeedId) {
+  selectedAiSpeed.value = speedId
+  closeComposerPanel()
+  focusComposer()
+}
+
+function isTextLikeAttachment(file: File): boolean {
+  const normalizedType = String(file.type || '').toLowerCase()
+  const normalizedName = String(file.name || '').toLowerCase()
+  return normalizedType.startsWith('text/')
+    || /\.(md|markdown|txt|json|csv|tsv|yaml|yml|xml|html|css|js|ts|vue)$/i.test(normalizedName)
+}
+
+async function handleAttachmentInput(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''
+  if (files.length === 0)
+    return
+
+  const blocks: string[] = []
+  for (const file of files.slice(0, 4)) {
+    if (!isTextLikeAttachment(file)) {
+      blocks.push(`- ${file.name}（${Math.ceil(file.size / 1024)} KB，暂仅附加文件名）`)
+      continue
+    }
+
+    const text = await file.slice(0, 12000).text().catch(() => '')
+    blocks.push([
+      `- ${file.name}`,
+      '```',
+      compactText(text, 1800),
+      '```',
+    ].join('\n'))
+  }
+
+  appendComposerText(`请结合以下附件内容回答：\n${blocks.join('\n\n')}`)
 }
 
 async function loadAuthContext() {
@@ -270,6 +576,7 @@ async function loadAuthContext() {
     ].find(workspaceId => workspaceId && workspaceOptions.value.some(item => item.workspace.id === workspaceId)) || ''
 
     await syncLoopyWorkspace(nextWorkspaceId)
+    await loadProjectsForWorkspace(nextWorkspaceId)
   }
   catch (error: any) {
     const info = resolveAuthRequestErrorInfo(error)
@@ -283,6 +590,7 @@ async function loadAuthContext() {
     }
     errorText.value = resolveAuthDisplayMessage(error, '对话初始化失败，请稍后重试。')
     await syncLoopyWorkspace('')
+    await loadProjectsForWorkspace('')
   }
   finally {
     loading.value = false
@@ -299,6 +607,19 @@ watch(
     await nextTick()
     if (messageScrollRef.value)
       messageScrollRef.value.scrollTop = messageScrollRef.value.scrollHeight
+  },
+)
+
+watch(
+  () => [
+    activeComposerPanel.value,
+    resourceSearchScope.value,
+    resourceSearchQuery.value,
+    selectedLoopyProjectId.value,
+  ],
+  () => {
+    if (activeComposerPanel.value === 'knowledge')
+      scheduleResourceSearch()
   },
 )
 
@@ -503,6 +824,13 @@ onMounted(() => {
 
             <footer class="loopy-page-footer shrink-0">
               <div class="loopy-page-composer">
+                <input
+                  ref="attachmentInputRef"
+                  class="sr-only"
+                  type="file"
+                  multiple
+                  @change="handleAttachmentInput"
+                >
                 <textarea
                   ref="composerRef"
                   :value="loopyChatInput"
@@ -512,6 +840,134 @@ onMounted(() => {
                   :disabled="!loopySelectedWorkspaceId"
                   @input="loopyChatInput = ($event.target as HTMLTextAreaElement).value"
                 />
+                <div
+                  v-if="activeComposerPanel"
+                  class="loopy-page-composer-panel"
+                  :data-panel="activeComposerPanel"
+                >
+                  <template v-if="activeComposerPanel === 'knowledge'">
+                    <div class="loopy-page-composer-panel__header">
+                      <div class="loopy-page-panel-tabs" role="tablist" aria-label="资料来源">
+                        <button
+                          class="loopy-page-panel-tab"
+                          type="button"
+                          :data-active="resourceSearchScope === 'platform'"
+                          @click="changeResourceScope('platform')"
+                        >
+                          平台资料
+                        </button>
+                        <button
+                          class="loopy-page-panel-tab"
+                          type="button"
+                          :data-active="resourceSearchScope === 'project'"
+                          @click="changeResourceScope('project')"
+                        >
+                          项目资料
+                        </button>
+                      </div>
+                      <button class="loopy-page-panel-close" type="button" aria-label="关闭资料选择" @click="closeComposerPanel">
+                        <span class="material-symbols-outlined text-[16px]">close</span>
+                      </button>
+                    </div>
+
+                    <div class="loopy-page-project-strip">
+                      <button
+                        v-for="project in projects.slice(0, 8)"
+                        :key="project.id"
+                        class="loopy-page-project-chip"
+                        type="button"
+                        :data-active="project.id === selectedLoopyProjectId"
+                        @click="selectProjectForResource(project)"
+                      >
+                        <span class="material-symbols-outlined text-[15px]">folder_managed</span>
+                        <span class="truncate">{{ project.title }}</span>
+                      </button>
+                      <span v-if="projectsLoading" class="loopy-page-panel-muted">项目加载中...</span>
+                      <span v-else-if="projects.length === 0" class="loopy-page-panel-muted">暂无可选项目</span>
+                    </div>
+
+                    <label class="loopy-page-resource-search">
+                      <span class="material-symbols-outlined text-[17px]">search</span>
+                      <input
+                        v-model="resourceSearchQuery"
+                        type="search"
+                        :placeholder="resourceSearchScope === 'platform' ? '搜索平台资料' : '搜索项目资料'"
+                      >
+                    </label>
+
+                    <p v-if="resourceErrorText" class="loopy-page-panel-error">
+                      {{ resourceErrorText }}
+                    </p>
+                    <div class="loopy-page-resource-list">
+                      <button
+                        v-for="resource in visibleResourceResults"
+                        :key="`${resourceSearchScope}-${resource.id}`"
+                        class="loopy-page-resource-row"
+                        type="button"
+                        @click="selectResourceContext(resource)"
+                      >
+                        <span class="loopy-page-resource-row__icon">
+                          <span class="material-symbols-outlined text-[17px]">description</span>
+                        </span>
+                        <span class="loopy-page-resource-row__body">
+                          <span class="loopy-page-resource-row__title">{{ resource.title }}</span>
+                          <span class="loopy-page-resource-row__meta">{{ resolveResourceMeta(resource) || '资料' }}</span>
+                        </span>
+                      </button>
+                      <p v-if="resourcesLoading" class="loopy-page-panel-empty">资料加载中...</p>
+                      <p v-else-if="visibleResourceResults.length === 0" class="loopy-page-panel-empty">暂无匹配资料</p>
+                    </div>
+                  </template>
+
+                  <template v-else-if="activeComposerPanel === 'command'">
+                    <div class="loopy-page-composer-panel__header">
+                      <span class="loopy-page-panel-title">命令</span>
+                      <button class="loopy-page-panel-close" type="button" aria-label="关闭命令面板" @click="closeComposerPanel">
+                        <span class="material-symbols-outlined text-[16px]">close</span>
+                      </button>
+                    </div>
+                    <div class="loopy-page-command-list">
+                      <button
+                        v-for="command in commandItems"
+                        :key="command.id"
+                        class="loopy-page-command-row"
+                        type="button"
+                        @click="applyCommandPrompt(command.prompt)"
+                      >
+                        <span>
+                          <strong>{{ command.label }}</strong>
+                          <small>{{ command.description }}</small>
+                        </span>
+                        <span class="material-symbols-outlined text-[17px]">arrow_forward</span>
+                      </button>
+                    </div>
+                  </template>
+
+                  <template v-else-if="activeComposerPanel === 'speed'">
+                    <div class="loopy-page-composer-panel__header">
+                      <span class="loopy-page-panel-title">回答速度</span>
+                      <button class="loopy-page-panel-close" type="button" aria-label="关闭速度选择" @click="closeComposerPanel">
+                        <span class="material-symbols-outlined text-[16px]">close</span>
+                      </button>
+                    </div>
+                    <div class="loopy-page-speed-list">
+                      <button
+                        v-for="option in aiSpeedOptions"
+                        :key="option.id"
+                        class="loopy-page-speed-row"
+                        type="button"
+                        :data-active="option.id === selectedAiSpeed"
+                        @click="selectAiSpeed(option.id)"
+                      >
+                        <span>
+                          <strong>{{ option.label }}</strong>
+                          <small>{{ option.description }}</small>
+                        </span>
+                        <span v-if="option.id === selectedAiSpeed" class="material-symbols-outlined text-[17px]">check</span>
+                      </button>
+                    </div>
+                  </template>
+                </div>
                 <div class="loopy-page-composer__footer">
                   <div class="loopy-page-composer__tools">
                     <button
@@ -520,7 +976,7 @@ onMounted(() => {
                       class="loopy-page-composer__tool"
                       type="button"
                       :disabled="!loopySelectedWorkspaceId"
-                      @click="applyComposerAction(action.prefix)"
+                      @click="handleQuickAction(action.id)"
                     >
                       <span class="material-symbols-outlined text-[18px]">{{ action.icon }}</span>
                       <span>{{ action.label }}</span>
@@ -532,10 +988,11 @@ onMounted(() => {
                       class="loopy-page-ai-selector"
                       type="button"
                       :disabled="!loopySelectedWorkspaceId"
+                      @click="toggleComposerPanel('speed')"
                     >
                       <span class="material-symbols-outlined text-[16px]">auto_awesome</span>
                       <span>AI 回答速度</span>
-                      <span class="loopy-page-ai-selector__value">快速</span>
+                      <span class="loopy-page-ai-selector__value">{{ selectedAiSpeedOption.label }}</span>
                       <span class="material-symbols-outlined text-[16px]">expand_more</span>
                     </button>
 
@@ -1031,6 +1488,247 @@ onMounted(() => {
   overflow: visible;
 }
 
+.loopy-page-composer-panel {
+  position: absolute;
+  left: 1rem;
+  bottom: 4.25rem;
+  width: min(42rem, calc(100% - 2rem));
+  max-height: min(24rem, 48vh);
+  padding: 0.75rem;
+  border: 1px solid #dbe4f2;
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  overflow: hidden;
+  z-index: 4;
+}
+
+.loopy-page-composer-panel[data-panel='speed'] {
+  left: auto;
+  right: 5rem;
+  width: min(22rem, calc(100% - 2rem));
+}
+
+.loopy-page-composer-panel__header {
+  min-height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.loopy-page-panel-title {
+  color: #0f172a;
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.loopy-page-panel-tabs {
+  display: inline-flex;
+  padding: 0.1875rem;
+  border-radius: 0.625rem;
+  background: #f1f5f9;
+  gap: 0.125rem;
+}
+
+.loopy-page-panel-tab,
+.loopy-page-panel-close {
+  border: none;
+  background: transparent;
+}
+
+.loopy-page-panel-tab {
+  height: 1.75rem;
+  padding: 0 0.625rem;
+  border-radius: 0.5rem;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.loopy-page-panel-tab[data-active='true'] {
+  background: #fff;
+  color: #1d4ed8;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+.loopy-page-panel-close {
+  width: 1.875rem;
+  height: 1.875rem;
+  border-radius: 0.5rem;
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loopy-page-panel-close:hover {
+  color: #334155;
+  background: #f1f5f9;
+}
+
+.loopy-page-project-strip {
+  display: flex;
+  gap: 0.375rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.loopy-page-project-chip {
+  max-width: 11rem;
+  height: 2rem;
+  padding: 0 0.625rem;
+  border: 1px solid #dbe4f2;
+  border-radius: 0.625rem;
+  background: #fff;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.loopy-page-project-chip[data-active='true'] {
+  border-color: #93b7fd;
+  background: #eff5ff;
+  color: #1d4ed8;
+}
+
+.loopy-page-resource-search {
+  height: 2.25rem;
+  padding: 0 0.625rem;
+  border: 1px solid #dbe4f2;
+  border-radius: 0.625rem;
+  background: #fff;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.loopy-page-resource-search input {
+  min-width: 0;
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #0f172a;
+  font-size: 0.8125rem;
+}
+
+.loopy-page-resource-list,
+.loopy-page-command-list,
+.loopy-page-speed-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  scrollbar-width: thin;
+}
+
+.loopy-page-resource-row,
+.loopy-page-command-row,
+.loopy-page-speed-row {
+  width: 100%;
+  border: none;
+  border-radius: 0.625rem;
+  background: transparent;
+  color: #334155;
+  text-align: left;
+}
+
+.loopy-page-resource-row {
+  padding: 0.5rem;
+  display: grid;
+  grid-template-columns: 1.875rem minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.loopy-page-resource-row:hover,
+.loopy-page-command-row:hover,
+.loopy-page-speed-row:hover {
+  background: #f5f8ff;
+}
+
+.loopy-page-resource-row__icon {
+  width: 1.875rem;
+  height: 1.875rem;
+  border-radius: 0.5rem;
+  background: #edf4ff;
+  color: #2f6af2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loopy-page-resource-row__body,
+.loopy-page-command-row span,
+.loopy-page-speed-row span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.loopy-page-resource-row__title {
+  color: #0f172a;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loopy-page-resource-row__meta,
+.loopy-page-command-row small,
+.loopy-page-speed-row small,
+.loopy-page-panel-muted,
+.loopy-page-panel-empty {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.loopy-page-command-row,
+.loopy-page-speed-row {
+  padding: 0.625rem 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.loopy-page-command-row strong,
+.loopy-page-speed-row strong {
+  color: #0f172a;
+  font-size: 0.8125rem;
+}
+
+.loopy-page-speed-row[data-active='true'] {
+  background: #eff5ff;
+  color: #1d4ed8;
+}
+
+.loopy-page-panel-error {
+  margin: 0;
+  color: #be123c;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.loopy-page-panel-empty {
+  margin: 0;
+  padding: 0.75rem;
+}
+
 .loopy-page-textarea {
   width: 100%;
   min-height: 8.5rem;
@@ -1045,7 +1743,7 @@ onMounted(() => {
 }
 
 .loopy-page-textarea:focus {
-  box-shadow: inset 0 0 0 1px #60a5fa;
+  box-shadow: none;
 }
 
 .loopy-page-composer__footer {
@@ -1097,6 +1795,19 @@ onMounted(() => {
   border-color: #bfd2f8;
   color: #1d4ed8;
   background: #fff;
+}
+
+.loopy-page-composer__tool:focus-visible,
+.loopy-page-ai-selector:focus-visible,
+.loopy-page-send:focus-visible,
+.loopy-page-panel-tab:focus-visible,
+.loopy-page-panel-close:focus-visible,
+.loopy-page-project-chip:focus-visible,
+.loopy-page-resource-row:focus-visible,
+.loopy-page-command-row:focus-visible,
+.loopy-page-speed-row:focus-visible {
+  outline: 2px solid rgba(47, 106, 242, 0.28);
+  outline-offset: 2px;
 }
 
 .loopy-page-composer__tool:disabled {
@@ -1211,6 +1922,15 @@ onMounted(() => {
     min-height: 8rem;
     padding: 0.75rem 0.75rem 5.5rem;
     font-size: 0.875rem;
+  }
+
+  .loopy-page-composer-panel,
+  .loopy-page-composer-panel[data-panel='speed'] {
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 6rem;
+    width: auto;
+    max-height: min(24rem, 54vh);
   }
 
   .loopy-page-composer__footer {

@@ -222,6 +222,11 @@ const WORKSPACE_AGENT_PROFILES: Record<WorkspaceSupportedMode, WorkspaceAgentPro
     allowWebAccess: true,
     progressMessage: '',
   },
+  loopy_page: {
+    mode: 'loopy_page',
+    allowWebAccess: true,
+    progressMessage: '',
+  },
   auto_optimize: {
     mode: 'auto_optimize',
     allowWebAccess: false,
@@ -636,7 +641,7 @@ function isWriteLockedWorkspaceMode(
   profile: WorkspaceAgentProfile,
   context: WorkspaceAiExecutionContext,
 ): boolean {
-  if (profile.mode === 'dialog_ask')
+  if (profile.mode === 'dialog_ask' || profile.mode === 'loopy_page')
     return false
   if (profile.mode === 'contextual_agent')
     return isContextualDraftActionIntent(context)
@@ -684,9 +689,9 @@ function isStandaloneWorkflowTopicRequest(message: string): boolean {
 }
 
 function buildModePrompt(profile: WorkspaceAgentProfile, context?: WorkspaceAiExecutionContext): string {
-  if (profile.mode === 'dialog_ask') {
+  if (profile.mode === 'dialog_ask' || profile.mode === 'loopy_page') {
     return [
-      '模式：对话询问（只读）。',
+      profile.mode === 'loopy_page' ? '模式：Loopy 首页对话（只读、独立会话）。' : '模式：对话询问（只读）。',
       '仅允许解释、澄清、对比、归纳和下一步建议。',
       '禁止输出任何写入、审批通过、自动执行或文档已修改之类的暗示。',
       '如果信息不足，要明确指出缺口，而不是编造结论。',
@@ -1887,6 +1892,10 @@ async function executeDialogAskWorkspaceAi(input: WorkspaceModeExecutionInput): 
   return executeWorkspaceAgentMode(input, WORKSPACE_AGENT_PROFILES.dialog_ask)
 }
 
+async function executeLoopyPageWorkspaceAi(input: WorkspaceModeExecutionInput): Promise<WorkspaceExecutionOutcome> {
+  return executeWorkspaceAgentMode(input, WORKSPACE_AGENT_PROFILES.loopy_page)
+}
+
 async function executeAutoOptimizeWorkspaceAi(input: WorkspaceModeExecutionInput): Promise<WorkspaceExecutionOutcome> {
   return executeWorkspaceAgentMode(input, WORKSPACE_AGENT_PROFILES.auto_optimize)
 }
@@ -1927,6 +1936,8 @@ export async function executeWorkspaceAi(input: {
 
   if (input.mode === 'auto_optimize')
     return executeAutoOptimizeWorkspaceAi(executionInput)
+  if (input.mode === 'loopy_page')
+    return executeLoopyPageWorkspaceAi(executionInput)
   if (input.mode === 'issue_discovery')
     return executeIssueDiscoveryWorkspaceAi(executionInput)
   if (input.mode === 'document_assist')

@@ -42,6 +42,7 @@ function normalizeMode(value: unknown): WorkspaceAiMode {
   const text = toText(value) as WorkspaceAiMode
   if (
     text === 'dialog_ask'
+    || text === 'loopy_page'
     || text === 'auto_optimize'
     || text === 'issue_discovery'
     || text === 'defense'

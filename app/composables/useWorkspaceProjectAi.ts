@@ -27,7 +27,7 @@ import type {
 import { reactive, ref } from 'vue'
 
 export type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
-export type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
+export type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist' | 'loopy_page'>
 
 function createEmptyTopicBoardDraft(): WorkspaceTopicBoardDraft {
   return {

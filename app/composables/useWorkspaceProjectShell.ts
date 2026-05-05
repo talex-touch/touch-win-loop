@@ -45,7 +45,7 @@ export type WorkspaceMainTabId = WorkspaceOpenTabState
 type WorkspaceMeetingTabId = `meeting:${string}`
 export type WorkspaceMeetingCreateLocalTabId = WorkspaceMeetingCreateTabId
 export type WorkspaceWorkbenchMode = ProjectWorkbenchMode
-export type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
+export type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense' | 'loopy_page'>
 
 interface DeviceRestoreConfirmState {
   visible: boolean

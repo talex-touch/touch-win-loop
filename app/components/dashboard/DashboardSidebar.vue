@@ -49,9 +49,21 @@ watch(() => props.analystAvatar, (value) => {
   displayAvatarUrl.value = String(value || '').trim()
 }, { immediate: true })
 
+function resolveMenuItemTo(item: DashboardMenuItem): string {
+  if (item.id === 'team' && selectedWorkspaceId.value)
+    return `/team/${selectedWorkspaceId.value}`
+  return item.to
+}
+
 function isMenuItemActive(item: DashboardMenuItem): boolean {
   if (item.to === '/dashboard')
     return route.path === '/dashboard'
+  if (item.id === 'team') {
+    const normalizedPath = route.path.replace(/\/+$/, '') || '/'
+    return normalizedPath === '/team'
+      || /^\/team\/[^/]+(?:\/project\/[^/]+)?$/.test(normalizedPath)
+      || /^\/workspace\/[^/]+(?:\/project\/[^/]+)?$/.test(normalizedPath)
+  }
   return route.path === item.to || route.path.startsWith(`${item.to}/`)
 }
 
@@ -141,7 +153,7 @@ function onUserUpdated(user: AuthUser) {
         <NuxtLink
           v-for="item in props.menuItems"
           :key="item.id"
-          :to="item.to"
+          :to="resolveMenuItemTo(item)"
           class="dashboard-sidebar__nav-item"
           :class="{ 'dashboard-sidebar__nav-item--active': isMenuItemActive(item) }"
         >

@@ -65,6 +65,11 @@ const {
   resetConversation: resetLoopyConversation,
 } = loopyState
 
+const loopySessionOptions = computed(() => [
+  { label: loopyLoadingSessions.value ? '加载中...' : '新会话', value: '' },
+  ...loopySessions.value.map(session => ({ label: session.title, value: session.id })),
+])
+
 watch(
   () => [preferredWorkspaceId.value, props.workspaceOptions.map(item => item.workspace.id).join('|')],
   async () => {
@@ -126,22 +131,13 @@ function togglePanel() {
           <div class="loopy-floating-panel__field loopy-floating-panel__field--sessions">
             <span class="loopy-floating-panel__label">会话</span>
             <div class="flex gap-2 items-center">
-              <select
-                :value="loopyActiveSessionId"
-                class="loopy-floating-panel__select"
-                @change="switchLoopySession(($event.target as HTMLSelectElement).value)"
-              >
-                <option value="">
-                  {{ loopyLoadingSessions ? '加载中...' : '新会话' }}
-                </option>
-                <option
-                  v-for="session in loopySessions"
-                  :key="session.id"
-                  :value="session.id"
-                >
-                  {{ session.title }}
-                </option>
-              </select>
+              <UiSelect
+                :model-value="loopyActiveSessionId"
+                :options="loopySessionOptions"
+                size="sm"
+                aria-label="Loopy 会话"
+                @change="value => switchLoopySession(String(value || ''))"
+              />
               <button
                 class="loopy-floating-panel__ghost-btn"
                 type="button"
