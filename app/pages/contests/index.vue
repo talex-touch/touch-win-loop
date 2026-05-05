@@ -1704,6 +1704,24 @@ onBeforeUnmount(() => {
   line-height: 1.35;
 }
 
+.contest-card__track-popover-name code,
+.contest-detail-modal__nav-copy code,
+.contest-detail-modal__track-detail h4 code {
+  display: inline-flex;
+  max-width: 100%;
+  margin-left: 6px;
+  border: 1px solid #dbe5f5;
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: #667792;
+  background: #f6f9fd;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  vertical-align: 1px;
+  overflow-wrap: anywhere;
+}
+
 .contest-card__track-popover-year {
   width: fit-content;
   border-radius: 5px;
@@ -2250,6 +2268,13 @@ onBeforeUnmount(() => {
   font-weight: 900;
 }
 
+.contest-detail-modal__nav-copy code {
+  max-width: 118px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .contest-detail-modal__nav-copy small {
   color: #98a6b9;
   font-size: 11px;
@@ -2414,6 +2439,17 @@ onBeforeUnmount(() => {
   color: #172033;
   font-size: 14px;
   font-weight: 900;
+}
+
+.contest-detail-modal__track-detail h4 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.contest-detail-modal__track-detail h4 code {
+  margin-left: 0;
 }
 
 .contest-detail-modal__resources p,
