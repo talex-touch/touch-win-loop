@@ -21,6 +21,7 @@ const ADMIN_INDEX_FILE = resolve(process.cwd(), 'app/pages/admin/index.vue')
 const ADMIN_OPERATIONS_STORE_FILE = resolve(process.cwd(), 'server/utils/admin-operations-store.ts')
 const PROJECT_KNOWLEDGE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-knowledge-store.ts')
 const KNOWLEDGE_ANALYTICS_STORE_FILE = resolve(process.cwd(), 'server/utils/project-knowledge-analytics-store.ts')
+const RESOURCE_KNOWLEDGE_STORE_FILE = resolve(process.cwd(), 'server/utils/resource-knowledge-store.ts')
 
 describe('project knowledge phase2', () => {
   it('aI 返回协议与 assistant metadata 已扩展 knowledge 结构', async () => {
@@ -129,5 +130,14 @@ describe('project knowledge phase2', () => {
     assert.match(pluginSource, /embeddingProvider: embeddingResult\.provider/, '知识索引 worker 未持久化 embedding provider')
     assert.match(pluginSource, /embeddingModel: embeddingResult\.model/, '知识索引 worker 未持久化 embedding model')
     assert.match(pluginSource, /embeddingFallbackUsed: embeddingResult\.fallbackUsed/, '知识索引 worker 未持久化 fallback 标记')
+  })
+
+  it('资源知识 worker 失败回写 SQL 固定消费退避参数', async () => {
+    const storeSource = await readFile(RESOURCE_KNOWLEDGE_STORE_FILE, 'utf8')
+
+    assert.doesNotMatch(storeSource, /const nextRunAtSql = nextStatus === 'dead_letter'/, '失败回写不应再动态跳过 $4 参数')
+    assert.match(storeSource, /WHEN \$2::TEXT = 'dead_letter' THEN next_run_at/, 'dead_letter 分支应保留原 next_run_at')
+    assert.match(storeSource, /GREATEST\(2, \$4::INT\)/, '失败重试分支应显式消费 $4::INT 退避参数')
+    assert.match(storeSource, /result_payload = \$5::JSONB/, '失败回写应继续将结果 payload 写为 JSONB')
   })
 })

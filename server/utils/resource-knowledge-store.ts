@@ -1196,16 +1196,16 @@ export async function finishResourceGovernanceTaskFailure(
   },
 ): Promise<void> {
   const nextStatus: ResourceGovernanceTaskStatus = input.attempt >= input.maxAttempt ? 'dead_letter' : 'failed'
-  const nextRunAtSql = nextStatus === 'dead_letter'
-    ? 'next_run_at'
-    : `NOW() + (LEAST(60, GREATEST(2, $4))::TEXT || ' minutes')::INTERVAL`
 
   await db.query(
     `UPDATE contest_resource_governance_tasks
      SET status = $2,
          error_message = $3,
          result_payload = $5::JSONB,
-         next_run_at = ${nextRunAtSql},
+         next_run_at = CASE
+           WHEN $2::TEXT = 'dead_letter' THEN next_run_at
+           ELSE NOW() + (LEAST(60, GREATEST(2, $4::INT))::TEXT || ' minutes')::INTERVAL
+         END,
          finished_at = NOW(),
          updated_at = NOW()
      WHERE id = $1`,
