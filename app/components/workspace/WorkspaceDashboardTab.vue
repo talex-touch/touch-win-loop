@@ -100,6 +100,14 @@ const dashboardGuide = computed(() => {
   ]
 })
 
+const trackSelectOptions = computed(() => [
+  { value: '', label: '选择赛道', disabled: true },
+  ...(props.selectedContest?.tracks || []).map(track => ({
+    value: track.id,
+    label: track.name,
+  })),
+])
+
 function resolveMappingScoreBarClass(score: number): string {
   if (score >= 80)
     return 'bg-emerald-500'
@@ -178,18 +186,14 @@ function resolveMappingScoreTextClass(score: number): string {
             <span class="rounded-full bg-blue-500 h-1.5 w-1.5 inline-block animate-pulse" />
             <span>刷新中</span>
           </div>
-          <select
-            class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 min-w-46 focus:border-blue-500"
-            :value="props.selectedTrackId"
-            @change="emit('updateSelectedTrackId', ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="" disabled>
-              选择赛道
-            </option>
-            <option v-for="track in props.selectedContest?.tracks || []" :key="track.id" :value="track.id">
-              {{ track.name }}
-            </option>
-          </select>
+          <UiSelect
+            :model-value="props.selectedTrackId"
+            :options="trackSelectOptions"
+            size="xs"
+            aria-label="选择赛道"
+            class="min-w-46"
+            @change="value => emit('updateSelectedTrackId', String(value))"
+          />
         </div>
       </div>
 

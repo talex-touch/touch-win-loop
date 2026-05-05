@@ -180,6 +180,29 @@ function resolveInitial(value: string | null | undefined): string {
 const workspacePrimaryRole = computed<WorkspaceMemberRole | ''>(() => resolvePrimaryRole(currentWorkspace.value?.workspace.roles))
 const canManageConnectors = computed(() => props.isPlatformAdminUser || workspacePrimaryRole.value === 'owner' || workspacePrimaryRole.value === 'admin')
 
+const displayFontSizeOptions = computed(() => [
+  { value: '', label: '跟随系统默认' },
+  ...WORKSPACE_FONT_SIZE_PRESET_OPTIONS.map(option => ({
+    value: option.value,
+    label: option.label,
+  })),
+])
+
+const displayTabSpacingOptions = computed(() => [
+  { value: '', label: '跟随系统默认' },
+  ...WORKSPACE_TAB_SPACING_PRESET_OPTIONS.map(option => ({
+    value: option.value,
+    label: option.label,
+  })),
+])
+
+const workspaceInviteExpiresInDayOptions = [
+  { value: 3, label: '3 天' },
+  { value: 7, label: '7 天' },
+  { value: 14, label: '14 天' },
+  { value: 30, label: '30 天' },
+] as const
+
 const userIdentityItems = computed(() => {
   const items: Array<{ key: string, value: string, mono?: boolean }> = []
   if (currentUserId.value) {
@@ -744,36 +767,26 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
         <div class="mt-4 gap-4 grid md:grid-cols-2">
           <label class="text-xs text-slate-600 block space-y-1.5">
             <span class="text-slate-700 font-semibold">默认字号</span>
-            <select
-              :value="userWorkspaceDisplayFontSizeDraft"
+            <UiSelect
+              :model-value="userWorkspaceDisplayFontSizeDraft"
+              :options="displayFontSizeOptions"
               data-testid="user-settings-display-font-size-select"
-              class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-              @change="userWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(($event.target as HTMLSelectElement).value)"
-            >
-              <option value="">
-                跟随系统默认
-              </option>
-              <option v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS" :key="`user-settings-font-size-${option.value}`" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
+              aria-label="默认字号"
+              class="w-full"
+              @change="value => userWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(String(value))"
+            />
           </label>
 
           <label class="text-xs text-slate-600 block space-y-1.5">
             <span class="text-slate-700 font-semibold">默认标签边距</span>
-            <select
-              :value="userWorkspaceDisplayTabSpacingDraft"
+            <UiSelect
+              :model-value="userWorkspaceDisplayTabSpacingDraft"
+              :options="displayTabSpacingOptions"
               data-testid="user-settings-display-tab-spacing-select"
-              class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-              @change="userWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(($event.target as HTMLSelectElement).value)"
-            >
-              <option value="">
-                跟随系统默认
-              </option>
-              <option v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS" :key="`user-settings-tab-spacing-${option.value}`" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
+              aria-label="默认标签边距"
+              class="w-full"
+              @change="value => userWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(String(value))"
+            />
           </label>
         </div>
 
@@ -1083,41 +1096,24 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
         <div class="gap-4 grid sm:grid-cols-2">
           <label class="user-settings-field">
             <span class="user-settings-field__label">空间角色</span>
-            <select
+            <UiSelect
               v-model="workspaceInviteRole"
-              class="user-settings-select"
+              :options="inviteRoleOptions"
               :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
-            >
-              <option
-                v-for="option in inviteRoleOptions"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </option>
-            </select>
+              aria-label="空间角色"
+              class="w-full"
+            />
           </label>
 
           <label class="user-settings-field">
             <span class="user-settings-field__label">有效期</span>
-            <select
+            <UiSelect
               v-model="workspaceInviteExpiresInDays"
-              class="user-settings-select"
+              :options="workspaceInviteExpiresInDayOptions"
               :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
-            >
-              <option :value="3">
-                3 天
-              </option>
-              <option :value="7">
-                7 天
-              </option>
-              <option :value="14">
-                14 天
-              </option>
-              <option :value="30">
-                30 天
-              </option>
-            </select>
+              aria-label="邀请有效期"
+              class="w-full"
+            />
           </label>
         </div>
       </div>

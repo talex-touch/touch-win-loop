@@ -45,6 +45,11 @@ const emit = defineEmits<{
   updateWorkspaceMemberRole: [member: WorkspaceMemberSummary]
   revokeWorkspaceInvitation: [invitationId: string]
 }>()
+
+const editableRoleSelectOptions = computed(() => props.editableRoleOptions.map(option => ({
+  label: option.label,
+  value: option.value,
+})))
 </script>
 
 <template>
@@ -131,20 +136,15 @@ const emit = defineEmits<{
             </div>
             <div class="user-settings-member-actions">
               <template v-if="props.isRoleEditorVisible(member)">
-                <select
-                  :value="props.workspaceMemberRoleDrafts[member.userId]"
+                <UiSelect
+                  :model-value="props.workspaceMemberRoleDrafts[member.userId]"
+                  :options="editableRoleSelectOptions"
                   class="user-settings-select user-settings-select--compact"
                   :disabled="props.workspaceMemberRoleSubmittingUserId === member.userId"
-                  @change="emit('updateWorkspaceMemberRoleDraft', { userId: member.userId, role: ($event.target as HTMLSelectElement).value as EditableWorkspaceRole })"
-                >
-                  <option
-                    v-for="option in props.editableRoleOptions"
-                    :key="option.value"
-                    :value="option.value"
-                  >
-                    {{ option.label }}
-                  </option>
-                </select>
+                  size="xs"
+                  aria-label="空间角色"
+                  @change="value => emit('updateWorkspaceMemberRoleDraft', { userId: member.userId, role: value as EditableWorkspaceRole })"
+                />
                 <button
                   class="user-settings-btn user-settings-btn--compact"
                   :disabled="!props.canSubmitRoleChange(member)"

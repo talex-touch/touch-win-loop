@@ -63,6 +63,13 @@ const emit = defineEmits<{
 }>()
 
 const editableProjectMemberRoles: ProjectMemberRole[] = ['manager', 'editor', 'viewer']
+const invitationExpiryOptions = [
+  { label: '1 天', value: 1 },
+  { label: '3 天', value: 3 },
+  { label: '7 天', value: 7 },
+  { label: '14 天', value: 14 },
+  { label: '30 天', value: 30 },
+]
 
 const modelVisible = computed({
   get: () => props.visible,
@@ -70,6 +77,20 @@ const modelVisible = computed({
     if (!value)
       emit('close')
   },
+})
+
+const projectInviteRoleSelectOptions = computed(() => {
+  return props.projectInviteRoleOptions.map(role => ({
+    label: props.roleLabel(role),
+    value: role,
+  }))
+})
+
+const editableProjectMemberRoleOptions = computed(() => {
+  return editableProjectMemberRoles.map(role => ({
+    label: props.roleLabel(role),
+    value: role,
+  }))
 })
 </script>
 
@@ -136,44 +157,25 @@ const modelVisible = computed({
           <div class="gap-2 grid grid-cols-2">
             <label class="text-xs text-slate-600 block space-y-1">
               <span class="block">项目角色</span>
-              <select
+              <UiSelect
                 v-model="invitationForm.role"
+                :options="projectInviteRoleSelectOptions"
                 data-testid="team-project-invite-role-select"
-                class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-              >
-                <option
-                  v-for="role in projectInviteRoleOptions"
-                  :key="`team-project-role-option-${role}`"
-                  :value="role"
-                >
-                  {{ roleLabel(role) }}
-                </option>
-              </select>
+                size="sm"
+                aria-label="项目角色"
+              />
             </label>
 
             <label class="text-xs text-slate-600 block space-y-1">
               <span class="block">有效期</span>
-              <select
-                v-model.number="invitationForm.expiresInDays"
+              <UiSelect
+                :model-value="invitationForm.expiresInDays"
+                :options="invitationExpiryOptions"
                 data-testid="team-project-invite-expiry-select"
-                class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-              >
-                <option :value="1">
-                  1 天
-                </option>
-                <option :value="3">
-                  3 天
-                </option>
-                <option :value="7">
-                  7 天
-                </option>
-                <option :value="14">
-                  14 天
-                </option>
-                <option :value="30">
-                  30 天
-                </option>
-              </select>
+                size="sm"
+                aria-label="有效期"
+                @change="value => invitationForm.expiresInDays = Number(value || 7)"
+              />
             </label>
           </div>
 
@@ -284,19 +286,13 @@ const modelVisible = computed({
                   v-if="canEditMember(member)"
                   class="flex shrink-0 gap-2 items-center"
                 >
-                  <select
+                  <UiSelect
                     v-model="roleDraftMap[member.userId]"
+                    :options="editableProjectMemberRoleOptions"
                     data-testid="team-project-member-role-select"
-                    class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-7 focus:border-blue-500"
-                  >
-                    <option
-                      v-for="role in editableProjectMemberRoles"
-                      :key="`team-project-member-role-${member.userId}-${role}`"
-                      :value="role"
-                    >
-                      {{ roleLabel(role) }}
-                    </option>
-                  </select>
+                    size="xs"
+                    aria-label="成员角色"
+                  />
                   <button
                     data-testid="team-project-member-role-update-button"
                     class="text-xs text-slate-700 font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"

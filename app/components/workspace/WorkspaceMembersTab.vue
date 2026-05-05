@@ -71,6 +71,13 @@ const normalizedWorkspaceSeatLimit = computed<number | null>(() => {
 const workspaceCanAddSeat = computed(() => {
   return props.workspaceSupportsSeatAdd && props.workspaceCanManageBillingSeats
 })
+
+const projectRoleSelectOptions = computed(() => {
+  return props.projectRoleOptions.map(role => ({
+    value: role,
+    label: props.workspaceRoleLabel(role),
+  }))
+})
 </script>
 
 <template>
@@ -183,20 +190,15 @@ const workspaceCanAddSeat = computed(() => {
                   v-if="props.workspaceCanEditMembers && member.role !== 'owner'"
                   class="mt-2 flex flex-wrap gap-2 items-center"
                 >
-                  <select
-                    :value="props.workspaceMemberRoleDraftMap[member.userId]"
+                  <UiSelect
+                    :model-value="props.workspaceMemberRoleDraftMap[member.userId]"
+                    :options="projectRoleSelectOptions"
                     data-testid="project-member-role-select"
-                    class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-7 focus:border-blue-500"
-                    @change="emit('updateWorkspaceMemberRoleDraft', { userId: member.userId, role: ($event.target as HTMLSelectElement).value as ProjectMemberRole })"
-                  >
-                    <option
-                      v-for="role in props.projectRoleOptions"
-                      :key="`member-role-option-${member.userId}-${role}`"
-                      :value="role"
-                    >
-                      {{ props.workspaceRoleLabel(role) }}
-                    </option>
-                  </select>
+                    size="xs"
+                    aria-label="项目角色"
+                    class="min-w-28"
+                    @change="value => emit('updateWorkspaceMemberRoleDraft', { userId: member.userId, role: String(value) as ProjectMemberRole })"
+                  />
                   <button
                     data-testid="project-member-role-update-button"
                     class="text-xs font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"

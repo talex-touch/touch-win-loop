@@ -85,6 +85,11 @@ const selectedUnionIdSet = computed(() => new Set(selectedFeishuUnionIds.value))
 const selectedCandidates = computed(() => directoryCandidates.value.filter(candidate => selectedUnionIdSet.value.has(candidate.unionId)))
 const departmentOptions = computed(() => buildDirectoryScopeOptions('departmentIds'))
 const groupOptions = computed(() => buildDirectoryScopeOptions('groupIds'))
+const feishuMemberRoleOptions = [
+  { value: 'member', label: 'member' },
+  { value: 'manager', label: 'manager' },
+  { value: 'admin', label: 'admin' },
+] as const
 const memberSyncDisabledText = computed(() => {
   if (canSyncFeishuMembers.value)
     return ''
@@ -574,17 +579,14 @@ watch(
           <div class="mt-2 space-y-2">
             <div v-for="candidate in selectedCandidates" :key="candidate.unionId" class="text-xs text-slate-600 flex gap-3 items-center justify-between">
               <span class="truncate">{{ candidate.name || candidate.unionId }}</span>
-              <select v-model="roleMappingDrafts[candidate.unionId]" class="px-2 border border-slate-200 rounded-lg bg-white h-8" :disabled="!canSyncFeishuMembers">
-                <option value="member">
-                  member
-                </option>
-                <option value="manager">
-                  manager
-                </option>
-                <option value="admin">
-                  admin
-                </option>
-              </select>
+              <UiSelect
+                v-model="roleMappingDrafts[candidate.unionId]"
+                :options="feishuMemberRoleOptions"
+                :disabled="!canSyncFeishuMembers"
+                size="xs"
+                aria-label="飞书成员角色"
+                class="min-w-24"
+              />
             </div>
           </div>
         </div>

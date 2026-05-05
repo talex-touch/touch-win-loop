@@ -46,6 +46,21 @@ const modelVisible = computed({
       emit('close')
   },
 })
+
+const inviteRoleSelectOptions = computed(() => {
+  return props.workspaceInviteRoleOptions.map(role => ({
+    label: props.workspaceRoleLabel(role),
+    value: role,
+  }))
+})
+
+const inviteExpiryOptions = [
+  { label: '1 天', value: 1 },
+  { label: '3 天', value: 3 },
+  { label: '7 天', value: 7 },
+  { label: '14 天', value: 14 },
+  { label: '30 天', value: 30 },
+]
 </script>
 
 <template>
@@ -87,46 +102,26 @@ const modelVisible = computed({
         <div class="gap-2 grid grid-cols-2">
           <label class="text-[11px] text-slate-600 block space-y-1">
             <span class="block">项目角色</span>
-            <select
-              :value="props.inviteRole"
+            <UiSelect
+              :model-value="props.inviteRole"
+              :options="inviteRoleSelectOptions"
               data-testid="project-invite-role-select"
-              class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-              @change="emit('updateInviteRole', ($event.target as HTMLSelectElement).value as ProjectMemberRole)"
-            >
-              <option
-                v-for="role in props.workspaceInviteRoleOptions"
-                :key="`workspace-role-option-${role}`"
-                :value="role"
-              >
-                {{ props.workspaceRoleLabel(role) }}
-              </option>
-            </select>
+              size="sm"
+              aria-label="项目角色"
+              @change="value => emit('updateInviteRole', value as ProjectMemberRole)"
+            />
           </label>
 
           <label class="text-[11px] text-slate-600 block space-y-1">
             <span class="block">有效期</span>
-            <select
-              :value="props.inviteExpiresInDays"
+            <UiSelect
+              :model-value="props.inviteExpiresInDays"
+              :options="inviteExpiryOptions"
               data-testid="project-invite-expiry-select"
-              class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-              @change="emit('updateInviteExpiresInDays', Number(($event.target as HTMLSelectElement).value || 7))"
-            >
-              <option :value="1">
-                1 天
-              </option>
-              <option :value="3">
-                3 天
-              </option>
-              <option :value="7">
-                7 天
-              </option>
-              <option :value="14">
-                14 天
-              </option>
-              <option :value="30">
-                30 天
-              </option>
-            </select>
+              size="sm"
+              aria-label="有效期"
+              @change="value => emit('updateInviteExpiresInDays', Number(value || 7))"
+            />
           </label>
         </div>
 
