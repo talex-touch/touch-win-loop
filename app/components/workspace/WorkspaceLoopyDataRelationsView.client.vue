@@ -30,6 +30,8 @@ const payload = ref<ProjectKnowledgeRelationsPayload | null>(null)
 const detail = ref<ProjectKnowledgeNodeDetail | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
+const selectedFlowNodeId = ref('')
+const fallbackReason = ref('')
 const nodeType = ref<ProjectKnowledgeRelationNodeType | ''>('')
 const modality = ref<ProjectKnowledgeModality | 'unknown' | ''>('')
 const embeddingStatus = ref<ProjectKnowledgeEmbeddingStatus | ''>('')
@@ -56,31 +58,217 @@ const embeddingStatusOptions = [
   { value: 'failed', label: 'failed' },
 ] as const
 
+function resolveNodeColor(status: ProjectKnowledgeEmbeddingStatus): string {
+  if (status === 'native')
+    return '#0f9f62'
+  if (status === 'derived')
+    return '#0ea5e9'
+  if (status === 'fallback')
+    return '#d97706'
+  if (status === 'failed')
+    return '#d14b66'
+  return '#6b7280'
+}
+
+function relationLabel(value: string): string {
+  if (value === 'belongs_to')
+    return '归属'
+  if (value === 'derived_from')
+    return '派生'
+  if (value === 'similar_to')
+    return '相似'
+  if (value === 'aligned_to')
+    return '对齐'
+  if (value === 'references')
+    return '引用'
+  if (value === 'duplicated_with')
+    return '重复'
+  return value
+}
+
+function createSimulatedRelationsPayload(projectId: string): ProjectKnowledgeRelationsPayload {
+  const now = new Date().toISOString()
+  const sourceLabels = ['竞赛规则', '项目方案', '技术架构', '数据证据', '答辩脚本']
+  const chunkLabels = [
+    ['评分指标', '提交材料', '资格约束', '时间节点'],
+    ['用户场景', '需求闭环', '价值假设', '交付路径'],
+    ['RAG 编排', '多模态索引', '实时协同', '部署链路'],
+    ['样本分布', '质量检查', '引用证据', '指标趋势'],
+    ['评委问题', '风险追问', '演示路线', '复盘结论'],
+  ]
+  const statuses: ProjectKnowledgeEmbeddingStatus[] = ['native', 'derived', 'fallback', 'native', 'derived']
+  const modalities: Array<ProjectKnowledgeModality | 'unknown'> = ['text', 'draw', 'image', 'text', 'audio']
+  const nodes: ProjectKnowledgeRelationsPayload['nodes'] = []
+  const relations: ProjectKnowledgeRelationsPayload['relations'] = []
+
+  sourceLabels.forEach((label, sourceIndex) => {
+    const sourceId = `sim-source-${sourceIndex + 1}`
+    nodes.push({
+      id: sourceId,
+      nodeType: 'source',
+      label,
+      modality: modalities[sourceIndex] || 'unknown',
+      embeddingStatus: statuses[sourceIndex] || 'native',
+      provenanceSourceType: 'native',
+      resourceKind: sourceIndex === 2 ? 'draw' : 'markdown',
+      importance: 12 + sourceIndex,
+      metadata: {
+        simulated: true,
+        resourceTitle: label,
+        embeddingModel: 'dashscope-compatible-simulated',
+      },
+    })
+
+    chunkLabels[sourceIndex]?.forEach((chunkLabel, chunkIndex) => {
+      const chunkId = `sim-chunk-${sourceIndex + 1}-${chunkIndex + 1}`
+      nodes.push({
+        id: chunkId,
+        nodeType: 'chunk',
+        label: chunkLabel,
+        modality: modalities[sourceIndex] || 'unknown',
+        embeddingStatus: chunkIndex === 2 && sourceIndex === 0 ? 'fallback' : statuses[(sourceIndex + chunkIndex) % statuses.length] || 'native',
+        provenanceSourceType: chunkIndex === 2 ? 'vision_summary' : 'native',
+        resourceKind: 'markdown',
+        sourceId,
+        importance: 5 + chunkIndex,
+        metadata: {
+          simulated: true,
+          resourceTitle: label,
+          chunkKind: 'semantic',
+          embeddingModel: 'dashscope-compatible-simulated',
+        },
+      })
+      relations.push({
+        id: `sim-belongs-${sourceIndex + 1}-${chunkIndex + 1}`,
+        projectId: projectId || 'simulated-project',
+        snapshotId: 'simulated-snapshot',
+        sourceNodeType: 'source',
+        sourceNodeId: sourceId,
+        targetNodeType: 'chunk',
+        targetNodeId: chunkId,
+        relationType: 'belongs_to',
+        score: 0.82 - (chunkIndex * 0.04),
+        evidenceMetric: 'simulated_membership',
+        evidenceModel: 'loopy_vue_flow_simulation',
+        metadata: { simulated: true },
+        createdAt: now,
+        updatedAt: now,
+      })
+    })
+  })
+
+  for (let index = 0; index < sourceLabels.length; index += 1) {
+    const next = (index + 1) % sourceLabels.length
+    relations.push({
+      id: `sim-source-aligned-${index + 1}`,
+      projectId: projectId || 'simulated-project',
+      snapshotId: 'simulated-snapshot',
+      sourceNodeType: 'source',
+      sourceNodeId: `sim-source-${index + 1}`,
+      targetNodeType: 'source',
+      targetNodeId: `sim-source-${next + 1}`,
+      relationType: index % 2 === 0 ? 'aligned_to' : 'similar_to',
+      score: 0.68 + (index * 0.03),
+      evidenceMetric: 'simulated_semantic_bridge',
+      evidenceModel: 'loopy_vue_flow_simulation',
+      metadata: { simulated: true },
+      createdAt: now,
+      updatedAt: now,
+    })
+  }
+
+  return {
+    projectId: projectId || 'simulated-project',
+    analytics: {
+      relationsUpdatedAt: now,
+      snapshotUpdatedAt: now,
+      semanticLayoutUpdatedAt: now,
+      latestSnapshotType: 'manual',
+      relationsJobStatus: 'succeeded',
+      snapshotJobStatus: 'succeeded',
+      semanticLayoutJobStatus: 'succeeded',
+      staleKinds: [],
+      allReady: false,
+    },
+    nodes,
+    relations,
+  }
+}
+
+const isSimulatedPayload = computed(() => Boolean(payload.value?.nodes.some(node => Boolean(node.metadata?.simulated))))
+
 const visibleNodes = computed(() => {
   const items = (payload.value?.nodes || []).slice().sort((left, right) => right.importance - left.importance)
   return items.slice(0, 140)
 })
 const visibleNodeIdSet = computed(() => new Set(visibleNodes.value.map(item => item.id)))
 
-const flowNodes = computed<Node[]>(() => {
+const nodeDegreeMap = computed(() => {
+  const map = new Map<string, number>()
+  for (const relation of payload.value?.relations || []) {
+    const sourceKey = `${relation.sourceNodeType}:${relation.sourceNodeId}`
+    const targetKey = `${relation.targetNodeType}:${relation.targetNodeId}`
+    map.set(sourceKey, (map.get(sourceKey) || 0) + 1)
+    map.set(targetKey, (map.get(targetKey) || 0) + 1)
+  }
+  return map
+})
+
+const sourceIndexMap = computed(() => {
   const sourceNodes = visibleNodes.value.filter(node => node.nodeType === 'source')
-  const chunkNodes = visibleNodes.value.filter(node => node.nodeType === 'chunk')
-  return [
-    ...sourceNodes.map((node, index) => ({
-      id: `source:${node.id}`,
+  return new Map(sourceNodes.map((node, index) => [node.id, index]))
+})
+
+function resolveNodePosition(node: ProjectKnowledgeRelationsPayload['nodes'][number], index: number): { x: number, y: number } {
+  const sourceNodes = visibleNodes.value.filter(item => item.nodeType === 'source')
+  const sourceCount = Math.max(1, sourceNodes.length)
+  if (node.nodeType === 'source') {
+    const sourceIndex = sourceIndexMap.value.get(node.id) ?? index
+    const angle = (sourceIndex / sourceCount) * Math.PI * 2 - Math.PI / 2
+    return {
+      x: 520 + Math.cos(angle) * 330,
+      y: 330 + Math.sin(angle) * 230,
+    }
+  }
+
+  const parentIndex = sourceIndexMap.value.get(node.sourceId || '') ?? (index % sourceCount)
+  const siblingIndex = visibleNodes.value
+    .filter(item => item.nodeType === 'chunk' && item.sourceId === node.sourceId)
+    .findIndex(item => item.id === node.id)
+  const angle = (parentIndex / sourceCount) * Math.PI * 2 - Math.PI / 2
+  const spread = ((Math.max(0, siblingIndex) % 9) - 4) * 0.13
+  const radius = 430 + ((Math.max(0, siblingIndex) % 3) * 42)
+  return {
+    x: 520 + Math.cos(angle + spread) * radius,
+    y: 330 + Math.sin(angle + spread) * (radius * 0.7),
+  }
+}
+
+const flowNodes = computed<Node[]>(() => {
+  return visibleNodes.value.map((node, index) => {
+    const flowId = `${node.nodeType}:${node.id}`
+    const position = resolveNodePosition(node, index)
+    const degree = nodeDegreeMap.value.get(flowId) || 0
+    const statusColor = resolveNodeColor(node.embeddingStatus)
+    return {
+      id: flowId,
       type: 'default',
-      position: { x: 30, y: 40 + (index * 88) },
-      data: { label: node.label },
-      class: `loopy-relations__node loopy-relations__node--${node.embeddingStatus}`,
-    })),
-    ...chunkNodes.map((node, index) => ({
-      id: `chunk:${node.id}`,
-      type: 'default',
-      position: { x: 420, y: 40 + (index * 62) },
-      data: { label: node.label },
-      class: `loopy-relations__node loopy-relations__node--${node.embeddingStatus}`,
-    })),
-  ]
+      position,
+      data: {
+        label: `${node.nodeType === 'source' ? '◆' : '●'} ${node.label}`,
+      },
+      class: [
+        'loopy-relations__node',
+        `loopy-relations__node--${node.embeddingStatus}`,
+        node.nodeType === 'source' ? 'loopy-relations__node--source' : 'loopy-relations__node--chunk',
+        selectedFlowNodeId.value === flowId ? 'loopy-relations__node--selected' : '',
+      ].filter(Boolean).join(' '),
+      style: {
+        '--loopy-node-color': statusColor,
+        '--loopy-node-size': `${Math.min(1.28, 0.86 + degree * 0.045)}`,
+      } as Record<string, string>,
+    }
+  })
 })
 
 const flowEdges = computed<Edge[]>(() => {
@@ -95,9 +283,13 @@ const flowEdges = computed<Edge[]>(() => {
         id: relation.id,
         source: `${relation.sourceNodeType}:${relation.sourceNodeId}`,
         target: `${relation.targetNodeType}:${relation.targetNodeId}`,
-        label: relation.relationType,
+        label: relationLabel(relation.relationType),
         animated: relation.relationType === 'aligned_to' || relation.relationType === 'references',
+        type: 'smoothstep',
         class: `loopy-relations__edge loopy-relations__edge--${isAligned ? 'aligned' : relation.relationType}`,
+        style: {
+          strokeWidth: Math.max(1.2, Math.min(4, relation.score * 3.2)),
+        },
       }
     })
 })
@@ -111,6 +303,7 @@ async function loadRelations(): Promise<void> {
 
   loading.value = true
   error.value = ''
+  fallbackReason.value = ''
   try {
     const params = new URLSearchParams()
     if (nodeType.value)
@@ -122,10 +315,17 @@ async function loadRelations(): Promise<void> {
     const response = await unsafeFetch<ApiResponse<ProjectKnowledgeRelationsPayload>>(
       `${endpoint(`/projects/${projectId}/knowledge/relations`)}${params.toString() ? `?${params.toString()}` : ''}`,
     )
-    payload.value = response.data || null
+    const nextPayload = response.data || null
+    if (nextPayload && nextPayload.relations.length > 0) {
+      payload.value = nextPayload
+      return
+    }
+    payload.value = createSimulatedRelationsPayload(projectId)
+    fallbackReason.value = '真实关系数据暂为空，已切换到本地模拟语义图谱。'
   }
   catch (fetchError: any) {
-    error.value = String(fetchError?.data?.message || '加载关系探索失败，请稍后重试。').trim() || '加载关系探索失败，请稍后重试。'
+    payload.value = createSimulatedRelationsPayload(projectId)
+    fallbackReason.value = String(fetchError?.data?.message || '真实关系探索暂不可用，已切换到本地模拟语义图谱。').trim()
   }
   finally {
     loading.value = false
@@ -159,6 +359,7 @@ async function loadNodeDetail(nodeId: string, selectedNodeType: ProjectKnowledge
 
 function handleNodeClick(event: NodeMouseEvent): void {
   const [selectedNodeType, nodeId] = String(event.node.id || '').split(':')
+  selectedFlowNodeId.value = String(event.node.id || '')
   if ((selectedNodeType === 'source' || selectedNodeType === 'chunk') && nodeId)
     void loadNodeDetail(nodeId, selectedNodeType)
 }
@@ -166,6 +367,7 @@ function handleNodeClick(event: NodeMouseEvent): void {
 watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.value], () => {
   detail.value = null
   detailError.value = ''
+  selectedFlowNodeId.value = ''
   void loadRelations()
 }, { immediate: true })
 </script>
@@ -174,11 +376,14 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
   <div class="loopy-relations">
     <aside class="loopy-relations__filters">
       <div class="loopy-relations__filters-head">
-        <h3>关系探索</h3>
+        <h3>语义关系图谱</h3>
         <button class="loopy-relations__button" type="button" :disabled="loading" @click="loadRelations">
           刷新
         </button>
       </div>
+      <p class="loopy-relations__hint">
+        Vue Flow 径向图谱支持拖拽、缩放、迷你地图与节点详情；没有真实关系时自动进入模拟图谱。
+      </p>
       <label class="loopy-relations__field">
         <span>节点类型</span>
         <UiSelect v-model="nodeType" :options="nodeTypeOptions" size="xs" aria-label="节点类型" class="w-full" />
@@ -203,8 +408,12 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
         </article>
         <article>
           <span>Analytics</span>
-          <strong>{{ payload?.analytics.allReady ? 'ready' : 'stale' }}</strong>
+          <strong>{{ isSimulatedPayload ? 'mock' : payload?.analytics.allReady ? 'ready' : 'stale' }}</strong>
         </article>
+      </div>
+
+      <div v-if="fallbackReason" class="loopy-relations__notice">
+        {{ fallbackReason }}
       </div>
     </aside>
 
@@ -226,9 +435,12 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
         :fit-view-on-init="true"
         :nodes-draggable="true"
         :elements-selectable="true"
+        :default-viewport="{ x: 0, y: 0, zoom: 0.84 }"
+        :min-zoom="0.32"
+        :max-zoom="1.6"
         @node-click="handleNodeClick"
       >
-        <Background />
+        <Background pattern-color="#cbd7e7" :gap="20" />
         <Controls />
         <MiniMap />
       </VueFlow>
@@ -278,6 +490,22 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
   color: #182c48;
   font-size: 14px;
   font-weight: 800;
+}
+
+.loopy-relations__hint,
+.loopy-relations__notice {
+  margin: 0;
+  color: #5f7899;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.loopy-relations__notice {
+  padding: 10px 11px;
+  border: 1px solid #f0ddb6;
+  border-radius: 14px;
+  background: #fff8eb;
+  color: #93620f;
 }
 
 .loopy-relations__button,
@@ -354,13 +582,35 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
 }
 
 :deep(.loopy-relations__node) {
-  border-radius: 18px;
+  transform: scale(var(--loopy-node-size, 1));
+  border-radius: 16px;
   padding: 10px 12px;
-  border: 1px solid #dce7f4;
+  border: 1px solid color-mix(in srgb, var(--loopy-node-color, #5b6f8d) 34%, #dce7f4);
   background: #fff;
   color: #18304a;
   font-size: 12px;
   box-shadow: 0 10px 26px rgba(31, 71, 122, 0.08);
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+
+:deep(.loopy-relations__node:hover),
+:deep(.loopy-relations__node--selected) {
+  transform: scale(calc(var(--loopy-node-size, 1) + 0.08));
+  border-color: var(--loopy-node-color, #3b82f6);
+  box-shadow: 0 16px 34px rgba(31, 71, 122, 0.16);
+}
+
+:deep(.loopy-relations__node--source) {
+  min-width: 150px;
+  border-radius: 22px;
+  font-weight: 800;
+}
+
+:deep(.loopy-relations__node--chunk) {
+  min-width: 118px;
 }
 
 :deep(.loopy-relations__node--native),
@@ -380,6 +630,20 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
 :deep(.loopy-relations__edge--aligned path) {
   stroke: #00a6d6;
   stroke-dasharray: 6 4;
+}
+
+:deep(.loopy-relations__edge--similar_to path) {
+  stroke: #7c3aed;
+}
+
+:deep(.loopy-relations__edge--belongs_to path) {
+  stroke: #64748b;
+}
+
+:deep(.vue-flow__edge-text) {
+  fill: #48617f;
+  font-size: 10px;
+  font-weight: 800;
 }
 
 @media (max-width: 1440px) {

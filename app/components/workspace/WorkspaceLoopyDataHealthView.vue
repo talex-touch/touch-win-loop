@@ -121,7 +121,6 @@ const EMPTY_DASHBOARD: ProjectKnowledgeIndexDashboard = {
 const currentDashboard = computed(() => props.dashboard || EMPTY_DASHBOARD)
 const summary = computed(() => currentDashboard.value.summary)
 const diagnostics = computed(() => currentDashboard.value.diagnostics)
-const runtime = computed(() => currentDashboard.value.runtime)
 const worker = computed(() => currentDashboard.value.worker)
 const visuals = computed(() => currentDashboard.value.visuals)
 const analytics = computed(() => currentDashboard.value.analytics)
@@ -153,18 +152,6 @@ const healthBadgeClass = computed(() => {
   if (state === 'missing_runtime' || state === 'worker_inactive' || state === 'queued_but_not_running')
     return 'loopy-health__badge loopy-health__badge--error'
   return 'loopy-health__badge loopy-health__badge--idle'
-})
-
-const runtimeLabel = computed(() => {
-  if (!runtime.value.embeddingConfigured)
-    return 'Embedding 未配置'
-  const clientLabel = runtime.value.clientType === 'bailian-native'
-    ? '百炼原生 SDK'
-    : runtime.value.clientType === 'coze-sdk'
-      ? 'Coze SDK'
-      : 'LangChain'
-  const embeddingClientLabel = runtime.value.embeddingClientType === 'bailian-native' ? '百炼原生' : 'OpenAI 兼容'
-  return `${clientLabel} · ${embeddingClientLabel} · ${runtime.value.embeddingProvider || 'provider'} / ${runtime.value.embeddingModel || 'model'} @ ${runtime.value.embeddingDimensions || 0}d`
 })
 
 const freshnessCards = computed(() => [
@@ -340,12 +327,7 @@ const taskTrendFailedPolyline = computed(() => {
         <h2 class="loopy-health__title">
           {{ diagnostics.healthMessage }}
         </h2>
-        <p class="loopy-health__subtitle">
-          这里专门回答“系统哪里坏了、坏到什么程度”。3D 语义空间已经被拆到单独子视图，健康页只保留真实诊断。
-        </p>
-
         <div class="loopy-health__pill-row">
-          <span class="loopy-health__pill">{{ runtimeLabel }}</span>
           <span class="loopy-health__pill">
             {{ worker.ticking ? 'Worker 正在消费队列' : worker.lastSuccessAt ? `最近成功 ${formatDateTime(worker.lastSuccessAt)}` : 'Worker 等待中' }}
           </span>

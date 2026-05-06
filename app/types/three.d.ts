@@ -84,6 +84,14 @@ declare module 'three' {
     constructor(options?: Record<string, unknown>)
   }
 
+  export class MeshBasicMaterial extends Material {
+    constructor(options?: Record<string, unknown>)
+  }
+
+  export class LineBasicMaterial extends Material {
+    constructor(options?: Record<string, unknown>)
+  }
+
   export class MeshStandardMaterial extends Material {
     constructor(options?: Record<string, unknown>)
   }
@@ -98,6 +106,14 @@ declare module 'three' {
 
   export class Points extends Object3D {
     constructor(geometry: BufferGeometry, material: Material)
+  }
+
+  export class LineSegments extends Object3D {
+    constructor(geometry: BufferGeometry, material: Material)
+  }
+
+  export class GridHelper extends Object3D {
+    constructor(size?: number, divisions?: number, colorCenterLine?: string | number, colorGrid?: string | number)
   }
 
   export class AmbientLight extends Object3D {
