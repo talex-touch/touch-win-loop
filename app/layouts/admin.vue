@@ -11,6 +11,7 @@ import type { ContextMenuAnchorPoint, ContextMenuItem } from '~/types/ui-context
 import { resolveWorkspaceOptions } from '~/composables/team-ui'
 import { readActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 import { useAdminRouteTabs } from '~/composables/useAdminRouteTabs'
+import { resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 interface AdminNavItem {
   key: string
@@ -417,6 +418,19 @@ function onWorkspaceUpdated(payload: { workspaceId: string, name: string }) {
   })
 }
 
+async function redirectOutOfAdmin(options?: { login?: boolean }): Promise<void> {
+  if (!import.meta.client)
+    return
+  if (options?.login) {
+    await navigateTo({
+      path: '/login',
+      query: { redirect: resolveLoginRedirectTarget(route, '/admin') },
+    }, { replace: true })
+    return
+  }
+  await navigateTo('/dashboard', { replace: true })
+}
+
 async function loadProfile() {
   loadingProfile.value = true
   try {
@@ -436,8 +450,11 @@ async function loadProfile() {
     activeWorkspaceId.value = preferredWorkspaceId && nextWorkspaceOptions.some(item => item.workspace.id === preferredWorkspaceId)
       ? preferredWorkspaceId
       : (nextWorkspaceOptions[0]?.workspace.id || '')
+
+    if (!showAdminBadge.value)
+      await redirectOutOfAdmin()
   }
-  catch {
+  catch (error) {
     userId.value = ''
     userEmail.value = ''
     userName.value = '未登录用户'
@@ -447,6 +464,12 @@ async function loadProfile() {
     isPlatformAdmin.value = false
     workspaceOptions.value = []
     activeWorkspaceId.value = ''
+
+    const info = resolveAuthRequestErrorInfo(error)
+    if (info.isUnauthorized)
+      await redirectOutOfAdmin({ login: true })
+    else if (info.isForbidden)
+      await redirectOutOfAdmin()
   }
   finally {
     loadingProfile.value = false
@@ -636,7 +659,6 @@ if (import.meta.client) {
             >
               <span class="admin-inline-icon i-heroicons-outline-bars-3" />
             </button>
-            <span class="admin-header-chevron i-heroicons-outline-chevron-left" />
             <div class="admin-header-copy">
               <p class="admin-header-title">
                 {{ pageTitle }}
@@ -1073,12 +1095,6 @@ if (import.meta.client) {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.admin-header-chevron {
-  width: 18px;
-  height: 18px;
-  color: #9aa9bf;
 }
 
 .admin-header-copy {
@@ -1583,10 +1599,6 @@ if (import.meta.client) {
 
   .admin-header-left {
     width: 100%;
-  }
-
-  .admin-header-chevron {
-    display: none;
   }
 
   .admin-header-copy {

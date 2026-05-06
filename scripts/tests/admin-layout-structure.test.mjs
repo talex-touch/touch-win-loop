@@ -15,6 +15,8 @@ it('admin 布局已将路由标签状态与持久化逻辑抽到 composable', as
   assert.match(layoutSource, /from '~\/composables\/useAdminRouteTabs'/, 'admin 布局未接入 route tabs composable')
   assert.match(layoutSource, /to: '\/admin\/canvas-library', label: '画布资源库'/, 'admin 主侧栏缺少画布资源库入口')
   assert.doesNotMatch(layoutSource, /to: '\/admin\/mockups', label: 'Mockup 专项'/, 'admin 主侧栏不应再保留独立 Mockup 专项入口')
+  assert.doesNotMatch(layoutSource, /class="admin-header-left"[\s\S]*?admin-header-chevron[\s\S]*?class="admin-header-copy"/, 'admin 管理页头不应渲染左侧返回 icon')
+  assert.match(layoutSource, /await navigateTo\('\/dashboard', \{ replace: true \}\)/, 'admin 布局无平台权限时未跳回业务首页')
   assert.match(layoutSource, /const \{[\s\S]*adminRouteTabs,[\s\S]*activeRouteTabId,[\s\S]*restoreAdminRouteTabs,[\s\S]*appendRouteTab,[\s\S]*openRouteTab,[\s\S]*closeRouteTab,[\s\S]*closeTabsToLeft,[\s\S]*closeTabsToRight,[\s\S]*closeOtherTabs,[\s\S]*closeAllTabs,[\s\S]*\} = useAdminRouteTabs\(/, 'admin 布局未复用完整的 route tabs 状态机')
   assert.match(layoutSource, /<UiContextMenu[\s\S]*test-id="admin-route-tab-context-menu"/, 'admin tabs 未挂载统一右键菜单')
   assert.match(layoutSource, /function handleRouteTabContextMenuFromPointer\(tabId: string, event: MouseEvent\)/, 'admin tabs 缺少右键菜单入口')

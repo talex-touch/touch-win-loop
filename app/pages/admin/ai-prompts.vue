@@ -38,6 +38,7 @@ type PlatformAiChannelKey
     | 'workspace_canvas_refine'
     | 'admin_general'
     | 'admin_publish_assistant'
+    | 'admin_operations_analysis'
     | 'knowledge_embedding'
     | 'knowledge_visual_embedding'
     | 'knowledge_query_planner'

@@ -115,6 +115,7 @@ it('场景抽屉支持 Provider 绑定、模型池、回退顺序和故障转移
   assert.match(source, /回退顺序/, '缺少回退顺序项')
   assert.match(source, /故障转移策略/, '缺少故障转移策略项')
   assert.match(source, /failoverStrategy: 'model_then_provider'/, '场景表单未声明默认故障转移策略')
+  assert.match(source, /admin_operations_analysis/, '场景类型缺少运营管控 AI 分析')
   assert.match(source, /knowledge_embedding/, '缺少专用 Embedding 场景')
   assert.match(source, /knowledge_visual_embedding/, '缺少专用视觉 Embedding 场景')
   assert.match(source, /knowledge_visual_projection/, '缺少专用视觉投影场景')

@@ -512,6 +512,10 @@ async function loadPermissions() {
     permissions.value = response.data.user.platformPermissions || []
     currentUserName.value = response.data.user.username || '管理员'
     isPlatformAdminUser.value = Boolean(response.data.user.isPlatformAdmin)
+    if (!hasAnyAdminAccess.value) {
+      await navigateTo('/dashboard', { replace: true })
+      return
+    }
     await Promise.allSettled([
       loadBuildInfo(),
       loadOverview(),
