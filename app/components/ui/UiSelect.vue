@@ -18,12 +18,14 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   ariaLabel?: string
   size?: 'md' | 'sm' | 'xs'
+  placement?: 'bottom' | 'top'
 }>(), {
   modelValue: '',
   placeholder: '请选择',
   disabled: false,
   ariaLabel: '',
   size: 'md',
+  placement: 'bottom',
 })
 
 const emit = defineEmits<{
@@ -140,9 +142,13 @@ function updatePopoverPosition() {
   const maxWidth = Math.min(360, Math.max(0, viewportWidth - 32))
   const width = Math.min(minWidth, maxWidth)
   const left = Math.min(Math.max(16, rect.left), Math.max(16, viewportWidth - width - 16))
+  const popoverHeight = popoverRef.value?.getBoundingClientRect().height || 0
+  const top = props.placement === 'top'
+    ? Math.max(16, rect.top - popoverHeight - 8)
+    : rect.bottom + 8
 
   popoverStyle.value = {
-    top: `${Math.round(rect.bottom + 8)}px`,
+    top: `${Math.round(top)}px`,
     left: `${Math.round(left)}px`,
     width: `${Math.round(width)}px`,
   }
@@ -205,6 +211,7 @@ onBeforeUnmount(() => {
           v-if="open"
           ref="popoverRef"
           class="ui-select__popover"
+          :class="`ui-select__popover--${placement}`"
           :style="popoverStyle"
         >
           <div class="ui-select__list" role="listbox" :aria-label="ariaLabel || placeholder">
@@ -321,6 +328,11 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 20px 44px rgba(28, 50, 90, 0.18);
+  transform-origin: top center;
+}
+
+.ui-select__popover--top {
+  transform-origin: bottom center;
 }
 
 .ui-select__list {
@@ -398,5 +410,10 @@ onBeforeUnmount(() => {
 .ui-select-popover-leave-to {
   opacity: 0;
   transform: translateY(-4px) scale(0.98);
+}
+
+.ui-select__popover--top.ui-select-popover-enter-from,
+.ui-select__popover--top.ui-select-popover-leave-to {
+  transform: translateY(4px) scale(0.98);
 }
 </style>
