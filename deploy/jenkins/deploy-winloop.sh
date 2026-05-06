@@ -334,10 +334,10 @@ PY
             'rtc', jsonb_strip_nulls(jsonb_build_object(
               'provider', incoming.value #> '{rtc,provider}',
               'serverUrl', incoming.value #> '{rtc,serverUrl}',
-              'apiKey', COALESCE(NULLIF(current.value #> '{rtc,apiKey}', '""'::jsonb), incoming.value #> '{rtc,apiKey}'),
-              'apiSecret', COALESCE(NULLIF(current.value #> '{rtc,apiSecret}', '""'::jsonb), incoming.value #> '{rtc,apiSecret}'),
-              'embedBaseUrl', NULLIF(current.value #> '{rtc,embedBaseUrl}', '""'::jsonb),
-              'webhookSecret', NULLIF(current.value #> '{rtc,webhookSecret}', '""'::jsonb),
+              'apiKey', COALESCE(NULLIF(current.value #> '{rtc,apiKey}', to_jsonb(''::text)), incoming.value #> '{rtc,apiKey}'),
+              'apiSecret', COALESCE(NULLIF(current.value #> '{rtc,apiSecret}', to_jsonb(''::text)), incoming.value #> '{rtc,apiSecret}'),
+              'embedBaseUrl', NULLIF(current.value #> '{rtc,embedBaseUrl}', to_jsonb(''::text)),
+              'webhookSecret', NULLIF(current.value #> '{rtc,webhookSecret}', to_jsonb(''::text)),
               'roomPrefix', incoming.value #> '{rtc,roomPrefix}'
             )),
             'asr', NULLIF(current.value->'asr', 'null'::jsonb),
