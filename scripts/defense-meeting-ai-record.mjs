@@ -352,6 +352,44 @@ async function probeHttp(url) {
   }
 }
 
+async function probeAsrBridge(url) {
+  const healthUrl = `${String(url || '').replace(/\/+$/g, '')}/healthz`
+  try {
+    const response = await fetch(healthUrl, {
+      redirect: 'manual',
+    })
+    let payload = null
+    try {
+      payload = await response.json()
+    }
+    catch {
+      payload = null
+    }
+    const details = [`HTTP ${response.status}`]
+    if (payload && typeof payload === 'object') {
+      details.push(`transcriptionEnabled=${Boolean(payload.transcriptionEnabled)}`)
+      details.push(`transcribeUrlConfigured=${Boolean(payload.transcribeUrlConfigured)}`)
+      details.push(`callbackUrlConfigured=${Boolean(payload.callbackUrlConfigured)}`)
+      if (payload.activeSessionCount !== undefined)
+        details.push(`activeSessionCount=${payload.activeSessionCount}`)
+    }
+    return {
+      ok: response.ok,
+      status: response.status,
+      detail: details.join(' '),
+      payload,
+    }
+  }
+  catch (error) {
+    return {
+      ok: false,
+      status: 'network_error',
+      detail: summarizeError(error),
+      payload: null,
+    }
+  }
+}
+
 async function readApiPayload(response, label) {
   const text = await response.text()
   let payload = null
@@ -398,6 +436,20 @@ async function pollMeetingDetail(api, projectId, meetingId, timeoutMs = 90000) {
   }
 
   return lastDetail
+}
+
+function summarizeMeetingRuntimeHealth(value) {
+  if (!value || typeof value !== 'object')
+    return 'runtimeHealth=unknown'
+  const rtcIssues = Array.isArray(value.rtcIssues) ? value.rtcIssues.join('|') : ''
+  const asrIssues = Array.isArray(value.asrIssues) ? value.asrIssues.join('|') : ''
+  return [
+    `ready=${Boolean(value.ready)}`,
+    `rtcProvider=${String(value.rtcProvider || 'none')}`,
+    `asrProvider=${String(value.asrProvider || 'none')}`,
+    `rtcIssues=${rtcIssues || 'none'}`,
+    `asrIssues=${asrIssues || 'none'}`,
+  ].join(' ')
 }
 
 async function chooseUiSelectOption(page, root, label, optionNames) {
@@ -499,7 +551,7 @@ async function main() {
 
   const connectivity = {
     livekit: await probeHttp('http://127.0.0.1:7880'),
-    asrBridge: await probeHttp('http://127.0.0.1:8790'),
+    asrBridge: await probeAsrBridge('http://127.0.0.1:8790'),
   }
 
   const credentials = createCredentials('smoke_defense', seed)
@@ -544,6 +596,11 @@ async function main() {
     meetingStatus: '',
     aiRuntimeDefenseConfigured: false,
     aiRuntimeProjectChatConfigured: false,
+    defenseRealtimeQwenConfigured: false,
+    defenseRealtimeCozeConfigured: false,
+    defenseRealtimeDefaultProvider: '',
+    defenseRealtimeRuntimeDetail: '',
+    meetingRuntimeHealthDetail: '',
     failure: '',
   }
 
@@ -568,9 +625,25 @@ async function main() {
       throw new Error('创建项目成功，但未返回 projectId。')
     results.projectId = projectId
 
+    const meetingListPayload = await apiGet(api, `/api/projects/${projectId}/meetings`, '读取会议 runtime health')
+    results.meetingRuntimeHealthDetail = summarizeMeetingRuntimeHealth(meetingListPayload?.runtimeHealth)
+
     const aiRuntime = await apiGet(api, '/api/user/ai/runtime', '读取用户 AI runtime')
     results.aiRuntimeDefenseConfigured = Boolean(aiRuntime?.defense?.configured)
     results.aiRuntimeProjectChatConfigured = Boolean(aiRuntime?.projectChat?.configured)
+    results.defenseRealtimeQwenConfigured = Boolean(aiRuntime?.defenseRealtime?.qwen?.configured)
+    results.defenseRealtimeCozeConfigured = Boolean(aiRuntime?.defenseRealtime?.coze?.configured)
+    results.defenseRealtimeDefaultProvider = String(aiRuntime?.defenseRealtime?.defaultProvider || '').trim()
+    results.defenseRealtimeRuntimeDetail = [
+      `defaultProvider=${results.defenseRealtimeDefaultProvider || 'none'}`,
+      `qwenConfigured=${results.defenseRealtimeQwenConfigured}`,
+      `qwenRealtimeProfiles=${Number(aiRuntime?.defenseRealtime?.qwen?.realtimeProfileCount || 0)}`,
+      `qwenAsrProfiles=${Number(aiRuntime?.defenseRealtime?.qwen?.asrProfileCount || 0)}`,
+      `qwenTtsProfiles=${Number(aiRuntime?.defenseRealtime?.qwen?.ttsProfileCount || 0)}`,
+      `cozeConfigured=${results.defenseRealtimeCozeConfigured}`,
+      `cozeAgents=${Array.isArray(aiRuntime?.defenseRealtime?.coze?.agents) ? aiRuntime.defenseRealtime.coze.agents.filter(item => item?.enabled).length : 0}`,
+      `cozeVoices=${Array.isArray(aiRuntime?.defenseRealtime?.coze?.voices) ? aiRuntime.defenseRealtime.coze.voices.filter(item => item?.enabled).length : 0}`,
+    ].join(' ')
 
     await writeSummaryHtml(startSummaryPath, {
       title: '答辩 / 语音视频流 / AI 验收录屏',
@@ -587,7 +660,7 @@ async function main() {
         {
           label: 'Vitest 基线',
           status: baselinePassed ? 'passed' : 'warn',
-          detail: '13 个相关测试文件已重新执行并通过。',
+          detail: `${BASELINE_TEST_FILES.length} 个相关测试文件已重新执行并通过。`,
         },
         {
           label: 'LiveKit 7880',
@@ -600,9 +673,14 @@ async function main() {
           detail: connectivity.asrBridge.detail,
         },
         {
-          label: 'AI runtime / defense',
-          status: results.aiRuntimeDefenseConfigured ? 'ready' : 'failed',
-          detail: `configured=${results.aiRuntimeDefenseConfigured}`,
+          label: '应用会议 runtime',
+          status: meetingListPayload?.runtimeHealth?.ready ? 'ready' : 'failed',
+          detail: results.meetingRuntimeHealthDetail,
+        },
+        {
+          label: 'AI runtime / defense realtime',
+          status: results.defenseRealtimeQwenConfigured || results.defenseRealtimeCozeConfigured ? 'ready' : 'failed',
+          detail: results.defenseRealtimeRuntimeDetail,
         },
         {
           label: 'AI runtime / projectChat',
@@ -616,7 +694,7 @@ async function main() {
         '录屏产物会落到 output/playwright/defense-meeting-ai。',
       ],
       vitestOutput: sanitizeLongText(baseline.output, 12000),
-      notes: '当前环境已确认 LiveKit 可达、ASR bridge 可达；AI runtime 以用户态 /api/user/ai/runtime 为准。',
+      notes: '当前环境已确认 LiveKit 可达、ASR bridge 可达；realtime provider readiness 以 /api/user/ai/runtime 的 defenseRealtime.qwen / defenseRealtime.coze 为准。',
     })
 
     await installChromiumIfNeeded({
@@ -674,24 +752,38 @@ async function main() {
     results.defenseWorkbenchVisible = true
     await page.waitForTimeout(1500)
 
-    const defenseRealtimeControls = page.locator('.workspace-defense-workbench__realtime-controls')
-    await chooseUiSelectOption(page, defenseRealtimeControls, '实时链路', '千问')
-    await chooseUiSelectOption(page, defenseRealtimeControls, '媒体模式', ['音视频理解', '音频 + 视频'])
-    await page.waitForTimeout(500)
+    const defenseRealtimeControls = page
+      .locator('.workspace-defense-workbench__realtime-settings, .workspace-defense-workbench__realtime-controls')
+      .first()
+    const realtimeProviderReady = results.defenseRealtimeQwenConfigured || results.defenseRealtimeCozeConfigured
+    if (realtimeProviderReady) {
+      await chooseUiSelectOption(page, defenseRealtimeControls, '实时链路', results.defenseRealtimeQwenConfigured ? '千问' : 'Coze')
+      await chooseUiSelectOption(page, defenseRealtimeControls, '媒体模式', ['音视频理解', '音频 + 视频'])
+      await page.waitForTimeout(500)
 
-    const defenseCreateResponsePromise = page.waitForResponse((response) => {
-      return response.request().method() === 'POST'
-        && response.url().includes(`/api/projects/${projectId}/defense/realtime-sessions`)
-    }, { timeout: 30000 }).catch(() => null)
+      const defenseCreateResponsePromise = page.waitForResponse((response) => {
+        return response.request().method() === 'POST'
+          && response.url().includes(`/api/projects/${projectId}/defense/realtime-sessions`)
+      }, { timeout: 30000 }).catch(() => null)
 
-    await page.getByRole('button', { name: '发起实时答辩' }).click()
-    results.defenseRealtimeRequested = true
-    await defenseCreateResponsePromise
+      await page.getByRole('button', { name: '发起实时答辩' }).click()
+      results.defenseRealtimeRequested = true
+      await defenseCreateResponsePromise
 
-    await page.waitForTimeout(8000)
+      await page.waitForTimeout(8000)
+    }
+    else {
+      results.defenseRealtimeBlocked = true
+      results.defenseConsoleText = `defense realtime provider 未完成配置（${results.defenseRealtimeRuntimeDetail || 'unknown'}）`
+      await page.waitForTimeout(500)
+    }
     const defenseConsoleLocator = page.getByTestId('workspace-defense-realtime-console')
-    results.defenseConsoleText = sanitizeLongText(await defenseConsoleLocator.textContent())
-    results.defenseRealtimeBlocked = results.defenseConsoleText.includes('千问实时音视频未完成配置')
+    const defenseConsoleText = sanitizeLongText(await defenseConsoleLocator.textContent())
+    results.defenseConsoleText = results.defenseConsoleText
+      ? `${results.defenseConsoleText}\n${defenseConsoleText}`
+      : defenseConsoleText
+    results.defenseRealtimeBlocked = results.defenseRealtimeBlocked
+      || results.defenseConsoleText.includes('千问实时音视频未完成配置')
       || results.defenseConsoleText.includes('异常：')
     await page.screenshot({ path: screenshotPaths.defense, fullPage: true })
 
@@ -788,7 +880,7 @@ async function main() {
         {
           label: 'Vitest 基线',
           status: baselinePassed ? 'passed' : 'warn',
-          detail: '目标 13 文件已再次执行并通过。',
+          detail: `目标 ${BASELINE_TEST_FILES.length} 文件已再次执行并通过。`,
         },
         {
           label: '答辩工作台可见',
@@ -803,11 +895,21 @@ async function main() {
             : '未观察到 bootstrap 阻塞。',
         },
         {
+          label: '实时 Provider 配置',
+          status: results.defenseRealtimeQwenConfigured || results.defenseRealtimeCozeConfigured ? 'ready' : 'failed',
+          detail: results.defenseRealtimeRuntimeDetail || '未读取到 defenseRealtime 配置。',
+        },
+        {
           label: '会议 LiveKit 连接',
           status: results.meetingConnected ? 'connected' : 'failed',
           detail: results.meetingConnected
             ? '站内 Web 客户端已进入可操作态。'
             : '未观察到已连接或可操作态。',
+        },
+        {
+          label: '应用会议 runtime',
+          status: results.meetingRuntimeHealthDetail.includes('ready=true') ? 'ready' : 'failed',
+          detail: results.meetingRuntimeHealthDetail || '未读取到 runtimeHealth。',
         },
         {
           label: '麦克风 / 摄像头',
@@ -833,7 +935,9 @@ async function main() {
       contextItems: [
         `LiveKit 7880：${connectivity.livekit.detail}`,
         `ASR bridge 8790：${connectivity.asrBridge.detail}`,
+        `Meeting runtime：${results.meetingRuntimeHealthDetail || 'unknown'}`,
         `AI runtime: defense=${results.aiRuntimeDefenseConfigured} / projectChat=${results.aiRuntimeProjectChatConfigured}`,
+        `Realtime provider: ${results.defenseRealtimeRuntimeDetail || 'unknown'}`,
         `纪要按钮可见=${results.notesButtonVisible}，录制按钮可见=${results.recordingButtonVisible}`,
         `Meeting：${results.meetingId || 'unknown'}`,
       ],
@@ -850,6 +954,8 @@ async function main() {
     await page.screenshot({ path: screenshotPaths.finalSummary, fullPage: true })
 
     const unmetChecks = []
+    if (!results.defenseRealtimeQwenConfigured && !results.defenseRealtimeCozeConfigured)
+      unmetChecks.push(`defense realtime provider 未完成配置（${results.defenseRealtimeRuntimeDetail || 'unknown'}）`)
     if (results.defenseRealtimeBlocked)
       unmetChecks.push('答辩 realtime provider bootstrap 被配置阻塞')
     if (!results.meetingCreated)
@@ -859,7 +965,7 @@ async function main() {
     if (!results.micEnabled || !results.cameraEnabled)
       unmetChecks.push(`本地媒体未全部开启 mic=${results.micEnabled} camera=${results.cameraEnabled}`)
     if (!results.captionObserved)
-      unmetChecks.push('未观察到实时字幕回流')
+      unmetChecks.push(`未观察到实时字幕回流（bridge=${connectivity.asrBridge.detail}；runtime=${results.meetingRuntimeHealthDetail || 'unknown'}）`)
     if (!results.notesResourceId)
       unmetChecks.push('会议纪要资源未生成')
     if (!results.recordingResourceId)

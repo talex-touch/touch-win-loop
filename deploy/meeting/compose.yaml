@@ -49,7 +49,7 @@ services:
       EGRESS_CONFIG_FILE: /etc/livekit/egress.yaml
     volumes:
       - ./egress.yaml:/etc/livekit/egress.yaml:ro
-      - /tmp/winloop-meeting-egress:/tmp/winloop-meeting-egress
+      - /private/tmp/winloop-meeting-egress:/tmp/winloop-meeting-egress
     extra_hosts:
       - host.docker.internal:host-gateway
     cap_add:

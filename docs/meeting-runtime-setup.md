@@ -55,7 +55,7 @@
 - 当前录制已经接通 `LiveKit Egress -> provider webhook -> recording worker -> project resource` 这条本地最小链路。
 - 当前正式支持的录制 artifact 形态是：
   - `egress webhook` 直接携带可下载 URL
-  - 或本地自建 egress 写入 `/tmp/winloop-meeting-egress` 后由应用读取本地文件
+  - 或本地自建 egress 写入容器内 `/tmp/winloop-meeting-egress` 后由应用读取本地文件；macOS 本地 Compose 会把宿主 `/private/tmp/winloop-meeting-egress` 挂载到该容器路径
 - 远端录制 URL 导入已经带超时与重试，最终资源会写入全局 Storage。
 - 全局 Storage 可在 `/admin/storage-service` 配置为 `local`、`s3` 或 `minio` 渠道池，后台会用 `WINLOOP_CONFIG_MASTER_KEY` 加密 accessKey / secretKey。
 - 当前是否能看到真实字幕，取决于你采用哪种 ASR 路线：
@@ -197,6 +197,48 @@ pnpm meeting:asr:dev
 - `http` provider 需要 `serviceUrl`
 - `openai-compatible` provider 需要 AI 场景 `meeting_asr` 已绑定可用 ASR Provider/模型或 Coze/百炼语音 Provider
 - 可选 `webhookSecret`
+
+## 答辩实时 sidecar 配置
+
+答辩工作台的实时评委 sidecar 不复用普通文本模型池。它只从 AI 场景 `defense` 绑定的语音 / 实时 Provider 解析凭据和 profile。
+
+`provider = qwen`
+
+- `defense` 场景必须绑定 `type = dashscope-bailian` 的 Provider。
+- Provider 的 `capability` 必须是 `realtime` 或 `voice`。
+- 该 Provider 可只配置实时语音 profile，不要求同时配置普通 chat 模型；普通文本答辩仍走 `defense` 场景中的 LLM Provider。
+- Provider 需要可解密的 DashScope API Key。
+- `voice.qwen.realtimeProfiles` 至少启用 1 个 profile，例如 `qwen3.5-omni-plus-realtime`。
+- 可选绑定 `voice.qwen.asrProfiles` / `voice.qwen.ttsProfiles`，用于同一实时 profile 的 ASR/TTS 选择。
+- bootstrap 会真实请求 DashScope 临时 token：`POST https://dashscope.aliyuncs.com/api/v1/tokens?expire_in_seconds=1800`。
+
+`provider = coze`
+
+- `defense` 场景必须绑定 `type = coze-voice` 的 Provider。
+- 该 Provider 可只用于实时语音，不会被普通文本答辩当作 chat runtime。
+- Provider 需要可用 PAT/OAuth token。
+- `voice.coze.agents` 至少启用 1 个 agent。
+- `voice.coze.voices` 至少启用 1 个 voice。
+- 根据 `voice.coze.roomConfig.createRoomOnServer` 决定由服务端创建 Coze realtime room，或由前端 SDK 侧创建。
+
+验收脚本 `scripts/defense-meeting-ai-record.mjs` 不会把“报告生成”当成实时链路完成。它会同时检查 LiveKit 会议创建、客户端连接、本地媒体、答辩 realtime bootstrap、字幕回流、纪要资源和录制资源。
+
+### Smoke 报告字段
+
+`scripts/defense-meeting-ai-record.mjs` 会把普通答辩 AI 和实时答辩 Provider 分开诊断：
+
+- `aiRuntimeDefenseConfigured=true`
+  - 只代表 `defense` 文本 AI 场景可用，不代表实时音视频 Provider 可用。
+- `defenseRealtimeQwenConfigured=true`
+  - 需要 `defense` 场景绑定 `dashscope-bailian`，`capability` 为 `realtime` 或 `voice`，且 Provider 有 DashScope API Key 与至少 1 个 enabled realtime profile。
+- `defenseRealtimeCozeConfigured=true`
+  - 需要 `defense` 场景绑定 `coze-voice`，且 Provider 有 token、至少 1 个 enabled agent、至少 1 个 enabled voice。
+- `defenseRealtimeRuntimeDetail`
+  - 用于定位缺口，例如 `qwenRealtimeProfiles=0`、`cozeAgents=0`。
+- `transcriptionEnabled=true`
+  - 只在 ASR bridge 同时具备真实转写上游和 callback URL，或会议 ASR 改为内置 `openai-compatible` 并绑定可用 `meeting_asr` Provider 后才应成立。
+
+如果 smoke 同时显示 `meetingConnected=true`、`recordingStatus=completed`、`summaryStatus=completed`，但 `defenseRealtimeQwenConfigured=false` / `defenseRealtimeCozeConfigured=false` 或 `transcriptionEnabled=false`，说明 RTC / Egress / 会后沉淀已通，剩余问题在 realtime Provider 或 ASR 真实识别配置。
 
 ## 后台配置入口
 

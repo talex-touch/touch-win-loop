@@ -103,7 +103,8 @@ docker compose ps
 
 - 请先在应用侧显式配置开发态地址契约：`WINLOOP_DEV_HOST`、`WINLOOP_DEV_PORT`
 - `livekit.yaml` 里的 webhook URL 应与当前开发态地址保持一致，推荐按 `http://host.docker.internal:${WINLOOP_DEV_PORT}/api/internal/meetings/provider-events` 填写
-- `egress` 会把录制文件写到 `/tmp/winloop-meeting-egress`，应用服务会在收到 `egress_ended` 后自动导入为项目录制资源
+- `egress` 容器内会把录制文件写到 `/tmp/winloop-meeting-egress`，本地 Compose 会把宿主 `/private/tmp/winloop-meeting-egress` 挂载到该路径
+- 应用服务会在收到 `egress_ended` 后按 `/tmp/winloop-meeting-egress` 读取并自动导入为项目录制资源
 
 如果你要让其它设备通过局域网访问：
 
@@ -247,6 +248,39 @@ pnpm meeting:asr:dev
 7. 创建会议并进入详情页
 8. 验证麦克风 / 摄像头 / 屏幕共享
 9. 结束会议后确认资源区出现“会议录制”
+
+如果还要验收“答辩实时评委 sidecar”，需要先在 `/admin/ai-prompts` 完成 AI Provider 场景绑定：
+
+- 百炼 / 千问实时音视频：
+  - 新增或编辑 `type = dashscope-bailian` 的 Provider
+  - `capability` 必须是 `realtime` 或 `voice`
+  - Provider 需要可解密的 DashScope API Key
+  - `voice.qwen.realtimeProfiles` 至少启用 1 个实时 profile，例如 `qwen3.5-omni-plus-realtime`
+  - 如需同链路 ASR/TTS，补齐 `voice.qwen.asrProfiles` 与 `voice.qwen.ttsProfiles`
+  - 将 AI 场景 `defense` 绑定到该百炼 Provider，而不是普通 `newapi` 文本 Provider
+- Coze 实时语音：
+  - 新增或编辑 `type = coze-voice` 的 Provider
+  - 填写 PAT/OAuth token、Bot ID、Connector ID
+  - `voice.coze.agents` 至少启用 1 个 agent
+  - `voice.coze.voices` 至少启用 1 个 voice
+  - 将 AI 场景 `defense` 绑定到该 Coze Provider
+
+`scripts/defense-meeting-ai-record.mjs` 的 smoke 会先读取 `/api/user/ai/runtime`，再决定是否发起答辩 realtime bootstrap。不要用普通 `defense.configured=true` 判断实时答辩已就绪；它只代表文本答辩 AI 可用。
+
+报告里的 realtime 配置字段含义如下：
+
+- `defenseRealtimeQwenConfigured=false`
+  - `defense` 场景没有绑定可用的百炼实时 Provider，或缺 DashScope API Key / enabled realtime profile
+  - 对应明细会显示 `qwenRealtimeProfiles=0`、`qwenAsrProfiles=0`、`qwenTtsProfiles=0`
+- `defenseRealtimeCozeConfigured=false`
+  - `defense` 场景没有绑定可用的 Coze 语音 Provider，或缺 token / enabled agent / enabled voice
+  - 对应明细会显示 `cozeAgents=0`、`cozeVoices=0`
+- `transcriptionEnabled=false`
+  - ASR bridge 仍是纯协议桥接，或者 `MEETING_ASR_DEV_TRANSCRIBE_URL` 与 `MEETING_ASR_DEV_CALLBACK_URL` 没有同时配置
+- `transcribeUrlConfigured=false` / `callbackUrlConfigured=false`
+  - 分别表示 bridge 没有真实转写上游，或没有回调到应用的 ASR event 地址
+
+若百炼配置不完整，旧 bootstrap 路径会报“千问实时音视频未完成配置”；当前 smoke 会把它归类为 `defense realtime provider 未完成配置`，并继续验证 LiveKit 会议、录制和纪要链路。
 
 如果你要验证“当前整条后台链已经通了”，最低验收建议是：
 
