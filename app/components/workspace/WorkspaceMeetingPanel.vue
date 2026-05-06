@@ -35,6 +35,8 @@ interface MeetingParticipantViewItem {
   leftAt?: string | null
 }
 
+type MeetingPanelSheet = 'details' | 'status' | 'share' | null
+
 const props = withDefaults(defineProps<{
   activeMeeting?: ProjectMeetingDetail | null
   utterances?: ProjectMeetingUtterance[]
@@ -99,6 +101,7 @@ const emit = defineEmits<{
 
 const browserOnline = ref(true)
 const microphoneState = ref<'checking' | 'granted' | 'prompt' | 'denied' | 'unknown'>('checking')
+const activeMeetingSheet = ref<MeetingPanelSheet>(null)
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -230,6 +233,14 @@ function revokeGuestShare(): void {
   emit('revokeGuestShare', props.activeMeeting.id)
 }
 
+function toggleMeetingPanelSheet(sheet: Exclude<MeetingPanelSheet, null>): void {
+  activeMeetingSheet.value = activeMeetingSheet.value === sheet ? null : sheet
+}
+
+function closeMeetingPanelSheet(): void {
+  activeMeetingSheet.value = null
+}
+
 async function copyGuestShareUrl(): Promise<void> {
   const shareUrl = normalizeString(props.guestShare?.shareUrl)
   if (!import.meta.client || !shareUrl)
@@ -264,6 +275,17 @@ const canManageGuestShare = computed(() => {
     && props.activeMeeting.status !== 'ended'
     && props.activeMeeting.status !== 'failed',
   )
+})
+const microphoneStateLabel = computed(() => {
+  if (microphoneState.value === 'granted')
+    return '已授权'
+  if (microphoneState.value === 'prompt')
+    return '待授权'
+  if (microphoneState.value === 'denied')
+    return '已拒绝'
+  if (microphoneState.value === 'checking')
+    return '检查中'
+  return '未知'
 })
 const scheduledStartInFuture = computed(() => {
   const value = props.activeMeeting?.scheduledStartAt
@@ -326,6 +348,35 @@ const participantItems = computed<MeetingParticipantViewItem[]>(() => {
 const activeScreenShareCount = computed(() => {
   return participantItems.value.filter(item => item.screenShareTrackState === 'active').length
 })
+const runtimeStatusRows = computed<Array<{ label: string, value: string, icon: string, tone?: 'positive' | 'warning' | 'danger' }>>(() => {
+  return [
+    {
+      label: '网络状态',
+      value: browserOnline.value ? '在线' : '离线',
+      icon: browserOnline.value ? 'wifi' : 'wifi_off',
+      tone: browserOnline.value ? 'positive' : 'danger',
+    },
+    {
+      label: '麦克风授权',
+      value: microphoneStateLabel.value,
+      icon: microphoneState.value === 'granted' ? 'mic' : 'mic_off',
+      tone: microphoneState.value === 'denied' ? 'danger' : microphoneState.value === 'prompt' ? 'warning' : 'positive',
+    },
+    { label: '套餐会议上限', value: planLimitText.value, icon: 'timer' },
+    { label: '参会人', value: `${participantItems.value.length} 人`, icon: 'groups' },
+    { label: '共享路数', value: `${activeScreenShareCount.value} 路`, icon: 'screen_share' },
+    { label: '字幕缓存', value: `${mergedCaptions.value.length} 条`, icon: 'closed_caption' },
+  ]
+})
+const activeMeetingSheetTitle = computed(() => {
+  if (activeMeetingSheet.value === 'details')
+    return '会议详情'
+  if (activeMeetingSheet.value === 'status')
+    return '运行状态'
+  if (activeMeetingSheet.value === 'share')
+    return '外部分享'
+  return ''
+})
 const meetingSummaryHint = computed(() => {
   if (!props.activeMeeting)
     return ''
@@ -359,6 +410,10 @@ onBeforeUnmount(() => {
     window.removeEventListener('offline', handleOnlineStatus)
   }
 })
+
+watch(() => props.activeMeeting?.id, () => {
+  closeMeetingPanelSheet()
+})
 </script>
 
 <template>
@@ -382,77 +437,6 @@ onBeforeUnmount(() => {
           <span>刷新中</span>
         </div>
       </div>
-
-      <div class="meeting-panel__actions">
-        <button
-          v-if="canStartMeeting"
-          class="meeting-btn"
-          type="button"
-          :disabled="mutating"
-          @click="startScheduledMeeting"
-        >
-          {{ mutating ? '处理中...' : startActionLabel }}
-        </button>
-        <button
-          v-if="canJoinMeeting"
-          class="meeting-btn"
-          type="button"
-          :disabled="mutating"
-          @click="joinActiveMeeting"
-        >
-          {{ mutating ? '处理中...' : '加入会议' }}
-        </button>
-        <button
-          v-if="canEndMeeting"
-          class="meeting-btn meeting-btn--danger"
-          type="button"
-          :disabled="mutating"
-          @click="endCurrentMeeting"
-        >
-          {{ mutating ? '处理中...' : '结束会议' }}
-        </button>
-        <button
-          v-if="activeMeeting?.notesResourceId"
-          class="meeting-btn meeting-btn--ghost"
-          type="button"
-          @click="openMeetingResource(activeMeeting.notesResourceId)"
-        >
-          打开纪要
-        </button>
-        <button
-          v-if="activeMeeting?.recordingResourceId"
-          class="meeting-btn meeting-btn--ghost"
-          type="button"
-          @click="openMeetingResource(activeMeeting.recordingResourceId)"
-        >
-          打开录制
-        </button>
-      </div>
-    </section>
-
-    <section class="meeting-panel__stats">
-      <div class="meeting-stat">
-        <span class="meeting-stat__label">网络状态</span>
-        <span class="meeting-stat__value" :class="browserOnline ? 'text-emerald-600' : 'text-rose-600'">
-          {{ browserOnline ? '在线' : '离线' }}
-        </span>
-      </div>
-      <div class="meeting-stat">
-        <span class="meeting-stat__label">麦克风权限</span>
-        <span class="meeting-stat__value">
-          {{
-            microphoneState === 'granted' ? '已授权'
-            : microphoneState === 'prompt' ? '待授权'
-              : microphoneState === 'denied' ? '已拒绝'
-                : microphoneState === 'checking' ? '检查中'
-                  : '未知'
-          }}
-        </span>
-      </div>
-      <div class="meeting-stat">
-        <span class="meeting-stat__label">套餐会议上限</span>
-        <span class="meeting-stat__value">{{ planLimitText }}</span>
-      </div>
     </section>
 
     <div v-if="detailLoading" class="meeting-panel__empty">
@@ -462,106 +446,6 @@ onBeforeUnmount(() => {
       请从总览或左侧最近会议中打开一场具体会议。
     </div>
     <template v-else>
-      <section class="meeting-panel__card">
-        <div class="meeting-panel__detail-grid">
-          <div class="meeting-panel__detail-list">
-            <div
-              v-for="item in infoRows"
-              :key="item.label"
-              class="meeting-panel__detail-item"
-            >
-              <span class="meeting-panel__detail-label">{{ item.label }}</span>
-              <span class="meeting-panel__detail-value">{{ item.value }}</span>
-            </div>
-          </div>
-
-          <div class="meeting-panel__detail-box">
-            <h3 class="meeting-panel__section-title">
-              邀请成员
-            </h3>
-            <div class="meeting-panel__person-list">
-              <div
-                v-for="invitee in activeMeeting.invitees"
-                :key="invitee.id"
-                class="meeting-panel__person-item"
-              >
-                <div class="meeting-panel__person-main">
-                  <span class="meeting-panel__person-name">{{ resolveInviteeName(invitee) }}</span>
-                  <span class="meeting-panel__person-role">{{ invitee.role }}</span>
-                </div>
-                <div class="meeting-panel__person-meta">
-                  邀请于 {{ formatDateTime(invitee.invitedAt) }}
-                </div>
-              </div>
-              <div v-if="activeMeeting.invitees.length === 0" class="meeting-panel__empty-inline">
-                暂无额外邀请成员，默认仅主持人入会。
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section v-if="canManageGuestShare" class="meeting-panel__card">
-        <div class="meeting-panel__share-head">
-          <div>
-            <h3 class="meeting-panel__section-title">
-              外部分享
-            </h3>
-            <p class="meeting-panel__share-hint">
-              单会议单链接。外部端严格脱敏，不展示项目 / 工作区 / 录制 / 纪要，guest token 为短时有效。
-            </p>
-          </div>
-          <div class="meeting-panel__share-actions">
-            <button
-              v-if="!guestShare"
-              class="meeting-btn"
-              type="button"
-              :disabled="guestShareLoading"
-              @click="createGuestShare"
-            >
-              {{ guestShareLoading ? '生成中...' : '生成外部链接' }}
-            </button>
-            <template v-else>
-              <button
-                class="meeting-btn"
-                type="button"
-                :disabled="guestShareLoading"
-                @click="copyGuestShareUrl"
-              >
-                复制外部参会链接
-              </button>
-              <button
-                class="meeting-btn meeting-btn--ghost"
-                type="button"
-                :disabled="guestShareLoading"
-                @click="regenerateGuestShare"
-              >
-                {{ guestShareLoading ? '处理中...' : '重新生成链接' }}
-              </button>
-              <button
-                class="meeting-btn meeting-btn--danger"
-                type="button"
-                :disabled="guestShareLoading"
-                @click="revokeGuestShare"
-              >
-                {{ guestShareLoading ? '处理中...' : '撤销链接' }}
-              </button>
-            </template>
-          </div>
-        </div>
-
-        <div v-if="guestShare" class="meeting-panel__share-body">
-          <label class="meeting-panel__share-field">
-            <span>当前有效链接</span>
-            <input :value="guestShare.shareUrl" readonly>
-          </label>
-          <div class="meeting-panel__share-meta">
-            <span>到期时间：{{ formatDateTime(guestShare.expiresAt) }}</span>
-            <span>会议结束后链接会立即失效</span>
-          </div>
-        </div>
-      </section>
-
       <section
         v-if="activeMeeting.status === 'scheduled'"
         class="meeting-panel__card"
@@ -662,6 +546,249 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </section>
+
+      <div class="meeting-panel__bottom-space" aria-hidden="true" />
+
+      <div
+        v-if="activeMeetingSheet"
+        class="meeting-panel__sheet-backdrop"
+        @click="closeMeetingPanelSheet"
+      />
+      <aside
+        v-if="activeMeetingSheet"
+        class="meeting-panel__sheet"
+        role="dialog"
+        :aria-label="activeMeetingSheetTitle"
+      >
+        <header class="meeting-panel__sheet-head">
+          <div>
+            <span class="meeting-panel__sheet-kicker">会议控制台</span>
+            <h3>{{ activeMeetingSheetTitle }}</h3>
+          </div>
+          <button
+            class="meeting-panel__icon-button"
+            type="button"
+            aria-label="关闭面板"
+            title="关闭面板"
+            @click="closeMeetingPanelSheet"
+          >
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </header>
+
+        <div v-if="activeMeetingSheet === 'details'" class="meeting-panel__sheet-body">
+          <div class="meeting-panel__detail-list meeting-panel__detail-list--sheet">
+            <div
+              v-for="item in infoRows"
+              :key="item.label"
+              class="meeting-panel__detail-item"
+            >
+              <span class="meeting-panel__detail-label">{{ item.label }}</span>
+              <span class="meeting-panel__detail-value">{{ item.value }}</span>
+            </div>
+          </div>
+
+          <section class="meeting-panel__sheet-section">
+            <h4 class="meeting-panel__section-title">
+              邀请成员
+            </h4>
+            <div class="meeting-panel__person-list">
+              <div
+                v-for="invitee in activeMeeting.invitees"
+                :key="invitee.id"
+                class="meeting-panel__person-item"
+              >
+                <div class="meeting-panel__person-main">
+                  <span class="meeting-panel__person-name">{{ resolveInviteeName(invitee) }}</span>
+                  <span class="meeting-panel__person-role">{{ invitee.role }}</span>
+                </div>
+                <div class="meeting-panel__person-meta">
+                  邀请于 {{ formatDateTime(invitee.invitedAt) }}
+                </div>
+              </div>
+              <div v-if="activeMeeting.invitees.length === 0" class="meeting-panel__empty-inline">
+                暂无额外邀请成员，默认仅主持人入会。
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div v-else-if="activeMeetingSheet === 'status'" class="meeting-panel__sheet-body">
+          <div class="meeting-panel__status-grid">
+            <div
+              v-for="item in runtimeStatusRows"
+              :key="item.label"
+              class="meeting-panel__status-item"
+              :class="item.tone ? `meeting-panel__status-item--${item.tone}` : ''"
+            >
+              <span class="material-symbols-outlined">{{ item.icon }}</span>
+              <div>
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="activeMeetingSheet === 'share'" class="meeting-panel__sheet-body">
+          <div class="meeting-panel__share-head meeting-panel__share-head--sheet">
+            <div>
+              <h4 class="meeting-panel__section-title">
+                外部分享
+              </h4>
+              <p class="meeting-panel__share-hint">
+                单会议单链接。外部端严格脱敏，不展示项目 / 工作区 / 录制 / 纪要，guest token 为短时有效。
+              </p>
+            </div>
+            <div class="meeting-panel__share-actions">
+              <button
+                v-if="!guestShare"
+                class="meeting-btn"
+                type="button"
+                :disabled="guestShareLoading"
+                @click="createGuestShare"
+              >
+                {{ guestShareLoading ? '生成中...' : '生成外部链接' }}
+              </button>
+              <template v-else>
+                <button
+                  class="meeting-btn"
+                  type="button"
+                  :disabled="guestShareLoading"
+                  @click="copyGuestShareUrl"
+                >
+                  复制链接
+                </button>
+                <button
+                  class="meeting-btn meeting-btn--ghost"
+                  type="button"
+                  :disabled="guestShareLoading"
+                  @click="regenerateGuestShare"
+                >
+                  {{ guestShareLoading ? '处理中...' : '重新生成' }}
+                </button>
+                <button
+                  class="meeting-btn meeting-btn--danger"
+                  type="button"
+                  :disabled="guestShareLoading"
+                  @click="revokeGuestShare"
+                >
+                  {{ guestShareLoading ? '处理中...' : '撤销' }}
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <div v-if="guestShare" class="meeting-panel__share-body">
+            <label class="meeting-panel__share-field">
+              <span>当前有效链接</span>
+              <input :value="guestShare.shareUrl" readonly>
+            </label>
+            <div class="meeting-panel__share-meta">
+              <span>到期时间：{{ formatDateTime(guestShare.expiresAt) }}</span>
+              <span>会议结束后链接会立即失效</span>
+            </div>
+          </div>
+          <div v-else class="meeting-panel__empty-inline">
+            当前还没有外部参会链接。
+          </div>
+        </div>
+      </aside>
+
+      <nav class="meeting-panel__bottom-bar" aria-label="会议详情快捷操作">
+        <button
+          class="meeting-panel__dock-button"
+          :class="{ 'meeting-panel__dock-button--active': activeMeetingSheet === 'details' }"
+          type="button"
+          aria-label="查看会议详情"
+          title="查看会议详情"
+          @click="toggleMeetingPanelSheet('details')"
+        >
+          <span class="material-symbols-outlined">info</span>
+          <strong>详情</strong>
+        </button>
+        <button
+          class="meeting-panel__dock-button"
+          :class="{ 'meeting-panel__dock-button--active': activeMeetingSheet === 'status' }"
+          type="button"
+          aria-label="查看运行状态"
+          title="查看运行状态"
+          @click="toggleMeetingPanelSheet('status')"
+        >
+          <span class="material-symbols-outlined">{{ browserOnline ? 'wifi' : 'wifi_off' }}</span>
+          <strong>{{ browserOnline ? '在线' : '离线' }}</strong>
+        </button>
+        <button
+          v-if="canManageGuestShare"
+          class="meeting-panel__dock-button"
+          :class="{ 'meeting-panel__dock-button--active': activeMeetingSheet === 'share' }"
+          type="button"
+          aria-label="管理外部分享"
+          title="管理外部分享"
+          @click="toggleMeetingPanelSheet('share')"
+        >
+          <span class="material-symbols-outlined">link</span>
+          <strong>{{ guestShare ? '分享' : '生成' }}</strong>
+        </button>
+        <button
+          v-if="canStartMeeting"
+          class="meeting-panel__dock-button meeting-panel__dock-button--primary"
+          type="button"
+          :disabled="mutating"
+          :aria-label="startActionLabel"
+          :title="startActionLabel"
+          @click="startScheduledMeeting"
+        >
+          <span class="material-symbols-outlined">play_arrow</span>
+          <strong>{{ mutating ? '处理中' : '开始' }}</strong>
+        </button>
+        <button
+          v-if="canJoinMeeting"
+          class="meeting-panel__dock-button meeting-panel__dock-button--primary"
+          type="button"
+          :disabled="mutating"
+          aria-label="加入会议"
+          title="加入会议"
+          @click="joinActiveMeeting"
+        >
+          <span class="material-symbols-outlined">login</span>
+          <strong>{{ mutating ? '处理中' : '加入' }}</strong>
+        </button>
+        <button
+          v-if="activeMeeting?.notesResourceId"
+          class="meeting-panel__dock-button"
+          type="button"
+          aria-label="打开纪要"
+          title="打开纪要"
+          @click="openMeetingResource(activeMeeting.notesResourceId)"
+        >
+          <span class="material-symbols-outlined">article</span>
+          <strong>纪要</strong>
+        </button>
+        <button
+          v-if="activeMeeting?.recordingResourceId"
+          class="meeting-panel__dock-button"
+          type="button"
+          aria-label="打开录制"
+          title="打开录制"
+          @click="openMeetingResource(activeMeeting.recordingResourceId)"
+        >
+          <span class="material-symbols-outlined">movie</span>
+          <strong>录制</strong>
+        </button>
+        <button
+          v-if="canEndMeeting"
+          class="meeting-panel__dock-button meeting-panel__dock-button--danger"
+          type="button"
+          :disabled="mutating"
+          aria-label="结束会议"
+          title="结束会议"
+          @click="endCurrentMeeting"
+        >
+          <span class="material-symbols-outlined">call_end</span>
+          <strong>{{ mutating ? '处理中' : '结束' }}</strong>
+        </button>
+      </nav>
     </template>
   </div>
 </template>
@@ -669,6 +796,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .meeting-panel {
   min-width: 0;
+  position: relative;
 }
 
 .meeting-panel__hero,
@@ -716,18 +844,11 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.meeting-panel__actions,
 .meeting-panel__share-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
   justify-content: flex-end;
-}
-
-.meeting-panel__stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
 }
 
 .meeting-panel__detail-grid,
@@ -756,6 +877,11 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.9rem;
+}
+
+.meeting-panel__detail-list--sheet {
+  border-radius: 1rem;
+  padding: 0;
 }
 
 .meeting-panel__detail-item {
@@ -856,6 +982,10 @@ onBeforeUnmount(() => {
   gap: 1rem;
 }
 
+.meeting-panel__share-head--sheet {
+  flex-direction: column;
+}
+
 .meeting-panel__share-hint {
   margin: 0.45rem 0 0;
   font-size: 0.875rem;
@@ -930,25 +1060,204 @@ onBeforeUnmount(() => {
   border-color: #dc2626;
 }
 
-.meeting-stat {
-  border: 1px solid #e2e8f0;
-  border-radius: 1rem;
-  padding: 0.85rem 1rem;
-  background: linear-gradient(180deg, #fff, #f8fafc);
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+.meeting-panel__bottom-space {
+  height: 5.5rem;
 }
 
-.meeting-stat__label {
+.meeting-panel__bottom-bar {
+  position: sticky;
+  z-index: 32;
+  bottom: 1rem;
+  left: 0;
+  right: 0;
+  width: min(100%, 760px);
+  margin: 0 auto;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(18px);
+  padding: 0.45rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  overflow-x: auto;
+}
+
+.meeting-panel__dock-button,
+.meeting-panel__icon-button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.meeting-panel__dock-button {
+  min-width: 4.25rem;
+  height: 3.6rem;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.35rem 0.65rem;
+}
+
+.meeting-panel__dock-button .material-symbols-outlined {
+  font-size: 1.25rem;
+}
+
+.meeting-panel__dock-button strong {
+  max-width: 4.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.meeting-panel__dock-button:hover,
+.meeting-panel__dock-button--active {
+  background: #eef2ff;
+  color: #1d4ed8;
+}
+
+.meeting-panel__dock-button--primary {
+  background: #0f172a;
+  color: #fff;
+}
+
+.meeting-panel__dock-button--primary:hover {
+  background: #111827;
+  color: #fff;
+}
+
+.meeting-panel__dock-button--danger {
+  background: #dc2626;
+  color: #fff;
+}
+
+.meeting-panel__dock-button--danger:hover {
+  background: #b91c1c;
+  color: #fff;
+}
+
+.meeting-panel__dock-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.meeting-panel__sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.meeting-panel__sheet {
+  position: fixed;
+  z-index: 36;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: 6.5rem;
+  width: min(440px, calc(100vw - 2rem));
+  max-height: min(68vh, 620px);
+  overflow: auto;
+  border: 1px solid rgba(203, 213, 225, 0.86);
+  border-radius: 1.25rem;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+  padding: 1rem;
+}
+
+.meeting-panel__sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.meeting-panel__sheet-head h3 {
+  margin: 0.15rem 0 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.meeting-panel__sheet-kicker {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.meeting-panel__sheet-body,
+.meeting-panel__sheet-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.meeting-panel__icon-button {
+  width: 2rem;
+  height: 2rem;
+  background: #f1f5f9;
+}
+
+.meeting-panel__status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.meeting-panel__status-item {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  background: #f8fafc;
+  padding: 0.85rem;
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.meeting-panel__status-item .material-symbols-outlined {
+  color: #64748b;
+  font-size: 1.2rem;
+}
+
+.meeting-panel__status-item div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.meeting-panel__status-item span:not(.material-symbols-outlined) {
   font-size: 0.75rem;
   color: #64748b;
 }
 
-.meeting-stat__value {
-  font-size: 1rem;
-  font-weight: 600;
+.meeting-panel__status-item strong {
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
   color: #0f172a;
+}
+
+.meeting-panel__status-item--positive .material-symbols-outlined,
+.meeting-panel__status-item--positive strong {
+  color: #059669;
+}
+
+.meeting-panel__status-item--warning .material-symbols-outlined,
+.meeting-panel__status-item--warning strong {
+  color: #b45309;
+}
+
+.meeting-panel__status-item--danger .material-symbols-outlined,
+.meeting-panel__status-item--danger strong {
+  color: #dc2626;
 }
 
 @keyframes meeting-panel-refresh-pulse {

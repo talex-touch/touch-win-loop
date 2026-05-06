@@ -124,9 +124,6 @@ watch(() => props.meetings, (nextMeetings, previousMeetings) => {
       <h3 class="workspace-meeting-sidebar__title">
         项目会议
       </h3>
-      <p class="workspace-meeting-sidebar__desc">
-        左侧只保留两种发起入口。具体会议会在右侧打开独立详情页 tab。
-      </p>
     </div>
 
     <div v-if="meetingRuntimeLoading || !meetingRuntimeReady" class="workspace-meeting-sidebar__runtime">

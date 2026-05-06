@@ -43,6 +43,8 @@ interface MediaTrackItem {
   track: any
 }
 
+type MeetingClientPanel = 'participants' | 'status' | 'sidecar' | 'captions' | null
+
 const props = withDefaults(defineProps<{
   provider?: string
   mode?: ProjectMeetingMode
@@ -106,6 +108,7 @@ const screenShareHint = ref('')
 const screenShareBusy = ref(false)
 const captionUploadState = ref<'idle' | 'capturing' | 'error'>('idle')
 const captionUploadHint = ref('')
+const activeClientPanel = ref<MeetingClientPanel>(null)
 
 const videoElements = new Map<string, HTMLVideoElement>()
 const audioElements = new Map<string, HTMLAudioElement>()
@@ -126,6 +129,14 @@ let captionCaptureEpoch = 0
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function toggleClientPanel(panel: Exclude<MeetingClientPanel, null>): void {
+  activeClientPanel.value = activeClientPanel.value === panel ? null : panel
+}
+
+function closeClientPanel(): void {
+  activeClientPanel.value = null
 }
 
 function resolveRtcServerUrl(rawUrl: string): string {
@@ -936,6 +947,7 @@ const showDefenseRealtimeSidecar = computed(() => {
   )
 })
 const canManageDefenseRealtimeSidecar = computed(() => !props.guest && isLivekit.value && hasJoinSession.value)
+const hasDefenseRealtimePanel = computed(() => canManageDefenseRealtimeSidecar.value || showDefenseRealtimeSidecar.value)
 const defenseRealtimeProvider = computed<DefenseRealtimeProvider>(() => props.defenseRealtimeState?.provider === 'coze' ? 'coze' : 'qwen')
 const defenseRealtimeMediaMode = computed<DefenseRealtimeMediaMode>(() => props.defenseRealtimeState?.mediaMode === 'audio' ? 'audio' : 'audio_video')
 const cozeRealtimeSelectable = computed(() => props.defenseRealtimeOptions?.coze.configured !== false)
@@ -964,10 +976,27 @@ const canInterruptDefenseRealtimeSidecar = computed(() => {
   return showDefenseRealtimeSidecar.value && (state === 'connected' || state === 'ready' || state === 'speaking')
 })
 const defenseRealtimeVideoToggleDisabled = computed(() => defenseRealtimeMediaMode.value === 'audio')
+const clientPanelTitle = computed(() => {
+  if (activeClientPanel.value === 'participants')
+    return '参会人'
+  if (activeClientPanel.value === 'status')
+    return '会中状态'
+  if (activeClientPanel.value === 'sidecar')
+    return 'AI Sidecar'
+  if (activeClientPanel.value === 'captions')
+    return '实时字幕'
+  return ''
+})
+const screenShareButtonLabel = computed(() => {
+  if (screenShareBusy.value)
+    return '处理中'
+  return screenShareEnabled.value ? '停止共享' : '开始共享'
+})
 
 watch(
   () => [props.provider, props.meetingId, props.rtcJoinToken, props.rtcServerUrl].join('::'),
   () => {
+    closeClientPanel()
     void connectLivekitRoom()
   },
   { immediate: true },
@@ -992,47 +1021,6 @@ onBeforeUnmount(() => {
         <p class="meeting-web-client__hint">
           {{ joinHint || `RTC Token 有效期至 ${formatDateTime(rtcJoinExpiresAt)}` }}
         </p>
-      </div>
-
-      <div class="meeting-web-client__controls">
-        <button
-          class="meeting-web-client__button"
-          type="button"
-          :disabled="!hasJoinSession || !isLivekit || connectionState !== 'connected'"
-          @click="toggleMicrophone"
-        >
-          {{ micEnabled ? '关闭麦克风' : '开启麦克风' }}
-        </button>
-        <button
-          v-if="mode === 'video'"
-          class="meeting-web-client__button meeting-web-client__button--ghost"
-          type="button"
-          :disabled="!hasJoinSession || !isLivekit || connectionState !== 'connected'"
-          @click="toggleCamera"
-        >
-          {{ cameraEnabled ? '关闭摄像头' : '开启摄像头' }}
-        </button>
-        <button
-          v-if="mode === 'video' && !guest"
-          class="meeting-web-client__button meeting-web-client__button--share"
-          type="button"
-          :disabled="!canShareScreen || screenShareBusy"
-          @click="toggleScreenShare"
-        >
-          {{
-            screenShareBusy ? '处理中...'
-            : screenShareEnabled ? '停止共享' : '开始共享'
-          }}
-        </button>
-        <a
-          v-if="rtcJoinUrl"
-          class="meeting-web-client__button meeting-web-client__button--ghost"
-          :href="rtcJoinUrl"
-          target="_blank"
-          rel="noreferrer"
-        >
-          外部窗口打开
-        </a>
       </div>
     </header>
 
@@ -1139,13 +1127,39 @@ onBeforeUnmount(() => {
           class="hidden"
         />
       </section>
+    </div>
 
-      <aside class="meeting-web-client__sidebar">
-        <section class="meeting-web-client__panel">
-          <div class="meeting-web-client__panel-head">
-            <h4>参会人</h4>
-            <span>{{ participantCount }}</span>
+    <template v-if="hasJoinSession && isLivekit">
+      <div class="meeting-web-client__bottom-space" aria-hidden="true" />
+
+      <div
+        v-if="activeClientPanel"
+        class="meeting-web-client__sheet-backdrop"
+        @click="closeClientPanel"
+      />
+      <aside
+        v-if="activeClientPanel"
+        class="meeting-web-client__sheet"
+        role="dialog"
+        :aria-label="clientPanelTitle"
+      >
+        <header class="meeting-web-client__sheet-head">
+          <div>
+            <span class="meeting-web-client__sheet-kicker">会议中</span>
+            <h4>{{ clientPanelTitle }}</h4>
           </div>
+          <button
+            class="meeting-web-client__icon-button"
+            type="button"
+            aria-label="关闭面板"
+            title="关闭面板"
+            @click="closeClientPanel"
+          >
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </header>
+
+        <div v-if="activeClientPanel === 'participants'" class="meeting-web-client__sheet-body">
           <div class="meeting-web-client__participant-list">
             <div
               v-for="participant in participants"
@@ -1165,14 +1179,18 @@ onBeforeUnmount(() => {
               暂无参会人数据。
             </div>
           </div>
-        </section>
+        </div>
 
-        <section class="meeting-web-client__panel">
-          <div class="meeting-web-client__panel-head">
-            <h4>会中状态</h4>
-            <span>{{ mode === 'audio' ? '语音' : '视频' }}</span>
-          </div>
+        <div v-else-if="activeClientPanel === 'status'" class="meeting-web-client__sheet-body">
           <div class="meeting-web-client__status-list">
+            <div class="meeting-web-client__status-item">
+              <span>连接状态</span>
+              <strong>{{ connectionBadgeText }}</strong>
+            </div>
+            <div class="meeting-web-client__status-item">
+              <span>RTC Token</span>
+              <strong>{{ formatDateTime(rtcJoinExpiresAt) }}</strong>
+            </div>
             <div class="meeting-web-client__status-item">
               <span>本地麦克风</span>
               <strong>{{ micEnabled ? '已开启' : '未开启' }}</strong>
@@ -1202,11 +1220,10 @@ onBeforeUnmount(() => {
               <strong>{{ resolveCaptionUploadLabel() }}</strong>
             </div>
           </div>
-        </section>
+        </div>
 
-        <section v-if="canManageDefenseRealtimeSidecar || showDefenseRealtimeSidecar" class="meeting-web-client__panel">
-          <div class="meeting-web-client__panel-head">
-            <h4>AI Sidecar</h4>
+        <div v-else-if="activeClientPanel === 'sidecar' && hasDefenseRealtimePanel" class="meeting-web-client__sheet-body">
+          <div class="meeting-web-client__panel-head meeting-web-client__panel-head--sheet">
             <span>{{ defenseRealtimeProvider === 'coze' ? 'Coze' : '百炼' }}</span>
           </div>
           <div v-if="canManageDefenseRealtimeSidecar" class="meeting-web-client__sidecar-actions">
@@ -1313,13 +1330,9 @@ onBeforeUnmount(() => {
               <p>{{ item.message }}</p>
             </div>
           </div>
-        </section>
+        </div>
 
-        <section class="meeting-web-client__panel">
-          <div class="meeting-web-client__panel-head">
-            <h4>实时字幕</h4>
-            <span>{{ captionItems.length }}</span>
-          </div>
+        <div v-else-if="activeClientPanel === 'captions'" class="meeting-web-client__sheet-body">
           <div class="meeting-web-client__caption-list">
             <div
               v-for="caption in captionItems"
@@ -1337,9 +1350,107 @@ onBeforeUnmount(() => {
               暂无实时字幕。
             </div>
           </div>
-        </section>
+        </div>
       </aside>
-    </div>
+
+      <nav class="meeting-web-client__bottom-bar" aria-label="会议控制">
+        <button
+          class="meeting-web-client__dock-button"
+          :class="{ 'meeting-web-client__dock-button--active': micEnabled }"
+          type="button"
+          :disabled="connectionState !== 'connected'"
+          :aria-label="micEnabled ? '关闭麦克风' : '开启麦克风'"
+          :title="micEnabled ? '关闭麦克风' : '开启麦克风'"
+          @click="toggleMicrophone"
+        >
+          <span class="material-symbols-outlined">{{ micEnabled ? 'mic' : 'mic_off' }}</span>
+          <strong>{{ micEnabled ? '麦克风开' : '麦克风关' }}</strong>
+        </button>
+        <button
+          v-if="mode === 'video'"
+          class="meeting-web-client__dock-button"
+          :class="{ 'meeting-web-client__dock-button--active': cameraEnabled }"
+          type="button"
+          :disabled="connectionState !== 'connected'"
+          :aria-label="cameraEnabled ? '关闭摄像头' : '开启摄像头'"
+          :title="cameraEnabled ? '关闭摄像头' : '开启摄像头'"
+          @click="toggleCamera"
+        >
+          <span class="material-symbols-outlined">{{ cameraEnabled ? 'videocam' : 'videocam_off' }}</span>
+          <strong>{{ cameraEnabled ? '摄像头开' : '摄像头关' }}</strong>
+        </button>
+        <button
+          v-if="mode === 'video' && !guest"
+          class="meeting-web-client__dock-button meeting-web-client__dock-button--share"
+          :class="{ 'meeting-web-client__dock-button--active': screenShareEnabled }"
+          type="button"
+          :disabled="!canShareScreen || screenShareBusy"
+          :aria-label="screenShareButtonLabel"
+          :title="screenShareButtonLabel"
+          @click="toggleScreenShare"
+        >
+          <span class="material-symbols-outlined">{{ screenShareEnabled ? 'stop_screen_share' : 'screen_share' }}</span>
+          <strong>{{ screenShareButtonLabel }}</strong>
+        </button>
+        <button
+          class="meeting-web-client__dock-button"
+          :class="{ 'meeting-web-client__dock-button--active': activeClientPanel === 'participants' }"
+          type="button"
+          aria-label="查看参会人"
+          title="查看参会人"
+          @click="toggleClientPanel('participants')"
+        >
+          <span class="material-symbols-outlined">groups</span>
+          <strong>{{ participantCount }} 人</strong>
+        </button>
+        <button
+          class="meeting-web-client__dock-button"
+          :class="{ 'meeting-web-client__dock-button--active': activeClientPanel === 'status' }"
+          type="button"
+          aria-label="查看会中状态"
+          title="查看会中状态"
+          @click="toggleClientPanel('status')"
+        >
+          <span class="material-symbols-outlined">monitoring</span>
+          <strong>状态</strong>
+        </button>
+        <button
+          v-if="hasDefenseRealtimePanel"
+          class="meeting-web-client__dock-button"
+          :class="{ 'meeting-web-client__dock-button--active': activeClientPanel === 'sidecar' }"
+          type="button"
+          aria-label="查看 AI Sidecar"
+          title="查看 AI Sidecar"
+          @click="toggleClientPanel('sidecar')"
+        >
+          <span class="material-symbols-outlined">smart_toy</span>
+          <strong>AI</strong>
+        </button>
+        <button
+          class="meeting-web-client__dock-button"
+          :class="{ 'meeting-web-client__dock-button--active': activeClientPanel === 'captions' }"
+          type="button"
+          aria-label="查看实时字幕"
+          title="查看实时字幕"
+          @click="toggleClientPanel('captions')"
+        >
+          <span class="material-symbols-outlined">closed_caption</span>
+          <strong>{{ captionItems.length }}</strong>
+        </button>
+        <a
+          v-if="rtcJoinUrl"
+          class="meeting-web-client__dock-button"
+          :href="rtcJoinUrl"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="外部窗口打开"
+          title="外部窗口打开"
+        >
+          <span class="material-symbols-outlined">open_in_new</span>
+          <strong>外开</strong>
+        </a>
+      </nav>
+    </template>
   </section>
 </template>
 
@@ -1350,6 +1461,7 @@ onBeforeUnmount(() => {
   background: linear-gradient(180deg, #fff, #f8fafc);
   padding: 1rem;
   box-shadow: 0 16px 36px rgba(15, 23, 42, 0.06);
+  position: relative;
 }
 
 .meeting-web-client__header {
@@ -1382,13 +1494,6 @@ onBeforeUnmount(() => {
   margin: 0.45rem 0 0;
   font-size: 0.875rem;
   color: #475569;
-}
-
-.meeting-web-client__controls {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.75rem;
 }
 
 .meeting-web-client__button {
@@ -1449,9 +1554,7 @@ onBeforeUnmount(() => {
 
 .meeting-web-client__layout {
   margin-top: 1rem;
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 360px);
-  gap: 1rem;
+  display: block;
 }
 
 .meeting-web-client__stage,
@@ -1564,12 +1667,6 @@ onBeforeUnmount(() => {
   color: #0f172a;
 }
 
-.meeting-web-client__sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
 .meeting-web-client__participant-list,
 .meeting-web-client__caption-list,
 .meeting-web-client__status-list {
@@ -1649,6 +1746,143 @@ onBeforeUnmount(() => {
   color: #0f172a;
 }
 
+.meeting-web-client__bottom-space {
+  height: 5.25rem;
+}
+
+.meeting-web-client__bottom-bar {
+  position: sticky;
+  z-index: 22;
+  bottom: 1rem;
+  width: min(100%, 720px);
+  margin: 1rem auto 0;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(18px);
+  padding: 0.45rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  overflow-x: auto;
+}
+
+.meeting-web-client__dock-button,
+.meeting-web-client__icon-button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.meeting-web-client__dock-button {
+  min-width: 4.25rem;
+  height: 3.6rem;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.35rem 0.65rem;
+}
+
+.meeting-web-client__dock-button .material-symbols-outlined {
+  font-size: 1.25rem;
+}
+
+.meeting-web-client__dock-button strong {
+  max-width: 4.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.meeting-web-client__dock-button:hover,
+.meeting-web-client__dock-button--active {
+  background: #eef2ff;
+  color: #1d4ed8;
+}
+
+.meeting-web-client__dock-button--share {
+  color: #0f766e;
+}
+
+.meeting-web-client__dock-button--share.meeting-web-client__dock-button--active {
+  background: #ccfbf1;
+  color: #0f766e;
+}
+
+.meeting-web-client__dock-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.meeting-web-client__sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.meeting-web-client__sheet {
+  position: fixed;
+  z-index: 26;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: 6.5rem;
+  width: min(420px, calc(100vw - 2rem));
+  max-height: min(68vh, 620px);
+  overflow: auto;
+  border: 1px solid rgba(203, 213, 225, 0.86);
+  border-radius: 1.25rem;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+  padding: 1rem;
+}
+
+.meeting-web-client__sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.meeting-web-client__sheet-head h4 {
+  margin: 0.15rem 0 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.meeting-web-client__sheet-kicker {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.meeting-web-client__sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.meeting-web-client__icon-button {
+  width: 2rem;
+  height: 2rem;
+  background: #f1f5f9;
+}
+
+.meeting-web-client__panel-head--sheet {
+  justify-content: flex-start;
+  margin-bottom: 0;
+}
+
 .meeting-web-client__caption-item--partial {
   border-style: dashed;
 }
@@ -1670,19 +1904,11 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1024px) {
-  .meeting-web-client__layout {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 768px) {
   .meeting-web-client__header {
     flex-direction: column;
-  }
-
-  .meeting-web-client__controls {
-    width: 100%;
-    justify-content: flex-start;
   }
 
   .meeting-web-client__audio-stage {
@@ -1692,6 +1918,17 @@ onBeforeUnmount(() => {
   .meeting-web-client__share-grid,
   .meeting-web-client__video-grid {
     grid-template-columns: 1fr;
+  }
+
+  .meeting-web-client__bottom-bar {
+    justify-content: flex-start;
+    border-radius: 1.4rem;
+  }
+
+  .meeting-web-client__sheet {
+    left: 1rem;
+    right: 1rem;
+    width: auto;
   }
 }
 </style>
