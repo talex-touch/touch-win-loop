@@ -1103,6 +1103,14 @@ function providerCanServeModelCapability(provider: PlatformAiProviderConfig, cap
 
 function providerCanServeChannel(provider: PlatformAiProviderConfig, key: PlatformAiChannelKey): boolean {
   const definition = resolveChannelDefinition(key)
+  if (
+    key === 'defense'
+    && definition.allowedProviderCapabilities.includes(provider.capability)
+    && (provider.capability === 'voice' || provider.capability === 'realtime')
+    && (provider.type === 'coze-voice' || provider.type === 'dashscope-bailian')
+  ) {
+    return true
+  }
   return definition.allowedProviderCapabilities.includes(provider.capability)
     && providerCanServeModelCapability(provider, definition.requiredModelCapability)
 }

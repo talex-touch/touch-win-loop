@@ -9,10 +9,13 @@ import { getAiChatSessionById } from '~~/server/utils/chat-store'
 import { withTransaction } from '~~/server/utils/db'
 import {
   buildDefenseRealtimePersonaPack,
+  buildQwenRealtimeUpstreamUrl,
   normalizeDefenseRealtimeMediaMode,
   normalizeDefenseRealtimeProvider,
   normalizeDefenseRealtimeSessionMeta,
+  resolveDefenseQwenVoiceProvider,
   resolveDefenseRealtimeQwenApiKey,
+  resolveQwenRealtimeProtocol,
 } from '~~/server/utils/defense-realtime'
 import { resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
@@ -35,15 +38,6 @@ function resolveDefenseCozeVoiceProvider(runtime: RuntimeSettings) {
   return (defenseChannel?.providerIds || [])
     .map(providerId => providerMap.get(providerId) || null)
     .find(provider => provider?.enabled && provider.type === 'coze-voice') || null
-}
-
-function resolveDefenseQwenVoiceProvider(runtime: RuntimeSettings) {
-  const registry = resolvePlatformAiRegistry(runtime)
-  const providerMap = new Map(registry.providers.map(provider => [provider.id, provider]))
-  const defenseChannel = registry.channels.find(item => item.key === 'defense')
-  return (defenseChannel?.providerIds || [])
-    .map(providerId => providerMap.get(providerId) || null)
-    .find(provider => provider?.enabled && provider.type === 'dashscope-bailian' && (provider.capability === 'realtime' || provider.capability === 'voice')) || null
 }
 
 function normalizeSelectionArray(value: unknown): DefenseVoiceRuntimeSelection[] {
@@ -207,14 +201,21 @@ export default defineEventHandler(async (event) => {
         const ttsProfile = qwenVoice?.ttsProfiles.find(item => item.enabled && item.id === (requestedTtsProfileId || realtimeProfile?.ttsProfileId))
           || qwenVoice?.ttsProfiles.find(item => item.enabled)
           || null
+        const qwenBaseWsUrl = realtimeProfile?.baseWsUrl || runtime.defenseRealtime.qwen.baseWsUrl
+        const qwenRealtimeModel = realtimeProfile?.model || (resolveQwenRealtimeProtocol(qwenBaseWsUrl) === 'omni' ? 'qwen3.5-omni-plus-realtime' : undefined)
+        const qwenConnectionUrl = `${runtime.apiBaseUrl.replace(/\/$/, '')}/projects/${projectId}/defense/realtime-sessions/${sessionId}/qwen-relay`
         const tokenResult = await createQwenTemporaryToken(qwenApiKey)
         payload = {
           ...payload,
           expiresAt: tokenResult.expiresAt,
           qwen: {
-            baseWsUrl: realtimeProfile?.baseWsUrl || runtime.defenseRealtime.qwen.baseWsUrl,
+            baseWsUrl: buildQwenRealtimeUpstreamUrl({
+              baseWsUrl: qwenBaseWsUrl,
+              model: qwenRealtimeModel,
+            }),
+            protocol: resolveQwenRealtimeProtocol(qwenBaseWsUrl),
             realtimeProfileId: realtimeProfile?.id,
-            realtimeModel: realtimeProfile?.model,
+            realtimeModel: qwenRealtimeModel,
             asrProfileId: asrProfile?.id,
             asrModel: asrProfile?.model,
             ttsProfileId: ttsProfile?.id,
@@ -225,7 +226,7 @@ export default defineEventHandler(async (event) => {
             voice: ttsProfile?.voiceId || realtimeProfile?.defaultVoiceId || runtime.defenseRealtime.qwen.voice,
             frameIntervalMs: realtimeProfile?.frameIntervalMs || runtime.defenseRealtime.qwen.frameIntervalMs,
             accessToken: tokenResult.token,
-            connectionUrl: `${runtime.apiBaseUrl.replace(/\/$/, '')}/projects/${projectId}/defense/realtime-sessions/${sessionId}/qwen-relay`,
+            connectionUrl: qwenConnectionUrl,
           },
         }
       }
@@ -295,6 +296,7 @@ export default defineEventHandler(async (event) => {
           coze: {
             baseUrl: config.baseURL,
             accessToken: config.apiKey,
+            authMode: config.authMode,
             botId: primaryAgent?.botId || config.botId,
             connectorId: primaryAgent?.connectorId || config.connectorId,
             voiceId: primaryVoiceId,

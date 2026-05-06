@@ -110,7 +110,7 @@ import type {
 } from '~/types/workspace'
 import type { CollabMarkdownHeadingAnchorItem } from '~/utils/collab-markdown-navigation'
 import type { DefenseRealtimeProviderBridge } from '~/utils/defense-realtime-bridge'
-import type { DefenseRealtimeMediaController } from '~/utils/defense-realtime-media-controller'
+import type { DefenseRealtimeMediaController, DefenseRealtimeMediaTelemetry } from '~/utils/defense-realtime-media-controller'
 import type { WorkspaceMetaKActionId, WorkspaceMetaKItem, WorkspaceMetaKSection, WorkspaceMetaKSectionDefinition } from '~/utils/workspace-metak'
 import type {
   WorkspaceOutlineNode,
@@ -199,6 +199,7 @@ import {
 } from '~/utils/collab-markdown-navigation'
 import { createDefenseRealtimeProviderBridge } from '~/utils/defense-realtime-bridge'
 import { createDefenseRealtimeMediaController } from '~/utils/defense-realtime-media-controller'
+import { mergeLoopyMockResources } from '~/utils/loopy-data-mockup'
 import {
   isProjectUploadTaskSidebarVisible,
 } from '~/utils/project-upload'
@@ -1254,6 +1255,16 @@ const defenseRealtimeBootstrapPayload = ref<DefenseRealtimeBootstrapPayload | nu
 const defenseRealtimeLatestError = ref('')
 const defenseRealtimeLatestSpeakerLabel = ref('')
 const defenseRealtimeLatestLatencyMs = ref<number | null>(null)
+const defenseRealtimeMediaTelemetry = ref<DefenseRealtimeMediaTelemetry>({
+  audioInputLabel: '',
+  videoInputLabel: '',
+  audioLevel: 0,
+  audioSampleRate: null,
+  videoWidth: null,
+  videoHeight: null,
+  audioLastCapturedAt: null,
+  videoLastCapturedAt: null,
+})
 const defenseRealtimeLogs = ref<Array<{
   id: string
   level: 'info' | 'warning' | 'error'
@@ -2705,7 +2716,10 @@ const defenseSessionStateSnapshot = computed<AiDefenseSessionState | null>(() =>
       audioEnabled: realtimeBase?.audioEnabled ?? defenseRealtimeAudioEnabled.value,
       videoEnabled: realtimeBase?.videoEnabled ?? (realtimeMediaMode === 'audio_video' ? defenseRealtimeVideoEnabled.value : false),
       lastError: realtimeBase?.lastError || defenseRealtimeLatestError.value || null,
-      metadata: realtimeBase?.metadata || {},
+      metadata: {
+        ...(realtimeBase?.metadata || {}),
+        ...buildDefenseRealtimeMediaMetadata(),
+      },
     },
     createdAt: base?.createdAt || defenseSessionMetaSnapshot.value?.createdAt || fallbackTimestamp,
     updatedAt: base?.updatedAt
@@ -2783,6 +2797,12 @@ function appendDefenseRealtimeLog(
       createdAt: new Date().toISOString(),
     },
   ]
+}
+
+function buildDefenseRealtimeMediaMetadata(): Record<string, unknown> {
+  return {
+    media: { ...defenseRealtimeMediaTelemetry.value },
+  }
 }
 
 function syncDefenseRealtimeDraftState(state: AiDefenseSessionState | null | undefined): void {
@@ -3151,19 +3171,35 @@ async function bootstrapDefenseRealtimeSidecar(sessionId: string): Promise<void>
       frameIntervalMs: bootstrap.qwen?.frameIntervalMs || 1000,
     })
     defenseRealtimeMediaController = mediaController
-    await mediaController.start({
-      mode: bootstrap.mediaMode,
+    const telemetryCleanup = mediaController.onTelemetry((telemetry) => {
+      defenseRealtimeMediaTelemetry.value = telemetry
+      patchDefenseRealtimeState({
+        metadata: buildDefenseRealtimeMediaMetadata(),
+      }, { syncDrafts: false })
     })
-    await mediaController.setAudioEnabled(defenseRealtimeAudioEnabled.value)
-    if (bootstrap.mediaMode === 'audio_video')
-      await mediaController.setVideoEnabled(defenseRealtimeVideoEnabled.value)
-    else
+    if (bootstrap.provider === 'qwen') {
+      await mediaController.start({
+        mode: bootstrap.mediaMode,
+      })
+      await mediaController.setAudioEnabled(defenseRealtimeAudioEnabled.value)
+      if (bootstrap.mediaMode === 'audio_video')
+        await mediaController.setVideoEnabled(defenseRealtimeVideoEnabled.value)
+      else
+        defenseRealtimeVideoEnabled.value = false
+    }
+    else if (bootstrap.mediaMode !== 'audio_video') {
       defenseRealtimeVideoEnabled.value = false
+    }
 
     defenseRealtimeBridge = createDefenseRealtimeProviderBridge(bootstrap.provider, bootstrap)
     defenseRealtimeBridgeCleanup = defenseRealtimeBridge.onEvent((event) => {
       void handleDefenseRealtimeBridgeEvent(event)
     })
+    const bridgeCleanup = defenseRealtimeBridgeCleanup
+    defenseRealtimeBridgeCleanup = () => {
+      telemetryCleanup()
+      bridgeCleanup?.()
+    }
     defenseRealtimeBootstrapState.value = 'ready'
     await defenseRealtimeBridge.bootstrap()
     await defenseRealtimeBridge.connect(mediaController)
@@ -3303,6 +3339,49 @@ const finalReviewOpenIssues = computed(() => {
 })
 const finalReviewUnresolvedIssueCount = computed(() => {
   return projectIssues.value.filter(item => item.status !== 'resolved' && item.status !== 'ignored').length
+})
+
+const finalReviewVideoMeeting = computed(() => {
+  return projectMeetings.value
+    .filter(item => item.mode === 'video' && /终审|评审|review/i.test(normalizeString(item.title)))
+    .sort((left, right) => {
+      const statusWeight: Record<string, number> = {
+        active: 0,
+        scheduled: 1,
+        failed: 2,
+        ended: 3,
+      }
+      const weightDiff = (statusWeight[left.status] ?? 4) - (statusWeight[right.status] ?? 4)
+      if (weightDiff !== 0)
+        return weightDiff
+      return parseTimestamp(right.updatedAt) - parseTimestamp(left.updatedAt)
+    })[0] || null
+})
+
+const finalReviewVideoCallStatus = computed(() => {
+  const meeting = finalReviewVideoMeeting.value
+  if (!meeting)
+    return '可创建'
+  if (meeting.status === 'active')
+    return '进行中'
+  if (meeting.status === 'scheduled')
+    return '待启动'
+  if (meeting.status === 'ended')
+    return '已结束'
+  return '需重试'
+})
+
+const finalReviewVideoCallDetail = computed(() => {
+  const meeting = finalReviewVideoMeeting.value
+  if (!meeting)
+    return '将创建终审视频会，并复用项目会议的 RTC、录制与纪要链路。'
+  if (meeting.status === 'active')
+    return `当前视频会正在进行：${meeting.title}`
+  if (meeting.status === 'scheduled')
+    return `已有待启动的视频会：${meeting.title}`
+  if (meeting.status === 'ended')
+    return `最近的视频会已结束：${meeting.title}。再次接入会创建新视频会。`
+  return `最近的视频会状态异常：${meeting.title}。再次接入会创建新视频会。`
 })
 
 const finalReviewEvidenceGaps = computed(() => {
@@ -6318,14 +6397,14 @@ async function loadProjectResources() {
   try {
     const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${projectId}/resources`))
     if (activeProjectId.value === projectId) {
-      resources.value = response.data
+      resources.value = mergeLoopyMockResources(response.data || [], projectId)
       resourcesLoadedProjectId.value = projectId
     }
   }
   catch {
     if (activeProjectId.value === projectId && !sameProjectRefresh) {
-      resources.value = []
-      resourcesLoadedProjectId.value = ''
+      resources.value = mergeLoopyMockResources([], projectId)
+      resourcesLoadedProjectId.value = projectId
     }
   }
   finally {
@@ -9495,11 +9574,13 @@ async function startDefenseRealtime() {
       {
         method: 'POST',
         body: {
+          title: `答辩工作台专属 · ${mediaMode === 'audio' ? '语音' : '音视频'}会话`,
           mode: mediaMode === 'audio' ? 'audio' : 'video',
           personaIds: enabledPersonaIds,
           provider,
           mediaMode,
           vadMode: 'server_vad',
+          source: 'defense_workbench',
           voiceRuntimeSelections,
         },
       },
@@ -11087,6 +11168,36 @@ async function openDashboardFromFinalReview(): Promise<void> {
   statusLine.value = '已打开仪表盘对标视图。'
 }
 
+async function openVideoCallFromFinalReview(): Promise<void> {
+  if (meetingMutating.value)
+    return
+
+  await updateWorkbenchMode('project')
+  await loadProjectMeetings({ fallbackToFirst: false, hydrateSelectedDetail: false })
+
+  const meeting = finalReviewVideoMeeting.value
+  if (meeting?.status === 'active') {
+    await joinProjectMeeting(meeting.id)
+    statusLine.value = '已接入终审视频通话。'
+    return
+  }
+
+  if (meeting?.status === 'scheduled') {
+    await startProjectMeeting(meeting.id)
+    statusLine.value = '已启动并接入终审视频通话。'
+    return
+  }
+
+  await submitProjectMeetingCreate({
+    mode: 'video',
+    title: '终审视频通话',
+    invitedUserIds: [],
+    scheduledStartAt: new Date().toISOString(),
+    scheduledEndAt: '',
+  })
+  statusLine.value = '已创建并接入终审视频通话。'
+}
+
 function openMaterialsDrawerFromFinalReview(): void {
   finalReviewMaterialsOpen.value = true
   void refreshFinalReviewContext()
@@ -12663,9 +12774,13 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                   :session-meta="defenseSessionMetaSnapshot"
                   :session-state="defenseSessionStateSnapshot"
                   :personas="defensePersonas"
+                  :scorecard="defenseScorecard"
                   :rounds="defenseRounds"
                   :linked-meeting="defenseLinkedMeeting"
                   :meeting-runtime-health="meetingRuntimeHealth"
+                  @import-personas="importDefensePersonas"
+                  @save-persona="saveDefensePersona"
+                  @delete-persona="deleteDefensePersona"
                 />
               </div>
 
@@ -12681,8 +12796,6 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                   :realtime-state="defenseRealtimeSessionMetaSnapshot"
                   :realtime-options="defenseRealtimeRuntimeOptions"
                   :realtime-logs="defenseRealtimeLogs"
-                  :scorecard="defenseScorecard"
-                  :summary="defenseSummary"
                   :rounds="defenseRounds"
                   :turns="defenseTurns"
                   :linked-meeting="defenseLinkedMeeting"
@@ -12831,9 +12944,6 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 @create-chat-session="startNewChatSession"
                 @approve-change="approveAiChange"
                 @reject-change="rejectAiChange"
-                @import-defense-personas="importDefensePersonas"
-                @save-defense-persona="saveDefensePersona"
-                @delete-defense-persona="deleteDefensePersona"
                 @generate-defense-summary="generateDefenseSummary"
                 @start-defense-realtime="startDefenseRealtime"
                 @update-defense-realtime-provider="updateDefenseRealtimeProvider"
@@ -12901,6 +13011,10 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
               :draft-title="formState.title"
               :draft-problem-statement="formState.problemStatement"
               :draft-summary="formState.summary"
+              :video-call-status="finalReviewVideoCallStatus"
+              :video-call-detail="finalReviewVideoCallDetail"
+              :video-call-busy="meetingMutating || projectMeetingsLoading"
+              @open-video-call="openVideoCallFromFinalReview"
               @open-final-review-flow="openFinalReviewFlowFromWorkbench"
               @open-project-settings="openProjectSettingsFromFinalReview"
               @open-dashboard="openDashboardFromFinalReview"
@@ -13214,7 +13328,6 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   width: 360px;
   min-width: 320px;
   max-width: 380px;
-  border-right: 1px solid rgba(213, 223, 238, 0.94);
   overflow: hidden;
 }
 
@@ -13362,8 +13475,6 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
     width: 100%;
     min-width: 0;
     max-width: none;
-    border-right: none;
-    border-bottom: 1px solid rgba(213, 223, 238, 0.94);
   }
 
   .workspace-defense-shell__stage {

@@ -1,4 +1,5 @@
 import type { RuntimeSettings } from '~~/server/utils/env'
+import type { PlatformAiProviderConfig } from '~~/server/utils/platform-ai-channels'
 import type {
   AiDefensePersona,
   AiDefenseSessionState,
@@ -10,7 +11,10 @@ import type {
   DefenseRealtimeProvider,
   DefenseRealtimeSessionMeta,
 } from '~~/shared/types/domain'
-import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import {
+  resolveAiRuntimeForChannel,
+  resolvePlatformAiRegistry,
+} from '~~/server/utils/platform-ai-channels'
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -155,7 +159,50 @@ export function buildDefenseRealtimeEventKey(event: DefenseRealtimeNormalizedEve
   ].join('::')
 }
 
+export function resolveDefenseQwenVoiceProvider(runtime: RuntimeSettings): PlatformAiProviderConfig | null {
+  const registry = resolvePlatformAiRegistry(runtime)
+  const providerMap = new Map(registry.providers.map(provider => [provider.id, provider]))
+  const defenseChannel = registry.channels.find(item => item.key === 'defense')
+  return (defenseChannel?.providerIds || [])
+    .map(providerId => providerMap.get(providerId) || null)
+    .find(provider => provider?.enabled && provider.type === 'dashscope-bailian' && (provider.capability === 'realtime' || provider.capability === 'voice')) || null
+}
+
+export function isQwenOmniRealtimeUrl(rawUrl: unknown): boolean {
+  return normalizeString(rawUrl).includes('/api-ws/v1/realtime')
+}
+
+export function resolveQwenRealtimeProtocol(rawUrl: unknown): 'legacy' | 'omni' {
+  return isQwenOmniRealtimeUrl(rawUrl) ? 'omni' : 'legacy'
+}
+
+export function buildQwenRealtimeUpstreamUrl(input: {
+  baseWsUrl: string
+  model?: string
+}): string {
+  const baseWsUrl = normalizeString(input.baseWsUrl)
+  const model = normalizeString(input.model)
+  if (!baseWsUrl || !model || !isQwenOmniRealtimeUrl(baseWsUrl))
+    return baseWsUrl
+
+  try {
+    const parsed = new URL(baseWsUrl)
+    if (!parsed.searchParams.get('model'))
+      parsed.searchParams.set('model', model)
+    return parsed.toString()
+  }
+  catch {
+    const separator = baseWsUrl.includes('?') ? '&' : '?'
+    return `${baseWsUrl}${separator}model=${encodeURIComponent(model)}`
+  }
+}
+
 export function resolveDefenseRealtimeQwenApiKey(runtime: RuntimeSettings): string {
+  const realtimeProvider = resolveDefenseQwenVoiceProvider(runtime)
+  const realtimeApiKey = normalizeString(realtimeProvider?.apiKey)
+  if (realtimeApiKey)
+    return realtimeApiKey
+
   const defenseRuntime = resolveAiRuntimeForChannel(runtime, 'defense')
   const providerType = normalizeString(defenseRuntime.provider?.type || defenseRuntime.provider?.provider || defenseRuntime.ai.provider).toLowerCase()
   if (!providerType.includes('dashscope') && !providerType.includes('bailian') && providerType !== 'qwen')

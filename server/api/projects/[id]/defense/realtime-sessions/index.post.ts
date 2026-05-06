@@ -35,6 +35,7 @@ interface CreateDefenseRealtimeBody {
   asrProfileId?: string
   ttsProfileId?: string
   vadMode?: 'server_vad' | 'semantic_vad' | 'manual'
+  source?: string
   voiceRuntimeSelections?: DefenseVoiceRuntimeSelection[]
 }
 
@@ -120,6 +121,8 @@ export default defineEventHandler(async (event) => {
       const asrProfileId = normalizeString(body?.asrProfileId)
       const ttsProfileId = normalizeString(body?.ttsProfileId)
       const vadMode = normalizeVadMode(body?.vadMode)
+      const source = normalizeString(body?.source) || 'defense_workbench'
+      const sessionTitle = normalizeString(body?.title) || `答辩工作台专属 · ${meetingMode === 'audio' ? '语音' : '音视频'}会话`
       const startupUnits = resolveRealtimeStartupUnits(aiRuntime, provider)
       const quota = await teamConsumeAiQuota(db, {
         workspaceId: access.workspaceId,
@@ -135,15 +138,21 @@ export default defineEventHandler(async (event) => {
         projectId,
         mode: 'defense',
         createdByUserId: user.id,
-        title: normalizeString(body?.title) || `答辩模拟 · ${meetingMode === 'audio' ? '语音' : '音视频'}会话`,
+        title: sessionTitle,
       })
       const meetingSession = await createProjectMeetingSession(db, {
         projectId,
         workspaceId: access.workspaceId,
         user,
-        title: normalizeString(body?.title) || `答辩模拟 · ${meetingMode === 'audio' ? '语音' : '音视频'}会话`,
+        title: sessionTitle,
         mode: meetingMode,
         runtime,
+        providerMetadata: {
+          source,
+          scope: 'defense_workbench',
+          visibleInMeetingHub: false,
+          description: '答辩工作台专属会议，仅复用会议的 RTC、转写与录制能力。',
+        },
       })
 
       await upsertProjectDefenseSessionState(db, {
@@ -174,6 +183,8 @@ export default defineEventHandler(async (event) => {
             ttsProfileId,
             vadMode,
             voiceRuntimeSelections,
+            source,
+            meetingScope: 'defense_workbench',
             billingStartedAt: new Date().toISOString(),
             billedMinutes: 0,
             billingUnits: startupUnits,

@@ -418,6 +418,7 @@ export async function createProjectMeetingSession(
     title?: string
     mode?: ProjectMeetingMode
     runtime?: RuntimeSettings
+    providerMetadata?: Record<string, unknown>
   },
 ): Promise<ProjectMeetingSessionPayload> {
   const payload = await createProjectMeetingRecord(db, {
@@ -454,6 +455,7 @@ export async function createProjectMeetingRecord(
     scheduledStartAt?: string | null
     scheduledEndAt?: string | null
     runtime?: RuntimeSettings
+    providerMetadata?: Record<string, unknown>
   },
 ): Promise<{
   meeting: ProjectMeetingDetail
@@ -495,7 +497,7 @@ export async function createProjectMeetingRecord(
     transcriptStatus: schedule.status === 'active' ? 'running' : 'idle',
     recordingStatus: schedule.status === 'active' ? 'requested' : 'idle',
     summaryStatus: 'idle',
-    providerMetadata: {},
+    providerMetadata: normalizeRecord(input.providerMetadata),
   })
 
   await replaceMeetingInvitees(db, {

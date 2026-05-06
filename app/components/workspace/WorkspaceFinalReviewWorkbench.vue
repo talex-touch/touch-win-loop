@@ -27,6 +27,9 @@ const props = withDefaults(defineProps<{
   draftTitle?: string
   draftProblemStatement?: string
   draftSummary?: string
+  videoCallStatus?: string
+  videoCallDetail?: string
+  videoCallBusy?: boolean
 }>(), {
   contestName: '',
   trackName: '',
@@ -43,9 +46,13 @@ const props = withDefaults(defineProps<{
   draftTitle: '',
   draftProblemStatement: '',
   draftSummary: '',
+  videoCallStatus: '未开始',
+  videoCallDetail: '可直接创建终审视频会，进入后会复用项目会议的 RTC、录制与纪要链路。',
+  videoCallBusy: false,
 })
 
 const emit = defineEmits<{
+  openVideoCall: []
   openFinalReviewFlow: []
   openProjectSettings: []
   openDashboard: []
@@ -277,6 +284,18 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
         </header>
 
         <div class="workspace-final-review-workbench__action-list">
+          <button
+            data-testid="workspace-final-review-video-call-action"
+            class="workspace-final-review-workbench__action workspace-final-review-workbench__action--primary"
+            type="button"
+            :disabled="videoCallBusy"
+            @click="emit('openVideoCall')"
+          >
+            <span>接入视频通话</span>
+            <span class="workspace-final-review-workbench__action-meta">
+              {{ videoCallBusy ? '连接中...' : videoCallStatus }}
+            </span>
+          </button>
           <button class="workspace-final-review-workbench__action workspace-final-review-workbench__action--primary" type="button" @click="emit('openFinalReviewFlow')">
             打开终审流程
           </button>
@@ -293,6 +312,9 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
             切到答辩工作台
           </button>
         </div>
+        <p class="workspace-final-review-workbench__action-hint">
+          {{ videoCallDetail }}
+        </p>
       </article>
     </section>
 
@@ -620,6 +642,10 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
 }
 
 .workspace-final-review-workbench__action {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
   min-height: 44px;
   border-radius: var(--wl-workbench-radius-control);
   padding: 0 14px;
@@ -627,6 +653,31 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
   line-height: 1;
   font-weight: 600;
   text-align: left;
+}
+
+.workspace-final-review-workbench__action:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.workspace-final-review-workbench__action-meta {
+  flex: 0 0 auto;
+  max-width: 128px;
+  overflow: hidden;
+  color: currentColor;
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 500;
+  opacity: 0.82;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-final-review-workbench__action-hint {
+  margin: 4px 0 0;
+  color: var(--wl-workbench-text-muted);
+  font-size: var(--wl-workbench-meta-size);
+  line-height: 1.7;
 }
 
 .workspace-final-review-workbench__action:hover,

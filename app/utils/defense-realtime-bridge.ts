@@ -46,6 +46,16 @@ function safeJsonParse<T = Record<string, unknown>>(value: string): T | null {
   }
 }
 
+function toBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const step = 0x8000
+  for (let offset = 0; offset < bytes.byteLength; offset += step) {
+    const slice = bytes.subarray(offset, Math.min(bytes.byteLength, offset + step))
+    binary += String.fromCharCode(...slice)
+  }
+  return window.btoa(binary)
+}
+
 function buildRealtimeWsUrl(rawUrl: string): string {
   const normalizedUrl = normalizeString(rawUrl)
   if (!normalizedUrl || !import.meta.client)
@@ -63,6 +73,49 @@ function buildRealtimeWsUrl(rawUrl: string): string {
   const origin = window.location.origin.replace(/^http/i, 'ws')
   const path = normalizedUrl.startsWith('/') ? normalizedUrl : `/${normalizedUrl}`
   return `${origin}${path}`
+}
+
+function buildQwenRealtimeRelayUrl(rawUrl: string, model: string): string {
+  const normalizedUrl = buildRealtimeWsUrl(rawUrl)
+  const normalizedModel = normalizeString(model)
+  if (!normalizedUrl || !normalizedModel || !normalizedUrl.includes('/api-ws/v1/realtime'))
+    return normalizedUrl
+
+  try {
+    const parsed = new URL(normalizedUrl)
+    if (!parsed.searchParams.get('model'))
+      parsed.searchParams.set('model', normalizedModel)
+    return parsed.toString()
+  }
+  catch {
+    const separator = normalizedUrl.includes('?') ? '&' : '?'
+    return `${normalizedUrl}${separator}model=${encodeURIComponent(normalizedModel)}`
+  }
+}
+
+function isQwenOmniRealtimeUrl(rawUrl: string): boolean {
+  return buildRealtimeWsUrl(rawUrl).includes('/api-ws/v1/realtime')
+}
+
+function resolveQwenRealtimeProtocol(payload: DefenseRealtimeBootstrapPayload, rawUrl: string): 'legacy' | 'omni' {
+  if (payload.qwen?.protocol === 'omni')
+    return 'omni'
+  if (payload.qwen?.protocol === 'legacy')
+    return 'legacy'
+  return isQwenOmniRealtimeUrl(rawUrl) ? 'omni' : 'legacy'
+}
+
+function toArrayBuffer(view: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(view.byteLength)
+  copy.set(view)
+  return copy.buffer
+}
+
+function isPcm16Base64(value: string): boolean {
+  const normalized = normalizeString(value)
+  if (!normalized || normalized.length < 8)
+    return false
+  return /^[a-z0-9+/]+={0,2}$/i.test(normalized)
 }
 
 function extractTextCandidate(value: unknown, depth = 0): string {
@@ -386,10 +439,16 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
   private readyForAudio = false
   private assistantAudioActive = false
   private latestAssistantText = ''
+  private realtimeProtocol: 'legacy' | 'omni' = 'legacy'
   private audioPlayer = new Pcm16AudioPlayer(24000)
 
   async connect(mediaController: DefenseRealtimeMediaController): Promise<void> {
-    const baseWsUrl = buildRealtimeWsUrl(normalizeString(this.payload.qwen?.connectionUrl || this.payload.qwen?.baseWsUrl))
+    const rawWsUrl = normalizeString(this.payload.qwen?.connectionUrl || this.payload.qwen?.baseWsUrl)
+    const model = normalizeString(this.payload.qwen?.realtimeModel) || 'qwen3.5-omni-plus-realtime'
+    this.realtimeProtocol = resolveQwenRealtimeProtocol(this.payload, rawWsUrl)
+    const baseWsUrl = this.realtimeProtocol === 'omni'
+      ? buildQwenRealtimeRelayUrl(rawWsUrl, model)
+      : buildRealtimeWsUrl(rawWsUrl)
     if (!import.meta.client || !baseWsUrl) {
       this.emitError('千问实时链路缺少 WebSocket 地址。')
       return
@@ -486,6 +545,14 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
   }
 
   override async interrupt(): Promise<void> {
+    if (this.realtimeProtocol === 'omni') {
+      this.sendJson({
+        type: 'response.cancel',
+      })
+      await super.interrupt()
+      return
+    }
+
     this.sendJson({
       header: {
         action: 'continue-task',
@@ -504,6 +571,9 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
 
   private startHeartbeat(): void {
     this.stopHeartbeat()
+    if (this.realtimeProtocol === 'omni')
+      return
+
     this.heartbeatTimer = setInterval(() => {
       this.sendJson({
         header: {
@@ -587,8 +657,44 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
     }
   }
 
+  private buildQwenOmniInstructions(): string {
+    const personaPack = this.payload.personaPack
+    const judgeLines = personaPack.judges
+      .filter(item => item.enabled !== false)
+      .map(item => `${item.name}（${item.judgeType}）：${(item.focusAreas || []).join('、') || item.summary || '围绕项目答辩质量追问'}`)
+      .join('\n')
+    return [
+      '你是 WinLoop 的实时答辩评委 sidecar。',
+      '请根据答辩者当前语音、画面和项目上下文，输出简短、可追溯、适合现场训练的追问与建议。',
+      `赛事：${normalizeString(personaPack.contestName) || '未提供'}`,
+      `赛道：${normalizeString(personaPack.trackName) || '未提供'}`,
+      `当前阶段：${normalizeString(personaPack.stage) || 'opening'}，已有轮次：${personaPack.turnCount}`,
+      judgeLines ? `评委 persona：\n${judgeLines}` : '评委 persona：默认技术、业务和表达综合评审。',
+      '回答要求：优先中文；每次只给一个关键问题或一条改进建议；不要虚构未看到的证据。',
+    ].join('\n')
+  }
+
+  private buildQwenOmniSessionPayload(): Record<string, unknown> {
+    const vadMode = this.payload.qwen?.vadMode === 'semantic_vad' ? 'semantic_vad' : 'server_vad'
+    return {
+      type: 'session.update',
+      session: {
+        modalities: ['text', 'audio'],
+        instructions: this.buildQwenOmniInstructions(),
+        voice: normalizeString(this.payload.qwen?.voice) || undefined,
+        input_audio_format: 'pcm',
+        output_audio_format: 'pcm',
+        turn_detection: {
+          type: vadMode,
+        },
+      },
+    }
+  }
+
   private sendStartMessage(): void {
-    this.sendJson(this.buildQwenStartPayload())
+    this.sendJson(this.realtimeProtocol === 'omni'
+      ? this.buildQwenOmniSessionPayload()
+      : this.buildQwenStartPayload())
   }
 
   private sendJson(payload: Record<string, unknown>): void {
@@ -598,7 +704,16 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
   }
 
   private async handleAudioChunk(chunk: DefenseRealtimeAudioChunk): Promise<void> {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.readyForAudio)
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN)
+      return
+    if (this.realtimeProtocol === 'omni') {
+      this.sendJson({
+        type: 'input_audio_buffer.append',
+        audio: toBase64(chunk.pcm),
+      })
+      return
+    }
+    if (!this.readyForAudio)
       return
     this.socket.send(chunk.pcm)
   }
@@ -608,6 +723,13 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
       return
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN)
       return
+    if (this.realtimeProtocol === 'omni') {
+      this.sendJson({
+        type: 'input_image_buffer.append',
+        image: frame.base64,
+      })
+      return
+    }
     this.sendJson({
       header: {
         action: 'continue-task',
@@ -636,6 +758,10 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
       const parsed = safeJsonParse<Record<string, unknown>>(event.data)
       if (!parsed)
         return
+      if (this.realtimeProtocol === 'omni') {
+        await this.handleOmniJsonMessage(parsed)
+        return
+      }
       this.handleJsonMessage(parsed)
       return
     }
@@ -647,6 +773,197 @@ class QwenBridge extends BaseDefenseRealtimeBridge {
       return
 
     await this.audioPlayer.play(binaryChunk).catch(() => {})
+  }
+
+  private async handleOmniJsonMessage(message: Record<string, unknown>): Promise<void> {
+    const eventType = normalizeString(message.type || message.event_type)
+    const response = normalizeObject(message.response)
+    const item = normalizeObject(message.item)
+    const error = normalizeObject(message.error)
+    const text = extractTextCandidate(message)
+    const responseId = normalizeString(message.response_id || response.id || message.item_id || item.id || message.event_id)
+    const eventId = normalizeString(message.event_id || message.id)
+
+    if (eventType === 'session.created' || eventType === 'session.updated') {
+      this.readyForAudio = true
+      this.emitState('connected', {
+        providerSessionId: normalizeString(normalizeObject(message.session).id) || responseId || this.taskId,
+        realtimeProtocol: 'omni',
+      })
+      return
+    }
+
+    if (eventType === 'input_audio_buffer.speech_started') {
+      this.emit({
+        type: 'session.state',
+        provider: 'qwen',
+        sessionId: this.payload.sessionId,
+        meetingId: this.payload.meetingId,
+        transport: this.payload.transport,
+        createdAt: nowIsoString(),
+        connectionState: 'connected',
+        speakerLabel: '答辩者',
+        audioEnabled: this.audioEnabled,
+        videoEnabled: this.videoEnabled,
+        eventId,
+        metadata: createEventMetadata(message, { realtimeProtocol: 'omni' }),
+      })
+      return
+    }
+
+    if (
+      eventType === 'conversation.item.input_audio_transcription.delta'
+      || eventType === 'response.audio_transcript.delta'
+    ) {
+      this.emit({
+        type: 'user.transcript.partial',
+        provider: 'qwen',
+        sessionId: this.payload.sessionId,
+        meetingId: this.payload.meetingId,
+        transport: this.payload.transport,
+        createdAt: nowIsoString(),
+        providerSessionId: responseId || this.taskId,
+        text,
+        speakerLabel: '答辩者',
+        audioEnabled: this.audioEnabled,
+        videoEnabled: this.videoEnabled,
+        eventId,
+        metadata: createEventMetadata(message, { realtimeProtocol: 'omni' }),
+      })
+      return
+    }
+
+    if (
+      eventType === 'conversation.item.input_audio_transcription.completed'
+      || eventType === 'input_audio_buffer.speech_stopped'
+    ) {
+      this.emit({
+        type: 'user.transcript.final',
+        provider: 'qwen',
+        sessionId: this.payload.sessionId,
+        meetingId: this.payload.meetingId,
+        transport: this.payload.transport,
+        createdAt: nowIsoString(),
+        providerSessionId: responseId || this.taskId,
+        text,
+        speakerLabel: '答辩者',
+        audioEnabled: this.audioEnabled,
+        videoEnabled: this.videoEnabled,
+        eventId,
+        isFinal: true,
+        metadata: createEventMetadata(message, { realtimeProtocol: 'omni' }),
+      })
+      return
+    }
+
+    if (eventType === 'response.created' || eventType === 'response.audio.delta') {
+      if (eventType === 'response.audio.delta') {
+        const delta = normalizeString(message.delta)
+        if (isPcm16Base64(delta)) {
+          try {
+            const binary = window.atob(delta)
+            const bytes = new Uint8Array(binary.length)
+            for (let index = 0; index < binary.length; index += 1)
+              bytes[index] = binary.charCodeAt(index)
+            await this.audioPlayer.play(toArrayBuffer(bytes)).catch(() => {})
+          }
+          catch {
+          }
+        }
+      }
+      if (!this.assistantAudioActive) {
+        this.assistantAudioActive = true
+        this.emit({
+          type: 'assistant.audio.started',
+          provider: 'qwen',
+          sessionId: this.payload.sessionId,
+          meetingId: this.payload.meetingId,
+          transport: this.payload.transport,
+          createdAt: nowIsoString(),
+          providerSessionId: responseId || this.taskId,
+          speakerLabel: 'AgentDef',
+          audioEnabled: this.audioEnabled,
+          videoEnabled: this.videoEnabled,
+          eventId,
+          metadata: createEventMetadata(message, { realtimeProtocol: 'omni' }),
+        })
+      }
+      return
+    }
+
+    if (
+      eventType === 'response.text.delta'
+      || eventType === 'response.output_text.delta'
+      || eventType === 'response.audio_transcript.delta'
+    ) {
+      this.latestAssistantText = text || this.latestAssistantText
+      this.emit({
+        type: 'assistant.transcript.delta',
+        provider: 'qwen',
+        sessionId: this.payload.sessionId,
+        meetingId: this.payload.meetingId,
+        transport: this.payload.transport,
+        createdAt: nowIsoString(),
+        providerSessionId: responseId || this.taskId,
+        text: this.latestAssistantText,
+        speakerLabel: 'AgentDef',
+        audioEnabled: this.audioEnabled,
+        videoEnabled: this.videoEnabled,
+        eventId,
+        metadata: createEventMetadata(message, { realtimeProtocol: 'omni' }),
+      })
+      return
+    }
+
+    if (
+      eventType === 'response.done'
+      || eventType === 'response.text.done'
+      || eventType === 'response.output_text.done'
+      || eventType === 'response.audio_transcript.done'
+      || eventType === 'response.audio.done'
+    ) {
+      this.assistantAudioActive = false
+      this.latestAssistantText = text || this.latestAssistantText
+      this.emit({
+        type: 'assistant.transcript.final',
+        provider: 'qwen',
+        sessionId: this.payload.sessionId,
+        meetingId: this.payload.meetingId,
+        transport: this.payload.transport,
+        createdAt: nowIsoString(),
+        providerSessionId: responseId || this.taskId,
+        text: this.latestAssistantText,
+        speakerLabel: 'AgentDef',
+        audioEnabled: this.audioEnabled,
+        videoEnabled: this.videoEnabled,
+        eventId,
+        isFinal: true,
+        metadata: createEventMetadata(message, { realtimeProtocol: 'omni' }),
+      })
+      this.emit({
+        type: 'assistant.audio.ended',
+        provider: 'qwen',
+        sessionId: this.payload.sessionId,
+        meetingId: this.payload.meetingId,
+        transport: this.payload.transport,
+        createdAt: nowIsoString(),
+        providerSessionId: responseId || this.taskId,
+        speakerLabel: 'AgentDef',
+        audioEnabled: this.audioEnabled,
+        videoEnabled: this.videoEnabled,
+        eventId,
+        metadata: createEventMetadata(message, { realtimeProtocol: 'omni' }),
+      })
+      this.latestAssistantText = ''
+      return
+    }
+
+    if (eventType === 'error' || eventType === 'response.failed') {
+      this.emitError(
+        extractTextCandidate(error) || extractTextCandidate(message) || '千问 Omni realtime 链路返回异常。',
+        createEventMetadata(message, { realtimeProtocol: 'omni' }),
+      )
+    }
   }
 
   private handleJsonMessage(message: Record<string, unknown>): void {
@@ -805,7 +1122,7 @@ class CozeBridge extends BaseDefenseRealtimeBridge {
         voiceId: normalizeString(this.payload.coze?.voiceId) || undefined,
         conversationId: normalizeString(this.payload.coze?.conversationId) || undefined,
         audioMutedDefault: !this.audioEnabled,
-        allowPersonalAccessTokenInBrowser: false,
+        allowPersonalAccessTokenInBrowser: this.payload.coze?.authMode === 'pat',
         videoConfig: {
           videoOnDefault: this.videoEnabled,
           renderDom: 'workspace-defense-realtime-preview',

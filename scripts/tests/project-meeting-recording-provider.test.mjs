@@ -19,6 +19,7 @@ const LIVEKIT_CONFIG_FILE = resolve(process.cwd(), 'deploy/meeting/livekit.yaml.
 const EGRESS_CONFIG_FILE = resolve(process.cwd(), 'deploy/meeting/egress.yaml.example')
 const DEPLOY_DOC_FILE = resolve(process.cwd(), 'deploy/meeting/README.zh-CN.md')
 const SETUP_DOC_FILE = resolve(process.cwd(), 'docs/meeting-runtime-setup.md')
+const DEFENSE_SMOKE_FILE = resolve(process.cwd(), 'scripts/defense-meeting-ai-record.mjs')
 
 it('livekit RTC provider 已接入 egress 录制与原生 webhook 校验', async () => {
   const rtcProviderSource = await readFile(RTC_PROVIDER_FILE, 'utf8')
@@ -136,4 +137,18 @@ it('本地 bring-up 已补齐 egress 服务与录制说明', async () => {
   assert.match(egressConfigSource, /ws_url: ws:\/\/livekit:7880/, 'egress 示例配置未指向本地 LiveKit')
   assert.match(deployDocSource, /会议录制/, '本地部署说明未描述录制导入结果')
   assert.match(setupDocSource, /LiveKit Egress/, '会议运行说明未描述 LiveKit Egress 录制链路')
+  assert.match(deployDocSource, /qwen3\.5-omni-plus-realtime/, '本地部署说明未描述百炼实时答辩 profile 配置')
+  assert.match(deployDocSource, /type = coze-voice/, '本地部署说明未描述 Coze 实时答辩 Provider 配置')
+  assert.match(setupDocSource, /DashScope 临时 token/, '会议运行说明未描述百炼 realtime bootstrap 真实 token 前置')
+  assert.match(setupDocSource, /voice\.coze\.agents/, '会议运行说明未描述 Coze realtime agent 前置')
+})
+
+it('答辩 smoke 同时诊断 ASR bridge 与应用会议 runtime health', async () => {
+  const smokeSource = await readFile(DEFENSE_SMOKE_FILE, 'utf8')
+
+  assert.match(smokeSource, /probeAsrBridge\('http:\/\/127\.0\.0\.1:8790'\)/, '答辩 smoke 未使用 ASR bridge healthz 探针')
+  assert.match(smokeSource, /读取会议 runtime health/, '答辩 smoke 未读取应用侧会议 runtime health')
+  assert.match(smokeSource, /summarizeMeetingRuntimeHealth/, '答辩 smoke 未格式化应用侧会议 runtime 配置态')
+  assert.match(smokeSource, /Meeting runtime：/, '答辩 smoke 结果页未展示应用侧会议 runtime 配置态')
+  assert.match(smokeSource, /bridge=\$\{connectivity\.asrBridge\.detail\}；runtime=\$\{results\.meetingRuntimeHealthDetail/, '答辩 smoke 字幕失败原因未同时包含 bridge 与应用 runtime')
 })

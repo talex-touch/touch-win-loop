@@ -7,7 +7,12 @@ import {
 } from '~~/server/utils/auth'
 import { getAiChatSessionById } from '~~/server/utils/chat-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { resolveDefenseRealtimeQwenApiKey } from '~~/server/utils/defense-realtime'
+import {
+  buildQwenRealtimeUpstreamUrl,
+  normalizeDefenseRealtimeSessionMeta,
+  resolveDefenseQwenVoiceProvider,
+  resolveDefenseRealtimeQwenApiKey,
+} from '~~/server/utils/defense-realtime'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { findAuthBySessionTokenHash } from '~~/server/utils/platform-store'
 import { getProjectDefenseSessionState } from '~~/server/utils/project-defense-store'
@@ -18,6 +23,11 @@ const RELAY_CONTEXT_KEY = '__defenseQwenRelay'
 
 interface DefenseQwenRelayContext {
   upstream: WebSocket | null
+}
+
+interface DefenseQwenRelayUpstreamConfig {
+  url: string
+  apiKey: string
 }
 
 function normalizeString(value: unknown): string {
@@ -166,6 +176,67 @@ async function resolveAuthUserFromPeer(peer: Peer): Promise<AuthUser | null> {
   })
 }
 
+function resolveQwenRealtimeProfile(input: {
+  runtime: Awaited<ReturnType<typeof readEffectiveRuntimeSettings>>['runtime']
+  metadata: Record<string, unknown>
+}) {
+  const qwenVoice = resolveDefenseQwenVoiceProvider(input.runtime)?.voice?.qwen
+  const requestedRealtimeProfileId = normalizeString(input.metadata.voiceRuntimeProfileId)
+  return qwenVoice?.realtimeProfiles.find(item => item.enabled && item.id === requestedRealtimeProfileId)
+    || qwenVoice?.realtimeProfiles.find(item => item.enabled)
+    || null
+}
+
+async function resolveRelayUpstreamConfig(input: {
+  user: AuthUser
+  projectId: string
+  sessionId: string
+}): Promise<DefenseQwenRelayUpstreamConfig | null> {
+  const { runtime } = await readEffectiveRuntimeSettings()
+  const qwenApiKey = resolveDefenseRealtimeQwenApiKey(runtime)
+  if (!qwenApiKey)
+    return null
+
+  let upstreamUrl = ''
+  await withTransaction(undefined, async (db) => {
+    const access = await resolveProjectRealtimeAccess(db, input.user, input.projectId)
+    if (!access)
+      throw new Error('FORBIDDEN')
+
+    const session = await getAiChatSessionById(db, {
+      workspaceId: access.workspaceId,
+      sessionId: input.sessionId,
+      projectId: input.projectId,
+      mode: 'defense',
+      strictScope: true,
+    })
+    if (!session)
+      throw new Error('NOT_FOUND')
+
+    const state = await getProjectDefenseSessionState(db, { sessionId: input.sessionId })
+    const realtime = normalizeDefenseRealtimeSessionMeta(state?.realtime)
+    if (!state || realtime.provider !== 'qwen')
+      throw new Error('NOT_FOUND')
+
+    const realtimeProfile = resolveQwenRealtimeProfile({
+      runtime,
+      metadata: realtime.metadata || {},
+    })
+    upstreamUrl = buildQwenRealtimeUpstreamUrl({
+      baseWsUrl: realtimeProfile?.baseWsUrl || runtime.defenseRealtime.qwen.baseWsUrl,
+      model: realtimeProfile?.model,
+    })
+  })
+
+  if (!upstreamUrl)
+    return null
+
+  return {
+    url: upstreamUrl,
+    apiKey: qwenApiKey,
+  }
+}
+
 export default defineWebSocketHandler({
   async open(peer) {
     const user = await resolveAuthUserFromPeer(peer)
@@ -184,45 +255,29 @@ export default defineWebSocketHandler({
       return
     }
 
-    const { runtime } = await readEffectiveRuntimeSettings()
-    const qwenApiKey = resolveDefenseRealtimeQwenApiKey(runtime)
-    if (!qwenApiKey || !normalizeString(runtime.defenseRealtime.qwen.baseWsUrl)) {
-      safeClose(peer, 4503, 'qwen_config_missing')
-      return
-    }
-
+    let upstreamConfig: DefenseQwenRelayUpstreamConfig | null = null
     try {
-      await withTransaction(undefined, async (db) => {
-        const access = await resolveProjectRealtimeAccess(db, user, projectId)
-        if (!access)
-          throw new Error('FORBIDDEN')
-
-        const session = await getAiChatSessionById(db, {
-          workspaceId: access.workspaceId,
-          sessionId,
-          projectId,
-          mode: 'defense',
-          strictScope: true,
-        })
-        if (!session)
-          throw new Error('NOT_FOUND')
-
-        const state = await getProjectDefenseSessionState(db, { sessionId })
-        if (!state || normalizeString(state.realtime?.provider) !== 'qwen')
-          throw new Error('NOT_FOUND')
+      upstreamConfig = await resolveRelayUpstreamConfig({
+        user,
+        projectId,
+        sessionId,
       })
     }
     catch (error) {
       safeClose(peer, error instanceof Error && error.message === 'FORBIDDEN' ? 4403 : 4404, error instanceof Error ? error.message.toLowerCase() : 'relay_bootstrap_failed')
       return
     }
+    if (!upstreamConfig?.url) {
+      safeClose(peer, 4503, 'qwen_config_missing')
+      return
+    }
 
     const UpstreamWebSocket = globalThis.WebSocket as unknown as {
       new (url: string, init?: unknown): WebSocket
     }
-    const upstream = new UpstreamWebSocket(runtime.defenseRealtime.qwen.baseWsUrl, {
+    const upstream = new UpstreamWebSocket(upstreamConfig.url, {
       headers: {
-        Authorization: `Bearer ${qwenApiKey}`,
+        Authorization: `Bearer ${upstreamConfig.apiKey}`,
       },
     })
     upstream.binaryType = 'arraybuffer'

@@ -265,6 +265,82 @@ describe('platform-ai-channels', () => {
     expect(resolveDefenseRealtimeQwenApiKey(runtime)).toBe('dashscope-native-key')
   })
 
+  it('答辩 realtime Provider 即使没有 chat 模型也会保留 defense 绑定', () => {
+    const runtime = createRuntime()
+
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'qwen_realtime',
+          name: 'Qwen Realtime',
+          type: 'dashscope-bailian',
+          capability: 'realtime',
+          provider: 'dashscope',
+          baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          apiKey: 'qwen-realtime-key',
+          voice: {
+            qwen: {
+              realtimeProfiles: [
+                {
+                  id: 'qwen_omni',
+                  model: 'qwen3.5-omni-plus-realtime',
+                  enabled: true,
+                },
+              ],
+            },
+          },
+          models: [],
+        },
+        {
+          id: 'coze_voice',
+          name: 'Coze Voice',
+          type: 'coze-voice',
+          provider: 'coze',
+          baseURL: 'https://api.coze.cn',
+          apiKey: 'coze-token',
+          voice: {
+            coze: {
+              agents: [
+                {
+                  id: 'judge_agent',
+                  botId: 'bot_1',
+                  connectorId: 'connector_1',
+                  enabled: true,
+                },
+              ],
+              voices: [
+                {
+                  id: 'judge_voice',
+                  voiceId: 'voice_1',
+                  enabled: true,
+                },
+              ],
+            },
+          },
+          models: [],
+        },
+      ],
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'defense',
+          providerIds: ['qwen_realtime', 'coze_voice'],
+          models: [],
+          modelFallback: [],
+          enabled: true,
+        },
+      ],
+    })
+
+    const registry = resolvePlatformAiRegistry(runtime)
+    const defenseChannel = registry.channels.find(item => item.key === 'defense')
+
+    expect(defenseChannel?.providerIds).toEqual(['qwen_realtime', 'coze_voice'])
+    expect(resolveAiRuntimeForChannel(runtime, 'defense').provider).toBeNull()
+    expect(resolveDefenseRealtimeQwenApiKey(runtime)).toBe('qwen-realtime-key')
+  })
+
   it('模型名会启发式识别能力', () => {
     expect(inferPlatformAiModelCapabilities({ model: 'qwen-plus' })).toEqual(['chat'])
     expect(inferPlatformAiModelCapabilities({ model: 'qwen-vl-max' })).toEqual(['chat', 'vision'])

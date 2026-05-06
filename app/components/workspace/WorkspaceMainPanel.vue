@@ -1368,16 +1368,17 @@ const activeDeviceArrangementResourceId = computed(() => {
 })
 const isActiveDeviceArrangementResource = computed(() => Boolean(activeDeviceArrangementResourceId.value))
 const deviceArrangementSaveState = ref({ dirty: false, saving: false, blocked: false })
+type BreadcrumbSaveTone = 'blocked' | 'dirty' | 'saved' | 'saving'
 const breadcrumbSaveState = computed(() => {
   if (!isActiveDeviceArrangementResource.value)
     return null
   if (deviceArrangementSaveState.value.blocked)
-    return { label: '已占用', tone: 'blocked' }
+    return { label: '已占用', tone: 'blocked' as BreadcrumbSaveTone }
   if (deviceArrangementSaveState.value.saving)
-    return { label: '保存中', tone: 'saving' }
+    return { label: '保存中', tone: 'saving' as BreadcrumbSaveTone }
   if (deviceArrangementSaveState.value.dirty)
-    return { label: '未保存', tone: 'dirty' }
-  return { label: '已保存', tone: 'saved' }
+    return { label: '未保存', tone: 'dirty' as BreadcrumbSaveTone }
+  return { label: '已保存', tone: 'saved' as BreadcrumbSaveTone }
 })
 
 const breadcrumbItems = computed(() => {

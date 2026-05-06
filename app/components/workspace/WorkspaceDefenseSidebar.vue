@@ -291,7 +291,7 @@ const showcaseDefenseScorecard: AiDefenseScorecard = {
   business: 90,
   expression: 86,
   total: 88,
-  summary: '答辩已经形成项目资料、知识索引、AI 协作、实时答辩和终审导出的完整闭环。下一步重点补强量化指标、引用复核路径和 45 秒收束句。',
+  summary: '',
   materialGaps: [
     '资料更新后的重新索引说明',
     '效率提升指标采集口径',
@@ -313,14 +313,23 @@ const activePersonaPopoverStyle = ref<Record<string, string>>({
   top: '0px',
   left: '0px',
 })
+const scorecardPopoverVisible = ref(false)
+const scorecardPopoverStyle = ref<Record<string, string>>({
+  top: '0px',
+  left: '0px',
+})
 
+const POPOVER_GAP = 12
+const POPOVER_MARGIN = 12
 const PERSONA_POPOVER_WIDTH = 300
-const PERSONA_POPOVER_GAP = 12
-const PERSONA_POPOVER_MARGIN = 12
 const PERSONA_POPOVER_ESTIMATED_HEIGHT = 280
+const SCORECARD_POPOVER_WIDTH = 320
+const SCORECARD_POPOVER_ESTIMATED_HEIGHT = 360
 
 let personaPopoverTriggerElement: HTMLElement | null = null
 let personaPopoverLayoutFrame: number | null = null
+let scorecardPopoverTriggerElement: HTMLElement | null = null
+let scorecardPopoverLayoutFrame: number | null = null
 
 const currentPersonaIdSet = computed(() => {
   return new Set(
@@ -342,34 +351,50 @@ const activePersonaPopover = computed(() => {
   return sortedPersonas.value.find(persona => persona.id === activePersonaPopoverId.value) || null
 })
 
+const activeScorecardPopover = computed(() => {
+  return scorecardPopoverVisible.value ? displayScorecard.value : null
+})
+
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }
 
-function buildPersonaPopoverStyle(triggerElement: HTMLElement): Record<string, string> {
+function buildPopoverStyle(
+  triggerElement: HTMLElement,
+  widthLimit: number,
+  estimatedHeight: number,
+): Record<string, string> {
   const rect = triggerElement.getBoundingClientRect()
   const viewportWidth = window.innerWidth
   const viewportHeight = window.innerHeight
   const width = Math.min(
-    PERSONA_POPOVER_WIDTH,
-    Math.max(220, viewportWidth - PERSONA_POPOVER_MARGIN * 2),
+    widthLimit,
+    Math.max(220, viewportWidth - POPOVER_MARGIN * 2),
   )
-  const maxLeft = Math.max(PERSONA_POPOVER_MARGIN, viewportWidth - PERSONA_POPOVER_MARGIN - width)
-  const rightSideLeft = rect.right + PERSONA_POPOVER_GAP
-  const leftSideLeft = rect.left - PERSONA_POPOVER_GAP - width
-  const preferredLeft = rightSideLeft + width <= viewportWidth - PERSONA_POPOVER_MARGIN
+  const maxLeft = Math.max(POPOVER_MARGIN, viewportWidth - POPOVER_MARGIN - width)
+  const rightSideLeft = rect.right + POPOVER_GAP
+  const leftSideLeft = rect.left - POPOVER_GAP - width
+  const preferredLeft = rightSideLeft + width <= viewportWidth - POPOVER_MARGIN
     ? rightSideLeft
     : leftSideLeft
   const maxTop = Math.max(
-    PERSONA_POPOVER_MARGIN,
-    viewportHeight - PERSONA_POPOVER_MARGIN - PERSONA_POPOVER_ESTIMATED_HEIGHT,
+    POPOVER_MARGIN,
+    viewportHeight - POPOVER_MARGIN - estimatedHeight,
   )
 
   return {
-    top: `${clampNumber(rect.top, PERSONA_POPOVER_MARGIN, maxTop)}px`,
-    left: `${clampNumber(preferredLeft, PERSONA_POPOVER_MARGIN, maxLeft)}px`,
+    top: `${clampNumber(rect.top, POPOVER_MARGIN, maxTop)}px`,
+    left: `${clampNumber(preferredLeft, POPOVER_MARGIN, maxLeft)}px`,
     width: `${width}px`,
   }
+}
+
+function buildPersonaPopoverStyle(triggerElement: HTMLElement): Record<string, string> {
+  return buildPopoverStyle(triggerElement, PERSONA_POPOVER_WIDTH, PERSONA_POPOVER_ESTIMATED_HEIGHT)
+}
+
+function buildScorecardPopoverStyle(triggerElement: HTMLElement): Record<string, string> {
+  return buildPopoverStyle(triggerElement, SCORECARD_POPOVER_WIDTH, SCORECARD_POPOVER_ESTIMATED_HEIGHT)
 }
 
 function cancelPersonaPopoverLayout(): void {
@@ -380,11 +405,26 @@ function cancelPersonaPopoverLayout(): void {
   personaPopoverLayoutFrame = null
 }
 
+function cancelScorecardPopoverLayout(): void {
+  if (!import.meta.client || scorecardPopoverLayoutFrame === null)
+    return
+
+  cancelAnimationFrame(scorecardPopoverLayoutFrame)
+  scorecardPopoverLayoutFrame = null
+}
+
 function updatePersonaPopoverLayout(): void {
   if (!import.meta.client || !personaPopoverTriggerElement)
     return
 
   activePersonaPopoverStyle.value = buildPersonaPopoverStyle(personaPopoverTriggerElement)
+}
+
+function updateScorecardPopoverLayout(): void {
+  if (!import.meta.client || !scorecardPopoverTriggerElement)
+    return
+
+  scorecardPopoverStyle.value = buildScorecardPopoverStyle(scorecardPopoverTriggerElement)
 }
 
 function schedulePersonaPopoverLayout(): void {
@@ -395,6 +435,17 @@ function schedulePersonaPopoverLayout(): void {
   personaPopoverLayoutFrame = requestAnimationFrame(() => {
     personaPopoverLayoutFrame = null
     updatePersonaPopoverLayout()
+  })
+}
+
+function scheduleScorecardPopoverLayout(): void {
+  if (!import.meta.client || !scorecardPopoverVisible.value || !scorecardPopoverTriggerElement)
+    return
+
+  cancelScorecardPopoverLayout()
+  scorecardPopoverLayoutFrame = requestAnimationFrame(() => {
+    scorecardPopoverLayoutFrame = null
+    updateScorecardPopoverLayout()
   })
 }
 
@@ -417,6 +468,22 @@ function hidePersonaPopover(personaId?: string): void {
   cancelPersonaPopoverLayout()
 }
 
+function showScorecardPopover(event: MouseEvent | FocusEvent): void {
+  if (!import.meta.client || !(event.currentTarget instanceof HTMLElement))
+    return
+
+  scorecardPopoverTriggerElement = event.currentTarget
+  scorecardPopoverStyle.value = buildScorecardPopoverStyle(event.currentTarget)
+  scorecardPopoverVisible.value = true
+  scheduleScorecardPopoverLayout()
+}
+
+function hideScorecardPopover(): void {
+  scorecardPopoverVisible.value = false
+  scorecardPopoverTriggerElement = null
+  cancelScorecardPopoverLayout()
+}
+
 function handlePersonaPopoverFocusOut(persona: AiDefensePersona, event: FocusEvent): void {
   const currentTarget = event.currentTarget
   const nextTarget = event.relatedTarget
@@ -431,25 +498,41 @@ function handlePersonaPopoverFocusOut(persona: AiDefensePersona, event: FocusEve
   hidePersonaPopover(persona.id)
 }
 
-function handlePersonaPopoverViewportChange(): void {
+function handleScorecardPopoverFocusOut(event: FocusEvent): void {
+  const currentTarget = event.currentTarget
+  const nextTarget = event.relatedTarget
+  if (
+    currentTarget instanceof HTMLElement
+    && nextTarget instanceof Node
+    && currentTarget.contains(nextTarget)
+  ) {
+    return
+  }
+
+  hideScorecardPopover()
+}
+
+function handlePopoverViewportChange(): void {
   schedulePersonaPopoverLayout()
+  scheduleScorecardPopoverLayout()
 }
 
 onMounted(() => {
   if (!import.meta.client)
     return
 
-  window.addEventListener('resize', handlePersonaPopoverViewportChange)
-  window.addEventListener('scroll', handlePersonaPopoverViewportChange, true)
+  window.addEventListener('resize', handlePopoverViewportChange)
+  window.addEventListener('scroll', handlePopoverViewportChange, true)
 })
 
 onBeforeUnmount(() => {
   if (!import.meta.client)
     return
 
-  window.removeEventListener('resize', handlePersonaPopoverViewportChange)
-  window.removeEventListener('scroll', handlePersonaPopoverViewportChange, true)
+  window.removeEventListener('resize', handlePopoverViewportChange)
+  window.removeEventListener('scroll', handlePopoverViewportChange, true)
   cancelPersonaPopoverLayout()
+  cancelScorecardPopoverLayout()
 })
 
 function resolvePersonaBadge(persona: AiDefensePersona): { label: string, className: string } {
@@ -706,7 +789,17 @@ function quickTogglePersona(persona: AiDefensePersona): void {
         </h3>
       </header>
 
-      <div v-if="displayScorecard" class="workspace-defense-sidebar__score-list">
+      <div
+        v-if="displayScorecard"
+        class="workspace-defense-sidebar__score-list"
+        tabindex="0"
+        :aria-describedby="activeScorecardPopover ? 'workspace-defense-sidebar-scorecard-popover' : undefined"
+        @mouseenter="showScorecardPopover"
+        @mouseleave="hideScorecardPopover"
+        @focusin="showScorecardPopover"
+        @focusout="handleScorecardPopoverFocusOut"
+        @keydown.esc="hideScorecardPopover"
+      >
         <div class="workspace-defense-sidebar__score-row">
           <span>技术</span>
           <strong>{{ displayScorecard.technical }}</strong>
@@ -723,13 +816,71 @@ function quickTogglePersona(persona: AiDefensePersona): void {
           <span>总分</span>
           <strong>{{ displayScorecard.total }}</strong>
         </div>
-        <p class="workspace-defense-sidebar__score-summary">
+        <p v-if="displayScorecard.summary" class="workspace-defense-sidebar__score-summary">
           {{ displayScorecard.summary }}
         </p>
       </div>
       <p v-else class="workspace-defense-sidebar__empty workspace-defense-sidebar__empty--score">
         当前还没有最新评分卡，进入一轮答辩后会在这里汇总技术、业务和表达得分。
       </p>
+
+      <Teleport to="body">
+        <aside
+          v-if="activeScorecardPopover"
+          id="workspace-defense-sidebar-scorecard-popover"
+          class="workspace-defense-sidebar__scorecard-popover"
+          :style="scorecardPopoverStyle"
+          role="tooltip"
+        >
+          <div class="workspace-defense-sidebar__popover-header">
+            <strong>评分卡详情</strong>
+            <span>总分 {{ activeScorecardPopover.total }}</span>
+          </div>
+
+          <div class="workspace-defense-sidebar__scorecard-popover-grid">
+            <div>
+              <span>技术</span>
+              <strong>{{ activeScorecardPopover.technical }}</strong>
+            </div>
+            <div>
+              <span>业务</span>
+              <strong>{{ activeScorecardPopover.business }}</strong>
+            </div>
+            <div>
+              <span>表达</span>
+              <strong>{{ activeScorecardPopover.expression }}</strong>
+            </div>
+          </div>
+
+          <p v-if="activeScorecardPopover.summary">
+            {{ activeScorecardPopover.summary }}
+          </p>
+
+          <div
+            v-if="activeScorecardPopover.materialGaps.length > 0"
+            class="workspace-defense-sidebar__scorecard-popover-section"
+          >
+            <strong>材料缺口</strong>
+            <ul>
+              <li v-for="item in activeScorecardPopover.materialGaps" :key="item">
+                {{ item }}
+              </li>
+            </ul>
+          </div>
+
+          <div
+            v-if="activeScorecardPopover.actionItems.length > 0"
+            class="workspace-defense-sidebar__scorecard-popover-section"
+          >
+            <strong>行动项</strong>
+            <ul>
+              <li v-for="item in activeScorecardPopover.actionItems" :key="item">
+                {{ item }}
+              </li>
+            </ul>
+          </div>
+        </aside>
+      </Teleport>
     </section>
   </aside>
 </template>
@@ -899,7 +1050,8 @@ function quickTogglePersona(persona: AiDefensePersona): void {
   margin-top: 10px;
 }
 
-.workspace-defense-sidebar__persona-popover {
+.workspace-defense-sidebar__persona-popover,
+.workspace-defense-sidebar__scorecard-popover {
   position: fixed;
   z-index: 80;
   width: 300px;
@@ -930,14 +1082,17 @@ function quickTogglePersona(persona: AiDefensePersona): void {
 }
 
 .workspace-defense-sidebar__popover-header span,
-.workspace-defense-sidebar__persona-popover p {
+.workspace-defense-sidebar__persona-popover p,
+.workspace-defense-sidebar__scorecard-popover p,
+.workspace-defense-sidebar__scorecard-popover li {
   margin: 0;
   color: #617591;
   font-size: 11px;
   line-height: 1.65;
 }
 
-.workspace-defense-sidebar__persona-popover p {
+.workspace-defense-sidebar__persona-popover p,
+.workspace-defense-sidebar__scorecard-popover p {
   margin-top: 8px;
 }
 
@@ -1010,6 +1165,12 @@ function quickTogglePersona(persona: AiDefensePersona): void {
 .workspace-defense-sidebar__score-list {
   display: flex;
   flex-direction: column;
+  cursor: default;
+}
+
+.workspace-defense-sidebar__score-list:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: -2px;
 }
 
 .workspace-defense-sidebar__score-row {
@@ -1041,6 +1202,59 @@ function quickTogglePersona(persona: AiDefensePersona): void {
 .workspace-defense-sidebar__score-summary {
   padding: 12px 18px 16px;
   border-top: 1px solid #edf2fb;
+}
+
+.workspace-defense-sidebar__scorecard-popover-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.workspace-defense-sidebar__scorecard-popover-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid #edf2fb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.workspace-defense-sidebar__scorecard-popover-grid span {
+  color: #617591;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.workspace-defense-sidebar__scorecard-popover-grid strong {
+  color: #14233a;
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 750;
+}
+
+.workspace-defense-sidebar__scorecard-popover-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #edf2fb;
+}
+
+.workspace-defense-sidebar__scorecard-popover-section > strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #102138;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 750;
+}
+
+.workspace-defense-sidebar__scorecard-popover-section ul {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding-left: 15px;
 }
 
 .workspace-defense-sidebar__persona-badge {

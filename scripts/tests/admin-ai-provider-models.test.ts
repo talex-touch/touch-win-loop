@@ -117,6 +117,7 @@ describe('admin-ai provider models', () => {
     expect(pageSource).toMatch(/Qwen Realtime \/ ASR \/ TTS/)
     expect(pageSource).toMatch(/Coze 智能体 \/ 音色 \/ 房间/)
     expect(pageSource).toMatch(/扣点策略/)
+    expect(pageSource).toMatch(/providerEditorCanRunVoiceTest = computed\(\(\) => providerEditorForm\.capability === 'voice' \|\| providerEditorForm\.capability === 'realtime'\)/)
     expect(patchSource).toMatch(/voice: hasOwn\(source as Record<string, unknown>, 'voice'\)/)
   })
 
@@ -379,9 +380,12 @@ describe('admin-ai provider models', () => {
       readFile(AI_PROMPTS_PAGE_FILE, 'utf8'),
     ])
 
-    expect(postSource).toMatch(/resolvedProvider\.capability === 'search' \|\| resolvedProvider\.capability === 'voice'/)
-    expect(testSource).toMatch(/resolvedProvider\.capability !== 'llm' && resolvedProvider\.capability !== 'voice' && resolvedProvider\.capability !== 'tts' && resolvedProvider\.capability !== 'asr'/)
+    expect(postSource).toMatch(/resolvedProvider\.capability === 'search' \|\| resolvedProvider\.capability === 'voice' \|\| resolvedProvider\.capability === 'realtime'/)
+    expect(testSource).toMatch(/resolvedProvider\.capability !== 'llm' && resolvedProvider\.capability !== 'voice' && resolvedProvider\.capability !== 'realtime' && resolvedProvider\.capability !== 'tts' && resolvedProvider\.capability !== 'asr'/)
     expect(testSource).toMatch(/probeCozeVoiceProvider/)
+    expect(testSource).toMatch(/probeDashScopeRealtimeProvider/)
+    expect(testSource).toMatch(/tokens\?expire_in_seconds=1800/)
+    expect(testSource).toMatch(/resolvedProvider\.capability === 'voice' \|\| resolvedProvider\.capability === 'realtime'/)
     expect(testSource).toMatch(/model:\s*'coze-voice'/)
     expect(testSource).toMatch(/synthesizeDashScopeTtsSpeech/)
     expect(testSource).toMatch(/runAdminAiAsrProbe/)

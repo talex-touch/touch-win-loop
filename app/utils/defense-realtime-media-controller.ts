@@ -15,6 +15,17 @@ export interface DefenseRealtimeVideoFrame {
   createdAt: string
 }
 
+export interface DefenseRealtimeMediaTelemetry {
+  audioInputLabel: string
+  videoInputLabel: string
+  audioLevel: number
+  audioSampleRate: number | null
+  videoWidth: number | null
+  videoHeight: number | null
+  audioLastCapturedAt: string | null
+  videoLastCapturedAt: string | null
+}
+
 export interface DefenseRealtimeMediaControllerOptions {
   previewElementId?: string
   targetSampleRate?: number
@@ -87,9 +98,20 @@ function downsampleBuffer(input: Float32Array, inputSampleRate: number, outputSa
 export class DefenseRealtimeMediaController {
   private readonly audioListeners = new Set<(chunk: DefenseRealtimeAudioChunk) => void>()
   private readonly videoListeners = new Set<(frame: DefenseRealtimeVideoFrame) => void>()
+  private readonly telemetryListeners = new Set<(telemetry: DefenseRealtimeMediaTelemetry) => void>()
   private readonly previewElementId: string
   private readonly targetSampleRate: number
   private readonly defaultFrameIntervalMs: number
+  private readonly telemetry: DefenseRealtimeMediaTelemetry = {
+    audioInputLabel: '',
+    videoInputLabel: '',
+    audioLevel: 0,
+    audioSampleRate: null,
+    videoWidth: null,
+    videoHeight: null,
+    audioLastCapturedAt: null,
+    videoLastCapturedAt: null,
+  }
 
   private stream: MediaStream | null = null
   private audioTrack: MediaStreamTrack | null = null
@@ -101,6 +123,7 @@ export class DefenseRealtimeMediaController {
   private audioSourceNode: MediaStreamAudioSourceNode | null = null
   private audioProcessorNode: ScriptProcessorNode | null = null
   private audioGainNode: GainNode | null = null
+  private telemetryEmittedAt = 0
   private mode: DefenseRealtimeMediaMode = 'audio_video'
   private audioEnabled = true
   private videoEnabled = true
@@ -143,6 +166,17 @@ export class DefenseRealtimeMediaController {
       throw new Error('未获取到可用麦克风轨道。')
     if (options.mode === 'audio_video' && !this.videoTrack)
       throw new Error('未获取到可用摄像头轨道，请切到仅音频后重试。')
+
+    this.updateTelemetry({
+      audioInputLabel: this.resolveTrackLabel(this.audioTrack, '默认麦克风'),
+      videoInputLabel: this.videoTrack ? this.resolveTrackLabel(this.videoTrack, '默认摄像头') : '',
+      audioSampleRate: this.audioTrack.getSettings?.().sampleRate || this.targetSampleRate,
+      videoWidth: this.videoTrack?.getSettings?.().width || null,
+      videoHeight: this.videoTrack?.getSettings?.().height || null,
+      audioLevel: 0,
+      audioLastCapturedAt: null,
+      videoLastCapturedAt: null,
+    })
 
     this.attachPreview()
     await this.startAudioCapture()
@@ -195,12 +229,24 @@ export class DefenseRealtimeMediaController {
     this.audioTrack = null
     this.videoTrack = null
     this.frameCanvas = null
+    this.updateTelemetry({
+      audioInputLabel: '',
+      videoInputLabel: '',
+      audioLevel: 0,
+      audioSampleRate: null,
+      videoWidth: null,
+      videoHeight: null,
+      audioLastCapturedAt: null,
+      videoLastCapturedAt: null,
+    }, { force: true })
   }
 
   async setAudioEnabled(enabled: boolean): Promise<void> {
     this.audioEnabled = enabled
     if (this.audioTrack)
       this.audioTrack.enabled = enabled
+    if (!enabled)
+      this.updateTelemetry({ audioLevel: 0 }, { force: true })
   }
 
   async setVideoEnabled(enabled: boolean): Promise<void> {
@@ -210,10 +256,17 @@ export class DefenseRealtimeMediaController {
     this.videoEnabled = enabled
     if (this.videoTrack)
       this.videoTrack.enabled = enabled
-    if (enabled)
+    if (enabled) {
       this.startVideoCapture()
-    else
+    }
+    else {
       this.stopVideoCapture()
+      this.updateTelemetry({
+        videoWidth: null,
+        videoHeight: null,
+        videoLastCapturedAt: null,
+      }, { force: true })
+    }
   }
 
   onAudioChunk(listener: (chunk: DefenseRealtimeAudioChunk) => void): () => void {
@@ -227,6 +280,14 @@ export class DefenseRealtimeMediaController {
     this.videoListeners.add(listener)
     return () => {
       this.videoListeners.delete(listener)
+    }
+  }
+
+  onTelemetry(listener: (telemetry: DefenseRealtimeMediaTelemetry) => void): () => void {
+    this.telemetryListeners.add(listener)
+    listener({ ...this.telemetry })
+    return () => {
+      this.telemetryListeners.delete(listener)
     }
   }
 
@@ -246,6 +307,33 @@ export class DefenseRealtimeMediaController {
     this.detachPreview()
   }
 
+  private resolveTrackLabel(track: MediaStreamTrack | null, fallback: string): string {
+    const label = String(track?.label || '').trim()
+    return label || fallback
+  }
+
+  private updateTelemetry(patch: Partial<DefenseRealtimeMediaTelemetry>, options: { force?: boolean } = {}): void {
+    Object.assign(this.telemetry, patch)
+    const now = Date.now()
+    if (!options.force && now - this.telemetryEmittedAt < 120)
+      return
+    this.telemetryEmittedAt = now
+    const snapshot = { ...this.telemetry }
+    for (const listener of this.telemetryListeners)
+      listener(snapshot)
+  }
+
+  private resolveAudioLevel(input: Float32Array): number {
+    if (!input.length)
+      return 0
+    let sum = 0
+    for (let index = 0; index < input.length; index += 1) {
+      const sample = input[index] || 0
+      sum += sample * sample
+    }
+    return Math.max(0, Math.min(1, Math.sqrt(sum / input.length) * 4))
+  }
+
   private attachPreview(): void {
     if (!this.previewElementId || !this.stream || !this.videoTrack || typeof document === 'undefined')
       return
@@ -263,6 +351,8 @@ export class DefenseRealtimeMediaController {
       video.style.width = '100%'
       video.style.height = '100%'
       video.style.objectFit = 'cover'
+      video.style.position = 'absolute'
+      video.style.inset = '0'
       container.appendChild(video)
       container.__defenseRealtimePreviewVideo__ = video
     }
@@ -321,6 +411,11 @@ export class DefenseRealtimeMediaController {
           durationMs,
           createdAt: nowIsoString(),
         }
+        this.updateTelemetry({
+          audioLevel: this.resolveAudioLevel(channelData),
+          audioSampleRate: this.targetSampleRate,
+          audioLastCapturedAt: chunk.createdAt,
+        })
         for (const listener of this.audioListeners)
           listener(chunk)
       }
@@ -382,6 +477,11 @@ export class DefenseRealtimeMediaController {
         height: scaledHeight,
         createdAt: nowIsoString(),
       }
+      this.updateTelemetry({
+        videoWidth: scaledWidth,
+        videoHeight: scaledHeight,
+        videoLastCapturedAt: frame.createdAt,
+      })
       for (const listener of this.videoListeners)
         listener(frame)
     }, this.defaultFrameIntervalMs)

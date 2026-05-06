@@ -3900,6 +3900,12 @@ export interface DefenseRealtimeCozeVoiceOption {
 
 export interface DefenseRealtimeRuntimeOptions {
   defaultProvider: DefenseRealtimeProvider
+  qwen: {
+    configured: boolean
+    realtimeProfileCount: number
+    asrProfileCount: number
+    ttsProfileCount: number
+  }
   coze: {
     configured: boolean
     agents: DefenseRealtimeCozeAgentOption[]
@@ -3959,6 +3965,7 @@ export interface DefenseRealtimeBootstrapPayload {
   personaPack: DefenseRealtimePersonaPack
   qwen?: {
     baseWsUrl: string
+    protocol?: 'legacy' | 'omni'
     realtimeProfileId?: string
     realtimeModel?: string
     asrProfileId?: string
@@ -3976,6 +3983,7 @@ export interface DefenseRealtimeBootstrapPayload {
   coze?: {
     baseUrl: string
     accessToken?: string
+    authMode?: 'pat' | 'oauth'
     botId: string
     connectorId?: string
     voiceId?: string

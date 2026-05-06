@@ -48,13 +48,39 @@ function resolveDefenseCozeVoiceProvider(runtime: Awaited<ReturnType<typeof read
     .find(provider => provider?.enabled && provider.type === 'coze-voice') || null
 }
 
+function resolveDefenseQwenVoiceProvider(runtime: Awaited<ReturnType<typeof readEffectiveRuntimeSettings>>['runtime']): PlatformAiProviderConfig | null {
+  const registry = resolvePlatformAiRegistry(runtime)
+  const providerMap = new Map(registry.providers.map(provider => [provider.id, provider]))
+  const defenseChannel = registry.channels.find(item => item.key === 'defense')
+  return (defenseChannel?.providerIds || [])
+    .map(providerId => providerMap.get(providerId) || null)
+    .find(provider => provider?.enabled && provider.type === 'dashscope-bailian' && (provider.capability === 'realtime' || provider.capability === 'voice')) || null
+}
+
 function buildDefenseRealtimeRuntimeOptions(runtime: Awaited<ReturnType<typeof readEffectiveRuntimeSettings>>['runtime']): DefenseRealtimeRuntimeOptions {
+  const qwenProvider = resolveDefenseQwenVoiceProvider(runtime)
+  const qwenVoice = qwenProvider?.voice?.qwen
+  const qwenApiKeyConfigured = Boolean(String(qwenProvider?.apiKey || '').trim())
+  const qwenRealtimeProfileCount = qwenVoice?.realtimeProfiles?.filter(item => item.enabled).length || 0
+  const qwenAsrProfileCount = qwenVoice?.asrProfiles?.filter(item => item.enabled).length || 0
+  const qwenTtsProfileCount = qwenVoice?.ttsProfiles?.filter(item => item.enabled).length || 0
   const cozeProvider = resolveDefenseCozeVoiceProvider(runtime)
   const cozeVoice = cozeProvider?.voice?.coze
+  const cozeApiKeyConfigured = Boolean(String(cozeProvider?.apiKey || '').trim())
+  const cozeAgentCount = cozeVoice?.agents?.filter(item => item.enabled).length || 0
+  const cozeVoiceCount = cozeVoice?.voices?.filter(item => item.enabled).length || 0
+  const qwenConfigured = Boolean(qwenProvider?.enabled && qwenApiKeyConfigured && qwenRealtimeProfileCount > 0)
+  const cozeConfigured = Boolean(cozeProvider?.enabled && cozeApiKeyConfigured && cozeAgentCount > 0 && cozeVoiceCount > 0)
   return {
-    defaultProvider: cozeProvider ? 'coze' : 'qwen',
+    defaultProvider: qwenConfigured ? 'qwen' : (cozeConfigured ? 'coze' : 'qwen'),
+    qwen: {
+      configured: qwenConfigured,
+      realtimeProfileCount: qwenRealtimeProfileCount,
+      asrProfileCount: qwenAsrProfileCount,
+      ttsProfileCount: qwenTtsProfileCount,
+    },
     coze: {
-      configured: Boolean(cozeProvider?.enabled && cozeVoice?.agents.some(item => item.enabled)),
+      configured: cozeConfigured,
       agents: (cozeVoice?.agents || []).map(item => ({
         id: item.id,
         name: item.name,
