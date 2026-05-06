@@ -47,6 +47,13 @@ interface LoopySelectedResourceContext {
   projectId: string
 }
 
+interface LoopyAiSpeedOption {
+  id: AiSpeedId
+  label: string
+  description: string
+  temperature: number
+}
+
 const activeComposerPanel = ref<ComposerPanelId>('')
 const selectedLoopyProjectId = ref('')
 const selectedResourceContext = ref<LoopySelectedResourceContext | null>(null)
@@ -177,12 +184,7 @@ const suggestionPrompts = [
   },
 ]
 
-const aiSpeedOptions: Array<{
-  id: AiSpeedId
-  label: string
-  description: string
-  temperature: number
-}> = [
+const aiSpeedOptions: LoopyAiSpeedOption[] = [
   {
     id: 'fast',
     label: '快速',
@@ -202,6 +204,7 @@ const aiSpeedOptions: Array<{
     temperature: 0.5,
   },
 ]
+const defaultAiSpeedOption: LoopyAiSpeedOption = aiSpeedOptions[0]!
 
 const commandItems = [
   {
@@ -1083,6 +1086,10 @@ const mockSessionMessages = ref<Record<string, ChatMessage[]>>({
   ],
 })
 
+function getMockSessionMessages(sessionId: string): ChatMessage[] {
+  return mockSessionMessages.value[sessionId] || []
+}
+
 const loopySelectedWorkspaceId = ref(MOCK_WORKSPACE_ID)
 const loopySessions = ref<LoopyMockSession[]>([
   {
@@ -1091,7 +1098,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '用户角色比赛推荐',
-    messageCount: mockSessionMessages.value['mock-session-role-fit'].length,
+    messageCount: getMockSessionMessages('mock-session-role-fit').length,
     lastMessageAt: '2026-05-05T10:42:00+08:00',
     createdAt: '2026-05-05T10:02:00+08:00',
     updatedAt: '2026-05-05T10:42:00+08:00',
@@ -1104,7 +1111,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '项目赛道契合度',
-    messageCount: mockSessionMessages.value['mock-session-contest-match'].length,
+    messageCount: getMockSessionMessages('mock-session-contest-match').length,
     lastMessageAt: '2026-05-05T10:39:00+08:00',
     createdAt: '2026-05-05T09:54:00+08:00',
     updatedAt: '2026-05-05T10:39:00+08:00',
@@ -1117,7 +1124,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '项目比赛组合选择',
-    messageCount: mockSessionMessages.value['mock-session-project-picker'].length,
+    messageCount: getMockSessionMessages('mock-session-project-picker').length,
     lastMessageAt: '2026-05-05T10:34:00+08:00',
     createdAt: '2026-05-05T09:36:00+08:00',
     updatedAt: '2026-05-05T10:34:00+08:00',
@@ -1130,7 +1137,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '报名资料收集',
-    messageCount: mockSessionMessages.value['mock-session-resource-collect'].length,
+    messageCount: getMockSessionMessages('mock-session-resource-collect').length,
     lastMessageAt: '2026-05-05T10:28:00+08:00',
     createdAt: '2026-05-05T09:22:00+08:00',
     updatedAt: '2026-05-05T10:28:00+08:00',
@@ -1143,7 +1150,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '新用户画像推荐',
-    messageCount: mockSessionMessages.value['mock-session-user-persona'].length,
+    messageCount: getMockSessionMessages('mock-session-user-persona').length,
     lastMessageAt: '2026-05-05T10:20:00+08:00',
     createdAt: '2026-05-05T09:08:00+08:00',
     updatedAt: '2026-05-05T10:20:00+08:00',
@@ -1156,7 +1163,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '资料契合度转任务',
-    messageCount: mockSessionMessages.value['mock-session-material-fit'].length,
+    messageCount: getMockSessionMessages('mock-session-material-fit').length,
     lastMessageAt: '2026-05-05T10:16:00+08:00',
     createdAt: '2026-05-05T08:58:00+08:00',
     updatedAt: '2026-05-05T10:16:00+08:00',
@@ -1169,7 +1176,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '报名截止风险',
-    messageCount: mockSessionMessages.value['mock-session-deadline-risk'].length,
+    messageCount: getMockSessionMessages('mock-session-deadline-risk').length,
     lastMessageAt: '2026-05-05T10:11:00+08:00',
     createdAt: '2026-05-05T08:46:00+08:00',
     updatedAt: '2026-05-05T10:11:00+08:00',
@@ -1182,7 +1189,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '落地成本口径',
-    messageCount: mockSessionMessages.value['mock-session-budget-cost'].length,
+    messageCount: getMockSessionMessages('mock-session-budget-cost').length,
     lastMessageAt: '2026-05-05T10:07:00+08:00',
     createdAt: '2026-05-05T08:38:00+08:00',
     updatedAt: '2026-05-05T10:07:00+08:00',
@@ -1195,7 +1202,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '团队分工安排',
-    messageCount: mockSessionMessages.value['mock-session-team-division'].length,
+    messageCount: getMockSessionMessages('mock-session-team-division').length,
     lastMessageAt: '2026-05-05T10:01:00+08:00',
     createdAt: '2026-05-05T08:31:00+08:00',
     updatedAt: '2026-05-05T10:01:00+08:00',
@@ -1208,7 +1215,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '竞品对比表达',
-    messageCount: mockSessionMessages.value['mock-session-competitor-compare'].length,
+    messageCount: getMockSessionMessages('mock-session-competitor-compare').length,
     lastMessageAt: '2026-05-05T09:55:00+08:00',
     createdAt: '2026-05-05T08:24:00+08:00',
     updatedAt: '2026-05-05T09:55:00+08:00',
@@ -1221,7 +1228,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '商业化路径',
-    messageCount: mockSessionMessages.value['mock-session-business-model'].length,
+    messageCount: getMockSessionMessages('mock-session-business-model').length,
     lastMessageAt: '2026-05-05T09:47:00+08:00',
     createdAt: '2026-05-05T08:12:00+08:00',
     updatedAt: '2026-05-05T09:47:00+08:00',
@@ -1234,7 +1241,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '路演稿重排',
-    messageCount: mockSessionMessages.value['mock-session-roadshow-order'].length,
+    messageCount: getMockSessionMessages('mock-session-roadshow-order').length,
     lastMessageAt: '2026-05-05T09:39:00+08:00',
     createdAt: '2026-05-05T08:04:00+08:00',
     updatedAt: '2026-05-05T09:39:00+08:00',
@@ -1247,7 +1254,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '答辩备用题库',
-    messageCount: mockSessionMessages.value['mock-session-defense-bank'].length,
+    messageCount: getMockSessionMessages('mock-session-defense-bank').length,
     lastMessageAt: '2026-05-05T09:30:00+08:00',
     createdAt: '2026-05-05T07:58:00+08:00',
     updatedAt: '2026-05-05T09:30:00+08:00',
@@ -1260,7 +1267,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '项目缺口看板',
-    messageCount: mockSessionMessages.value['mock-session-gap-board'].length,
+    messageCount: getMockSessionMessages('mock-session-gap-board').length,
     lastMessageAt: '2026-05-05T09:22:00+08:00',
     createdAt: '2026-05-05T07:44:00+08:00',
     updatedAt: '2026-05-05T09:22:00+08:00',
@@ -1273,7 +1280,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '跨项目组合判断',
-    messageCount: mockSessionMessages.value['mock-session-cross-project'].length,
+    messageCount: getMockSessionMessages('mock-session-cross-project').length,
     lastMessageAt: '2026-05-05T09:14:00+08:00',
     createdAt: '2026-05-05T07:35:00+08:00',
     updatedAt: '2026-05-05T09:14:00+08:00',
@@ -1286,7 +1293,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '导师视角复盘',
-    messageCount: mockSessionMessages.value['mock-session-mentor-review'].length,
+    messageCount: getMockSessionMessages('mock-session-mentor-review').length,
     lastMessageAt: '2026-05-05T09:05:00+08:00',
     createdAt: '2026-05-05T07:26:00+08:00',
     updatedAt: '2026-05-05T09:05:00+08:00',
@@ -1299,7 +1306,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '终审优先事项梳理',
-    messageCount: mockSessionMessages.value['mock-session-priority'].length,
+    messageCount: getMockSessionMessages('mock-session-priority').length,
     lastMessageAt: '2026-05-05T10:38:00+08:00',
     createdAt: '2026-05-05T09:40:00+08:00',
     updatedAt: '2026-05-05T10:38:00+08:00',
@@ -1312,7 +1319,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '评委追问风险扫描',
-    messageCount: mockSessionMessages.value['mock-session-defense'].length,
+    messageCount: getMockSessionMessages('mock-session-defense').length,
     lastMessageAt: '2026-05-05T10:12:00+08:00',
     createdAt: '2026-05-05T08:50:00+08:00',
     updatedAt: '2026-05-05T10:12:00+08:00',
@@ -1325,7 +1332,7 @@ const loopySessions = ref<LoopyMockSession[]>([
     createdByUserId: MOCK_USER_ID,
     mode: 'loopy_page',
     title: '路演稿终审检查',
-    messageCount: mockSessionMessages.value['mock-session-material'].length,
+    messageCount: getMockSessionMessages('mock-session-material').length,
     lastMessageAt: '2026-05-04T22:24:00+08:00',
     createdAt: '2026-05-04T21:50:00+08:00',
     updatedAt: '2026-05-04T22:24:00+08:00',
@@ -1334,7 +1341,7 @@ const loopySessions = ref<LoopyMockSession[]>([
   },
 ])
 const loopyActiveSessionId = ref('mock-session-role-fit')
-const loopyMessages = ref<ChatMessage[]>([...mockSessionMessages.value['mock-session-role-fit']])
+const loopyMessages = ref<ChatMessage[]>([...getMockSessionMessages('mock-session-role-fit')])
 const loopyChatInput = ref('')
 const loopyChatLoading = ref(false)
 const loopyStatusText = ref('')
@@ -1395,7 +1402,7 @@ const selectedLoopyProject = computed(() => {
 })
 
 const selectedAiSpeedOption = computed(() => {
-  return aiSpeedOptions.find(item => item.id === selectedAiSpeed.value) || aiSpeedOptions[0]
+  return aiSpeedOptions.find(item => item.id === selectedAiSpeed.value) || defaultAiSpeedOption
 })
 
 const visibleResourceResults = computed(() => {
@@ -1631,12 +1638,15 @@ function updateActiveMockSession(content: string) {
 
   const now = new Date().toISOString()
   const current = loopySessions.value[sessionIndex]
-  const nextSession = {
+  if (!current)
+    return
+
+  const nextSession: LoopyMockSession = {
     ...current,
     title: current.title === '新对话' ? buildDialogTitlePreview(content) || '新对话' : current.title,
     preview: buildDialogTitlePreview(content) || current.preview,
     tag: resolveMockSessionTag(content, current.tag),
-    messageCount: mockSessionMessages.value[activeId]?.length || current.messageCount,
+    messageCount: getMockSessionMessages(activeId).length || current.messageCount,
     lastMessageAt: now,
     updatedAt: now,
   }
@@ -1665,7 +1675,7 @@ function switchLoopySession(sessionId: string) {
   if (!normalizedSessionId || normalizedSessionId === loopyActiveSessionId.value)
     return
   loopyActiveSessionId.value = normalizedSessionId
-  loopyMessages.value = [...(mockSessionMessages.value[normalizedSessionId] || [])]
+  loopyMessages.value = [...getMockSessionMessages(normalizedSessionId)]
   loopyStatusText.value = ''
   loopyErrorText.value = ''
   closeComposerPanel()
@@ -3026,15 +3036,19 @@ onMounted(() => {
   outline-offset: 2px;
 }
 
+.loopy-page-ai-selector:focus-visible {
+  outline: none;
+}
+
 .loopy-page-composer__tool:disabled {
   opacity: 0.5;
 }
 
 .loopy-page-ai-selector {
   height: 2.375rem;
-  padding: 0 0.75rem;
-  border: 1px solid #dbe4f2;
-  border-radius: 0.75rem;
+  padding: 0 0.875rem;
+  border: 1px solid rgba(178, 194, 255, 0.9);
+  border-radius: 999px;
   background: rgba(255, 255, 255, 0.96);
   color: #475569;
   display: inline-flex;
@@ -3043,6 +3057,7 @@ onMounted(() => {
   font-size: 0.75rem;
   font-weight: 600;
   white-space: nowrap;
+  box-shadow: none;
   transition:
     border-color 0.2s ease,
     color 0.2s ease,
@@ -3052,7 +3067,7 @@ onMounted(() => {
 .loopy-page-ai-selector:hover:not(:disabled) {
   border-color: #bfd2f8;
   color: #1d4ed8;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .loopy-page-ai-selector:disabled {

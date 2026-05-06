@@ -318,13 +318,13 @@ const taskTrendFailedPolyline = computed(() => {
 </script>
 
 <template>
-  <div class="loopy-health space-y-5">
+  <div class="loopy-health loopy-health--ops">
     <div class="loopy-health__hero">
       <div class="loopy-health__hero-copy">
         <span :class="healthBadgeClass">
           {{ healthBadgeLabel }}
         </span>
-        <h2 class="loopy-health__title">
+        <h2 v-if="diagnostics.healthMessage" class="loopy-health__title">
           {{ diagnostics.healthMessage }}
         </h2>
         <div class="loopy-health__pill-row">
@@ -416,7 +416,7 @@ const taskTrendFailedPolyline = computed(() => {
     </section>
 
     <template v-else>
-      <section class="gap-3 grid">
+      <section v-if="diagnostics.issues.length > 0" class="gap-3 grid">
         <article
           v-for="issue in diagnostics.issues"
           :key="issue.code"
@@ -715,30 +715,36 @@ const taskTrendFailedPolyline = computed(() => {
 
 <style scoped>
 .loopy-health {
-  --loopy-health-gap-1: var(--wl-wb-gap-1, 6px);
-  --loopy-health-gap-2: var(--wl-wb-gap-2, 8px);
-  --loopy-health-gap-3: var(--wl-wb-gap-3, 10px);
-  --loopy-health-gap-4: var(--wl-wb-gap-4, 12px);
-  --loopy-health-gap-5: var(--wl-wb-gap-5, 14px);
-  --loopy-health-panel-padding: var(--wl-wb-panel-padding, 12px);
-  --loopy-health-card-padding: var(--wl-wb-card-padding, 10px);
-  --loopy-health-shell-radius: var(--wl-wb-shell-radius, 18px);
-  --loopy-health-panel-radius: var(--wl-wb-panel-radius, 15px);
-  --loopy-health-card-radius: var(--wl-wb-card-radius, 12px);
+  --loopy-health-gap-1: 6px;
+  --loopy-health-gap-2: 8px;
+  --loopy-health-gap-3: 10px;
+  --loopy-health-gap-4: 12px;
+  --loopy-health-gap-5: 16px;
+  --loopy-health-panel-padding: 16px;
+  --loopy-health-card-padding: 12px;
+  --loopy-health-shell-radius: 0px;
+  --loopy-health-panel-radius: 0px;
+  --loopy-health-card-radius: 0px;
   --loopy-health-control-height: var(--wl-wb-control-height, 34px);
   --loopy-health-control-padding-x: var(--wl-wb-control-padding-x, 14px);
   --loopy-health-chip-height: var(--wl-wb-chip-height, 28px);
   --loopy-health-caption-size: var(--wl-wb-caption-size, 11px);
   --loopy-health-label-size: var(--wl-wb-label-size, 12px);
   --loopy-health-body-size: var(--wl-wb-body-size, 13px);
-  --loopy-health-title-size: var(--wl-wb-title-size, 28px);
+  --loopy-health-title-size: var(--wl-wb-title-size, 20px);
   --loopy-health-panel-title-size: var(--wl-wb-panel-title-size, 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  color: #17263d;
 }
 
 .loopy-health__hero {
   display: grid;
-  gap: var(--loopy-health-gap-4);
-  grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.82fr);
+  gap: 16px;
+  grid-template-columns: minmax(420px, 1.08fr) minmax(360px, 0.92fr);
+  align-items: stretch;
 }
 
 .loopy-health__hero-copy,
@@ -753,24 +759,25 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__hero-copy {
-  padding: calc(var(--loopy-health-panel-padding) + var(--loopy-health-gap-4));
-  background:
-    radial-gradient(circle at top left, rgba(73, 164, 255, 0.13), transparent 32%),
-    linear-gradient(150deg, #ffffff 0%, #f7fbff 52%, #f4f9ff 100%);
+  display: grid;
+  align-content: start;
+  padding: 18px 20px;
+  background: #fbfdff;
 }
 
 .loopy-health__hero-panel {
-  padding: calc(var(--loopy-health-panel-padding) + var(--loopy-health-gap-2));
-  background:
-    radial-gradient(circle at top right, rgba(19, 171, 182, 0.12), transparent 28%),
-    linear-gradient(160deg, #fdfefe 0%, #f6fbff 100%);
+  display: grid;
+  align-content: start;
+  padding: 18px 20px;
+  background: #fbfdff;
 }
 
 .loopy-health__badge {
   display: inline-flex;
   align-items: center;
   min-height: var(--loopy-health-chip-height);
-  padding: 0 var(--loopy-health-gap-4);
+  width: fit-content;
+  padding: 0 10px;
   border-radius: 999px;
   font-size: var(--loopy-health-caption-size);
   font-weight: 800;
@@ -794,12 +801,13 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__title {
-  margin: calc(var(--loopy-health-gap-4) + var(--loopy-health-gap-1)) 0 0;
+  max-width: 760px;
+  margin: 10px 0 0;
   color: #13253d;
-  font-size: calc(var(--loopy-health-title-size) + 2px);
-  line-height: 1.12;
+  font-size: var(--loopy-health-title-size);
+  line-height: 1.35;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .loopy-health__subtitle {
@@ -821,7 +829,7 @@ const taskTrendFailedPolyline = computed(() => {
   display: inline-flex;
   align-items: center;
   min-height: var(--loopy-health-control-height);
-  padding: 0 var(--loopy-health-gap-4);
+  padding: 0 10px;
   border: 1px solid #dbe7f3;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.86);
@@ -831,10 +839,10 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__pill-row {
-  margin-top: calc(var(--loopy-health-gap-5) + var(--loopy-health-gap-1));
+  margin-top: 12px;
 }
 .loopy-health__actions {
-  margin-top: calc(var(--loopy-health-gap-5) + var(--loopy-health-gap-2));
+  margin-top: 14px;
 }
 
 .loopy-health__action {
@@ -846,6 +854,22 @@ const taskTrendFailedPolyline = computed(() => {
   color: #355274;
   font-size: var(--loopy-health-label-size);
   font-weight: 700;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.loopy-health__action:hover:not(:disabled),
+.loopy-health__inline-action:hover:not(:disabled) {
+  border-color: #9bb4d0;
+  background: #f5f9fd;
+}
+
+.loopy-health__action:disabled,
+.loopy-health__inline-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .loopy-health__action--primary {
@@ -873,7 +897,7 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__progress-track {
-  height: 10px;
+  height: 8px;
   margin-top: var(--loopy-health-gap-3);
   border-radius: 999px;
   background: #dfebf8;
@@ -883,24 +907,25 @@ const taskTrendFailedPolyline = computed(() => {
 .loopy-health__progress-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #41a6ff, #76f0ff);
+  background: #1d4f82;
 }
 
 .loopy-health__progress-meta {
   margin-top: var(--loopy-health-gap-4);
   color: #567092;
   font-size: var(--loopy-health-label-size);
+  line-height: 1.55;
 }
 
 .loopy-health__freshness-grid {
   display: grid;
-  gap: var(--loopy-health-gap-3);
-  margin-top: calc(var(--loopy-health-gap-5) + var(--loopy-health-gap-1));
+  gap: 10px;
+  margin-top: 16px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .loopy-health__freshness-card {
-  padding: var(--loopy-health-card-padding);
+  padding: 10px 12px;
   border-radius: var(--loopy-health-card-radius);
   border: 1px solid #dce8f5;
   background: rgba(255, 255, 255, 0.82);
@@ -935,12 +960,15 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__summary-card {
-  padding: calc(var(--loopy-health-card-padding) + var(--loopy-health-gap-2));
+  padding: 14px 12px;
+  min-height: 84px;
+  border-top-color: #eef3f8;
 }
 .loopy-health__summary-value {
   margin-top: var(--loopy-health-gap-2);
-  font-size: calc(var(--loopy-health-title-size) - 6px);
-  letter-spacing: -0.02em;
+  font-size: 22px;
+  line-height: 1.05;
+  letter-spacing: 0;
 }
 .loopy-health__message {
   padding: calc(var(--loopy-health-panel-padding) + var(--loopy-health-gap-2));
@@ -957,6 +985,7 @@ const taskTrendFailedPolyline = computed(() => {
   gap: var(--loopy-health-gap-3);
   border-radius: var(--loopy-health-card-radius);
   padding: var(--loopy-health-card-padding) var(--loopy-health-gap-5);
+  border: 1px solid transparent;
   font-size: var(--loopy-health-label-size);
   font-weight: 600;
 }
@@ -976,13 +1005,33 @@ const taskTrendFailedPolyline = computed(() => {
 
 .loopy-health__grid {
   display: grid;
-  gap: var(--loopy-health-gap-4);
+  gap: 16px;
 }
 .loopy-health__grid--3 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.loopy-health__grid--3 > .loopy-health__card {
+  grid-column: span 4;
+}
+
+.loopy-health__grid--3 > .loopy-health__card:nth-child(1),
+.loopy-health__grid--3 > .loopy-health__card:nth-child(3) {
+  grid-column: span 4;
+}
+
+.loopy-health__grid--3 > .loopy-health__card:nth-child(2) {
+  grid-column: span 4;
+}
+
+.loopy-health__grid--3 > .loopy-health__card:nth-child(4),
+.loopy-health__grid--3 > .loopy-health__card:nth-child(5),
+.loopy-health__grid--3 > .loopy-health__card:nth-child(6) {
+  grid-column: span 4;
 }
 .loopy-health__card {
-  padding: calc(var(--loopy-health-panel-padding) + var(--loopy-health-gap-2));
+  min-width: 0;
+  padding: 16px;
 }
 
 .loopy-health__card-head h3 {
@@ -994,14 +1043,16 @@ const taskTrendFailedPolyline = computed(() => {
 
 .loopy-health__matrix {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  min-width: 520px;
+  overflow-x: auto;
 }
 
 .loopy-health__matrix-header {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 34px;
+  min-height: 32px;
   border-radius: 12px;
   background: #f5f8fc;
   font-weight: 700;
@@ -1013,7 +1064,7 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__matrix-cell {
-  min-height: 34px;
+  min-height: 32px;
   border-radius: 12px;
   display: flex;
   align-items: center;
@@ -1045,7 +1096,8 @@ const taskTrendFailedPolyline = computed(() => {
 
 .loopy-health__bar-row {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr) 32px;
+  grid-template-columns: 104px minmax(0, 1fr) 44px;
+  min-height: 30px;
 }
 
 .loopy-health__bar-label--wide {
@@ -1053,7 +1105,7 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 .loopy-health__bar-track {
-  height: 10px;
+  height: 8px;
   border-radius: 999px;
   background: #ecf2fa;
   overflow: hidden;
@@ -1062,17 +1114,18 @@ const taskTrendFailedPolyline = computed(() => {
 .loopy-health__bar-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #46a7ff, #7ae7ff);
+  background: #6f8fb0;
 }
 
 .loopy-health__bar-fill--rose {
-  background: linear-gradient(90deg, #ff7d8b, #ffb2ba);
+  background: #c35f70;
 }
 
 .loopy-health__pipeline-item {
-  padding: 12px;
-  border-radius: 16px;
+  padding: 12px 0;
+  border-radius: 0;
   border: 1px solid #dce7f4;
+  border-width: 0 0 1px;
   background: #f8fbff;
 }
 
@@ -1096,8 +1149,8 @@ const taskTrendFailedPolyline = computed(() => {
 }
 .loopy-health__trend-svg {
   width: 100%;
-  height: 180px;
-  border-radius: 18px;
+  height: 148px;
+  border-radius: 0;
   background: linear-gradient(180deg, #f8fbff, #ffffff);
 }
 .loopy-health__trend-line {
@@ -1122,8 +1175,8 @@ const taskTrendFailedPolyline = computed(() => {
 
 .loopy-health__metric-chip,
 .loopy-health__list-item {
-  padding: 14px;
-  border-radius: 16px;
+  padding: 12px;
+  border-radius: var(--loopy-health-card-radius);
   border: 1px solid #dce7f4;
   background: #f8fbff;
 }
@@ -1158,7 +1211,7 @@ const taskTrendFailedPolyline = computed(() => {
 
 .loopy-health__table th,
 .loopy-health__table td {
-  padding: 12px 10px;
+  padding: 10px 8px;
   border-bottom: 1px solid #e8eef7;
   text-align: left;
   vertical-align: top;
@@ -1170,9 +1223,22 @@ const taskTrendFailedPolyline = computed(() => {
 }
 
 @media (max-width: 1280px) {
-  .loopy-health__hero,
-  .loopy-health__grid--3 {
+  .loopy-health__hero {
     grid-template-columns: 1fr;
+  }
+
+  .loopy-health__grid--3 > .loopy-health__card {
+    grid-column: span 6;
+  }
+}
+
+@media (max-width: 820px) {
+  .loopy-health__freshness-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .loopy-health__grid--3 > .loopy-health__card {
+    grid-column: span 12;
   }
 }
 </style>

@@ -671,7 +671,8 @@ watch(() => [props.projectId, props.dashboard?.summary.lastRefreshedAt, props.da
 }, { immediate: true })
 
 watch(payload, () => {
-  void nextTick(() => {
+  void nextTick(async () => {
+    await ensureThreeScene()
     buildSceneData()
   })
 })

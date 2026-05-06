@@ -415,35 +415,48 @@ watch(workflows, (items) => {
         </p>
       </div>
 
-      <div class="workflow-workbench__actions">
-        <button class="workflow-workbench__action" type="button" @click="reload()">
-          刷新
-        </button>
-        <button class="workflow-workbench__action workflow-workbench__action--primary" type="button" @click="createNewWorkflow()">
-          新建工作流
-        </button>
+      <div class="workflow-workbench__header-side">
+        <div class="workflow-workbench__stats" aria-label="工作流概览">
+          <span><strong>{{ props.selectedResources?.length || 0 }}</strong> 资源</span>
+          <span><strong>{{ workflows.length }}</strong> 工作流</span>
+          <span><strong>{{ builtinTemplates.length }}</strong> 模板</span>
+          <span><strong>{{ filteredRuns.length }}</strong> 历史</span>
+        </div>
+        <div class="workflow-workbench__actions">
+          <button class="workflow-workbench__action" type="button" @click="reload()">
+            刷新
+          </button>
+          <button class="workflow-workbench__action workflow-workbench__action--primary" type="button" @click="createNewWorkflow()">
+            新建工作流
+          </button>
+        </div>
       </div>
     </header>
 
     <div class="workflow-workbench__selection">
-      <span class="workflow-workbench__selection-label">当前选中资源</span>
-      <span
-        v-for="resource in props.selectedResources"
-        :key="resource.id"
-        class="workflow-workbench__selection-chip"
-      >
-        {{ resource.title || '未命名资源' }}
-      </span>
-      <span v-if="!props.selectedResources?.length" class="workflow-workbench__selection-empty">
-        当前没有显式选中资源，`resource.batch` 触发器将退化为项目级上下文运行。
-      </span>
+      <div class="workflow-workbench__selection-summary">
+        <span class="workflow-workbench__selection-label">当前选中资源</span>
+        <strong>{{ props.selectedResources?.length || 0 }}</strong>
+      </div>
+      <div class="workflow-workbench__selection-list" aria-label="当前选中资源列表">
+        <span
+          v-for="resource in props.selectedResources"
+          :key="resource.id"
+          class="workflow-workbench__selection-chip"
+        >
+          {{ resource.title || '未命名资源' }}
+        </span>
+        <span v-if="!props.selectedResources?.length" class="workflow-workbench__selection-empty">
+          当前没有显式选中资源，resource.batch 触发器将退化为项目级上下文运行。
+        </span>
+      </div>
     </div>
 
     <p v-if="error" class="workflow-workbench__error">
       {{ error }}
     </p>
 
-    <div class="workflow-workbench__grid">
+    <div class="workflow-workbench__layout">
       <aside class="workflow-workbench__sidebar">
         <div class="workflow-workbench__sidebar-group">
           <div class="workflow-workbench__sidebar-head">
@@ -663,107 +676,107 @@ watch(workflows, (items) => {
           </div>
         </div>
       </section>
-    </div>
 
-    <section class="workflow-runs">
-      <div class="workflow-runs__head">
-        <div>
-          <h3>运行历史</h3>
-          <p>查看 step 状态、审批对象和 continue 恢复入口。</p>
-        </div>
-        <span>{{ filteredRuns.length }} 条</span>
-      </div>
-
-      <p v-if="runsLoading" class="workflow-workbench__hint">
-        正在加载运行历史...
-      </p>
-
-      <article
-        v-for="run in filteredRuns"
-        :key="run.id"
-        class="workflow-runs__card"
-      >
-        <header class="workflow-runs__card-head">
+      <section class="workflow-runs">
+        <div class="workflow-runs__head">
           <div>
-            <strong>{{ run.definitionSnapshot.name }}</strong>
-            <p>{{ resolveStatusLabel(run.status) }} · {{ formatDateTime(run.createdAt) }}</p>
+            <h3>运行历史</h3>
+            <p>查看 step 状态、审批对象和 continue 恢复入口。</p>
           </div>
-          <button
-            v-if="run.status === 'needs_review'"
-            class="workflow-editor__secondary"
-            type="button"
-            :disabled="continuingRunId === run.id || hasPendingReview(run)"
-            @click="continueRun(run.id)"
-          >
-            {{ continuingRunId === run.id ? '继续中...' : hasPendingReview(run) ? '等待审批完成' : '继续执行' }}
-          </button>
-        </header>
+          <span>{{ filteredRuns.length }} 条</span>
+        </div>
 
-        <ol class="workflow-runs__steps">
-          <li
-            v-for="step in run.steps || []"
-            :key="step.id"
-            class="workflow-runs__step"
-          >
-            <div class="workflow-runs__step-main">
-              <strong>{{ step.name }}</strong>
-              <span>{{ step.type }} · {{ resolveStatusLabel(step.status) }}</span>
+        <p v-if="runsLoading" class="workflow-workbench__hint">
+          正在加载运行历史...
+        </p>
+
+        <article
+          v-for="run in filteredRuns"
+          :key="run.id"
+          class="workflow-runs__card"
+        >
+          <header class="workflow-runs__card-head">
+            <div>
+              <strong>{{ run.definitionSnapshot.name }}</strong>
+              <p>{{ resolveStatusLabel(run.status) }} · {{ formatDateTime(run.createdAt) }}</p>
             </div>
-            <p v-if="step.output?.assistantReply" class="workflow-runs__step-copy">
-              {{ String(step.output.assistantReply || '') }}
-            </p>
-            <p v-else-if="step.output?.text" class="workflow-runs__step-copy">
-              {{ String(step.output.text || '') }}
-            </p>
-            <p v-else-if="step.errorMessage" class="workflow-runs__step-error">
-              {{ step.errorMessage }}
-            </p>
-
-            <div
-              v-if="step.reviewContext?.changeRequests?.length"
-              class="workflow-runs__reviews"
+            <button
+              v-if="run.status === 'needs_review'"
+              class="workflow-editor__secondary"
+              type="button"
+              :disabled="continuingRunId === run.id || hasPendingReview(run)"
+              @click="continueRun(run.id)"
             >
-              <article
-                v-for="change in step.reviewContext.changeRequests"
-                :key="change.id"
-                class="workflow-runs__review-card"
-              >
-                <div>
-                  <div class="workflow-runs__review-title">
-                    <strong>{{ change.title }}</strong>
-                    <span v-if="change.destructive" class="workflow-runs__destructive-pill">破坏性</span>
-                  </div>
-                  <p>{{ change.summary }}</p>
-                </div>
-                <div class="workflow-runs__review-actions">
-                  <span>{{ resolveStatusLabel(change.status) }}</span>
-                  <button
-                    v-if="change.status === 'pending'"
-                    type="button"
-                    :disabled="mutatingChangeId === change.id"
-                    @click="approveWorkflowChange(change)"
-                  >
-                    {{ requiresWorkflowChangeSecondConfirm(change) ? '再次确认批准' : '批准' }}
-                  </button>
-                  <button
-                    v-if="change.status === 'pending'"
-                    type="button"
-                    :disabled="mutatingChangeId === change.id"
-                    @click="rejectWorkflowChange(change)"
-                  >
-                    拒绝
-                  </button>
-                </div>
-              </article>
-            </div>
-          </li>
-        </ol>
-      </article>
+              {{ continuingRunId === run.id ? '继续中...' : hasPendingReview(run) ? '等待审批完成' : '继续执行' }}
+            </button>
+          </header>
 
-      <p v-if="!filteredRuns.length && !runsLoading" class="workflow-workbench__hint">
-        还没有运行历史，先保存并运行一个 workflow。
-      </p>
-    </section>
+          <ol class="workflow-runs__steps">
+            <li
+              v-for="step in run.steps || []"
+              :key="step.id"
+              class="workflow-runs__step"
+            >
+              <div class="workflow-runs__step-main">
+                <strong>{{ step.name }}</strong>
+                <span>{{ step.type }} · {{ resolveStatusLabel(step.status) }}</span>
+              </div>
+              <p v-if="step.output?.assistantReply" class="workflow-runs__step-copy">
+                {{ String(step.output.assistantReply || '') }}
+              </p>
+              <p v-else-if="step.output?.text" class="workflow-runs__step-copy">
+                {{ String(step.output.text || '') }}
+              </p>
+              <p v-else-if="step.errorMessage" class="workflow-runs__step-error">
+                {{ step.errorMessage }}
+              </p>
+
+              <div
+                v-if="step.reviewContext?.changeRequests?.length"
+                class="workflow-runs__reviews"
+              >
+                <article
+                  v-for="change in step.reviewContext.changeRequests"
+                  :key="change.id"
+                  class="workflow-runs__review-card"
+                >
+                  <div>
+                    <div class="workflow-runs__review-title">
+                      <strong>{{ change.title }}</strong>
+                      <span v-if="change.destructive" class="workflow-runs__destructive-pill">破坏性</span>
+                    </div>
+                    <p>{{ change.summary }}</p>
+                  </div>
+                  <div class="workflow-runs__review-actions">
+                    <span>{{ resolveStatusLabel(change.status) }}</span>
+                    <button
+                      v-if="change.status === 'pending'"
+                      type="button"
+                      :disabled="mutatingChangeId === change.id"
+                      @click="approveWorkflowChange(change)"
+                    >
+                      {{ requiresWorkflowChangeSecondConfirm(change) ? '再次确认批准' : '批准' }}
+                    </button>
+                    <button
+                      v-if="change.status === 'pending'"
+                      type="button"
+                      :disabled="mutatingChangeId === change.id"
+                      @click="rejectWorkflowChange(change)"
+                    >
+                      拒绝
+                    </button>
+                  </div>
+                </article>
+              </div>
+            </li>
+          </ol>
+        </article>
+
+        <p v-if="!filteredRuns.length && !runsLoading" class="workflow-workbench__hint">
+          还没有运行历史，先保存并运行一个 workflow。
+        </p>
+      </section>
+    </div>
   </section>
 </template>
 
@@ -771,7 +784,8 @@ watch(workflows, (items) => {
 .workflow-workbench {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  color: #1b314d;
 }
 
 .workflow-workbench__header,
@@ -789,9 +803,27 @@ watch(workflows, (items) => {
   gap: 12px;
 }
 
+.workflow-workbench__header {
+  align-items: center;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e4ebf4;
+}
+
+.workflow-workbench__header-copy {
+  min-width: 0;
+}
+
+.workflow-workbench__header-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 360px;
+}
+
 .workflow-workbench__eyebrow {
   display: inline-block;
-  color: #7a8faa;
+  color: #7b8da5;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -803,7 +835,7 @@ watch(workflows, (items) => {
 .workflow-editor__toolbar h3 {
   margin: 6px 0 0;
   color: #152a45;
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 900;
 }
 
@@ -814,6 +846,33 @@ watch(workflows, (items) => {
   color: #627897;
   font-size: 12px;
   line-height: 1.6;
+}
+
+.workflow-workbench__stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workflow-workbench__stats span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid #e2eaf4;
+  border-radius: 7px;
+  background: #fbfdff;
+  color: #6d8099;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workflow-workbench__stats strong {
+  color: #1e3654;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .workflow-workbench__actions,
@@ -831,21 +890,51 @@ watch(workflows, (items) => {
 .workflow-editor__danger,
 .workflow-editor__step-actions button,
 .workflow-runs__review-actions button {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 34px;
+  padding: 0 13px;
   border: 1px solid #d4dfed;
-  border-radius: 10px;
+  border-radius: 7px;
   background: #fff;
   color: #244263;
   font-size: 12px;
   font-weight: 700;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.workflow-workbench__action:hover,
+.workflow-editor__primary:hover,
+.workflow-editor__secondary:hover,
+.workflow-editor__danger:hover,
+.workflow-editor__step-actions button:hover,
+.workflow-runs__review-actions button:hover {
+  border-color: #b9c9dc;
+  background: #f8fbff;
+}
+
+.workflow-workbench__action:disabled,
+.workflow-editor__primary:disabled,
+.workflow-editor__secondary:disabled,
+.workflow-editor__danger:disabled,
+.workflow-editor__step-actions button:disabled,
+.workflow-runs__review-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .workflow-workbench__action--primary,
 .workflow-editor__primary {
-  border-color: rgba(36, 92, 255, 0.24);
-  background: rgba(36, 92, 255, 0.1);
-  color: #1b46a9;
+  border-color: #94b4ff;
+  background: #eef4ff;
+  color: #173f9f;
+}
+
+.workflow-workbench__action--primary:hover,
+.workflow-editor__primary:hover {
+  border-color: #7299f7;
+  background: #e6efff;
 }
 
 .workflow-editor__danger {
@@ -854,11 +943,18 @@ watch(workflows, (items) => {
 }
 
 .workflow-workbench__selection {
-  flex-wrap: wrap;
-  padding: 12px 14px;
-  border: 1px solid #dbe5f1;
-  border-radius: 14px;
-  background: rgba(250, 252, 255, 0.92);
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: center;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid #e8eef6;
+}
+
+.workflow-workbench__selection-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .workflow-workbench__selection-label {
@@ -867,23 +963,66 @@ watch(workflows, (items) => {
   font-weight: 800;
 }
 
+.workflow-workbench__selection-summary strong {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 22px;
+  border-radius: 6px;
+  background: #eef4fb;
+  color: #244263;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.workflow-workbench__selection-list {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.workflow-workbench__selection-list::-webkit-scrollbar {
+  height: 4px;
+}
+
+.workflow-workbench__selection-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #d6e1ef;
+}
+
 .workflow-workbench__selection-chip,
 .workflow-editor__chip {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
+  min-width: 0;
+  min-height: 28px;
+  max-width: 260px;
   padding: 0 10px;
   border: 1px solid #d7e2ef;
-  border-radius: 999px;
+  border-radius: 7px;
   background: #fff;
   color: #315072;
   font-size: 12px;
   font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.workflow-workbench__selection-chip {
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .workflow-editor__chip[data-active='true'] {
-  border-color: rgba(36, 92, 255, 0.26);
-  background: rgba(36, 92, 255, 0.1);
+  border-color: #9bb8ff;
+  background: #eef4ff;
   color: #173567;
 }
 
@@ -902,31 +1041,34 @@ watch(workflows, (items) => {
   line-height: 1.6;
 }
 
-.workflow-workbench__grid {
+.workflow-workbench__layout {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(210px, 240px) minmax(520px, 1fr) minmax(300px, 360px);
+  align-items: flex-start;
+  gap: 18px;
 }
 
 .workflow-workbench__sidebar,
-.workflow-editor,
-.workflow-runs__card {
-  border: 1px solid #dbe4f0;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.9);
+.workflow-runs {
+  min-width: 0;
+  max-height: calc(100vh - 190px);
+  overflow: auto;
+  position: sticky;
+  top: 12px;
 }
 
 .workflow-workbench__sidebar {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px;
+  gap: 18px;
+  padding-right: 16px;
+  border-right: 1px solid #e7edf5;
 }
 
 .workflow-workbench__sidebar-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .workflow-workbench__sidebar-head h3 {
@@ -946,17 +1088,26 @@ watch(workflows, (items) => {
 .workflow-workbench__sidebar-item {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border: 1px solid #dbe4f0;
-  border-radius: 12px;
-  background: #fff;
+  gap: 5px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: 7px;
+  background: transparent;
   text-align: left;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease;
+}
+
+.workflow-workbench__sidebar-item:hover {
+  background: #f8fbff;
 }
 
 .workflow-workbench__sidebar-item[data-active='true'] {
-  border-color: rgba(36, 92, 255, 0.28);
-  background: rgba(36, 92, 255, 0.08);
+  border-color: #dbe7ff;
+  border-left-color: #4f7cff;
+  background: #f2f6ff;
 }
 
 .workflow-workbench__sidebar-item strong,
@@ -975,21 +1126,53 @@ watch(workflows, (items) => {
   line-height: 1.55;
 }
 
+.workflow-workbench__editor {
+  min-width: 0;
+}
+
 .workflow-editor {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px;
+  gap: 0;
+  min-width: 0;
+}
+
+.workflow-editor__toolbar {
+  align-items: center;
+  padding-bottom: 14px;
+}
+
+.workflow-editor__toolbar-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
 }
 
 .workflow-editor__panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px;
-  border: 1px solid #e2eaf3;
-  border-radius: 14px;
-  background: #fff;
+  padding: 18px 0;
+  border-top: 1px solid #e7edf5;
+}
+
+.workflow-editor__toolbar + .workflow-editor__panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.2fr) 170px;
+  align-items: start;
+  column-gap: 12px;
+}
+
+.workflow-editor__section-head h4 {
+  margin: 0;
+  color: #20364f;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.workflow-editor__section-head small {
+  color: #7488a3;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .workflow-editor__field {
@@ -1007,14 +1190,32 @@ watch(workflows, (items) => {
 .workflow-editor__field input,
 .workflow-editor__field textarea,
 .workflow-editor__field select {
+  box-sizing: border-box;
   width: 100%;
-  padding: 10px 12px;
+  min-height: 38px;
+  padding: 9px 11px;
   border: 1px solid #dbe4ef;
-  border-radius: 12px;
-  background: #fdfefe;
+  border-radius: 7px;
+  background: #fff;
   color: #213a58;
   font-size: 13px;
   line-height: 1.5;
+  outline: none;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.workflow-editor__field input:focus,
+.workflow-editor__field textarea:focus,
+.workflow-editor__field select:focus {
+  border-color: #8eabeb;
+  box-shadow: 0 0 0 3px rgba(79, 124, 255, 0.1);
+}
+
+.workflow-editor__field textarea {
+  resize: vertical;
 }
 
 .workflow-editor__chip-grid,
@@ -1024,21 +1225,41 @@ watch(workflows, (items) => {
   gap: 8px;
 }
 
+.workflow-editor__chip-grid {
+  gap: 7px;
+}
+
+.workflow-editor__tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
 .workflow-editor__tool-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  width: min(240px, 100%);
+  gap: 5px;
+  min-width: 0;
   padding: 12px;
   border: 1px solid #dbe4ef;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
   text-align: left;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workflow-editor__tool-card:hover {
+  border-color: #bdcce0;
+  background: #fbfdff;
+  transform: translateY(-1px);
 }
 
 .workflow-editor__tool-card[data-active='true'] {
-  border-color: rgba(36, 92, 255, 0.28);
-  background: rgba(36, 92, 255, 0.08);
+  border-color: #9bb8ff;
+  background: #eef4ff;
 }
 
 .workflow-editor__tool-card strong {
@@ -1058,10 +1279,17 @@ watch(workflows, (items) => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px;
+  padding: 14px 14px 14px 16px;
   border: 1px solid #e0e8f2;
-  border-radius: 14px;
-  background: rgba(248, 250, 253, 0.92);
+  border-left: 3px solid #9bb8ff;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.workflow-editor__step-head strong {
+  color: #1d3553;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .workflow-editor__step-grid {
@@ -1079,17 +1307,39 @@ watch(workflows, (items) => {
   font-weight: 700;
 }
 
+.workflow-editor__checkbox input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.workflow-editor__step-remove {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid #ead1d1;
+  border-radius: 7px;
+  background: #fff;
+  color: #9a2b2b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .workflow-runs {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  padding-left: 16px;
+  border-left: 1px solid #e7edf5;
 }
 
 .workflow-runs__card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dfe8f3;
+  border-radius: 8px;
+  background: #fff;
 }
 
 .workflow-runs__steps {
@@ -1104,11 +1354,9 @@ watch(workflows, (items) => {
 .workflow-runs__step {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid #e1e8f2;
-  border-radius: 12px;
-  background: #fff;
+  gap: 7px;
+  padding: 10px 0 0;
+  border-top: 1px solid #edf2f8;
 }
 
 .workflow-runs__step-main span,
@@ -1123,6 +1371,10 @@ watch(workflows, (items) => {
   color: #344f6f;
   font-size: 12px;
   line-height: 1.6;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .workflow-runs__reviews {
@@ -1132,9 +1384,9 @@ watch(workflows, (items) => {
 }
 
 .workflow-runs__review-card {
-  padding: 10px 12px;
+  padding: 10px;
   border: 1px solid #e0e7f1;
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(249, 251, 254, 0.96);
 }
 
@@ -1148,15 +1400,59 @@ watch(workflows, (items) => {
 .workflow-runs__destructive-pill {
   padding: 2px 6px;
   border: 1px solid #fecaca;
-  border-radius: 999px;
+  border-radius: 6px;
   background: #fff1f2;
   color: #be123c;
   font-size: 10px;
   font-weight: 800;
 }
 
+@media (max-width: 1380px) {
+  .workflow-workbench__layout {
+    grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  }
+
+  .workflow-runs {
+    position: static;
+    grid-column: 1 / -1;
+    max-height: none;
+    padding: 16px 0 0;
+    border-top: 1px solid #e7edf5;
+    border-left: 0;
+  }
+}
+
 @media (max-width: 1080px) {
-  .workflow-workbench__grid {
+  .workflow-workbench__header,
+  .workflow-editor__toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workflow-workbench__header-side {
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .workflow-workbench__stats,
+  .workflow-workbench__actions,
+  .workflow-editor__toolbar-actions {
+    justify-content: flex-start;
+  }
+
+  .workflow-workbench__layout {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-workbench__sidebar {
+    padding-right: 0;
+    border-right: 0;
+    border-bottom: 1px solid #e7edf5;
+    padding-bottom: 14px;
+  }
+
+  .workflow-editor__toolbar + .workflow-editor__panel {
     grid-template-columns: 1fr;
   }
 
@@ -1165,27 +1461,85 @@ watch(workflows, (items) => {
   }
 }
 
+@media (max-width: 720px) {
+  .workflow-workbench__selection {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .workflow-workbench__actions,
+  .workflow-editor__toolbar-actions,
+  .workflow-editor__step-actions,
+  .workflow-runs__review-actions {
+    width: 100%;
+  }
+
+  .workflow-workbench__action,
+  .workflow-editor__primary,
+  .workflow-editor__secondary,
+  .workflow-editor__danger,
+  .workflow-editor__step-actions button,
+  .workflow-runs__review-actions button {
+    flex: 1 1 auto;
+  }
+
+  .workflow-runs__card-head,
+  .workflow-runs__review-card,
+  .workflow-runs__step-main,
+  .workflow-editor__section-head,
+  .workflow-editor__step-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 :global(html.dark) .workflow-workbench__selection,
-:global(html.dark) .workflow-workbench__sidebar,
-:global(html.dark) .workflow-editor,
 :global(html.dark) .workflow-runs__card,
-:global(html.dark) .workflow-editor__panel,
 :global(html.dark) .workflow-workbench__sidebar-item,
 :global(html.dark) .workflow-editor__tool-card,
 :global(html.dark) .workflow-editor__step-card,
-:global(html.dark) .workflow-runs__step,
 :global(html.dark) .workflow-runs__review-card {
-  background: rgba(14, 21, 33, 0.92);
+  background: rgba(14, 21, 33, 0.86);
   border-color: rgba(98, 122, 161, 0.3);
+}
+
+:global(html.dark) .workflow-workbench__header,
+:global(html.dark) .workflow-workbench__selection,
+:global(html.dark) .workflow-workbench__sidebar,
+:global(html.dark) .workflow-runs,
+:global(html.dark) .workflow-editor__panel {
+  border-color: rgba(98, 122, 161, 0.24);
+}
+
+:global(html.dark) .workflow-workbench__stats span,
+:global(html.dark) .workflow-workbench__selection-summary strong,
+:global(html.dark) .workflow-workbench__selection-chip,
+:global(html.dark) .workflow-editor__chip,
+:global(html.dark) .workflow-editor__field input,
+:global(html.dark) .workflow-editor__field textarea,
+:global(html.dark) .workflow-editor__field select,
+:global(html.dark) .workflow-workbench__action,
+:global(html.dark) .workflow-editor__primary,
+:global(html.dark) .workflow-editor__secondary,
+:global(html.dark) .workflow-editor__danger,
+:global(html.dark) .workflow-editor__step-actions button,
+:global(html.dark) .workflow-runs__review-actions button,
+:global(html.dark) .workflow-editor__step-remove {
+  background: rgba(10, 16, 26, 0.9);
+  border-color: rgba(98, 122, 161, 0.32);
+  color: #d8e5f8;
 }
 
 :global(html.dark) .workflow-workbench__title,
 :global(html.dark) .workflow-runs__head h3,
 :global(html.dark) .workflow-editor__toolbar h3,
+:global(html.dark) .workflow-editor__section-head h4,
 :global(html.dark) .workflow-workbench__sidebar-item strong,
 :global(html.dark) .workflow-runs__card-head strong,
 :global(html.dark) .workflow-runs__review-card strong,
-:global(html.dark) .workflow-editor__tool-card strong {
+:global(html.dark) .workflow-editor__tool-card strong,
+:global(html.dark) .workflow-editor__step-head strong,
+:global(html.dark) .workflow-workbench__stats strong {
   color: #edf4ff;
 }
 
@@ -1195,10 +1549,26 @@ watch(workflows, (items) => {
 :global(html.dark) .workflow-workbench__selection-empty,
 :global(html.dark) .workflow-workbench__hint,
 :global(html.dark) .workflow-editor__hint,
+:global(html.dark) .workflow-editor__section-head small,
 :global(html.dark) .workflow-workbench__sidebar-item small,
 :global(html.dark) .workflow-runs__card-head p,
 :global(html.dark) .workflow-runs__review-card p,
 :global(html.dark) .workflow-runs__step-copy {
   color: #9bb1cd;
+}
+
+:global(html.dark) .workflow-workbench__sidebar-item:hover,
+:global(html.dark) .workflow-editor__tool-card:hover {
+  background: rgba(30, 42, 61, 0.64);
+}
+
+:global(html.dark) .workflow-workbench__sidebar-item[data-active='true'],
+:global(html.dark) .workflow-editor__chip[data-active='true'],
+:global(html.dark) .workflow-editor__tool-card[data-active='true'],
+:global(html.dark) .workflow-workbench__action--primary,
+:global(html.dark) .workflow-editor__primary {
+  border-color: rgba(117, 154, 255, 0.56);
+  background: rgba(47, 82, 180, 0.24);
+  color: #edf4ff;
 }
 </style>

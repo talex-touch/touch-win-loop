@@ -294,6 +294,80 @@ const flowEdges = computed<Edge[]>(() => {
     })
 })
 
+function buildSimulatedNodeDetail(
+  nodeId: string,
+  selectedNodeType: ProjectKnowledgeRelationNodeType,
+): ProjectKnowledgeNodeDetail | null {
+  const currentPayload = payload.value
+  if (!currentPayload)
+    return null
+
+  const node = currentPayload.nodes.find(item => item.id === nodeId && item.nodeType === selectedNodeType)
+  if (!node?.metadata?.simulated)
+    return null
+
+  const nodeRelations = currentPayload.relations
+    .filter((relation) => {
+      return (relation.sourceNodeType === selectedNodeType && relation.sourceNodeId === nodeId)
+        || (relation.targetNodeType === selectedNodeType && relation.targetNodeId === nodeId)
+    })
+    .sort((left, right) => right.score - left.score)
+  const now = currentPayload.analytics.relationsUpdatedAt || new Date().toISOString()
+  const relatedLabels = nodeRelations
+    .slice(0, 3)
+    .map((relation) => {
+      const neighborId = relation.sourceNodeId === nodeId ? relation.targetNodeId : relation.sourceNodeId
+      return currentPayload.nodes.find(item => item.id === neighborId)?.label || neighborId
+    })
+    .filter(Boolean)
+    .join('、')
+
+  return {
+    nodeId: node.id,
+    nodeType: node.nodeType,
+    label: node.label,
+    contentPreview: relatedLabels
+      ? `${node.label} 是本地模拟语义图谱节点，已关联 ${relatedLabels}。`
+      : `${node.label} 是本地模拟语义图谱节点。`,
+    modality: node.modality,
+    embeddingStatus: node.embeddingStatus,
+    embeddingProvider: 'newapi',
+    embeddingModel: String(node.metadata.embeddingModel || 'dashscope-compatible-simulated'),
+    embeddingDimensions: 1024,
+    embeddingQualityScore: Math.min(0.98, Math.max(0.72, node.importance / 18)),
+    provenanceSourceType: node.provenanceSourceType || '',
+    sourceConfidence: 0.92,
+    neighborhoodConsistency: Math.min(0.96, Math.max(0.7, nodeRelations.length / 6)),
+    metadata: node.metadata,
+    pipelineLog: [
+      {
+        id: `sim-task-${node.id}`,
+        projectId: currentPayload.projectId,
+        scopeType: 'project_resource',
+        sourceResourceId: node.nodeType === 'source' ? node.id : node.sourceId || null,
+        linkedContestResourceId: null,
+        taskType: 'upsert',
+        status: 'succeeded',
+        stage: 'finalizing',
+        attempt: 1,
+        maxAttempt: 1,
+        progressPercent: 100,
+        etaSeconds: 0,
+        payloadJson: { simulated: true },
+        resultJson: { relationCount: nodeRelations.length },
+        errorMessage: '',
+        resourceTitle: node.label,
+        startedAt: now,
+        finishedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    nearestNeighbors: nodeRelations.filter(item => item.relationType === 'similar_to').slice(0, 8),
+    alignedNeighbors: nodeRelations.filter(item => item.relationType === 'aligned_to').slice(0, 8),
+  }
+}
+
 async function loadRelations(): Promise<void> {
   const projectId = String(props.projectId || '').trim()
   if (!projectId) {
@@ -336,6 +410,14 @@ async function loadNodeDetail(nodeId: string, selectedNodeType: ProjectKnowledge
   const projectId = String(props.projectId || '').trim()
   if (!projectId || !nodeId)
     return
+  const simulatedDetail = buildSimulatedNodeDetail(nodeId, selectedNodeType)
+  if (simulatedDetail) {
+    detail.value = simulatedDetail
+    detailError.value = ''
+    detailLoading.value = false
+    return
+  }
+
   detailLoading.value = true
   detailError.value = ''
   try {
@@ -373,8 +455,37 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
 </script>
 
 <template>
-  <div class="loopy-relations">
-    <aside class="loopy-relations__filters">
+  <div class="loopy-relations loopy-relations--floating">
+    <section class="loopy-relations__graph-shell" aria-label="语义关系画布">
+      <div v-if="loading" class="loopy-relations__empty">
+        正在加载关系图...
+      </div>
+      <div v-else-if="error" class="loopy-relations__empty loopy-relations__empty--error">
+        {{ error }}
+      </div>
+      <div v-else-if="!payload || payload.relations.length === 0" class="loopy-relations__empty">
+        当前没有可展示的关系数据。
+      </div>
+      <VueFlow
+        v-else
+        class="loopy-relations__graph"
+        :nodes="flowNodes"
+        :edges="flowEdges"
+        :fit-view-on-init="true"
+        :nodes-draggable="true"
+        :elements-selectable="true"
+        :default-viewport="{ x: 0, y: 0, zoom: 0.84 }"
+        :min-zoom="0.32"
+        :max-zoom="1.6"
+        @node-click="handleNodeClick"
+      >
+        <Background pattern-color="#cbd7e7" :gap="20" />
+        <Controls />
+        <MiniMap />
+      </VueFlow>
+    </section>
+
+    <aside class="loopy-relations__filters loopy-relations__panel">
       <div class="loopy-relations__filters-head">
         <h3>语义关系图谱</h3>
         <button class="loopy-relations__button" type="button" :disabled="loading" @click="loadRelations">
@@ -417,36 +528,8 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
       </div>
     </aside>
 
-    <section class="loopy-relations__graph-shell">
-      <div v-if="loading" class="loopy-relations__empty">
-        正在加载关系图...
-      </div>
-      <div v-else-if="error" class="loopy-relations__empty loopy-relations__empty--error">
-        {{ error }}
-      </div>
-      <div v-else-if="!payload || payload.relations.length === 0" class="loopy-relations__empty">
-        当前没有可展示的关系数据。
-      </div>
-      <VueFlow
-        v-else
-        class="loopy-relations__graph"
-        :nodes="flowNodes"
-        :edges="flowEdges"
-        :fit-view-on-init="true"
-        :nodes-draggable="true"
-        :elements-selectable="true"
-        :default-viewport="{ x: 0, y: 0, zoom: 0.84 }"
-        :min-zoom="0.32"
-        :max-zoom="1.6"
-        @node-click="handleNodeClick"
-      >
-        <Background pattern-color="#cbd7e7" :gap="20" />
-        <Controls />
-        <MiniMap />
-      </VueFlow>
-    </section>
-
     <WorkspaceLoopyDataNodeDetail
+      class="loopy-relations__detail-panel loopy-relations__panel"
       :detail="detail"
       :loading="detailLoading"
       :error="detailError"
@@ -457,25 +540,42 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
 
 <style scoped>
 .loopy-relations {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 320px;
-  gap: 16px;
-  min-height: 720px;
+  position: relative;
+  min-height: clamp(620px, calc(100vh - 180px), 820px);
+  overflow: hidden;
+  border: 1px solid #dbe7f3;
+  border-radius: 22px;
+  background: #f8fbff;
 }
 
-.loopy-relations__filters,
-.loopy-relations__graph-shell {
+.loopy-relations__panel {
+  position: absolute;
+  top: 20px;
+  z-index: 5;
   border: 1px solid #dbe7f3;
-  border-radius: 24px;
-  background: #fff;
-  box-shadow: 0 12px 30px rgba(36, 73, 125, 0.05);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 48px rgba(36, 73, 125, 0.12);
+  backdrop-filter: blur(16px);
 }
 
 .loopy-relations__filters {
+  left: 20px;
+  width: 240px;
+  max-height: calc(100% - 40px);
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow: auto;
+}
+
+.loopy-relations__detail-panel {
+  right: 20px;
+  width: 340px;
+  min-height: 0;
+  max-height: calc(100% - 40px);
+  overflow: auto;
 }
 
 .loopy-relations__filters-head {
@@ -559,7 +659,8 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
 }
 
 .loopy-relations__graph-shell {
-  min-height: 720px;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
 }
 
@@ -648,11 +749,37 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
 
 @media (max-width: 1440px) {
   .loopy-relations {
-    grid-template-columns: 1fr;
+    min-height: 720px;
   }
 
-  .loopy-relations__graph-shell {
-    min-height: 540px;
+  .loopy-relations__filters {
+    width: 220px;
+  }
+
+  .loopy-relations__detail-panel {
+    width: 300px;
+  }
+}
+
+@media (max-width: 960px) {
+  .loopy-relations {
+    min-height: 980px;
+  }
+
+  .loopy-relations__panel {
+    left: 14px;
+    right: 14px;
+    width: auto;
+    max-height: none;
+  }
+
+  .loopy-relations__filters {
+    top: 14px;
+  }
+
+  .loopy-relations__detail-panel {
+    top: auto;
+    bottom: 14px;
   }
 }
 </style>

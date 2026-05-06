@@ -258,15 +258,12 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string }> =
 .loopy-workbench :deep(.loopy-health__grid),
 .loopy-workbench :deep(.loopy-health__freshness-grid),
 .loopy-workbench :deep(.loopy-relations),
-.loopy-workbench :deep(.workflow-workbench__grid),
-.loopy-workbench :deep(.workflow-editor),
-.loopy-workbench :deep(.workflow-runs) {
+.loopy-workbench :deep(.workflow-workbench__layout) {
   gap: 0 !important;
 }
 
 .loopy-workbench :deep(.loopy-center__rail),
 .loopy-workbench :deep(.loopy-relations__filters),
-.loopy-workbench :deep(.workflow-workbench__sidebar),
 .loopy-workbench :deep(.loopy-detail) {
   border-left: 1px solid var(--wl-wb-linear-border) !important;
   padding-left: 12px !important;
@@ -306,17 +303,6 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string }> =
 .loopy-workbench :deep(.loopy-embedding__metric-card),
 .loopy-workbench :deep(.loopy-embedding__empty),
 .loopy-workbench :deep(.loopy-embedding__tooltip),
-.loopy-workbench :deep(.workflow-workbench__selection),
-.loopy-workbench :deep(.workflow-workbench__sidebar),
-.loopy-workbench :deep(.workflow-workbench__sidebar-group),
-.loopy-workbench :deep(.workflow-workbench__sidebar-item),
-.loopy-workbench :deep(.workflow-editor),
-.loopy-workbench :deep(.workflow-editor__panel),
-.loopy-workbench :deep(.workflow-editor__tool-card),
-.loopy-workbench :deep(.workflow-editor__step-card),
-.loopy-workbench :deep(.workflow-runs__card),
-.loopy-workbench :deep(.workflow-runs__step),
-.loopy-workbench :deep(.workflow-runs__review-card),
 .loopy-workbench :deep(.workflow-workbench__error),
 .loopy-workbench :deep(.workflow-workbench__hint),
 .loopy-workbench :deep(.loopy-detail),
@@ -349,10 +335,6 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string }> =
 .loopy-workbench :deep(.loopy-health__card-head),
 .loopy-workbench :deep(.loopy-health__progress-head),
 .loopy-workbench :deep(.loopy-relations__filters-head),
-.loopy-workbench :deep(.workflow-runs__head),
-.loopy-workbench :deep(.workflow-editor__toolbar),
-.loopy-workbench :deep(.workflow-editor__section-head),
-.loopy-workbench :deep(.workflow-editor__step-head),
 .loopy-workbench :deep(.loopy-detail__section h4) {
   margin: 0 !important;
   padding: 8px 0 !important;
@@ -386,6 +368,18 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string }> =
   box-shadow: none !important;
 }
 
+.loopy-workbench :deep(.workflow-workbench__layout) {
+  gap: 18px !important;
+}
+
+.loopy-workbench :deep(.workflow-editor) {
+  gap: 0 !important;
+}
+
+.loopy-workbench :deep(.workflow-runs) {
+  gap: 10px !important;
+}
+
 .loopy-workbench :deep(.loopy-center__progress-track),
 .loopy-workbench :deep(.loopy-health__progress-track),
 .loopy-workbench :deep(.loopy-health__bar-track) {
@@ -411,6 +405,206 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string }> =
   margin: 0 !important;
   font-size: 18px !important;
   line-height: 1.25 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops) {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+  padding: 0 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__hero),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__grid),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__freshness-grid) {
+  gap: 16px !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__hero-copy),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__hero-panel),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__card),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__summary-card),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__freshness-card),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__message) {
+  padding: 16px !important;
+  border: 1px solid #dbe7f3 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+  box-shadow: none !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__hero-copy),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__hero-panel) {
+  padding: 18px 20px !important;
+  background: #fbfdff !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__summary-card) {
+  min-height: 84px !important;
+  padding: 14px 12px !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__freshness-card[data-tone='warning']) {
+  background: #fff8ea !important;
+  border-color: #f3dfb2 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__freshness-card[data-tone='ready']) {
+  background: #f4fbf7 !important;
+  border-color: #cfe9df !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__issue) {
+  padding: 10px 14px !important;
+  border: 1px solid transparent !important;
+  border-radius: 0 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__issue[data-severity='error']) {
+  background: #fff4f4 !important;
+  color: #b45309 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__issue[data-severity='warning']) {
+  background: #fff8ea !important;
+  color: #a16207 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__issue[data-severity='info']) {
+  background: #f4f9ff !important;
+  color: #33557c !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__card-head),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__progress-head) {
+  margin: 0 !important;
+  padding: 0 0 10px !important;
+  border-bottom: 1px solid var(--wl-wb-linear-border-soft) !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__title) {
+  margin: 10px 0 0 !important;
+  font-size: 20px !important;
+  line-height: 1.35 !important;
+  letter-spacing: 0 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__pipeline-item),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__metric-chip),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__list-item) {
+  padding: 12px !important;
+  border: 1px solid #dce7f4 !important;
+  border-radius: 0 !important;
+  background: #f8fbff !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__pipeline-item) {
+  padding: 12px 0 !important;
+  border-width: 0 0 1px !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__pipeline-item[data-status='success']) {
+  background: #f4fbf7 !important;
+  border-color: #d0eadf !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__pipeline-item[data-status='degraded']) {
+  background: #fff8eb !important;
+  border-color: #f1dfb1 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__pipeline-item[data-status='failed']),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__pipeline-item[data-status='blocked']) {
+  background: #fff4f4 !important;
+  border-color: #f0d0d0 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__list-item--failed) {
+  background: #fff6f6 !important;
+  border-color: #f0d3d3 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__progress-track),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__bar-track),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__progress-fill),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__bar-fill),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__matrix-cell),
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__matrix-header) {
+  border-radius: 0 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__progress-fill) {
+  background: #1d4f82 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__bar-fill) {
+  background: #6f8fb0 !important;
+}
+
+.loopy-workbench :deep(.loopy-health--ops .loopy-health__bar-fill--rose) {
+  background: #c35f70 !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating) {
+  gap: 0 !important;
+  border: 1px solid var(--wl-wb-linear-border) !important;
+  border-radius: 0 !important;
+  background: #f8fbff !important;
+  box-shadow: none !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__graph-shell) {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__panel) {
+  border: 1px solid #dbe7f3 !important;
+  border-radius: 18px !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  box-shadow: 0 18px 48px rgba(36, 73, 125, 0.12) !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__hero),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__meta-card),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__section),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__empty),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__stats article),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__notice) {
+  border: 1px solid #dbe7f3 !important;
+  border-radius: 18px !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  box-shadow: none !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__panel) {
+  min-height: 0 !important;
+  padding: 16px !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__hero),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__section),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__empty) {
+  padding: 14px !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__meta-card),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__stats article) {
+  padding: 12px !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__filters-head),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__section h4) {
+  padding: 0 !important;
+  border-bottom: 0 !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__row) {
+  padding: 8px 0 !important;
+  border-top: 1px solid var(--wl-wb-linear-border-soft) !important;
 }
 
 .loopy-workbench :deep(p),

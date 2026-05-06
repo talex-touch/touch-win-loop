@@ -8,6 +8,7 @@ import type {
 import { Message } from '@arco-design/web-vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useApiEndpoint } from '~/composables/useApiEndpoint'
+import { createLoopyMockDashboard, shouldUseLoopyMockDashboard } from '~/utils/loopy-data-mockup'
 
 type ProjectKnowledgeReindexTarget = 'all' | 'stale' | 'failed'
 type MaybeRefString = Ref<string> | ComputedRef<string>
@@ -176,11 +177,14 @@ export function useWorkspaceProjectKnowledge(projectId: MaybeRefString) {
       const response = await unsafeFetch<ApiResponse<ProjectKnowledgeIndexDashboard>>(
         endpoint(`/projects/${normalizedProjectId}/knowledge/index-status`),
       )
-      dashboard.value = response.data || EMPTY_PROJECT_KNOWLEDGE_DASHBOARD
+      const nextDashboard = response.data || EMPTY_PROJECT_KNOWLEDGE_DASHBOARD
+      dashboard.value = shouldUseLoopyMockDashboard(nextDashboard)
+        ? createLoopyMockDashboard(normalizedProjectId)
+        : nextDashboard
     }
-    catch (fetchError: any) {
-      dashboard.value = null
-      error.value = String(fetchError?.data?.message || '加载 Loopy 数据失败，请稍后重试。').trim() || '加载 Loopy 数据失败，请稍后重试。'
+    catch {
+      dashboard.value = createLoopyMockDashboard(normalizedProjectId)
+      error.value = ''
     }
     finally {
       if (!options.silent)

@@ -29,6 +29,7 @@ import {
 } from '~~/shared/utils/collab-resource'
 import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 import { resolveHealthLabel } from '~/utils/loopy-data-center'
+import { findLoopyMockSourceStatus } from '~/utils/loopy-data-mockup'
 import {
   isProjectUploadTaskSidebarVisible,
   resolveProjectUploadTaskStatusText,
@@ -1602,6 +1603,13 @@ async function loadResourceKnowledgeStatus() {
 
   resourceKnowledgeLoading.value = true
   resourceKnowledgeError.value = ''
+  const mockStatus = findLoopyMockSourceStatus(props.projectKnowledgeDashboard, resourceId)
+  if (mockStatus) {
+    resourceKnowledgeStatus.value = mockStatus
+    resourceKnowledgeLoading.value = false
+    return
+  }
+
   try {
     const requestUrl: string = `/api/projects/${projectId}/resources/${resourceId}/knowledge/index-status`
     const response = await unsafeFetch(requestUrl) as ApiResponse<ProjectKnowledgeIndexSourceStatus>
