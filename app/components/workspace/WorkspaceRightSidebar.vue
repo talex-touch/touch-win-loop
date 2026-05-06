@@ -3,7 +3,6 @@ import type {
   AiChatSession,
   AiDefenseJudgeRound,
   AiDefensePersona,
-  AiDefensePersonaJudgeType,
   AiDefenseScorecard,
   AiDefenseSessionState,
   AiDefenseStage,
@@ -51,6 +50,7 @@ type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
 type WorkspaceWorkbenchMode = 'project' | 'defense' | 'final_review'
 type WorkspaceRightSidebarView = 'ai' | 'comments'
 type WorkspaceSessionVisualType = WorkspaceAiMode | 'final_review' | 'topic_proposal'
+type MockChatThreadKey = 'current' | 'agent_proto' | 'design' | 'defense' | 'final_review' | 'issue'
 type AgentDocDraftStatus = 'pending' | 'superseded' | 'expired' | 'applied'
 type DraftStatus = 'pending' | 'superseded' | 'expired' | 'applied' | 'discarded'
 type AgentDocDiffRowKind = 'same' | 'change' | 'delete' | 'insert'
@@ -276,17 +276,6 @@ const emit = defineEmits<{
   'createChatSession': []
   'approveChange': [change: AiProjectChangeRequest]
   'rejectChange': [change: AiProjectChangeRequest]
-  'importDefensePersonas': []
-  'saveDefensePersona': [payload: {
-    personaId?: string
-    judgeType: AiDefensePersonaJudgeType
-    name: string
-    summary: string
-    systemPrompt: string
-    focusAreas: string[]
-    enabled: boolean
-  }]
-  'deleteDefensePersona': [personaId: string]
   'generateDefenseSummary': []
   'startDefenseRealtime': []
   'updateDefenseRealtimeProvider': [provider: DefenseRealtimeProvider]
@@ -451,9 +440,329 @@ const pendingChangeRequests = computed(() => {
   return props.changeRequests.filter(item => item.status === 'pending')
 })
 
-const visibleChatMessages = computed(() => {
-  return props.chatMessages
+const selectedMockChatSessionId = ref('')
+const mockChatSessions = computed<AiChatSession[]>(() => {
+  if (props.chatSessions.length > 0 || props.chatSessionsLoading || props.workspacePreparing || !props.aiEnabled)
+    return []
+  return buildMockChatSessions()
 })
+const visibleChatSessions = computed(() => props.chatSessions.length > 0 ? props.chatSessions : mockChatSessions.value)
+const displayedActiveChatSessionId = computed(() => {
+  if (props.activeChatSessionId)
+    return props.activeChatSessionId
+  return selectedMockChatSessionId.value || mockChatSessions.value[0]?.id || ''
+})
+
+const visibleChatMessages = computed(() => {
+  if (props.chatMessages.length > 0 || props.chatMessagesLoading || props.workspacePreparing || !props.aiEnabled)
+    return props.chatMessages
+  return buildMockChatMessages(resolveMockChatThreadKey(displayedActiveChatSessionId.value))
+})
+
+function buildMockChatSessions(): AiChatSession[] {
+  const now = '2026-05-06T01:20:00.000+08:00'
+  const base = {
+    createdByUserId: 'mock-user',
+    createdAt: '2026-05-05T21:30:00.000+08:00',
+    updatedAt: now,
+    lastMessageAt: now,
+    hasContextSnapshot: true,
+    resumeAvailable: true,
+    degraded: false,
+  }
+  return [
+    { ...base, id: 'mock-current-ai-review', mode: props.aiMode, title: `${assistantMessageHeaderLabel.value} 当前页面走查`, messageCount: 10 },
+    { ...base, id: 'mock-agent-proto-flow', mode: 'contextual_agent', title: 'AgentProto 竞赛主流程梳理', messageCount: 12 },
+    { ...base, id: 'mock-design-sidebar', mode: 'contextual_agent', title: '设计助手 右侧 AI 面板层级', messageCount: 9 },
+    { ...base, id: 'mock-defense-qa', mode: 'defense', title: 'AgentDef 技术可行性追问', messageCount: 11 },
+    { ...base, id: 'mock-final-review-pack', mode: 'dialog_ask', title: '终审助手 提交包缺口检查', messageCount: 8 },
+    { ...base, id: 'mock-issue-evidence', mode: 'issue_discovery', title: '寻疑发现 证据链风险扫描', messageCount: 9 },
+  ] satisfies AiChatSession[]
+}
+
+function isMockChatSessionId(sessionId: string): boolean {
+  return sessionId.startsWith('mock-')
+}
+
+function resolveMockChatThreadKey(sessionId: string): MockChatThreadKey {
+  if (sessionId.includes('agent-proto'))
+    return 'agent_proto'
+  if (sessionId.includes('design'))
+    return 'design'
+  if (sessionId.includes('defense'))
+    return 'defense'
+  if (sessionId.includes('final-review'))
+    return 'final_review'
+  if (sessionId.includes('issue'))
+    return 'issue'
+  return 'current'
+}
+
+function buildMockChatMessages(threadKey: MockChatThreadKey = 'current'): ChatMessage[] {
+  if (threadKey === 'agent_proto') {
+    return [
+      { role: 'assistant', content: '我已读取当前流程画布上下文，主链路应该先稳定在“选赛 -> 建项 -> 资料沉淀 -> AI 协作 -> 终审答辩”。先把这条线画清楚，再补异常分支。' },
+      { role: 'user', content: '每个节点要不要都放角色？' },
+      { role: 'assistant', content: '建议只给关键节点放角色。选赛是队长和指导老师，资料沉淀是全员，AI 协作是项目负责人触发，终审答辩是答辩负责人收口。这样不会把图做得太重。' },
+      { role: 'user', content: '那风险点怎么加？' },
+      { role: 'assistant', content: '风险点可以放在节点右侧的小标注里：资料不完整、引用不可追溯、答辩口径不一致、导出包缺附件。每个风险只保留一句可执行修正。' },
+      { role: 'user', content: '需要泳道吗？' },
+      { role: 'assistant', content: '如果用于内部协作，建议泳道；如果用于评委展示，建议普通横向流程。评委版更看重闭环和产出，不需要看到每个成员的责任切分。' },
+      { role: 'assistant', content: '下一步可以点“AI 生成”，我会产出待确认流程草案；如果你只想补现有图，就点“AI 补全”。' },
+    ]
+  }
+
+  if (threadKey === 'design') {
+    return [
+      { role: 'assistant', content: '我看了一下右侧 AI 面板，现在最需要补的是“有上下文的最近对话”。单独提示语太轻，会让用户觉得助手没有真正进入当前页面。' },
+      { role: 'user', content: '消息多一点会不会显得乱？' },
+      { role: 'assistant', content: '不会，只要每条都围绕同一任务推进。建议控制为 8-10 条，用户消息短，AI 消息给判断和下一步，避免长篇说明。' },
+      { role: 'user', content: '顶部会话记录也要真实一点。' },
+      { role: 'assistant', content: '会话标题可以按任务命名，比如“竞赛主流程梳理”“提交包缺口检查”“技术可行性追问”。这些比“新对话 1”更像真实产品使用。' },
+      { role: 'user', content: '右侧输入框要不要改？' },
+      { role: 'assistant', content: '输入框保持现状即可。当前问题是中部空白，不是输入控件。只补展示内容，改动范围最小。' },
+      { role: 'assistant', content: '我建议把这些内容当成“空状态样例记录”，真实会话一出现就退场，避免用户误以为这些是后端历史。' },
+    ]
+  }
+
+  if (threadKey === 'defense') {
+    return [
+      { role: 'assistant', content: 'AgentDef 已进入答辩追问。当前答辩最容易被问到的是：AI 是否只是聊天入口，还是能贯穿竞赛流程。' },
+      { role: 'user', content: '如果评委问核心技术亮点，怎么压缩回答？' },
+      { role: 'assistant', content: '用三句话：第一，项目资源被结构化沉淀；第二，知识索引能返回可追溯证据；第三，右侧 AI 根据当前工作台上下文输出草案、建议和答辩辅助。' },
+      { role: 'user', content: '他们可能追问实时答辩是不是孤立功能。' },
+      { role: 'assistant', content: '可以回答：实时答辩不是孤立功能，它连接会议转写、评委 persona、会话 summary 和后续 action items；即使实时链路降级，项目资料和知识索引仍能支撑演示。' },
+      { role: 'user', content: '要不要主动说限制？' },
+      { role: 'assistant', content: '要。主动说明“不会静默覆盖项目数据，草案都需要确认应用”，能降低评委对 AI 自动改写风险的担心。' },
+      { role: 'assistant', content: '下一轮建议练“技术可信度”问题，我会重点追问数据来源、fallback 和权限边界。' },
+    ]
+  }
+
+  if (threadKey === 'final_review') {
+    return [
+      { role: 'assistant', content: '终审视角先看交付物完整度。当前建议把作品简介、技术路线、演示视频脚本和附件清单对齐到同一套术语。' },
+      { role: 'user', content: '最容易漏的材料是什么？' },
+      { role: 'assistant', content: '通常是两类：一是评分点映射表，二是可复现说明。前者告诉评委“为什么得分”，后者说明“如何验证”。' },
+      { role: 'user', content: '导出包标题要怎么写？' },
+      { role: 'assistant', content: '建议用评委可读标题：项目说明书、5 分钟答辩稿、演示视频脚本、核心流程图、关键截图、测试与部署说明。不要用内部模块名。' },
+      { role: 'user', content: '还要补风险说明吗？' },
+      { role: 'assistant', content: '要补一段简短风险边界：AI 输出均为待确认草案，敏感配置不进入提示词，实时答辩链路具备降级展示方案。' },
+      { role: 'assistant', content: '我建议先生成一次终审导出包，再根据失败或缺口列表反向补材料。' },
+    ]
+  }
+
+  if (threadKey === 'issue') {
+    return [
+      { role: 'assistant', content: '寻疑发现已按四个维度扫了一遍：评分映射、证据链、量化指标、资料完整度。目前没有阻断项，但有几处会影响说服力。' },
+      { role: 'user', content: '先说最严重的。' },
+      { role: 'assistant', content: '最严重的是“AI 协作效果”还缺量化表达。建议补两个指标：资料查找耗时降低、答辩材料整理轮次减少。' },
+      { role: 'user', content: '证据链呢？' },
+      { role: 'assistant', content: '证据链需要把流程图、知识引用和答辩总结串起来。评委看到的不是单点功能，而是从资料到产出的闭环。' },
+      { role: 'user', content: '资料完整度还有什么问题？' },
+      { role: 'assistant', content: '缺一个“异常和降级说明”。比如 AI provider 未配置、实时连接失败、导出任务失败时，系统怎么提示和恢复。' },
+      { role: 'assistant', content: '建议下一步生成 issue 报告草稿，把每个风险绑定到一个可补材料或可演示动作。' },
+    ]
+  }
+
+  const title = String(props.projectContextualAssistantLabel || '').trim()
+  if (props.workbenchMode === 'final_review') {
+    return [
+      {
+        role: 'assistant',
+        content: '我先按终审视角过了一遍当前材料：提交包还缺少“技术路线与评分点映射”的一页摘要，演示视频脚本里也需要补一句数据来源说明。建议优先处理这两项，避免评审只看到功能结果，看不到证据链。',
+      },
+      {
+        role: 'user',
+        content: '先帮我列一下终审前最容易被扣分的点。',
+      },
+      {
+        role: 'assistant',
+        content: '高风险点有 3 个：\n\n1. 作品简介和答辩稿里的核心指标不一致，建议统一为“资料沉淀效率、答辩准备耗时、引用可追溯率”。\n2. 附件命名还偏内部化，建议改成评委能直接理解的标题。\n3. 演示链路需要留一个离线兜底：如果实时 AI 不可用，仍能展示知识索引、流程草案和导出包。',
+      },
+      { role: 'user', content: '先处理哪个最划算？' },
+      { role: 'assistant', content: '先处理评分点映射。它能同时服务作品简介、答辩稿和终审导出，收益最大。附件命名可以最后统一。' },
+      { role: 'user', content: '终审材料要不要强调 AI 安全边界？' },
+      { role: 'assistant', content: '要，建议放一句：AI 只生成待确认草案，不静默覆盖项目数据；所有导出和应用动作都有人工确认。这个点对评审可信度很关键。' },
+      { role: 'assistant', content: '如果现在要推进，我建议先打开终审导出面板跑一次导出，再按缺口清单补材料。' },
+    ]
+  }
+
+  if (props.aiMode === 'document_assist') {
+    const resourceTitle = String(props.documentResourceTitle || '').trim() || '当前文档'
+    return [
+      {
+        role: 'assistant',
+        content: `我正在按 AgentDoc 模式查看《${resourceTitle}》。目前更适合先做结构收敛：把背景、方案、实现、验证和答辩亮点分开，后续再对单段做润写或补证据。`,
+      },
+      {
+        role: 'user',
+        content: '这段介绍有点散，应该怎么改？',
+      },
+      {
+        role: 'assistant',
+        content: '建议先把段落压成“问题 -> 方法 -> 结果”三句：\n\n- 问题：竞赛团队的资料、流程和答辩准备分散在多个工具里。\n- 方法：WinLoop 用项目资源、知识索引和右侧 AI 助手把上下文串起来。\n- 结果：团队能在同一工作台完成资料沉淀、流程梳理、答辩演练和终审导出。\n\n如果需要落地，我会先生成待确认草案，不会直接覆盖正文。',
+      },
+      { role: 'user', content: '摘要需要更像比赛材料。' },
+      { role: 'assistant', content: '可以把“功能介绍”改成“参赛价值”：围绕团队协作效率、材料可追溯、答辩准备质量来写。这样比堆模块更贴近评分语境。' },
+      { role: 'user', content: '需要补引用吗？' },
+      { role: 'assistant', content: '需要。建议在技术路线后补一段资料来源说明，引用项目资源、流程画布和答辩会议摘要，避免结论看起来像口号。' },
+      { role: 'assistant', content: '如果要落地，我会生成 diff 草案，你确认后再替换正文。' },
+    ]
+  }
+
+  if (props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual') {
+    if (props.projectContextualAssistantKey === 'design_assistant' || props.projectContextualAssistantPreset === 'design') {
+      return [
+        {
+          role: 'assistant',
+          content: '我看了一下当前设计稿，主要问题不在视觉细节，而是信息层级还没有定：顶部导航、核心任务区和右侧 AI 输入之间的主次关系需要更明确。',
+        },
+        {
+          role: 'user',
+          content: '先帮我判断这个页面应该怎么分层。',
+        },
+        {
+          role: 'assistant',
+          content: '建议按三层处理：\n\n1. 顶部只承担工作台切换和当前状态，不放解释性文案。\n2. 中间画布保留主要操作空间，空态用一句“下一步可做什么”就够。\n3. 右侧 AI 区展示最近 2-3 条真实建议，让用户知道助手能看见当前页面，而不是只看到输入框。\n\n下一步可以先生成一个待确认结构源草案，再决定是否导入。',
+        },
+        { role: 'user', content: '右侧是不是还缺历史感？' },
+        { role: 'assistant', content: '是的。顶部会话 tab 和历史 popover 应该露出几个任务型标题，比如“页面层级走查”“提交包缺口检查”，让用户知道这是连续工作区，不是一次性聊天框。' },
+        { role: 'user', content: '消息长度怎么控制？' },
+        { role: 'assistant', content: '用户消息短，AI 消息给判断、原因和下一步。每条 1-3 句足够，避免把右栏变成文档阅读区。' },
+        { role: 'assistant', content: '当前改动建议只补展示内容，不改布局尺寸，风险最小。' },
+      ]
+    }
+
+    if (props.projectContextualAssistantKey === 'agent_proto' || title === 'AgentProto') {
+      const targetTitle = String(props.workflowResourceTitle || props.sceneResourceTitle || '').trim() || '当前画布'
+      return [
+        {
+          role: 'assistant',
+          content: `我已进入 AgentProto 上下文，当前目标是《${targetTitle}》。可以先把流程边界、角色和状态讲清楚，再用上方动作生成待确认草案。`,
+        },
+        {
+          role: 'user',
+          content: '先帮我把这个竞赛项目的主流程梳一下。',
+        },
+        {
+          role: 'assistant',
+          content: '建议主流程先拆成 5 个节点：选赛匹配 -> 建项与成员分工 -> 资料导入与知识索引 -> AI 协作产出 -> 终审导出与答辩演练。\n\n每个节点保留一个输入、一个产出和一个风险点，这样后面生成流程图时不会变成泛泛的功能堆叠。',
+        },
+        { role: 'user', content: '输出物怎么标？' },
+        { role: 'assistant', content: '每段只标一个主输出：匹配报告、项目空间、知识索引、待确认草案、终审导出包。输出物太多会削弱主线。' },
+        { role: 'user', content: '异常分支要不要现在画？' },
+        { role: 'assistant', content: '先不画完整异常分支，只给关键节点加风险标注。等主流程确认后，再用“AI 续改”补 provider 降级、导出失败、权限不足这些分支。' },
+        { role: 'assistant', content: '如果你点上方“AI 生成”，我会按横向流程图产出待确认草案。' },
+      ]
+    }
+
+    return [
+      {
+        role: 'assistant',
+        content: '我会基于当前打开的资源、项目状态和工作台上下文回答。现在更适合先确认你要解决的问题，再决定是否需要生成草案或只做分析。',
+      },
+      {
+        role: 'user',
+        content: '先看一下当前项目下一步该推进什么。',
+      },
+      {
+        role: 'assistant',
+        content: '从当前上下文看，优先级应该是：先补齐项目简介和关键证据，再整理流程图，最后做答辩演练。这样终审材料、演示脚本和答辩问答会使用同一套事实口径。',
+      },
+      { role: 'user', content: '能不能先给一版优先级？' },
+      { role: 'assistant', content: '优先级是：评分点映射 > 证据材料 > 流程图 > 答辩脚本 > 导出包。前两项决定可信度，后三项决定表达质量。' },
+      { role: 'user', content: '现在适合自动改吗？' },
+      { role: 'assistant', content: '不建议直接自动改。当前更适合先生成待确认提案，确认口径后再落地到文档或画布。' },
+      { role: 'assistant', content: '你可以先问“帮我生成一份提交前清单”，我会按当前上下文列出可执行项。' },
+    ]
+  }
+
+  if (props.aiMode === 'auto_optimize') {
+    return [
+      {
+        role: 'assistant',
+        content: '我会只生成待审批提案，不会自动修改项目。当前建议先处理“摘要口径统一”和“证据链补齐”两类低风险改动。',
+      },
+      {
+        role: 'user',
+        content: '帮我看看哪些内容可以自动优化。',
+      },
+      {
+        role: 'assistant',
+        content: '可生成 3 个提案：\n\n1. 将项目简介统一为“竞赛团队项目工作台”。\n2. 给核心能力补一段量化说明，关联资料沉淀、知识检索和答辩准备。\n3. 把终审导出说明从内部流程改成评委可读的交付清单。\n\n这些都适合走审批后应用，不建议静默改写。',
+      },
+      { role: 'user', content: '这些提案风险高吗？' },
+      { role: 'assistant', content: '不高，都是文本和说明类改动。真正需要二次确认的是删除资源、覆盖画布或批量替换已有内容。' },
+      { role: 'user', content: '先不要改数据。' },
+      { role: 'assistant', content: '可以。我只生成待审批提案，列表里会显示摘要、影响范围和是否破坏性，确认后才应用。' },
+      { role: 'assistant', content: '建议先从“摘要口径统一”开始，最容易提升终审材料一致性。' },
+    ]
+  }
+
+  if (props.aiMode === 'issue_discovery') {
+    return [
+      {
+        role: 'assistant',
+        content: '我会按评分映射、证据链、量化指标和资料完整度四个维度检查。当前还没有发现需要立即阻断提交的问题，但有几处材料可以补强。',
+      },
+      {
+        role: 'user',
+        content: '先扫一下最可能被评委追问的地方。',
+      },
+      {
+        role: 'assistant',
+        content: '最可能被追问的是“AI 如何真正参与竞赛流程”。建议准备 3 条证据：\n\n- 右侧助手如何读取当前资源上下文。\n- 知识索引如何返回引用和证据路径。\n- 答辩工作台如何把实时问答沉淀为总结与动作项。',
+      },
+      { role: 'user', content: '还有没有量化指标风险？' },
+      { role: 'assistant', content: '有。当前说法偏能力描述，建议补两个指标：资料查找耗时、答辩材料整理轮次。即使用阶段性数据，也要说明采集口径。' },
+      { role: 'user', content: '资料完整度呢？' },
+      { role: 'assistant', content: '缺一个失败链路说明：AI 未配置、实时连接失败、导出任务失败时，界面如何提示，用户如何恢复。这个很适合放到技术答辩备用页。' },
+      { role: 'assistant', content: '下一步可以生成寻疑报告草稿，先不提交评审。' },
+    ]
+  }
+
+  if (props.aiMode === 'defense' || props.workbenchMode === 'defense') {
+    return [
+      {
+        role: 'assistant',
+        content: 'AgentDef 已按答辩模式准备好。当前建议先用 90 秒讲清楚项目闭环，再把技术亮点放到知识索引、AI 草案和答辩实时辅助三处。',
+      },
+      {
+        role: 'user',
+        content: '如果评委问我们和普通协作文档有什么区别，怎么答？',
+      },
+      {
+        role: 'assistant',
+        content: '可以这样答：普通协作文档解决的是内容共写，WinLoop 解决的是竞赛全过程上下文闭环。项目资料、流程画布、知识引用、AI 草案、答辩演练和终审导出都绑定在同一个项目里，所以 AI 给出的建议能追溯到具体资源，而不是停留在通用问答。',
+      },
+      { role: 'user', content: '如果追问技术可行性呢？' },
+      { role: 'assistant', content: '先讲架构边界：前端工作台负责上下文装配和确认流，服务端 AI orchestrator 负责 prompt、工具和 provider 路由，知识索引负责证据召回。三层职责清楚。' },
+      { role: 'user', content: '要不要提降级？' },
+      { role: 'assistant', content: '要。说明 AI 未配置或 provider 失败时，系统会展示明确禁用原因，不会静默给假结果；流程画布和资料管理仍能独立演示。' },
+      { role: 'assistant', content: '下一轮我建议演练“评委要求现场证明引用来源”的场景。' },
+    ]
+  }
+
+  return [
+    {
+      role: 'assistant',
+      content: '我可以先做只读分析，不会写入项目。你可以直接问当前项目、资料、评分点或下一步动作。',
+    },
+    {
+      role: 'user',
+      content: '这个项目现在最该补什么？',
+    },
+    {
+      role: 'assistant',
+      content: '优先补“可验证证据”：包括核心流程截图、数据来源说明、AI 生成草案的应用前确认记录，以及答辩中能快速引用的材料清单。先补这些，比继续扩展功能更稳。',
+    },
+    { role: 'user', content: '那现在不要写入项目。' },
+    { role: 'assistant', content: '可以，我只做只读分析。所有建议都会以清单形式给出，不触发草案应用或项目修改。' },
+    { role: 'user', content: '帮我整理成今天的推进顺序。' },
+    { role: 'assistant', content: '今天建议做四步：统一项目摘要、补证据清单、生成主流程草案、跑一次答辩追问。每步都能产生可展示材料。' },
+    { role: 'assistant', content: '如果时间只够一项，就先补证据清单。它能支撑文档、流程图和答辩问答。' },
+  ]
+}
 
 const visibleChatMessageEntries = computed(() => {
   const lastMessageIndex = Math.max(visibleChatMessages.value.length - 1, 0)
@@ -524,10 +833,10 @@ const CHAT_AUTO_SCROLL_THRESHOLD_PX = 32
 const latestVisibleChatEntrySignature = computed(() => {
   const lastEntry = visibleChatMessageEntries.value[visibleChatMessageEntries.value.length - 1]
   if (!lastEntry)
-    return `${props.activeChatSessionId}:empty:${Number(props.chatMessagesLoading)}`
+    return `${displayedActiveChatSessionId.value}:empty:${Number(props.chatMessagesLoading)}`
 
   return [
-    props.activeChatSessionId,
+    displayedActiveChatSessionId.value,
     visibleChatMessageEntries.value.length,
     lastEntry.id,
     lastEntry.message.content,
@@ -595,57 +904,6 @@ function isUserChatEntryHighlighted(entryId: string): boolean {
 const isDefenseWorkbench = computed(() => props.workbenchMode === 'defense')
 const sessionEmptyText = computed(() => isDefenseWorkbench.value ? '暂无打开的 AgentDef 会话' : '暂无打开的会话')
 const createSessionLabel = computed(() => isDefenseWorkbench.value ? '新建 AgentDef 会话' : '新建对话')
-const defenseSessionTimingText = computed(() => {
-  const startedAt = formatSessionDetailTime(props.defenseSessionMeta?.createdAt)
-  const updatedAt = formatSessionDetailTime(
-    props.defenseSessionState?.updatedAt
-    || props.defenseSessionMeta?.updatedAt
-    || props.defenseSessionMeta?.lastMessageAt,
-  )
-  if (!props.defenseSessionMeta && !props.defenseSessionState)
-    return '尚未生成答辩会话时间轴。'
-  return `开始：${startedAt} · 更新：${updatedAt}`
-})
-const defenseRealtimeRows = computed<Array<{ label: string, value: string }>>(() => {
-  return [
-    {
-      label: 'Provider',
-      value: props.defenseRealtimeState?.provider === 'coze' ? 'Coze' : '千问',
-    },
-    {
-      label: '媒体',
-      value: props.defenseRealtimeState?.mediaMode === 'audio' ? '仅音频' : '音视频理解',
-    },
-    {
-      label: '连接态',
-      value: defenseRealtimeConnectionLabel(props.defenseRealtimeState?.connectionState),
-    },
-    {
-      label: '当前评委',
-      value: String(props.defenseRealtimeState?.latestSpeakerLabel || '等待首句'),
-    },
-    {
-      label: '延迟',
-      value: props.defenseRealtimeState?.latestLatencyMs ? `${Math.round(props.defenseRealtimeState.latestLatencyMs)} ms` : '暂无',
-    },
-  ]
-})
-
-const defenseRealtimeSessionLocked = computed(() => {
-  const connectionState = props.defenseRealtimeState?.connectionState
-  return props.defenseRealtimeState?.bootstrapState === 'bootstrapping'
-    || connectionState === 'bootstrapping'
-    || connectionState === 'connecting'
-    || connectionState === 'connected'
-})
-
-const defenseRealtimeCanInterrupt = computed(() => {
-  const connectionState = props.defenseRealtimeState?.connectionState
-  return connectionState === 'connecting' || connectionState === 'connected'
-})
-
-const defenseRealtimeVideoToggleDisabled = computed(() => props.defenseRealtimeState?.mediaMode === 'audio')
-
 const issueReportStatusLabel = computed(() => {
   if (props.issueReport?.reviewSubmissionStatus === 'submitted')
     return '已提交评审'
@@ -750,17 +1008,20 @@ const workspaceRightSessionTabLayoutStyle = computed<Record<string, string>>(() 
   }
 })
 const openChatSessions = computed(() => {
-  const sessionMap = new Map(props.chatSessions.map(item => [item.id, item] as const))
-  const openedSessions = props.openChatSessionIds
+  const sessionMap = new Map(visibleChatSessions.value.map(item => [item.id, item] as const))
+  const openSessionIds = props.chatSessions.length > 0
+    ? props.openChatSessionIds
+    : mockChatSessions.value.slice(0, 4).map(session => session.id)
+  const openedSessions = openSessionIds
     .map(sessionId => sessionMap.get(sessionId) || null)
     .filter((session): session is AiChatSession => Boolean(session))
 
   if (
-    props.activeChatSessionId
-    && !props.openChatSessionIds.includes(props.activeChatSessionId)
-    && sessionMap.has(props.activeChatSessionId)
+    displayedActiveChatSessionId.value
+    && !openSessionIds.includes(displayedActiveChatSessionId.value)
+    && sessionMap.has(displayedActiveChatSessionId.value)
   ) {
-    const activeSession = sessionMap.get(props.activeChatSessionId)
+    const activeSession = sessionMap.get(displayedActiveChatSessionId.value)
     if (activeSession)
       openedSessions.push(activeSession)
   }
@@ -846,7 +1107,7 @@ function handleChatViewportScroll(): void {
   chatShouldStickToBottom.value = isChatViewportNearBottom(viewport)
 }
 
-watch(() => props.activeChatSessionId, async (nextId, previousId) => {
+watch(displayedActiveChatSessionId, async (nextId, previousId) => {
   if (nextId === previousId)
     return
   clearChatEntryVisualState()
@@ -1742,6 +2003,10 @@ function setHistoryPopoverVisible(visible: boolean): void {
 
 function handleChatSessionSwitch(sessionId: string): void {
   historyPopoverVisible.value = false
+  if (isMockChatSessionId(sessionId)) {
+    selectedMockChatSessionId.value = sessionId
+    return
+  }
   emit('switchChatSession', sessionId)
 }
 
@@ -1753,139 +2018,9 @@ function handleCreateChatSession(): void {
 }
 
 function handleDeleteChatSession(sessionId: string): void {
+  if (isMockChatSessionId(sessionId))
+    return
   emit('deleteChatSession', sessionId)
-}
-
-function defenseStageLabel(stage: AiDefenseStage | undefined): string {
-  if (stage === 'opening')
-    return '开场'
-  if (stage === 'qa')
-    return '问答'
-  if (stage === 'rebuttal')
-    return '反驳'
-  if (stage === 'closing')
-    return '收束'
-  return '未开始'
-}
-
-function defenseRealtimeConnectionLabel(state?: DefenseRealtimeSessionMeta['connectionState']): string {
-  if (state === 'bootstrapping')
-    return '握手中'
-  if (state === 'connecting')
-    return '连接中'
-  if (state === 'connected')
-    return '已连接'
-  if (state === 'interrupted')
-    return '已中断'
-  if (state === 'error')
-    return '异常'
-  if (state === 'closed')
-    return '已关闭'
-  return '待机'
-}
-
-function handleDefenseRealtimeProviderChange(rawValue: unknown): void {
-  const value = String(rawValue || 'qwen').trim()
-  if (value === 'coze' && props.defenseRealtimeOptions?.coze.configured === false)
-    return
-  emit('updateDefenseRealtimeProvider', value === 'coze' ? 'coze' : 'qwen')
-}
-
-function handleDefenseRealtimeMediaModeChange(rawValue: unknown): void {
-  const value = String(rawValue || 'audio_video').trim()
-  emit('updateDefenseRealtimeMediaMode', value === 'audio' ? 'audio' : 'audio_video')
-}
-
-const defenseRealtimeProviderOptions = computed(() => [
-  { value: 'qwen' as const, label: '千问' },
-  { value: 'coze' as const, label: 'Coze', disabled: props.defenseRealtimeOptions?.coze.configured === false },
-])
-const defenseRealtimeMediaModeOptions = [
-  { value: 'audio_video', label: '音视频理解' },
-  { value: 'audio', label: '仅音频' },
-] as const
-const defensePersonaJudgeTypeOptions = [
-  { value: 'technical', label: 'technical' },
-  { value: 'business', label: 'business' },
-  { value: 'expression', label: 'expression' },
-  { value: 'custom', label: 'custom' },
-] as const
-
-const defensePersonaFormVisible = ref(false)
-const defensePersonaEditingId = ref('')
-const defensePersonaForm = reactive<{
-  judgeType: AiDefensePersonaJudgeType
-  name: string
-  summary: string
-  systemPrompt: string
-  focusAreasText: string
-  enabled: boolean
-}>({
-  judgeType: 'custom',
-  name: '',
-  summary: '',
-  systemPrompt: '',
-  focusAreasText: '',
-  enabled: true,
-})
-
-function resetDefensePersonaForm() {
-  defensePersonaEditingId.value = ''
-  defensePersonaForm.judgeType = 'custom'
-  defensePersonaForm.name = ''
-  defensePersonaForm.summary = ''
-  defensePersonaForm.systemPrompt = ''
-  defensePersonaForm.focusAreasText = ''
-  defensePersonaForm.enabled = true
-}
-
-function openCreateDefensePersonaForm() {
-  resetDefensePersonaForm()
-  defensePersonaFormVisible.value = true
-}
-
-function openEditDefensePersonaForm(persona: AiDefensePersona) {
-  defensePersonaEditingId.value = persona.id
-  defensePersonaForm.judgeType = persona.judgeType
-  defensePersonaForm.name = persona.name
-  defensePersonaForm.summary = persona.summary
-  defensePersonaForm.systemPrompt = persona.systemPrompt
-  defensePersonaForm.focusAreasText = (persona.focusAreas || []).join('\n')
-  defensePersonaForm.enabled = persona.enabled
-  defensePersonaFormVisible.value = true
-}
-
-function submitDefensePersonaForm() {
-  const name = defensePersonaForm.name.trim()
-  const systemPrompt = defensePersonaForm.systemPrompt.trim()
-  if (!name || !systemPrompt)
-    return
-  emit('saveDefensePersona', {
-    personaId: defensePersonaEditingId.value || undefined,
-    judgeType: defensePersonaForm.judgeType,
-    name,
-    summary: defensePersonaForm.summary.trim(),
-    systemPrompt,
-    focusAreas: defensePersonaForm.focusAreasText
-      .split(/\n+/)
-      .map(item => item.trim())
-      .filter(Boolean),
-    enabled: defensePersonaForm.enabled,
-  })
-  defensePersonaFormVisible.value = false
-  resetDefensePersonaForm()
-}
-
-function quickToggleDefensePersona(persona: AiDefensePersona) {
-  emit('saveDefensePersona', {
-    personaId: persona.id,
-    judgeType: persona.judgeType,
-    name: persona.name,
-    summary: persona.summary,
-    systemPrompt: persona.systemPrompt,
-    focusAreas: persona.focusAreas || [],
-    enabled: !persona.enabled,
-  })
 }
 
 function requestSubmitIssueReport() {
@@ -2009,7 +2144,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               <button
                 class="workspace-right-sidebar__session-tab"
                 :class="{
-                  'workspace-right-sidebar__session-tab--active': session.id === activeChatSessionId,
+                  'workspace-right-sidebar__session-tab--active': session.id === displayedActiveChatSessionId,
                   'workspace-right-sidebar__session-tab--fresh': isChatSessionHighlighted(session.id),
                 }"
                 :title="resolveSessionTitle(session)"
@@ -2053,15 +2188,15 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                   <div class="workspace-right-sidebar__session-history-heading">
                     历史记录
                   </div>
-                  <div v-if="chatSessions.length === 0" class="workspace-right-sidebar__session-history-empty">
+                  <div v-if="visibleChatSessions.length === 0" class="workspace-right-sidebar__session-history-empty">
                     暂无历史记录
                   </div>
                   <div v-else class="workspace-right-sidebar__session-history-list">
                     <div
-                      v-for="session in chatSessions"
+                      v-for="session in visibleChatSessions"
                       :key="`history-${session.id}`"
                       class="workspace-right-sidebar__session-history-row"
-                      :class="{ 'workspace-right-sidebar__session-history-row--active': session.id === activeChatSessionId }"
+                      :class="{ 'workspace-right-sidebar__session-history-row--active': session.id === displayedActiveChatSessionId }"
                     >
                       <button
                         class="workspace-right-sidebar__session-history-entry"
@@ -2083,7 +2218,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                         type="button"
                         :title="props.chatSessionDeletingId === session.id ? '删除中' : '删除会话'"
                         :aria-label="props.chatSessionDeletingId === session.id ? '删除中' : '删除会话'"
-                        :disabled="props.chatSessionDeletingId === session.id"
+                        :disabled="props.chatSessionDeletingId === session.id || isMockChatSessionId(session.id)"
                         @click.stop="handleDeleteChatSession(session.id)"
                       >
                         <span class="material-symbols-outlined workspace-right-sidebar__session-history-delete-icon">
@@ -2769,249 +2904,6 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
             </div>
 
             <div v-if="aiMode === 'defense'" class="space-y-2">
-              <div class="p-3 border border-slate-200 rounded bg-slate-50">
-                <div class="flex gap-2 items-center justify-between">
-                  <div>
-                    <div class="text-xs text-slate-700 font-semibold">
-                      AgentDef 状态
-                    </div>
-                    <p class="text-[11px] text-slate-500 mt-1">
-                      阶段：{{ defenseStageLabel(defenseStage) }} · 已完成 {{ defenseTurnCount }} 轮
-                    </p>
-                    <p class="text-[11px] text-slate-500 mt-1">
-                      {{ defenseSessionTimingText }}
-                    </p>
-                  </div>
-                  <div class="flex gap-2 items-center">
-                    <button
-                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                      :disabled="defenseSummaryLoading || !props.aiEnabled"
-                      @click="emit('generateDefenseSummary')"
-                    >
-                      {{ defenseSummaryLoading ? '生成中...' : '生成总结' }}
-                    </button>
-                    <button
-                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                      :disabled="!props.aiEnabled"
-                      @click="emit('startDefenseRealtime')"
-                    >
-                      实时答辩
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="p-3 border border-slate-200 rounded bg-white space-y-3">
-                <div class="flex gap-2 items-center justify-between">
-                  <div class="text-xs text-slate-700 font-semibold">
-                    Provider 诊断
-                  </div>
-                  <div class="flex gap-2 items-center">
-                    <button
-                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                      type="button"
-                      :disabled="!defenseRealtimeCanInterrupt"
-                      @click="emit('interruptDefenseRealtime')"
-                    >
-                      中断
-                    </button>
-                    <button
-                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                      type="button"
-                      :disabled="props.defenseRealtimeState?.bootstrapState === 'bootstrapping'"
-                      @click="emit('reconnectDefenseRealtime')"
-                    >
-                      重连
-                    </button>
-                  </div>
-                </div>
-
-                <div class="gap-2 grid grid-cols-2">
-                  <label class="space-y-1">
-                    <span class="text-[11px] text-slate-500">实时链路</span>
-                    <UiSelect
-                      :model-value="props.defenseRealtimeState?.provider || 'qwen'"
-                      :options="defenseRealtimeProviderOptions"
-                      :disabled="defenseRealtimeSessionLocked"
-                      size="xs"
-                      aria-label="实时链路"
-                      class="w-full"
-                      @change="handleDefenseRealtimeProviderChange"
-                    />
-                  </label>
-                  <label class="space-y-1">
-                    <span class="text-[11px] text-slate-500">媒体模式</span>
-                    <UiSelect
-                      :model-value="props.defenseRealtimeState?.mediaMode || 'audio_video'"
-                      :options="defenseRealtimeMediaModeOptions"
-                      :disabled="defenseRealtimeSessionLocked"
-                      size="xs"
-                      aria-label="媒体模式"
-                      class="w-full"
-                      @change="handleDefenseRealtimeMediaModeChange"
-                    />
-                  </label>
-                </div>
-
-                <div class="flex gap-2">
-                  <button
-                    class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                    type="button"
-                    @click="emit('toggleDefenseRealtimeAudio', !(props.defenseRealtimeState?.audioEnabled !== false))"
-                  >
-                    麦克风 {{ props.defenseRealtimeState?.audioEnabled !== false ? '开' : '关' }}
-                  </button>
-                  <button
-                    class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                    type="button"
-                    :disabled="defenseRealtimeVideoToggleDisabled"
-                    @click="emit('toggleDefenseRealtimeVideo', !(props.defenseRealtimeState?.videoEnabled === true))"
-                  >
-                    摄像头 {{ props.defenseRealtimeState?.videoEnabled === true ? '开' : '关' }}
-                  </button>
-                </div>
-
-                <div class="gap-2 grid grid-cols-2">
-                  <div
-                    v-for="item in defenseRealtimeRows"
-                    :key="item.label"
-                    class="p-2 border border-slate-200 rounded bg-slate-50"
-                  >
-                    <div class="text-[10px] text-slate-400 tracking-[0.12em] uppercase">
-                      {{ item.label }}
-                    </div>
-                    <div class="text-[11px] text-slate-700 mt-1">
-                      {{ item.value }}
-                    </div>
-                  </div>
-                </div>
-
-                <div v-if="props.defenseRealtimeState?.lastError" class="text-[11px] text-amber-700 p-2 border border-amber-200 rounded bg-amber-50">
-                  token / room / 设备链路异常：{{ props.defenseRealtimeState.lastError }}
-                </div>
-
-                <div class="space-y-1">
-                  <div class="text-[11px] text-slate-500">
-                    Provider 日志
-                  </div>
-                  <div v-if="props.defenseRealtimeLogs.length === 0" class="text-[11px] text-slate-500 p-2 border border-slate-200 rounded border-dashed">
-                    还没有 provider 日志，等待 bootstrap、连接或首句发言。
-                  </div>
-                  <div v-else class="space-y-1">
-                    <div
-                      v-for="item in props.defenseRealtimeLogs.slice(-4)"
-                      :key="item.id"
-                      class="text-[11px] text-slate-600 p-2 border border-slate-200 rounded bg-slate-50"
-                    >
-                      {{ item.message }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="p-3 border border-slate-200 rounded bg-white space-y-2">
-                <div class="flex gap-2 items-center justify-between">
-                  <div class="text-xs text-slate-700 font-semibold">
-                    评委人设
-                  </div>
-                  <div class="flex gap-2 items-center">
-                    <button
-                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
-                      @click="emit('importDefensePersonas')"
-                    >
-                      导入比赛预设
-                    </button>
-                    <button
-                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
-                      @click="openCreateDefensePersonaForm"
-                    >
-                      新建
-                    </button>
-                  </div>
-                </div>
-
-                <div v-if="defensePersonasLoading" class="text-[11px] text-slate-500">
-                  人设加载中...
-                </div>
-                <div v-else-if="defensePersonas.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
-                  当前项目还没有答辩人设。可先导入比赛预设，再按项目需要调整。
-                </div>
-                <div v-else class="space-y-2">
-                  <div
-                    v-for="persona in defensePersonas"
-                    :key="persona.id"
-                    class="p-3 border border-slate-200 rounded bg-slate-50/60"
-                  >
-                    <div class="flex gap-2 items-start justify-between">
-                      <div>
-                        <div class="text-[11px] text-slate-800 font-semibold">
-                          {{ persona.name }}
-                        </div>
-                        <div class="text-[10px] text-slate-500 mt-1">
-                          {{ persona.judgeType }} · {{ persona.enabled ? '已启用' : '已停用' }}
-                        </div>
-                      </div>
-                      <div class="flex gap-1 items-center">
-                        <button
-                          class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
-                          @click="quickToggleDefensePersona(persona)"
-                        >
-                          {{ persona.enabled ? '停用' : '启用' }}
-                        </button>
-                        <button
-                          class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
-                          @click="openEditDefensePersonaForm(persona)"
-                        >
-                          编辑
-                        </button>
-                        <button
-                          class="text-[10px] text-rose-600 px-2 border border-rose-200 rounded bg-white h-6 hover:bg-rose-50"
-                          @click="emit('deleteDefensePersona', persona.id)"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </div>
-                    <p v-if="persona.summary" class="text-[11px] text-slate-600 mt-2">
-                      {{ persona.summary }}
-                    </p>
-                    <p v-if="persona.focusAreas.length > 0" class="text-[10px] text-slate-500 mt-1">
-                      关注点：{{ persona.focusAreas.join('、') }}
-                    </p>
-                  </div>
-                </div>
-
-                <div v-if="defensePersonaFormVisible" class="p-3 border border-blue-200 rounded bg-blue-50/60 space-y-2">
-                  <div class="flex gap-2 items-center justify-between">
-                    <div class="text-[11px] text-slate-800 font-semibold">
-                      {{ defensePersonaEditingId ? '编辑人设' : '新建人设' }}
-                    </div>
-                    <button
-                      class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
-                      @click="defensePersonaFormVisible = false"
-                    >
-                      取消
-                    </button>
-                  </div>
-                  <UiSelect v-model="defensePersonaForm.judgeType" :options="defensePersonaJudgeTypeOptions" size="xs" aria-label="评委类型" class="w-full" />
-                  <input v-model="defensePersonaForm.name" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white w-full" placeholder="人设名称">
-                  <textarea v-model="defensePersonaForm.summary" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-16 w-full resize-none" placeholder="一句话说明评委关注点" />
-                  <textarea v-model="defensePersonaForm.systemPrompt" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-28 w-full resize-none" placeholder="系统提示词" />
-                  <textarea v-model="defensePersonaForm.focusAreasText" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-16 w-full resize-none" placeholder="关注点，每行一个" />
-                  <label class="text-[11px] text-slate-600 flex gap-2 items-center">
-                    <input v-model="defensePersonaForm.enabled" type="checkbox">
-                    新建后立即启用
-                  </label>
-                  <button
-                    class="text-[11px] text-white font-semibold px-3 border border-blue-500 rounded bg-blue-600 h-8 hover:bg-blue-500 disabled:opacity-60"
-                    :disabled="!defensePersonaForm.name.trim() || !defensePersonaForm.systemPrompt.trim()"
-                    @click="submitDefensePersonaForm"
-                  >
-                    保存人设
-                  </button>
-                </div>
-              </div>
-
               <div v-if="defenseScorecard" class="p-3 border border-slate-200 rounded bg-slate-50">
                 <div class="text-xs text-slate-700 font-semibold">
                   答辩评分
@@ -3272,6 +3164,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                     :model-value="modeSelectValue()"
                     :options="props.workbenchMode === 'project' ? projectAssistantOptions : DEFENSE_MODES"
                     size="xs"
+                    placement="top"
                     aria-label="AI 模式"
                     @change="handleModeValueChange"
                   />
@@ -4253,14 +4146,15 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-chat-composer__mode-pill {
   position: relative;
   display: inline-flex;
-  min-width: 134px;
+  min-width: 166px;
   max-width: 100%;
-  height: 34px;
+  height: 38px;
   align-items: center;
-  border: 1px solid rgba(196, 208, 255, 0.85);
+  border: 1px solid rgba(178, 194, 255, 0.9);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 8px 18px rgba(99, 102, 241, 0.05);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: none;
+  overflow: hidden;
 }
 
 .workspace-chat-composer__mode-pill--disabled {
@@ -4276,9 +4170,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 }
 
 .workspace-chat-composer__mode-icon {
-  left: 12px;
+  left: 20px;
   color: #6d5ef1;
   font-size: 16px;
+  z-index: 2;
 }
 
 .workspace-chat-composer__mode-chevron {
@@ -4312,17 +4207,49 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 }
 
 .workspace-mode-select--embedded {
+  display: flex;
   width: 100%;
   height: 100%;
   min-width: 0;
-  border: none;
-  border-radius: 999px;
+  align-items: center;
+  border: 0;
   background: transparent;
   color: #23314f;
   font-size: var(--workspace-right-font-xs);
   font-weight: 700;
-  padding: 0 28px 0 34px;
-  appearance: none;
+  padding: 0;
+  box-shadow: none;
+}
+
+.workspace-mode-select--embedded :deep(.ui-select__trigger) {
+  height: 100%;
+  border: 0 !important;
+  border-radius: 999px;
+  padding: 0 13px 0 38px;
+  background: transparent !important;
+  color: #23314f;
+  font-size: var(--workspace-right-font-md);
+  font-weight: 800;
+  box-shadow: none !important;
+}
+
+.workspace-mode-select--embedded :deep(.ui-select__trigger:hover:not(:disabled)) {
+  background: transparent !important;
+}
+
+.workspace-mode-select--embedded :deep(.ui-select__trigger:focus-visible),
+.workspace-mode-select--embedded.ui-select--open :deep(.ui-select__trigger) {
+  box-shadow: none !important;
+}
+
+.workspace-mode-select--embedded :deep(.ui-select__value) {
+  line-height: 1;
+}
+
+.workspace-mode-select--embedded :deep(.ui-select__chevron) {
+  width: 18px;
+  height: 18px;
+  color: #94a3b8;
 }
 
 .workspace-chat-composer__send {

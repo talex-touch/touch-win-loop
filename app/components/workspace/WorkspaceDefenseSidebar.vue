@@ -3,6 +3,8 @@ import type {
   AiChatSession,
   AiDefenseJudgeRound,
   AiDefensePersona,
+  AiDefensePersonaJudgeType,
+  AiDefenseScorecard,
   AiDefenseSessionState,
   ProjectMeeting,
   ProjectMeetingDetail,
@@ -15,6 +17,7 @@ const props = withDefaults(defineProps<{
   sessionMeta?: AiChatSession | null
   sessionState?: AiDefenseSessionState | null
   personas?: AiDefensePersona[]
+  scorecard?: AiDefenseScorecard | null
   rounds?: AiDefenseJudgeRound[]
   linkedMeeting?: ProjectMeeting | ProjectMeetingDetail | null
   meetingRuntimeHealth?: ProjectMeetingRuntimeHealth | null
@@ -24,129 +27,429 @@ const props = withDefaults(defineProps<{
   sessionMeta: null,
   sessionState: null,
   personas: () => [],
+  scorecard: null,
   rounds: () => [],
   linkedMeeting: null,
   meetingRuntimeHealth: null,
 })
 
-function formatDateTime(value?: string | null): string {
-  const normalized = String(value || '').trim()
-  if (!normalized)
-    return '暂无'
+const emit = defineEmits<{
+  importPersonas: []
+  savePersona: [payload: {
+    personaId?: string
+    judgeType: AiDefensePersonaJudgeType
+    name: string
+    summary: string
+    systemPrompt: string
+    focusAreas: string[]
+    enabled: boolean
+  }]
+  deletePersona: [personaId: string]
+}>()
 
-  const date = new Date(normalized)
-  if (Number.isNaN(date.getTime()))
-    return normalized
+const personaFormVisible = ref(false)
+const personaEditingId = ref('')
+const personaForm = reactive<{
+  judgeType: AiDefensePersonaJudgeType
+  name: string
+  summary: string
+  systemPrompt: string
+  focusAreasText: string
+  enabled: boolean
+}>({
+  judgeType: 'custom',
+  name: '',
+  summary: '',
+  systemPrompt: '',
+  focusAreasText: '',
+  enabled: true,
+})
 
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
+const personaJudgeTypeOptions = [
+  { value: 'technical', label: 'technical' },
+  { value: 'business', label: 'business' },
+  { value: 'expression', label: 'expression' },
+  { value: 'custom', label: 'custom' },
+] as const
+
+const showcaseDefensePersonas: AiDefensePersona[] = [
+  {
+    id: 'showcase-technical',
+    projectId: 'showcase-project',
+    sourceContestId: null,
+    sourceTrackId: null,
+    sourceTemplateKey: 'technical-review',
+    judgeType: 'technical',
+    name: '技术评委 · 周启',
+    summary: '关注架构边界、实时链路稳定性、知识索引可信度和工程落地成本。',
+    systemPrompt: '你是技术评委，重点追问系统架构、数据流、权限边界、异常降级和可复现证据。',
+    focusAreas: ['AI 编排', '知识索引', '实时链路', '异常降级'],
+    scoringRubric: [
+      {
+        key: 'architecture',
+        name: '架构完整性',
+        weight: 0.34,
+        description: '服务边界、状态流转和降级路径是否清晰。',
+        scoringPoint: '能说明前端工作台、服务端编排和索引召回职责。',
+        deductionPoint: '只描述功能效果，缺少工程边界。',
+        evidenceRequirement: '技术路线图、provider 状态、索引引用示例。',
+      },
+      {
+        key: 'reliability',
+        name: '可靠性',
+        weight: 0.33,
+        description: '实时答辩和 AI provider 失败时是否具备可解释恢复路径。',
+        scoringPoint: '能展示授权状态、重连入口和禁用原因。',
+        deductionPoint: '失败时界面静默或给出不可信结果。',
+        evidenceRequirement: '实时控制台、运行日志、降级说明。',
+      },
+    ],
+    enabled: true,
+    sortOrder: 10,
+    isCustomized: false,
+    createdByUserId: 'showcase-user',
+    updatedByUserId: 'showcase-user',
+    createdAt: '2026-05-06T08:30:00.000+08:00',
+    updatedAt: '2026-05-06T09:42:00.000+08:00',
+  },
+  {
+    id: 'showcase-business',
+    projectId: 'showcase-project',
+    sourceContestId: null,
+    sourceTrackId: null,
+    sourceTemplateKey: 'business-review',
+    judgeType: 'business',
+    name: '业务评委 · 何砚',
+    summary: '关注参赛团队价值、流程闭环、量化收益和终审材料交付质量。',
+    systemPrompt: '你是业务评委，重点追问用户价值、落地路径、团队协作收益和评分点映射。',
+    focusAreas: ['用户价值', '流程闭环', '量化指标', '交付清单'],
+    scoringRubric: [
+      {
+        key: 'value',
+        name: '用户价值',
+        weight: 0.4,
+        description: '是否清楚回答目标团队为什么需要这个工作台。',
+        scoringPoint: '能将资料沉淀、AI 协作和终审答辩串成闭环。',
+        deductionPoint: '只罗列模块，缺少业务结果。',
+        evidenceRequirement: '角色分工、流程画布、收益指标。',
+      },
+      {
+        key: 'delivery',
+        name: '交付质量',
+        weight: 0.3,
+        description: '终审材料是否可直接服务评委理解和复核。',
+        scoringPoint: '材料命名、评分映射和证据路径清晰。',
+        deductionPoint: '附件偏内部化，无法快速判断价值。',
+        evidenceRequirement: '终审导出包、评分点映射表。',
+      },
+    ],
+    enabled: true,
+    sortOrder: 20,
+    isCustomized: false,
+    createdByUserId: 'showcase-user',
+    updatedByUserId: 'showcase-user',
+    createdAt: '2026-05-06T08:31:00.000+08:00',
+    updatedAt: '2026-05-06T09:40:00.000+08:00',
+  },
+  {
+    id: 'showcase-expression',
+    projectId: 'showcase-project',
+    sourceContestId: null,
+    sourceTrackId: null,
+    sourceTemplateKey: 'expression-review',
+    judgeType: 'expression',
+    name: '表达评委 · 陆晨',
+    summary: '关注答辩结构、证据顺序、非技术评委理解成本和现场收束能力。',
+    systemPrompt: '你是表达评委，重点追问开场结构、关键句、证据组织、时间控制和临场回应。',
+    focusAreas: ['开场结构', '证据组织', '时间控制', '现场回应'],
+    scoringRubric: [
+      {
+        key: 'structure',
+        name: '表达结构',
+        weight: 0.45,
+        description: '是否能用清晰顺序完成项目介绍和答辩回应。',
+        scoringPoint: '回答遵循问题、方案、证据、收益。',
+        deductionPoint: '术语堆叠，关键价值出现过晚。',
+        evidenceRequirement: '90 秒开场稿、结束页总结。',
+      },
+      {
+        key: 'response',
+        name: '临场回应',
+        weight: 0.35,
+        description: '是否能直接回答追问并主动补边界。',
+        scoringPoint: '回答短、准、可验证。',
+        deductionPoint: '绕开问题或引入新概念。',
+        evidenceRequirement: '答辩时间线、追问记录。',
+      },
+    ],
+    enabled: true,
+    sortOrder: 30,
+    isCustomized: false,
+    createdByUserId: 'showcase-user',
+    updatedByUserId: 'showcase-user',
+    createdAt: '2026-05-06T08:32:00.000+08:00',
+    updatedAt: '2026-05-06T09:39:00.000+08:00',
+  },
+  {
+    id: 'showcase-data',
+    projectId: 'showcase-project',
+    sourceContestId: null,
+    sourceTrackId: null,
+    sourceTemplateKey: 'data-review',
+    judgeType: 'custom',
+    name: '数据评委 · 孟也',
+    summary: '关注资料来源、引用一致性、指标口径和索引更新后的证据可信度。',
+    systemPrompt: '你是数据评委，重点追问数据来源、指标口径、索引更新、引用路径和复核方式。',
+    focusAreas: ['数据来源', '引用路径', '指标口径', '复核方式'],
+    scoringRubric: [
+      {
+        key: 'traceability',
+        name: '可追溯性',
+        weight: 0.5,
+        description: '关键结论是否能追溯到项目资料和引用片段。',
+        scoringPoint: '能展示资源路径、引用片段和更新时间。',
+        deductionPoint: '指标没有来源，引用无法复核。',
+        evidenceRequirement: '知识引用、资源详情、索引更新时间。',
+      },
+      {
+        key: 'metrics',
+        name: '指标口径',
+        weight: 0.3,
+        description: '量化收益是否有明确采集范围和计算方式。',
+        scoringPoint: '能说明耗时、轮次、追溯率等指标定义。',
+        deductionPoint: '只给数字，缺少采集方式。',
+        evidenceRequirement: '指标说明页、项目日志、终审摘要。',
+      },
+    ],
+    enabled: true,
+    sortOrder: 40,
+    isCustomized: true,
+    createdByUserId: 'showcase-user',
+    updatedByUserId: 'showcase-user',
+    createdAt: '2026-05-06T08:33:00.000+08:00',
+    updatedAt: '2026-05-06T09:38:00.000+08:00',
+  },
+]
+
+const showcaseDefenseRounds: AiDefenseJudgeRound[] = [
+  {
+    judge: '表达评委 · 陆晨',
+    judgeType: 'expression',
+    personaId: 'showcase-expression',
+    stage: 'closing',
+    turnIndex: 8,
+    question: '如果只剩 45 秒收束，你会如何把项目价值、技术可信度和落地路径压成一个闭环？',
+    score: 87,
+    comment: '收束结构清楚，结束句需要更明确地回到评分指标。',
+    followUp: '准备一句可直接放在结束页的总结。',
+    evidenceRefs: [],
+    createdAt: '2026-05-06T09:42:00.000+08:00',
+  },
+  {
+    judge: '数据评委 · 孟也',
+    judgeType: 'custom',
+    personaId: 'showcase-data',
+    stage: 'qa',
+    turnIndex: 7,
+    question: '知识索引返回的证据如何保证和当前项目资料一致？',
+    score: 85,
+    comment: '索引重建和引用路径已经说明，建议补充失败提示。',
+    followUp: '现场展示资料更新后的重新索引入口。',
+    evidenceRefs: [],
+    createdAt: '2026-05-06T09:38:00.000+08:00',
+  },
+  {
+    judge: '技术评委 · 周启',
+    judgeType: 'technical',
+    personaId: 'showcase-technical',
+    stage: 'qa',
+    turnIndex: 6,
+    question: '实时答辩链路依赖外部 provider，断连或鉴权失败时产品如何降级？',
+    score: 89,
+    comment: '连接状态、媒体授权和重连入口说明完整。',
+    followUp: '将安全边界补到技术答辩页。',
+    evidenceRefs: [],
+    createdAt: '2026-05-06T09:33:00.000+08:00',
+  },
+  {
+    judge: '业务评委 · 何砚',
+    judgeType: 'business',
+    personaId: 'showcase-business',
+    stage: 'qa',
+    turnIndex: 5,
+    question: '和普通协作文档相比，竞赛全过程闭环体现在哪里？',
+    score: 90,
+    comment: '业务链路完整，建议补充效率指标。',
+    followUp: '补资料查找耗时和终审整理轮次。',
+    evidenceRefs: [],
+    createdAt: '2026-05-06T09:29:00.000+08:00',
+  },
+]
+
+const showcaseDefenseScorecard: AiDefenseScorecard = {
+  technical: 88,
+  business: 90,
+  expression: 86,
+  total: 88,
+  summary: '答辩已经形成项目资料、知识索引、AI 协作、实时答辩和终审导出的完整闭环。下一步重点补强量化指标、引用复核路径和 45 秒收束句。',
+  materialGaps: [
+    '资料更新后的重新索引说明',
+    '效率提升指标采集口径',
+    '实时链路失败后的降级截图',
+  ],
+  actionItems: [
+    '把评分点映射表加入终审导出包',
+    '补一页 AI 安全边界和人工确认机制',
+    '整理 90 秒开场稿和 45 秒收束句',
+  ],
 }
 
-function defenseStageLabel(stage?: AiDefenseSessionState['currentStage']): string {
-  if (stage === 'opening')
-    return '开场'
-  if (stage === 'qa')
-    return '问答'
-  if (stage === 'rebuttal')
-    return '反驳'
-  if (stage === 'closing')
-    return '收束'
-  return '未开始'
-}
+const usingShowcasePersonas = computed(() => props.personas.length === 0)
+const displayPersonas = computed(() => usingShowcasePersonas.value ? showcaseDefensePersonas : props.personas)
+const displayRounds = computed(() => props.rounds.length > 0 ? props.rounds : showcaseDefenseRounds)
+const displayScorecard = computed(() => props.scorecard || props.sessionState?.lastScorecard || showcaseDefenseScorecard)
+const activePersonaPopoverId = ref('')
+const activePersonaPopoverStyle = ref<Record<string, string>>({
+  top: '0px',
+  left: '0px',
+})
+
+const PERSONA_POPOVER_WIDTH = 300
+const PERSONA_POPOVER_GAP = 12
+const PERSONA_POPOVER_MARGIN = 12
+const PERSONA_POPOVER_ESTIMATED_HEIGHT = 280
+
+let personaPopoverTriggerElement: HTMLElement | null = null
+let personaPopoverLayoutFrame: number | null = null
 
 const currentPersonaIdSet = computed(() => {
   return new Set(
-    props.rounds
+    displayRounds.value
       .map(item => String(item.personaId || '').trim())
       .filter(Boolean),
   )
 })
 
 const sortedPersonas = computed(() => {
-  return [...props.personas].sort((left, right) => {
+  return [...displayPersonas.value].sort((left, right) => {
     if (left.enabled !== right.enabled)
       return left.enabled ? -1 : 1
     return Number(left.sortOrder || 0) - Number(right.sortOrder || 0)
   })
 })
 
-const overviewItems = computed(() => {
-  const sessionState = props.sessionState
-  return [
-    {
-      id: 'stage',
-      label: '当前阶段',
-      value: defenseStageLabel(sessionState?.currentStage),
-      detail: sessionState ? `已完成 ${sessionState.turnCount} 轮` : '等待答辩开始',
-    },
-    {
-      id: 'created',
-      label: '开始时间',
-      value: formatDateTime(props.sessionMeta?.createdAt),
-      detail: props.sessionMeta?.title || '尚未生成答辩会话',
-    },
-    {
-      id: 'updated',
-      label: '最近更新',
-      value: formatDateTime(sessionState?.updatedAt || props.sessionMeta?.updatedAt || props.sessionMeta?.lastMessageAt),
-      detail: sessionState?.summaryStatus === 'completed' ? '总结已产出' : '会话仍可继续追问',
-    },
-  ]
+const activePersonaPopover = computed(() => {
+  return sortedPersonas.value.find(persona => persona.id === activePersonaPopoverId.value) || null
 })
 
-const meetingStatus = computed(() => {
-  if (!props.sessionState?.linkedMeetingId) {
-    return {
-      label: '未发起语音答辩',
-      detail: '当前仍是文本答辩回合。',
-      tone: 'idle',
-    }
-  }
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
 
-  if (!props.linkedMeeting) {
-    return {
-      label: '已关联语音会议',
-      detail: '会议详情载入中。',
-      tone: 'default',
-    }
-  }
-
-  if (props.linkedMeeting.status === 'active') {
-    return {
-      label: props.meetingRuntimeHealth?.ready === false ? '语音会议待检查' : '语音会议进行中',
-      detail: props.meetingRuntimeHealth?.ready === false
-        ? (props.meetingRuntimeHealth.issues[0] || 'RTC / ASR 状态异常。')
-        : `${props.linkedMeeting.mode === 'audio' ? '音频会话' : '视频会话'} · ${props.linkedMeeting.provider}`,
-      tone: props.meetingRuntimeHealth?.ready === false ? 'warning' : 'live',
-    }
-  }
-
-  if (props.linkedMeeting.status === 'scheduled') {
-    return {
-      label: '语音会议待开始',
-      detail: props.linkedMeeting.title || '会议已创建，等待进入。',
-      tone: 'default',
-    }
-  }
-
-  if (props.linkedMeeting.status === 'ended') {
-    return {
-      label: '语音会议已结束',
-      detail: props.linkedMeeting.title || '可继续查看会话总结与轮次记录。',
-      tone: 'idle',
-    }
-  }
+function buildPersonaPopoverStyle(triggerElement: HTMLElement): Record<string, string> {
+  const rect = triggerElement.getBoundingClientRect()
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  const width = Math.min(
+    PERSONA_POPOVER_WIDTH,
+    Math.max(220, viewportWidth - PERSONA_POPOVER_MARGIN * 2),
+  )
+  const maxLeft = Math.max(PERSONA_POPOVER_MARGIN, viewportWidth - PERSONA_POPOVER_MARGIN - width)
+  const rightSideLeft = rect.right + PERSONA_POPOVER_GAP
+  const leftSideLeft = rect.left - PERSONA_POPOVER_GAP - width
+  const preferredLeft = rightSideLeft + width <= viewportWidth - PERSONA_POPOVER_MARGIN
+    ? rightSideLeft
+    : leftSideLeft
+  const maxTop = Math.max(
+    PERSONA_POPOVER_MARGIN,
+    viewportHeight - PERSONA_POPOVER_MARGIN - PERSONA_POPOVER_ESTIMATED_HEIGHT,
+  )
 
   return {
-    label: '语音会议异常结束',
-    detail: props.meetingRuntimeHealth?.issues[0] || props.linkedMeeting.title || '请在 AgentDef 中继续排查。',
-    tone: 'warning',
+    top: `${clampNumber(rect.top, PERSONA_POPOVER_MARGIN, maxTop)}px`,
+    left: `${clampNumber(preferredLeft, PERSONA_POPOVER_MARGIN, maxLeft)}px`,
+    width: `${width}px`,
   }
+}
+
+function cancelPersonaPopoverLayout(): void {
+  if (!import.meta.client || personaPopoverLayoutFrame === null)
+    return
+
+  cancelAnimationFrame(personaPopoverLayoutFrame)
+  personaPopoverLayoutFrame = null
+}
+
+function updatePersonaPopoverLayout(): void {
+  if (!import.meta.client || !personaPopoverTriggerElement)
+    return
+
+  activePersonaPopoverStyle.value = buildPersonaPopoverStyle(personaPopoverTriggerElement)
+}
+
+function schedulePersonaPopoverLayout(): void {
+  if (!import.meta.client || !activePersonaPopoverId.value || !personaPopoverTriggerElement)
+    return
+
+  cancelPersonaPopoverLayout()
+  personaPopoverLayoutFrame = requestAnimationFrame(() => {
+    personaPopoverLayoutFrame = null
+    updatePersonaPopoverLayout()
+  })
+}
+
+function showPersonaPopover(persona: AiDefensePersona, event: MouseEvent | FocusEvent): void {
+  if (!import.meta.client || !(event.currentTarget instanceof HTMLElement))
+    return
+
+  personaPopoverTriggerElement = event.currentTarget
+  activePersonaPopoverStyle.value = buildPersonaPopoverStyle(event.currentTarget)
+  activePersonaPopoverId.value = persona.id
+  schedulePersonaPopoverLayout()
+}
+
+function hidePersonaPopover(personaId?: string): void {
+  if (personaId && activePersonaPopoverId.value !== personaId)
+    return
+
+  activePersonaPopoverId.value = ''
+  personaPopoverTriggerElement = null
+  cancelPersonaPopoverLayout()
+}
+
+function handlePersonaPopoverFocusOut(persona: AiDefensePersona, event: FocusEvent): void {
+  const currentTarget = event.currentTarget
+  const nextTarget = event.relatedTarget
+  if (
+    currentTarget instanceof HTMLElement
+    && nextTarget instanceof Node
+    && currentTarget.contains(nextTarget)
+  ) {
+    return
+  }
+
+  hidePersonaPopover(persona.id)
+}
+
+function handlePersonaPopoverViewportChange(): void {
+  schedulePersonaPopoverLayout()
+}
+
+onMounted(() => {
+  if (!import.meta.client)
+    return
+
+  window.addEventListener('resize', handlePersonaPopoverViewportChange)
+  window.addEventListener('scroll', handlePersonaPopoverViewportChange, true)
+})
+
+onBeforeUnmount(() => {
+  if (!import.meta.client)
+    return
+
+  window.removeEventListener('resize', handlePersonaPopoverViewportChange)
+  window.removeEventListener('scroll', handlePersonaPopoverViewportChange, true)
+  cancelPersonaPopoverLayout()
 })
 
 function resolvePersonaBadge(persona: AiDefensePersona): { label: string, className: string } {
@@ -167,6 +470,66 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
     className: 'workspace-defense-sidebar__persona-badge workspace-defense-sidebar__persona-badge--muted',
   }
 }
+
+function resetPersonaForm(): void {
+  personaEditingId.value = ''
+  personaForm.judgeType = 'custom'
+  personaForm.name = ''
+  personaForm.summary = ''
+  personaForm.systemPrompt = ''
+  personaForm.focusAreasText = ''
+  personaForm.enabled = true
+}
+
+function openCreatePersonaForm(): void {
+  resetPersonaForm()
+  personaFormVisible.value = true
+}
+
+function openEditPersonaForm(persona: AiDefensePersona): void {
+  personaEditingId.value = persona.id
+  personaForm.judgeType = persona.judgeType
+  personaForm.name = persona.name
+  personaForm.summary = persona.summary
+  personaForm.systemPrompt = persona.systemPrompt
+  personaForm.focusAreasText = (persona.focusAreas || []).join('\n')
+  personaForm.enabled = persona.enabled
+  personaFormVisible.value = true
+}
+
+function submitPersonaForm(): void {
+  const name = personaForm.name.trim()
+  const systemPrompt = personaForm.systemPrompt.trim()
+  if (!name || !systemPrompt)
+    return
+
+  emit('savePersona', {
+    personaId: personaEditingId.value || undefined,
+    judgeType: personaForm.judgeType,
+    name,
+    summary: personaForm.summary.trim(),
+    systemPrompt,
+    focusAreas: personaForm.focusAreasText
+      .split(/\n+/)
+      .map(item => item.trim())
+      .filter(Boolean),
+    enabled: personaForm.enabled,
+  })
+  personaFormVisible.value = false
+  resetPersonaForm()
+}
+
+function quickTogglePersona(persona: AiDefensePersona): void {
+  emit('savePersona', {
+    personaId: persona.id,
+    judgeType: persona.judgeType,
+    name: persona.name,
+    summary: persona.summary,
+    systemPrompt: persona.systemPrompt,
+    focusAreas: persona.focusAreas || [],
+    enabled: !persona.enabled,
+  })
+}
 </script>
 
 <template>
@@ -174,51 +537,6 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
     data-testid="workspace-defense-sidebar"
     class="workspace-defense-sidebar"
   >
-    <section
-      data-testid="workspace-defense-sidebar-overview"
-      class="workspace-defense-sidebar__overview"
-    >
-      <div class="space-y-3">
-        <div class="space-y-1">
-          <p class="workspace-defense-sidebar__eyebrow">
-            答辩概述
-          </p>
-          <h2 class="workspace-defense-sidebar__title">
-            {{ contestName || '未绑定比赛' }}
-          </h2>
-          <p class="workspace-defense-sidebar__subtitle">
-            {{ trackName || '未绑定赛道' }}
-          </p>
-        </div>
-
-        <div class="workspace-defense-sidebar__meeting" :data-tone="meetingStatus.tone">
-          <p class="workspace-defense-sidebar__section-label">
-            语音答辩
-          </p>
-          <strong class="workspace-defense-sidebar__meeting-title">{{ meetingStatus.label }}</strong>
-          <p class="workspace-defense-sidebar__meeting-text">
-            {{ meetingStatus.detail }}
-          </p>
-        </div>
-
-        <div class="workspace-defense-sidebar__overview-grid">
-          <article
-            v-for="item in overviewItems"
-            :key="item.id"
-            class="workspace-defense-sidebar__overview-item"
-          >
-            <p class="workspace-defense-sidebar__section-label">
-              {{ item.label }}
-            </p>
-            <strong class="workspace-defense-sidebar__overview-value">{{ item.value }}</strong>
-            <p class="workspace-defense-sidebar__overview-text">
-              {{ item.detail }}
-            </p>
-          </article>
-        </div>
-      </div>
-    </section>
-
     <section
       data-testid="workspace-defense-persona-list"
       class="workspace-defense-sidebar__personas"
@@ -232,13 +550,26 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
             当前答辩席
           </h3>
         </div>
-        <span class="workspace-defense-sidebar__personas-count">
-          {{ personas.length }} 位
-        </span>
+        <div class="workspace-defense-sidebar__personas-actions">
+          <button
+            class="workspace-defense-sidebar__text-action"
+            type="button"
+            @click="emit('importPersonas')"
+          >
+            导入
+          </button>
+          <button
+            class="workspace-defense-sidebar__text-action"
+            type="button"
+            @click="openCreatePersonaForm"
+          >
+            新增
+          </button>
+        </div>
       </header>
 
       <div v-if="sortedPersonas.length === 0" class="workspace-defense-sidebar__empty">
-        当前项目还没有答辩评委人设。可在右侧 AgentDef 导入比赛预设或新建评委。
+        当前项目还没有答辩评委人设。可在这里导入比赛预设或新增评委。
       </div>
 
       <div v-else class="workspace-defense-sidebar__persona-list">
@@ -247,6 +578,13 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
           :key="persona.id"
           class="workspace-defense-sidebar__persona"
           :data-active="currentPersonaIdSet.has(String(persona.id || '').trim()) ? 'true' : 'false'"
+          tabindex="0"
+          :aria-describedby="activePersonaPopoverId === persona.id ? 'workspace-defense-sidebar-persona-popover' : undefined"
+          @mouseenter="showPersonaPopover(persona, $event)"
+          @mouseleave="hidePersonaPopover(persona.id)"
+          @focusin="showPersonaPopover(persona, $event)"
+          @focusout="handlePersonaPopoverFocusOut(persona, $event)"
+          @keydown.esc="hidePersonaPopover(persona.id)"
         >
           <div class="workspace-defense-sidebar__persona-topline">
             <div>
@@ -263,8 +601,136 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
           <p class="workspace-defense-sidebar__persona-summary">
             {{ persona.summary || '当前评委暂无摘要描述。' }}
           </p>
+
+          <div v-if="!usingShowcasePersonas" class="workspace-defense-sidebar__persona-actions">
+            <button
+              class="workspace-defense-sidebar__mini-action"
+              type="button"
+              @click="quickTogglePersona(persona)"
+            >
+              {{ persona.enabled ? '停用' : '启用' }}
+            </button>
+            <button
+              class="workspace-defense-sidebar__mini-action"
+              type="button"
+              @click="openEditPersonaForm(persona)"
+            >
+              编辑
+            </button>
+            <button
+              class="workspace-defense-sidebar__mini-action workspace-defense-sidebar__mini-action--danger"
+              type="button"
+              @click="emit('deletePersona', persona.id)"
+            >
+              删除
+            </button>
+          </div>
+
         </article>
       </div>
+
+      <Teleport to="body">
+        <aside
+          v-if="activePersonaPopover"
+          id="workspace-defense-sidebar-persona-popover"
+          class="workspace-defense-sidebar__persona-popover"
+          :style="activePersonaPopoverStyle"
+          role="tooltip"
+        >
+          <div class="workspace-defense-sidebar__popover-header">
+            <strong>{{ activePersonaPopover.name }}</strong>
+            <span>{{ activePersonaPopover.judgeType }} · {{ activePersonaPopover.enabled ? '已启用' : '已停用' }}</span>
+          </div>
+          <p>{{ activePersonaPopover.summary || '当前评委暂无摘要描述。' }}</p>
+          <p v-if="activePersonaPopover.focusAreas.length > 0">
+            关注点：{{ activePersonaPopover.focusAreas.join('、') }}
+          </p>
+          <p v-if="activePersonaPopover.scoringRubric.length > 0">
+            评分维度：{{ activePersonaPopover.scoringRubric.map(item => item.name).join('、') }}
+          </p>
+          <p class="workspace-defense-sidebar__popover-prompt">
+            {{ activePersonaPopover.systemPrompt }}
+          </p>
+        </aside>
+      </Teleport>
+
+      <form
+        v-if="personaFormVisible"
+        class="workspace-defense-sidebar__persona-form"
+        @submit.prevent="submitPersonaForm"
+      >
+        <div class="workspace-defense-sidebar__form-header">
+          <strong>{{ personaEditingId ? '编辑人设' : '新增人设' }}</strong>
+          <button
+            class="workspace-defense-sidebar__mini-action"
+            type="button"
+            @click="personaFormVisible = false"
+          >
+            取消
+          </button>
+        </div>
+        <UiSelect
+          v-model="personaForm.judgeType"
+          :options="personaJudgeTypeOptions"
+          size="xs"
+          aria-label="评委类型"
+          class="w-full"
+        />
+        <input v-model="personaForm.name" class="workspace-defense-sidebar__input" placeholder="人设名称">
+        <textarea v-model="personaForm.summary" class="workspace-defense-sidebar__textarea" placeholder="一句话说明评委关注点" />
+        <textarea v-model="personaForm.systemPrompt" class="workspace-defense-sidebar__textarea workspace-defense-sidebar__textarea--prompt" placeholder="系统提示词" />
+        <textarea v-model="personaForm.focusAreasText" class="workspace-defense-sidebar__textarea" placeholder="关注点，每行一个" />
+        <label class="workspace-defense-sidebar__check">
+          <input v-model="personaForm.enabled" type="checkbox">
+          保存后启用
+        </label>
+        <button
+          class="workspace-defense-sidebar__submit"
+          type="submit"
+          :disabled="!personaForm.name.trim() || !personaForm.systemPrompt.trim()"
+        >
+          保存人设
+        </button>
+      </form>
+    </section>
+
+    <section
+      data-testid="workspace-defense-scorecard"
+      class="workspace-defense-sidebar__scorecard"
+    >
+      <header class="workspace-defense-sidebar__scorecard-header">
+        <p class="workspace-defense-sidebar__eyebrow">
+          最新评分
+        </p>
+        <h3 class="workspace-defense-sidebar__scorecard-title">
+          评分卡
+        </h3>
+      </header>
+
+      <div v-if="displayScorecard" class="workspace-defense-sidebar__score-list">
+        <div class="workspace-defense-sidebar__score-row">
+          <span>技术</span>
+          <strong>{{ displayScorecard.technical }}</strong>
+        </div>
+        <div class="workspace-defense-sidebar__score-row">
+          <span>业务</span>
+          <strong>{{ displayScorecard.business }}</strong>
+        </div>
+        <div class="workspace-defense-sidebar__score-row">
+          <span>表达</span>
+          <strong>{{ displayScorecard.expression }}</strong>
+        </div>
+        <div class="workspace-defense-sidebar__score-row workspace-defense-sidebar__score-row--total">
+          <span>总分</span>
+          <strong>{{ displayScorecard.total }}</strong>
+        </div>
+        <p class="workspace-defense-sidebar__score-summary">
+          {{ displayScorecard.summary }}
+        </p>
+      </div>
+      <p v-else class="workspace-defense-sidebar__empty workspace-defense-sidebar__empty--score">
+        当前还没有最新评分卡，进入一轮答辩后会在这里汇总技术、业务和表达得分。
+      </p>
     </section>
   </aside>
 </template>
@@ -273,33 +739,31 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
 .workspace-defense-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 16px;
   height: 100%;
   min-height: 0;
-  padding: 16px;
+  margin: 0;
+  padding: 0;
+  border-right: 1px solid rgba(213, 223, 238, 0.94);
   background: #f8fafc;
 }
 
-.workspace-defense-sidebar__overview,
-.workspace-defense-sidebar__personas {
-  border: 1px solid rgba(216, 224, 239, 0.95);
-  border-radius: 12px;
-  background: #ffffff;
-}
-
-.workspace-defense-sidebar__overview {
-  padding: 18px;
-}
-
-.workspace-defense-sidebar__personas {
+.workspace-defense-sidebar__personas,
+.workspace-defense-sidebar__scorecard {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
 }
 
-.workspace-defense-sidebar__eyebrow,
-.workspace-defense-sidebar__section-label {
+.workspace-defense-sidebar__personas {
+  flex: 1 1 auto;
+}
+
+.workspace-defense-sidebar__scorecard {
+  flex: 0 0 auto;
+  border-top: 1px solid #e5edf7;
+}
+
+.workspace-defense-sidebar__eyebrow {
   margin: 0;
   color: #5f7598;
   font-size: 11px;
@@ -308,52 +772,9 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
   text-transform: uppercase;
 }
 
-.workspace-defense-sidebar__title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 26px;
-  line-height: 1.15;
-  font-weight: 700;
-}
-
-.workspace-defense-sidebar__subtitle {
-  margin: 0;
-  color: #52637f;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.workspace-defense-sidebar__meeting {
-  padding: 14px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-}
-
-.workspace-defense-sidebar__meeting[data-tone='live'] {
-  background: #eef8f0;
-  border-color: #cde7d2;
-}
-
-.workspace-defense-sidebar__meeting[data-tone='warning'] {
-  background: #fff7eb;
-  border-color: #f1d7b0;
-}
-
-.workspace-defense-sidebar__meeting-title,
-.workspace-defense-sidebar__overview-value {
-  display: block;
-  margin-top: 6px;
-  color: #163150;
-  font-size: 16px;
-  line-height: 1.35;
-  font-weight: 700;
-}
-
-.workspace-defense-sidebar__meeting-text,
-.workspace-defense-sidebar__overview-text,
 .workspace-defense-sidebar__persona-meta,
 .workspace-defense-sidebar__persona-summary,
+.workspace-defense-sidebar__score-summary,
 .workspace-defense-sidebar__empty {
   margin: 0;
   color: #617591;
@@ -361,29 +782,17 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
   line-height: 1.7;
 }
 
-.workspace-defense-sidebar__overview-grid {
-  display: grid;
-  grid-template-columns: repeat(1, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.workspace-defense-sidebar__overview-item {
-  padding: 14px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-}
-
 .workspace-defense-sidebar__personas-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 18px 12px;
+  padding: 18px 18px 14px;
   border-bottom: 1px solid #edf2fb;
 }
 
-.workspace-defense-sidebar__personas-title {
+.workspace-defense-sidebar__personas-title,
+.workspace-defense-sidebar__scorecard-title {
   margin: 4px 0 0;
   color: #14233a;
   font-size: 18px;
@@ -391,41 +800,80 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
   font-weight: 700;
 }
 
-.workspace-defense-sidebar__personas-count {
+.workspace-defense-sidebar__personas-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.workspace-defense-sidebar__text-action,
+.workspace-defense-sidebar__mini-action,
+.workspace-defense-sidebar__submit {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 42px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #35537f;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workspace-defense-sidebar__text-action {
   height: 28px;
   padding: 0 10px;
-  border-radius: 8px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  color: #35537f;
+  border-radius: 7px;
   font-size: 11px;
-  font-weight: 700;
+}
+
+.workspace-defense-sidebar__mini-action {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 10px;
+}
+
+.workspace-defense-sidebar__mini-action--danger {
+  border-color: #fecdd3;
+  color: #e11d48;
+}
+
+.workspace-defense-sidebar__submit {
+  height: 30px;
+  border-color: #2563eb;
+  border-radius: 7px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 11px;
+}
+
+.workspace-defense-sidebar__submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .workspace-defense-sidebar__persona-list {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 14px 18px 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 .workspace-defense-sidebar__persona {
-  padding: 14px;
-  border-radius: 10px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  position: relative;
+  padding: 14px 18px;
+  border-bottom: 1px solid #edf2fb;
+}
+
+.workspace-defense-sidebar__persona:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: -2px;
 }
 
 .workspace-defense-sidebar__persona[data-active='true'] {
   background: #eff6ff;
-  border-color: #bfdbfe;
 }
 
 .workspace-defense-sidebar__persona-topline {
@@ -444,6 +892,165 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
 
 .workspace-defense-sidebar__persona-summary {
   margin-top: 8px;
+}
+
+.workspace-defense-sidebar__persona-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.workspace-defense-sidebar__persona-popover {
+  position: absolute;
+  z-index: 12;
+  top: 12px;
+  left: calc(100% - 4px);
+  width: 300px;
+  padding: 12px;
+  border: 1px solid #d7e1ef;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(8px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workspace-defense-sidebar__persona:hover .workspace-defense-sidebar__persona-popover,
+.workspace-defense-sidebar__persona:focus-within .workspace-defense-sidebar__persona-popover,
+.workspace-defense-sidebar__persona:focus-visible .workspace-defense-sidebar__persona-popover {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.workspace-defense-sidebar__popover-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workspace-defense-sidebar__popover-header strong {
+  color: #102138;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.workspace-defense-sidebar__popover-header span,
+.workspace-defense-sidebar__persona-popover p {
+  margin: 0;
+  color: #617591;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.workspace-defense-sidebar__persona-popover p {
+  margin-top: 8px;
+}
+
+.workspace-defense-sidebar__popover-prompt {
+  max-height: 120px;
+  overflow: auto;
+  padding-top: 8px;
+  border-top: 1px solid #edf2fb;
+}
+
+.workspace-defense-sidebar__persona-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #edf2fb;
+  background: #f1f7ff;
+}
+
+.workspace-defense-sidebar__form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workspace-defense-sidebar__form-header strong {
+  color: #14233a;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workspace-defense-sidebar__input,
+.workspace-defense-sidebar__textarea {
+  width: 100%;
+  border: 1px solid #d9e3f2;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #14233a;
+  font-size: 11px;
+}
+
+.workspace-defense-sidebar__input {
+  height: 30px;
+  padding: 0 9px;
+}
+
+.workspace-defense-sidebar__textarea {
+  min-height: 54px;
+  padding: 8px 9px;
+  resize: vertical;
+}
+
+.workspace-defense-sidebar__textarea--prompt {
+  min-height: 92px;
+}
+
+.workspace-defense-sidebar__check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #617591;
+  font-size: 11px;
+}
+
+.workspace-defense-sidebar__scorecard-header {
+  padding: 16px 18px 10px;
+}
+
+.workspace-defense-sidebar__score-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-defense-sidebar__score-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 18px;
+  border-top: 1px solid #edf2fb;
+}
+
+.workspace-defense-sidebar__score-row span {
+  color: #617591;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workspace-defense-sidebar__score-row strong {
+  color: #14233a;
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 750;
+}
+
+.workspace-defense-sidebar__score-row--total strong {
+  color: #1d4ed8;
+}
+
+.workspace-defense-sidebar__score-summary {
+  padding: 12px 18px 16px;
+  border-top: 1px solid #edf2fb;
 }
 
 .workspace-defense-sidebar__persona-badge {
@@ -475,16 +1082,17 @@ function resolvePersonaBadge(persona: AiDefensePersona): { label: string, classN
 }
 
 .workspace-defense-sidebar__empty {
-  margin: 0 18px 18px;
-  padding: 14px;
-  border: 1px dashed #d3ddea;
-  border-radius: 10px;
-  background: #f8fafc;
+  padding: 14px 18px;
+}
+
+.workspace-defense-sidebar__empty--score {
+  border-top: 1px solid #edf2fb;
 }
 
 @media (max-width: 1279px) {
   .workspace-defense-sidebar {
-    padding: 16px;
+    border-right: none;
+    border-bottom: 1px solid rgba(213, 223, 238, 0.94);
   }
 }
 </style>
