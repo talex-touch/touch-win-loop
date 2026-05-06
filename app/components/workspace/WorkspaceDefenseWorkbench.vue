@@ -988,18 +988,15 @@ const realtimeVideoToggleDisabled = computed(() => props.realtimeState?.mediaMod
 
 .workspace-defense-workbench__corner-preview {
   position: sticky;
-  right: auto;
-  bottom: 78px;
-  left: 50%;
-  align-self: center;
-  transform: translateX(-50%);
-  z-index: 8;
+  right: 24px;
+  bottom: 104px;
+  align-self: flex-end;
+  z-index: 11;
   display: flex;
   align-items: stretch;
   gap: 7px;
   width: max-content;
-  height: 0;
-  margin: -1px auto 0;
+  margin: -1px 24px 0 auto;
   pointer-events: none;
 }
 

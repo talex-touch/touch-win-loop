@@ -625,7 +625,6 @@ function quickTogglePersona(persona: AiDefensePersona): void {
               删除
             </button>
           </div>
-
         </article>
       </div>
 
@@ -901,29 +900,20 @@ function quickTogglePersona(persona: AiDefensePersona): void {
 }
 
 .workspace-defense-sidebar__persona-popover {
-  position: absolute;
-  z-index: 12;
-  top: 12px;
-  left: calc(100% - 4px);
+  position: fixed;
+  z-index: 80;
   width: 300px;
   padding: 12px;
   border: 1px solid #d7e1ef;
   border-radius: 10px;
   background: #ffffff;
   box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
-  opacity: 0;
+  opacity: 1;
   pointer-events: none;
-  transform: translateX(8px);
+  transform: translateX(0);
   transition:
     opacity 0.16s ease,
     transform 0.16s ease;
-}
-
-.workspace-defense-sidebar__persona:hover .workspace-defense-sidebar__persona-popover,
-.workspace-defense-sidebar__persona:focus-within .workspace-defense-sidebar__persona-popover,
-.workspace-defense-sidebar__persona:focus-visible .workspace-defense-sidebar__persona-popover {
-  opacity: 1;
-  transform: translateX(0);
 }
 
 .workspace-defense-sidebar__popover-header {
