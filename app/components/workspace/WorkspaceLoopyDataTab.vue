@@ -563,37 +563,50 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string }> =
 
 .loopy-workbench :deep(.loopy-relations--floating .loopy-relations__panel) {
   border: 1px solid #dbe7f3 !important;
-  border-radius: 18px !important;
+  border-radius: 14px !important;
   background: rgba(255, 255, 255, 0.94) !important;
-  box-shadow: 0 18px 48px rgba(36, 73, 125, 0.12) !important;
+  box-shadow: 0 12px 32px rgba(36, 73, 125, 0.08) !important;
 }
 
 .loopy-workbench :deep(.loopy-relations--floating .loopy-detail__hero),
 .loopy-workbench :deep(.loopy-relations--floating .loopy-detail__meta-card),
 .loopy-workbench :deep(.loopy-relations--floating .loopy-detail__section),
-.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__empty),
-.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__stats article),
-.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__notice) {
-  border: 1px solid #dbe7f3 !important;
-  border-radius: 18px !important;
-  background: rgba(255, 255, 255, 0.94) !important;
+.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__stats article) {
+  border-radius: 0 !important;
+  background: transparent !important;
   box-shadow: none !important;
 }
 
 .loopy-workbench :deep(.loopy-relations--floating .loopy-relations__panel) {
   min-height: 0 !important;
-  padding: 16px !important;
+  padding: 12px !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-relations__detail-panel) {
+  padding: 10px 12px !important;
 }
 
 .loopy-workbench :deep(.loopy-relations--floating .loopy-detail__hero),
-.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__section),
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__section) {
+  padding: 10px 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--wl-wb-linear-border-soft) !important;
+}
+
 .loopy-workbench :deep(.loopy-relations--floating .loopy-detail__empty) {
-  padding: 14px !important;
+  padding: 8px 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
 }
 
 .loopy-workbench :deep(.loopy-relations--floating .loopy-detail__meta-card),
 .loopy-workbench :deep(.loopy-relations--floating .loopy-relations__stats article) {
-  padding: 12px !important;
+  padding: 9px 10px !important;
+}
+
+.loopy-workbench :deep(.loopy-relations--floating .loopy-detail__meta-card:nth-child(even)) {
+  border-left: 1px solid var(--wl-wb-linear-border-soft) !important;
 }
 
 .loopy-workbench :deep(.loopy-relations--floating .loopy-relations__filters-head),
@@ -603,7 +616,7 @@ const viewMeta: Array<{ id: LoopyWorkbenchView, label: string, icon: string }> =
 }
 
 .loopy-workbench :deep(.loopy-relations--floating .loopy-detail__row) {
-  padding: 8px 0 !important;
+  padding: 7px 0 !important;
   border-top: 1px solid var(--wl-wb-linear-border-soft) !important;
 }
 

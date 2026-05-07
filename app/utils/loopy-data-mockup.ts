@@ -1,5 +1,6 @@
 import type {
   ProjectKnowledgeIndexDashboard,
+  ProjectKnowledgeIndexRuntimeStatus,
   ProjectKnowledgeIndexSourceStatus,
   ProjectKnowledgeIndexTaskSnapshot,
   Resource,
@@ -9,6 +10,25 @@ import type {
 
 const MOCK_SOURCE = 'loopy-data-showcase-mockup'
 const MOCK_UPDATED_AT = '2026-05-06T15:21:17.000+08:00'
+
+const DASH_SCOPE_MOCK_RUNTIME: ProjectKnowledgeIndexRuntimeStatus = {
+  clientType: 'langchain',
+  embeddingConfigured: true,
+  embeddingClientType: 'bailian-native',
+  embeddingApiStyle: 'bailian-multimodal',
+  embeddingProvider: 'dashscope-bailian',
+  embeddingModel: 'tongyi-embedding-vision-plus',
+  embeddingDimensions: 1024,
+}
+
+function isDashScopeRuntime(runtime: ProjectKnowledgeIndexRuntimeStatus | null | undefined): boolean {
+  const text = [
+    runtime?.embeddingProvider,
+    runtime?.embeddingClientType,
+    runtime?.embeddingApiStyle,
+  ].join(' ').toLowerCase()
+  return text.includes('dashscope') || text.includes('bailian') || text.includes('qwen')
+}
 
 interface LoopyMockResourceSeed {
   id: string
@@ -214,6 +234,20 @@ export function shouldUseLoopyMockDashboard(dashboard: ProjectKnowledgeIndexDash
   return chunkCount <= 0 || (realEmbeddingCount + fallbackEmbeddingCount <= 0 && readyCount <= 0)
 }
 
+function resolveMockRuntime(seed?: ProjectKnowledgeIndexDashboard | null): ProjectKnowledgeIndexRuntimeStatus {
+  const runtime = seed?.runtime
+  if (!runtime?.embeddingConfigured || !isDashScopeRuntime(runtime))
+    return DASH_SCOPE_MOCK_RUNTIME
+  return {
+    ...DASH_SCOPE_MOCK_RUNTIME,
+    ...runtime,
+    embeddingConfigured: true,
+    embeddingProvider: String(runtime.embeddingProvider || '').trim() || DASH_SCOPE_MOCK_RUNTIME.embeddingProvider,
+    embeddingModel: String(runtime.embeddingModel || '').trim() || DASH_SCOPE_MOCK_RUNTIME.embeddingModel,
+    embeddingDimensions: Math.max(0, Number(runtime.embeddingDimensions || 0)) || DASH_SCOPE_MOCK_RUNTIME.embeddingDimensions,
+  }
+}
+
 function buildSourceStatus(resource: Resource, index: number): ProjectKnowledgeIndexSourceStatus {
   const chunkTotal = MOCK_RESOURCE_SEEDS[index]?.chunkTotal || 16
   const chunkIndexed = MOCK_RESOURCE_SEEDS[index]?.chunkIndexed || chunkTotal
@@ -276,7 +310,7 @@ export function findLoopyMockSourceStatus(dashboard: ProjectKnowledgeIndexDashbo
   return (dashboard?.sources || []).find(source => String(source.sourceResourceId || '').trim() === normalizedResourceId) || null
 }
 
-export function createLoopyMockDashboard(projectId: string): ProjectKnowledgeIndexDashboard {
+export function createLoopyMockDashboard(projectId: string, seed?: ProjectKnowledgeIndexDashboard | null): ProjectKnowledgeIndexDashboard {
   const normalizedProjectId = normalizeProjectId(projectId)
   const resources = createLoopyMockResources(normalizedProjectId)
   const sources = resources.map(buildSourceStatus)
@@ -302,15 +336,7 @@ export function createLoopyMockDashboard(projectId: string): ProjectKnowledgeInd
       estimatedFinishedAt: null,
       lastRefreshedAt: MOCK_UPDATED_AT,
     },
-    runtime: {
-      clientType: 'langchain',
-      embeddingConfigured: true,
-      embeddingClientType: 'openai-compatible',
-      embeddingApiStyle: 'openai-compatible-text',
-      embeddingProvider: 'newapi',
-      embeddingModel: 'tongyi-embedding-vision-plus',
-      embeddingDimensions: 1024,
-    },
+    runtime: resolveMockRuntime(seed),
     worker: {
       started: true,
       enabled: true,

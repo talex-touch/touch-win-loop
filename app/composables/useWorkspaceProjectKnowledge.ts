@@ -179,7 +179,7 @@ export function useWorkspaceProjectKnowledge(projectId: MaybeRefString) {
       )
       const nextDashboard = response.data || EMPTY_PROJECT_KNOWLEDGE_DASHBOARD
       dashboard.value = shouldUseLoopyMockDashboard(nextDashboard)
-        ? createLoopyMockDashboard(normalizedProjectId)
+        ? createLoopyMockDashboard(normalizedProjectId, nextDashboard)
         : nextDashboard
     }
     catch {

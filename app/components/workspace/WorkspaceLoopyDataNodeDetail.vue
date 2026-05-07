@@ -102,73 +102,91 @@ function relationTitle(relation: { relationType: string, score: number, targetNo
 .loopy-detail {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
   min-height: 100%;
   border: 1px solid #dbe7f3;
-  border-radius: 24px;
-  background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
-  padding: 18px;
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px 12px;
 }
 
 .loopy-detail__hero,
 .loopy-detail__meta-card,
-.loopy-detail__section,
-.loopy-detail__empty {
-  border: 1px solid #dce7f4;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.88);
+.loopy-detail__section {
+  border: 0;
+  border-bottom: 1px solid #e1e9f3;
+  border-radius: 0;
+  background: transparent;
 }
 
 .loopy-detail__hero,
-.loopy-detail__section,
+.loopy-detail__section {
+  padding: 10px 0;
+}
+
 .loopy-detail__empty {
-  padding: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 0;
 }
 
 .loopy-detail__eyebrow {
   color: #6980a0;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .loopy-detail__title {
-  margin: 10px 0 0;
+  margin: 6px 0 0;
   color: #16283f;
-  font-size: 20px;
-  line-height: 1.2;
+  font-size: 18px;
+  line-height: 1.25;
 }
 
 .loopy-detail__preview {
-  margin: 12px 0 0;
+  margin: 6px 0 0;
   color: #4f6585;
   font-size: 12px;
-  line-height: 1.7;
+  line-height: 1.55;
   white-space: pre-wrap;
 }
 
 .loopy-detail__meta-grid {
   display: grid;
-  gap: 10px;
+  gap: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid #e1e9f3;
 }
 
 .loopy-detail__meta-card {
-  padding: 12px;
+  min-width: 0;
+  padding: 9px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
+  border: 0;
+  border-top: 1px solid #e1e9f3;
+  border-radius: 0;
+  background: transparent;
   color: #6d82a1;
   font-size: 11px;
 }
 
+.loopy-detail__meta-card:nth-child(even) {
+  border-left: 1px solid #e1e9f3;
+}
+
 .loopy-detail__meta-card strong {
   color: #16283f;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .loopy-detail__section h4 {
-  margin: 0 0 12px;
+  margin: 0 0 6px;
   color: #182c48;
   font-size: 12px;
   font-weight: 800;
@@ -178,11 +196,21 @@ function relationTitle(relation: { relationType: string, score: number, targetNo
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 0;
+  gap: 8px;
+  padding: 7px 0;
   border-top: 1px solid #edf2f9;
   color: #536b8c;
   font-size: 11px;
+  line-height: 1.45;
+}
+
+.loopy-detail__row span:first-child {
+  min-width: 0;
+}
+
+.loopy-detail__row span:last-child {
+  flex: none;
+  white-space: nowrap;
 }
 
 .loopy-detail__row:first-of-type {
@@ -197,7 +225,6 @@ function relationTitle(relation: { relationType: string, score: number, targetNo
 
 .loopy-detail__empty--error {
   color: #b45309;
-  background: #fff6f6;
-  border-color: #efd3d3;
+  background: transparent;
 }
 </style>

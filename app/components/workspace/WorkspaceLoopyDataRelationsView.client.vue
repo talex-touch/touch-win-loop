@@ -31,7 +31,6 @@ const detail = ref<ProjectKnowledgeNodeDetail | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
 const selectedFlowNodeId = ref('')
-const fallbackReason = ref('')
 const nodeType = ref<ProjectKnowledgeRelationNodeType | ''>('')
 const modality = ref<ProjectKnowledgeModality | 'unknown' | ''>('')
 const embeddingStatus = ref<ProjectKnowledgeEmbeddingStatus | ''>('')
@@ -377,7 +376,6 @@ async function loadRelations(): Promise<void> {
 
   loading.value = true
   error.value = ''
-  fallbackReason.value = ''
   try {
     const params = new URLSearchParams()
     if (nodeType.value)
@@ -395,11 +393,9 @@ async function loadRelations(): Promise<void> {
       return
     }
     payload.value = createSimulatedRelationsPayload(projectId)
-    fallbackReason.value = '真实关系数据暂为空，已切换到本地模拟语义图谱。'
   }
-  catch (fetchError: any) {
+  catch {
     payload.value = createSimulatedRelationsPayload(projectId)
-    fallbackReason.value = String(fetchError?.data?.message || '真实关系探索暂不可用，已切换到本地模拟语义图谱。').trim()
   }
   finally {
     loading.value = false
@@ -522,10 +518,6 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
           <strong>{{ isSimulatedPayload ? 'mock' : payload?.analytics.allReady ? 'ready' : 'stale' }}</strong>
         </article>
       </div>
-
-      <div v-if="fallbackReason" class="loopy-relations__notice">
-        {{ fallbackReason }}
-      </div>
     </aside>
 
     <WorkspaceLoopyDataNodeDetail
@@ -592,20 +584,11 @@ watch(() => [props.projectId, nodeType.value, modality.value, embeddingStatus.va
   font-weight: 800;
 }
 
-.loopy-relations__hint,
-.loopy-relations__notice {
+.loopy-relations__hint {
   margin: 0;
   color: #5f7899;
   font-size: 12px;
   line-height: 1.6;
-}
-
-.loopy-relations__notice {
-  padding: 10px 11px;
-  border: 1px solid #f0ddb6;
-  border-radius: 14px;
-  background: #fff8eb;
-  color: #93620f;
 }
 
 .loopy-relations__button,
