@@ -468,6 +468,7 @@ const emit = defineEmits<{
   'interruptDefenseRealtime': []
   'reconnectDefenseRealtime': []
   'openResource': [resourceId: string]
+  'createDeviceArrangement': [payload?: { title?: string, document?: Record<string, unknown> }]
   'loadContests': []
   'reconvertPreview': []
   'downloadPreviewSource': []
@@ -3147,6 +3148,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         @update-collab-cursor="onCollabCursorUpdate"
         @activate-resource="emitActivatePreviewResource($event)"
         @open-resource="emit('openResource', $event)"
+        @create-device-arrangement="emit('createDeviceArrangement', $event)"
       />
 
       <WorkspaceDeviceArrangementPanel

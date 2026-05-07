@@ -29,7 +29,7 @@ import {
 } from '~~/shared/utils/collab-resource'
 import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 import { resolveHealthLabel } from '~/utils/loopy-data-center'
-import { findLoopyMockSourceStatus } from '~/utils/loopy-data-mockup'
+import { findLoopyMockSourceStatus, isLoopyMockResource } from '~/utils/loopy-data-mockup'
 import {
   isProjectUploadTaskSidebarVisible,
   resolveProjectUploadTaskStatusText,
@@ -40,6 +40,7 @@ import {
   hasDownloadableSource,
   hasPreviewableSource,
   isCollabResource,
+  isDeviceArrangementResource,
   resourceDisplayTitle,
   resourceIcon,
   resourceIconClass,
@@ -69,7 +70,7 @@ interface ProjectResourceTreeRow {
 }
 
 type ResourceTreeDropPosition = 'before' | 'inside' | 'after' | 'root_end'
-type ProjectResourceTypeFilterId = 'all' | 'meeting_notes' | 'meeting_recording' | 'notes' | 'design' | 'workflow' | 'upload' | 'library' | 'external'
+type ProjectResourceTypeFilterId = 'all' | 'meeting_notes' | 'meeting_recording' | 'notes' | 'design' | 'device_arrangement' | 'workflow' | 'upload' | 'library' | 'external'
 
 interface ProjectResourceTypeFilterOption {
   id: ProjectResourceTypeFilterId
@@ -776,6 +777,9 @@ function resolveProjectResourceTypeFilterId(resource: Resource): Exclude<Project
   if (source === 'external')
     return 'external'
 
+  if (isDeviceArrangementResource(resource))
+    return 'device_arrangement'
+
   const collabPurpose = String(resource.collabPurpose || '').trim().toLowerCase()
   if (collabPurpose === 'design')
     return 'design'
@@ -793,6 +797,7 @@ const projectResourceTypeFilterDefinitions: ProjectResourceTypeFilterOption[] = 
   { id: 'all', label: '全部类型', icon: 'apps' },
   { id: 'notes', label: COLLAB_NOTES_RESOURCE_LABEL, icon: 'edit_note' },
   { id: 'design', label: '设计稿', icon: 'palette' },
+  { id: 'device_arrangement', label: '设备排布', icon: 'devices' },
   { id: 'workflow', label: '流程图', icon: 'flowsheet' },
   { id: 'upload', label: '上传文件', icon: 'upload_file' },
   { id: 'library', label: '导入资料', icon: 'library_add' },
@@ -1403,6 +1408,11 @@ function openResource(resource: Resource) {
   if (!resourceId)
     return
   selectResource(resourceId)
+
+  if (isLoopyMockResource(resource)) {
+    requestViewResourceDetails(resourceId)
+    return
+  }
 
   if (isCollabResource(resource)) {
     emit('openResource', resourceId)

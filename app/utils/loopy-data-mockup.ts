@@ -200,6 +200,10 @@ export function mergeLoopyMockResources(resources: Resource[], projectId: string
   return [...current, ...mocks]
 }
 
+export function isLoopyMockResource(resource: Resource | null | undefined): boolean {
+  return Boolean(resource?.metadata?.mock === true && resource.metadata?.source === MOCK_SOURCE)
+}
+
 export function shouldUseLoopyMockDashboard(dashboard: ProjectKnowledgeIndexDashboard | null | undefined): boolean {
   if (!dashboard)
     return true

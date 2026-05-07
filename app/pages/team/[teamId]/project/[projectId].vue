@@ -199,7 +199,7 @@ import {
 } from '~/utils/collab-markdown-navigation'
 import { createDefenseRealtimeProviderBridge } from '~/utils/defense-realtime-bridge'
 import { createDefenseRealtimeMediaController } from '~/utils/defense-realtime-media-controller'
-import { mergeLoopyMockResources } from '~/utils/loopy-data-mockup'
+import { isLoopyMockResource, mergeLoopyMockResources } from '~/utils/loopy-data-mockup'
 import {
   isProjectUploadTaskSidebarVisible,
 } from '~/utils/project-upload'
@@ -7375,7 +7375,7 @@ async function createCollabResource(
   }
 }
 
-async function createDeviceArrangement(): Promise<void> {
+async function createDeviceArrangement(payload: { title?: string, document?: Record<string, unknown> } = {}): Promise<void> {
   const projectId = String(activeProjectId.value || '').trim()
   if (!projectId)
     return
@@ -7385,7 +7385,8 @@ async function createDeviceArrangement(): Promise<void> {
     const response = await unsafeFetch<ApiResponse<{ resource: Resource }>>(endpoint(`/projects/${projectId}/device-arrangements`), {
       method: 'POST',
       body: {
-        title: '设备排布',
+        title: String(payload.title || '').trim() || '设备排布',
+        document: payload.document,
       },
     })
     const createdResource = response.data?.resource || null
@@ -8087,6 +8088,9 @@ async function resolveProjectResourceOpenTarget(resourceId: string, resourceHint
     return { resourceId: targetResourceId, surface: 'binary' }
 
   if (isDeviceArrangementResource(targetResource))
+    return { resourceId: targetResourceId, surface: 'binary' }
+
+  if (isLoopyMockResource(targetResource))
     return { resourceId: targetResourceId, surface: 'binary' }
 
   if (isLegacyDeviceArrangementResource(targetResource) || isDesignCanvasResource(targetResource)) {
@@ -12762,6 +12766,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
               @markdown-reopen-comment-thread="reopenMarkdownCommentThread"
               @markdown-create-comment-thread="createMarkdownCommentThread"
               @request-context-menu="openWorkspaceContextMenu($event)"
+              @create-device-arrangement="createDeviceArrangement"
             />
           </template>
 

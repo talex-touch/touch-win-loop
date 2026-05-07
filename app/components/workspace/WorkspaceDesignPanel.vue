@@ -226,6 +226,7 @@ const emit = defineEmits<{
   'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
   'activateResource': [resourceId: string]
   'openResource': [resourceId: string]
+  'createDeviceArrangement': [payload: { title: string, document: Record<string, unknown> }]
 }>()
 
 const templateOptions = SYSTEM_SCENE_TEMPLATES.filter(
@@ -2195,6 +2196,66 @@ function renderFramePreviewMarkup(
         })
   return renderCompositionAssetToSvg(nextDocument, {
     frameId,
+  })
+}
+
+function svgToDataUrl(svg: string): string {
+  if (!svg)
+    return ''
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+function resolveArrangementDevicePresetKey(frame: DesignFrameModel | null): string {
+  if (!frame)
+    return DEFAULT_DEVICE_FRAME_KEY
+  if (frame.kind === 'device_artboard' || frame.kind === 'device_mockup')
+    return normalizeString(frame.deviceFramePresetKey) || DEFAULT_DEVICE_FRAME_KEY
+
+  const ratio = Math.max(0.1, Number(frame.width || 0) / Math.max(1, Number(frame.height || 0)))
+  if (ratio >= 1.2)
+    return 'browser-window'
+  if (ratio >= 0.64)
+    return 'ipad-pro'
+  return DEFAULT_DEVICE_FRAME_KEY
+}
+
+function createDeviceArrangementFromCurrentFrame(): void {
+  const frame = defaultExportFrames.value[0] || null
+  if (!frame)
+    return
+
+  const title = `${normalizeString(frame.name) || 'Frame'} 设备排布`
+  const screenshotSrc = svgToDataUrl(renderFramePreviewMarkup(frame.id, frame.kind === 'device_artboard' ? 'none' : undefined))
+  if (!screenshotSrc)
+    return
+
+  emit('createDeviceArrangement', {
+    title,
+    document: {
+      title,
+      layoutPresetKey: 'solo',
+      shadowPresetKey: 'soft',
+      canvas: {
+        sizePresetKey: 'square',
+        background: '#f8fafc',
+        backgroundMode: 'solid',
+      },
+      exportSizePresetKeys: ['square', 'portrait-4-5', 'wide-16-9'],
+      items: [
+        {
+          id: `design-frame-${normalizeString(frame.id) || Date.now()}`,
+          name: normalizeString(frame.name) || 'Frame',
+          screenshotSrc,
+          screenshotWidth: Math.max(1, Math.round(frame.width || 0)),
+          screenshotHeight: Math.max(1, Math.round(frame.height || 0)),
+          devicePresetKey: resolveArrangementDevicePresetKey(frame),
+          shell: {
+            mode: frame.kind === 'device_artboard' ? 'builtin' : 'none',
+            presetKey: resolveArrangementDevicePresetKey(frame),
+          },
+        },
+      ],
+    },
   })
 }
 const selectedFramePreviewSvg = computed(() => {
@@ -6552,6 +6613,7 @@ async function downloadDefaultPng(): Promise<void> {
               @download-default-png="void downloadDefaultPng()"
               @download-page-svg="downloadSvg()"
               @download-page-png="void downloadPng()"
+              @create-device-arrangement="createDeviceArrangementFromCurrentFrame"
               @open-diagram-editor="openFrameEditor(selectedFrame?.id || '')"
             />
 

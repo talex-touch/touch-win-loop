@@ -25,6 +25,7 @@ const emit = defineEmits<{
   downloadDefaultPng: []
   downloadPageSvg: []
   downloadPagePng: []
+  createDeviceArrangement: []
   openDiagramEditor: []
 }>()
 </script>
@@ -92,6 +93,15 @@ const emit = defineEmits<{
     <section class="space-y-2">
       <span class="text-[10px] text-slate-400 tracking-[0.16em] font-semibold uppercase">导出</span>
       <div class="flex flex-wrap gap-2">
+        <button
+          class="text-[11px] text-slate-700 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          type="button"
+          :disabled="!props.canExportDefaultFrames"
+          @click="emit('createDeviceArrangement')"
+        >
+          <span class="material-symbols-outlined text-sm">devices</span>
+          <span>生成设备排布</span>
+        </button>
         <button
           class="text-[11px] text-slate-700 font-semibold px-2.5 border border-slate-200 rounded-[10px] bg-white inline-flex gap-1 h-8 transition-colors items-center hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
