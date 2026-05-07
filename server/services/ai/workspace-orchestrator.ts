@@ -715,6 +715,7 @@ function buildModePrompt(profile: WorkspaceAgentProfile, context?: WorkspaceAiEx
       'AgentProto 的流程图场景使用 propose_workflow_draft。',
       'AgentProto 的自由画布/原型画布场景使用 propose_scene_draft。',
       '设计助手只输出结构源草案与导入建议，不做静默覆盖。',
+      '上下文中的“多模态描述符”会标出 image/pdf/video/audio/markdown/draw/design/device_arrangement/mockup、预览状态和协作用途；生成草案前必须据此确认目标资源类型。',
       '普通聊天可以自然回答，并在合适时提示“可以继续生成待确认草案”。',
     ].join('\n')
   }
@@ -743,6 +744,7 @@ function buildModePrompt(profile: WorkspaceAgentProfile, context?: WorkspaceAiEx
     '模式：AgentDoc（文档草案模式，用户确认后才真正落文）。',
     '你必须先调用 get_workspace_context 读取上下文，再判断是否需要调用 propose_document_change。',
     '只有在请求可安全映射为文档修改时，才允许调用 propose_document_change。',
+    '如果资源摘要显示目标不是 markdown/notes/document 文档，必须先说明边界，不要把画布、图片或设备排布当成 AgentDoc 文档直接改写。',
     '如果只是问答、上下文不足，或无法安全判断修改范围，就直接用自然语言说明，不要伪造草案。',
     '禁止暗示文档已经被修改，也禁止输出审批通过、已替换等语气。',
   ].join('\n')
@@ -911,6 +913,7 @@ function buildDocumentAssistPrompt(context: WorkspaceAiExecutionContext): string
     '',
     '请结合最近多轮对话，判断用户想对文档做什么。',
     'document_assist 必须先调用 get_workspace_context 读取项目设置、大纲、知识索引与 citation/warning，再判断是否生成文档草案。',
+    '必须检查多模态资源摘要中的 resourceKind、collabPurpose、media、device_arrangement 与 previewStatus；只有 markdown/notes/document 文档上下文才生成 propose_document_change。',
     '如果上下文提示 degraded、fallback、索引未完成或规则回退，必须在回复或草案摘要中显式说明可靠性边界，不要把降级结果包装成稳定结论。',
     '引用资料时必须保留上下文中的 citation 标签，不要绕过 warning 直接编造依据。',
     '如果能够安全生成文档草案，请调用 propose_document_change；否则直接回复原因或补充建议。',
@@ -1093,7 +1096,7 @@ function createWorkspaceContextTool(input: WorkspaceModeExecutionInput, contextS
     },
     {
       name: 'get_workspace_context',
-      description: '读取当前工作台上下文（项目配置、资料摘要、大纲、知识索引、citation/warning 与用户输入）。',
+      description: '读取当前工作台上下文（项目配置、多模态资源摘要、大纲、知识索引、citation/warning 与用户输入）。资源摘要包含 media/resourceKind/collabPurpose/drawMode/sceneSourceType/device_arrangement/mockup/previewStatus 等描述符。',
       schema: z.object({}),
     },
   )
@@ -1773,6 +1776,7 @@ function buildWorkspaceSystemPrompt(profile: WorkspaceAgentProfile, channelPromp
     '你是 Loopy，负责 Team 与项目上下文下的工作台问答与分析。',
     buildModePrompt(profile, context),
     channelPrompt ? `[场景提示词]\n${channelPrompt}` : '',
+    '工具选择准则：先用 get_workspace_context 读取多模态资源摘要；markdown/notes/document 走文档草案，workflow draw 走 workflow 草案，design/freeform/device_arrangement/mockup 走 scene 草案；图片、PDF、视频、音频只可作为引用或投影依据，不能假设已经原地写回。',
     profile.mode === 'contextual_agent'
       ? '需要依赖当前资源细节或准备草案时先获取上下文；普通上下文讨论可以直接回答。'
       : '需要依赖当前项目事实时先获取上下文，避免与上下文冲突。',
