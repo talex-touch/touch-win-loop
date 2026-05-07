@@ -66,31 +66,34 @@ export function useFeishuDirectoryBrowser(input: UseFeishuDirectoryBrowserInput)
     loading.value = true
     try {
       const refreshQuery = forceRefresh ? '?refresh=1' : ''
-      const response = await $fetch<ApiResponse<FeishuDirectorySearchResult>>(
-        input.endpoint(`/admin/integrations/feishu/admin-feishu-users${refreshQuery}`),
-      )
+      const response = await fetch(String(input.endpoint(`/admin/integrations/feishu/admin-feishu-users${refreshQuery}`)), {
+        credentials: 'include',
+      })
+      const payload = await response.json() as ApiResponse<FeishuDirectorySearchResult>
+      if (!response.ok)
+        throw new Error(String(payload?.message || '飞书成员目录加载失败。'))
 
-      members.value = response.data.items || []
-      departments.value = response.data.departments || []
-      rootDepartmentId.value = String(response.data.rootDepartmentId || '')
-      notice.value = String(response.data.notice || '')
-      source.value = response.data.source || ''
-      fromCache.value = Boolean(response.data.fromCache)
-      fetchedAt.value = String(response.data.fetchedAt || '')
-      cacheExpiresAt.value = String(response.data.cacheExpiresAt || '')
-      totalMembers.value = Number(response.data.totalMembers || 0)
-      permissionHint.value = String(response.data.permissionHint || '')
-      directoryStatus.value = response.data.directoryStatus || 'unavailable'
-      memberListStatus.value = response.data.memberListStatus || 'failed'
-      departmentTreeStatus.value = response.data.departmentTreeStatus || 'failed'
-      contactScopeStatus.value = response.data.contactScopeStatus || 'failed'
-      contactScopeSummary.value = response.data.contactScopeSummary || null
-      contactScopeErrorMessage.value = String(response.data.contactScopeErrorMessage || '')
-      diagnosticCode.value = response.data.diagnosticCode || 'directory_unavailable'
-      diagnosticMessage.value = String(response.data.diagnosticMessage || '')
+      members.value = payload.data.items || []
+      departments.value = payload.data.departments || []
+      rootDepartmentId.value = String(payload.data.rootDepartmentId || '')
+      notice.value = String(payload.data.notice || '')
+      source.value = payload.data.source || ''
+      fromCache.value = Boolean(payload.data.fromCache)
+      fetchedAt.value = String(payload.data.fetchedAt || '')
+      cacheExpiresAt.value = String(payload.data.cacheExpiresAt || '')
+      totalMembers.value = Number(payload.data.totalMembers || 0)
+      permissionHint.value = String(payload.data.permissionHint || '')
+      directoryStatus.value = payload.data.directoryStatus || 'unavailable'
+      memberListStatus.value = payload.data.memberListStatus || 'failed'
+      departmentTreeStatus.value = payload.data.departmentTreeStatus || 'failed'
+      contactScopeStatus.value = payload.data.contactScopeStatus || 'failed'
+      contactScopeSummary.value = payload.data.contactScopeSummary || null
+      contactScopeErrorMessage.value = String(payload.data.contactScopeErrorMessage || '')
+      diagnosticCode.value = payload.data.diagnosticCode || 'directory_unavailable'
+      diagnosticMessage.value = String(payload.data.diagnosticMessage || '')
     }
     catch (error: any) {
-      const message = String(error?.data?.message || '飞书成员目录加载失败。')
+      const message = String(error?.data?.message || error?.message || '飞书成员目录加载失败。')
       reset()
       notice.value = message
       diagnosticMessage.value = message

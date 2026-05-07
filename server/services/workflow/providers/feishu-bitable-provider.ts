@@ -11,6 +11,7 @@ export const feishuBitableWorkflowProvider: WorkflowProvider = {
       triggerSource: input.triggerSource === 'webhook' ? 'event' : input.triggerSource,
       mode: input.mode,
       recordIds: input.recordIds,
+      force: input.force,
     })
   },
 }

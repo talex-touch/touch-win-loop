@@ -1,11 +1,15 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
+  CasdoorAuthBindStatus,
+  CasdoorIntegrationConfig,
+  ExternalAuthProvider,
   FeishuAdminCandidate,
   FeishuAdminGroupReconcileResult,
   FeishuAdminManualAddResult,
   FeishuAdminOverviewContestAdmin,
   FeishuAuthBindStatus,
   FeishuAuthUnbindResult,
+  FeishuBitableAutoSyncConfig,
   FeishuBitableSourceConfig,
   FeishuBitableSync,
   FeishuBitableSyncDetail,
@@ -14,6 +18,7 @@ import type {
   FeishuBitableSyncItemDetail,
   FeishuBitableSyncItemEntityType,
   FeishuBitableSyncItemRun,
+  FeishuBitableSyncRunDiagnostics,
   FeishuBitableSyncRunStatus,
   FeishuBitableSyncRunTriggerSource,
   FeishuBitableWritebackConfig,
@@ -23,10 +28,20 @@ import type {
   FeishuPostSyncTask,
   FeishuPostSyncTaskStatus,
   FeishuPostSyncTaskType,
+  FeishuSyncedDataMetrics,
+  FeishuSyncedDataQuery,
+  FeishuSyncedDataRecord,
+  FeishuSyncedDataRecordStatus,
+  FeishuSyncedDataResult,
+  FeishuSyncedDataSyncItemOption,
   FeishuSyncIssue,
+  FeishuSyncIssueReasonStat,
   FeishuSyncIssueResolution,
   FeishuSyncIssueStatus,
   FeishuSyncRunMode,
+  FeishuSyncRunSamplePage,
+  FeishuSyncRunSampleRecord,
+  FeishuSyncRunSampleType,
   FeishuTaskIssueStats,
   FeishuTaskLatestRunSummary,
   FeishuTaskScheduleConfig,
@@ -43,7 +58,9 @@ import {
 import { decryptConfigSecretSafe, encryptConfigSecret, hasConfigMasterKey, isEncryptedConfigValue } from '~~/server/utils/secure-config'
 
 const FEISHU_CONFIG_META_KEY = 'feishu_integration_config.v1'
+const CASDOOR_CONFIG_META_KEY = 'casdoor_integration_config.v1'
 const DEFAULT_WEBSDK_SCRIPT_URL = 'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.22.js'
+const DEFAULT_OAUTH_DISPLAY_NAME = '第三方 OAuth'
 
 interface AuthIdentityRow {
   id: string
@@ -65,6 +82,7 @@ interface FeishuBitableSyncItemRow {
   view_id: string
   source_json: Record<string, unknown>
   writeback_json: Record<string, unknown>
+  auto_sync_json: Record<string, unknown>
   is_enabled: boolean
   mapping_json: Record<string, unknown>
   options_json: Record<string, unknown>
@@ -139,6 +157,7 @@ interface FeishuBitableSyncItemRunRow {
   skipped_count: number | string
   error_count: number | string
   error_message: string
+  diagnostics_json: Record<string, unknown>
   created_by_user_id: string | null
   created_at: string
 }
@@ -162,6 +181,48 @@ interface FeishuPostSyncTaskRow {
   finished_at: string | null
   created_at: string
   updated_at: string
+}
+
+interface FeishuSyncedDataRow {
+  status: string
+  scope: FeishuBitableSyncItemEntityType
+  sync_id: string | null
+  sync_name: string | null
+  sync_item_id: string | null
+  sync_item_name: string | null
+  title: string | null
+  summary: string | null
+  body: string | null
+  external_id: string | null
+  entity_id: string
+  record_id: string | null
+  run_id: string | null
+  keywords: unknown
+  metadata: unknown
+  created_at: string
+  updated_at: string
+  total_count: number | string
+}
+
+interface FeishuSyncedDataMetricsRow {
+  latest_run_source_row_total: number | string | null
+  latest_run_auto_filtered_total: number | string | null
+  latest_run_business_skipped_total: number | string | null
+  latest_run_duplicate_external_id_total: number | string | null
+}
+
+interface FeishuSyncRunSampleRow {
+  id: string
+  run_id: string
+  sync_item_id: string
+  sample_type: FeishuSyncRunSampleType
+  sample_index: number | string
+  record_id: string
+  external_id: string | null
+  reason_code: string | null
+  payload_json: unknown
+  created_at: string
+  total_count?: number | string
 }
 
 const FEISHU_VECTOR_MODE_KEY = Symbol.for('winloop.feishu.vector.mode.v1')
@@ -189,6 +250,12 @@ interface FeishuSyncIssueRow {
 interface FeishuSyncIssueStatsRow {
   status: FeishuSyncIssueStatus
   issue_count: number | string
+}
+
+interface FeishuSyncIssueReasonStatRow {
+  reason_code: string | null
+  open_count: number | string
+  total_count: number | string
 }
 
 interface FeishuContestAdminDirectoryRow {
@@ -219,6 +286,9 @@ export interface FeishuIntegrationConfigInternal {
   enabled: boolean
   appId: string
   appSecret: string
+  marketplaceAppUrl: string
+  appTicket: string
+  appTicketUpdatedAt: string
   oauthRedirectUri: string
   eventToken: string
   eventEncryptKey: string
@@ -227,8 +297,22 @@ export interface FeishuIntegrationConfigInternal {
   startupNotifyEnabled: boolean
   startupNotifyChatId: string
   startupNotifyRemark: string
-  startupFallbackVersion: string
-  startupFallbackCommitSha: string
+  updatedAt: string
+  updatedByUserId: string
+}
+
+export interface CasdoorIntegrationConfigInternal {
+  enabled: boolean
+  displayName: string
+  protocolMode: 'oidc_discovery' | 'oauth2_manual'
+  issuer: string
+  authorizeEndpoint: string
+  tokenEndpoint: string
+  userinfoEndpoint: string
+  clientId: string
+  clientSecret: string
+  scope: string
+  redirectUri: string
   updatedAt: string
   updatedByUserId: string
 }
@@ -355,6 +439,31 @@ function normalizeWritebackConfig(raw: unknown): FeishuBitableWritebackConfig {
   }
 }
 
+function normalizeStringList(raw: unknown): string[] {
+  if (!Array.isArray(raw))
+    return []
+  return [...new Set(raw.map(item => toText(item)).filter(Boolean))]
+}
+
+function normalizeAutoSyncConfig(raw: unknown): FeishuBitableAutoSyncConfig {
+  const source = parseJsonObject(raw)
+  return {
+    enabled: source.enabled === undefined ? false : Boolean(source.enabled),
+    recordStatusField: toText(source.recordStatusField),
+    syncStatusField: toText(source.syncStatusField),
+    completedValues: normalizeStringList(source.completedValues),
+    pendingValues: normalizeStringList(source.pendingValues),
+    syncedValues: normalizeStringList(source.syncedValues),
+    resetRecordStatusValue: toText(source.resetRecordStatusValue),
+    resetSyncStatusValue: toText(source.resetSyncStatusValue),
+    useMappedFieldsAsWatched: source.useMappedFieldsAsWatched === undefined
+      ? true
+      : Boolean(source.useMappedFieldsAsWatched),
+    watchedFieldNames: normalizeStringList(source.watchedFieldNames),
+    ignoredFieldNames: normalizeStringList(source.ignoredFieldNames),
+  }
+}
+
 function parseTaskSchedule(row: {
   schedule_enabled: boolean
   schedule_mode: 'interval' | 'cron'
@@ -413,6 +522,9 @@ function normalizeFeishuConfigInternal(raw: unknown): FeishuIntegrationConfigInt
     enabled: hasOwn(source, 'enabled') ? toBoolean(source.enabled, false) : false,
     appId: hasOwn(source, 'appId') ? toText(source.appId) : '',
     appSecret: hasOwn(source, 'appSecret') ? decryptConfigSecretSafe(source.appSecret) : '',
+    marketplaceAppUrl: hasOwn(source, 'marketplaceAppUrl') ? toText(source.marketplaceAppUrl) : '',
+    appTicket: hasOwn(source, 'appTicket') ? decryptConfigSecretSafe(source.appTicket) : '',
+    appTicketUpdatedAt: hasOwn(source, 'appTicketUpdatedAt') ? toText(source.appTicketUpdatedAt) : '',
     oauthRedirectUri: hasOwn(source, 'oauthRedirectUri') ? toText(source.oauthRedirectUri) : '',
     eventToken: hasOwn(source, 'eventToken') ? decryptConfigSecretSafe(source.eventToken) : '',
     eventEncryptKey: hasOwn(source, 'eventEncryptKey') ? decryptConfigSecretSafe(source.eventEncryptKey) : '',
@@ -421,8 +533,25 @@ function normalizeFeishuConfigInternal(raw: unknown): FeishuIntegrationConfigInt
     startupNotifyEnabled: hasOwn(source, 'startupNotifyEnabled') ? toBoolean(source.startupNotifyEnabled, false) : false,
     startupNotifyChatId: hasOwn(source, 'startupNotifyChatId') ? toText(source.startupNotifyChatId) : '',
     startupNotifyRemark: hasOwn(source, 'startupNotifyRemark') ? toText(source.startupNotifyRemark) : '',
-    startupFallbackVersion: hasOwn(source, 'startupFallbackVersion') ? toText(source.startupFallbackVersion) : '',
-    startupFallbackCommitSha: hasOwn(source, 'startupFallbackCommitSha') ? toText(source.startupFallbackCommitSha) : '',
+    updatedAt: hasOwn(source, 'updatedAt') ? toText(source.updatedAt) : '',
+    updatedByUserId: hasOwn(source, 'updatedByUserId') ? toText(source.updatedByUserId) : '',
+  }
+}
+
+function normalizeCasdoorConfigInternal(raw: unknown): CasdoorIntegrationConfigInternal {
+  const source = parseJsonObject(raw)
+  return {
+    enabled: hasOwn(source, 'enabled') ? toBoolean(source.enabled, false) : false,
+    displayName: hasOwn(source, 'displayName') ? toText(source.displayName) : DEFAULT_OAUTH_DISPLAY_NAME,
+    protocolMode: hasOwn(source, 'protocolMode') && toText(source.protocolMode) === 'oauth2_manual' ? 'oauth2_manual' : 'oidc_discovery',
+    issuer: hasOwn(source, 'issuer') ? toText(source.issuer) : '',
+    authorizeEndpoint: hasOwn(source, 'authorizeEndpoint') ? toText(source.authorizeEndpoint) : '',
+    tokenEndpoint: hasOwn(source, 'tokenEndpoint') ? toText(source.tokenEndpoint) : '',
+    userinfoEndpoint: hasOwn(source, 'userinfoEndpoint') ? toText(source.userinfoEndpoint) : '',
+    clientId: hasOwn(source, 'clientId') ? toText(source.clientId) : '',
+    clientSecret: hasOwn(source, 'clientSecret') ? decryptConfigSecretSafe(source.clientSecret) : '',
+    scope: hasOwn(source, 'scope') ? toText(source.scope) : 'openid profile email',
+    redirectUri: hasOwn(source, 'redirectUri') ? toText(source.redirectUri) : '',
     updatedAt: hasOwn(source, 'updatedAt') ? toText(source.updatedAt) : '',
     updatedByUserId: hasOwn(source, 'updatedByUserId') ? toText(source.updatedByUserId) : '',
   }
@@ -489,6 +618,7 @@ function toSyncItem(row: FeishuBitableSyncItemRow): FeishuBitableSyncItem {
       viewId: row.view_id || '',
     }),
     writeback: normalizeWritebackConfig(row.writeback_json),
+    autoSync: normalizeAutoSyncConfig(row.auto_sync_json),
     isEnabled: Boolean(row.is_enabled),
     mapping: parseJsonObject(row.mapping_json),
     options: parseJsonObject(row.options_json),
@@ -508,6 +638,7 @@ function toSyncItem(row: FeishuBitableSyncItemRow): FeishuBitableSyncItem {
 }
 
 function toRun(row: FeishuBitableSyncItemRunRow): FeishuBitableSyncItemRun {
+  const diagnostics = parseJsonObject(row.diagnostics_json)
   return {
     id: row.id,
     syncItemId: row.sync_item_id,
@@ -524,6 +655,7 @@ function toRun(row: FeishuBitableSyncItemRunRow): FeishuBitableSyncItemRun {
     skippedCount: Number(row.skipped_count || 0),
     errorCount: Number(row.error_count || 0),
     errorMessage: row.error_message || '',
+    diagnostics: Object.keys(diagnostics).length ? diagnostics as unknown as FeishuBitableSyncRunDiagnostics : undefined,
     createdByUserId: row.created_by_user_id || null,
     createdAt: row.created_at,
   }
@@ -552,6 +684,75 @@ function toPostSyncTask(row: FeishuPostSyncTaskRow): FeishuPostSyncTask {
   }
 }
 
+function toSyncedDataStatus(raw: unknown): FeishuSyncedDataRecordStatus {
+  if (raw === 'ref_only')
+    return 'ref_only'
+  if (raw === 'release_draft')
+    return 'release_draft'
+  return 'indexed'
+}
+
+function toSyncedDataRecord(row: FeishuSyncedDataRow): FeishuSyncedDataRecord {
+  return {
+    status: toSyncedDataStatus(row.status),
+    scope: row.scope,
+    syncId: toText(row.sync_id),
+    syncName: toText(row.sync_name),
+    syncItemId: toText(row.sync_item_id),
+    syncItemName: toText(row.sync_item_name),
+    title: toText(row.title),
+    summary: toText(row.summary),
+    body: toText(row.body),
+    externalId: toText(row.external_id),
+    entityId: toText(row.entity_id),
+    recordId: toText(row.record_id),
+    runId: toText(row.run_id),
+    keywords: toStringArray(row.keywords),
+    metadata: parseJsonObject(row.metadata),
+    updatedAt: toText(row.updated_at),
+  }
+}
+
+function createDefaultFeishuSyncedDataMetrics(effectiveEntityTotal = 0): FeishuSyncedDataMetrics {
+  return {
+    effectiveEntityTotal: Math.max(0, Math.trunc(Number(effectiveEntityTotal) || 0)),
+    latestRunSourceRowTotal: 0,
+    latestRunAutoFilteredTotal: 0,
+    latestRunBusinessSkippedTotal: 0,
+    latestRunDuplicateExternalIdTotal: 0,
+    rawCountBasis: 'latest_run_per_sync_item',
+  }
+}
+
+function toFeishuSyncedDataMetrics(
+  row: FeishuSyncedDataMetricsRow | undefined,
+  effectiveEntityTotal: number,
+): FeishuSyncedDataMetrics {
+  return {
+    effectiveEntityTotal: Math.max(0, Math.trunc(Number(effectiveEntityTotal) || 0)),
+    latestRunSourceRowTotal: Math.max(0, Math.trunc(Number(row?.latest_run_source_row_total || 0) || 0)),
+    latestRunAutoFilteredTotal: Math.max(0, Math.trunc(Number(row?.latest_run_auto_filtered_total || 0) || 0)),
+    latestRunBusinessSkippedTotal: Math.max(0, Math.trunc(Number(row?.latest_run_business_skipped_total || 0) || 0)),
+    latestRunDuplicateExternalIdTotal: Math.max(0, Math.trunc(Number(row?.latest_run_duplicate_external_id_total || 0) || 0)),
+    rawCountBasis: 'latest_run_per_sync_item',
+  }
+}
+
+function toFeishuSyncRunSampleRecord(row: FeishuSyncRunSampleRow): FeishuSyncRunSampleRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    syncItemId: row.sync_item_id,
+    sampleType: row.sample_type,
+    sampleIndex: Math.max(1, Math.trunc(Number(row.sample_index) || 1)),
+    recordId: toText(row.record_id),
+    externalId: toText(row.external_id) || null,
+    reasonCode: toText(row.reason_code) || null,
+    payload: parseJsonObject(row.payload_json),
+    createdAt: row.created_at,
+  }
+}
+
 function toIssue(row: FeishuSyncIssueRow): FeishuSyncIssue {
   return {
     id: row.id,
@@ -569,6 +770,14 @@ function toIssue(row: FeishuSyncIssueRow): FeishuSyncIssue {
     resolvedAt: row.resolved_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function toIssueReasonStat(row: FeishuSyncIssueReasonStatRow): FeishuSyncIssueReasonStat {
+  return {
+    reasonCode: toText(row.reason_code),
+    openCount: Math.max(0, Number(row.open_count || 0) || 0),
+    totalCount: Math.max(0, Number(row.total_count || 0) || 0),
   }
 }
 
@@ -684,6 +893,9 @@ export function toPublicFeishuIntegrationConfig(config: FeishuIntegrationConfigI
     enabled: config.enabled,
     appId: config.appId,
     appSecretConfigured: Boolean(config.appSecret),
+    marketplaceAppUrl: config.marketplaceAppUrl,
+    appTicketConfigured: Boolean(config.appTicket),
+    appTicketUpdatedAt: config.appTicketUpdatedAt,
     oauthRedirectUri: config.oauthRedirectUri,
     eventTokenConfigured: Boolean(config.eventToken),
     eventEncryptKeyConfigured: Boolean(config.eventEncryptKey),
@@ -692,8 +904,24 @@ export function toPublicFeishuIntegrationConfig(config: FeishuIntegrationConfigI
     startupNotifyEnabled: Boolean(config.startupNotifyEnabled),
     startupNotifyChatId: toText(config.startupNotifyChatId),
     startupNotifyRemark: toText(config.startupNotifyRemark),
-    startupFallbackVersion: toText(config.startupFallbackVersion),
-    startupFallbackCommitSha: toText(config.startupFallbackCommitSha),
+    updatedAt: config.updatedAt,
+    updatedByUserId: config.updatedByUserId,
+  }
+}
+
+export function toPublicCasdoorIntegrationConfig(config: CasdoorIntegrationConfigInternal): CasdoorIntegrationConfig {
+  return {
+    enabled: config.enabled,
+    displayName: config.displayName || DEFAULT_OAUTH_DISPLAY_NAME,
+    protocolMode: config.protocolMode === 'oauth2_manual' ? 'oauth2_manual' : 'oidc_discovery',
+    issuer: config.issuer,
+    authorizeEndpoint: config.authorizeEndpoint,
+    tokenEndpoint: config.tokenEndpoint,
+    userinfoEndpoint: config.userinfoEndpoint,
+    clientId: config.clientId,
+    clientSecretConfigured: Boolean(config.clientSecret),
+    scope: config.scope || 'openid profile email',
+    redirectUri: config.redirectUri,
     updatedAt: config.updatedAt,
     updatedByUserId: config.updatedByUserId,
   }
@@ -717,6 +945,24 @@ export async function readFeishuIntegrationConfig(db: Queryable): Promise<Feishu
   }
 }
 
+export async function readCasdoorIntegrationConfig(db: Queryable): Promise<CasdoorIntegrationConfigInternal> {
+  const result = await db.query<{ value: string }>(
+    'SELECT value FROM migrations_meta WHERE key = $1 LIMIT 1',
+    [CASDOOR_CONFIG_META_KEY],
+  )
+
+  const raw = String(result.rows[0]?.value || '').trim()
+  if (!raw)
+    return normalizeCasdoorConfigInternal({})
+
+  try {
+    return normalizeCasdoorConfigInternal(JSON.parse(raw))
+  }
+  catch {
+    return normalizeCasdoorConfigInternal({})
+  }
+}
+
 export async function writeFeishuIntegrationConfig(
   db: Queryable,
   config: FeishuIntegrationConfigInternal,
@@ -728,6 +974,9 @@ export async function writeFeishuIntegrationConfig(
     appSecret: hasMasterKey && normalized.appSecret && !isEncryptedConfigValue(normalized.appSecret)
       ? encryptConfigSecret(normalized.appSecret)
       : normalized.appSecret,
+    appTicket: hasMasterKey && normalized.appTicket && !isEncryptedConfigValue(normalized.appTicket)
+      ? encryptConfigSecret(normalized.appTicket)
+      : normalized.appTicket,
     eventToken: hasMasterKey && normalized.eventToken && !isEncryptedConfigValue(normalized.eventToken)
       ? encryptConfigSecret(normalized.eventToken)
       : normalized.eventToken,
@@ -745,10 +994,50 @@ export async function writeFeishuIntegrationConfig(
   return normalized
 }
 
+export async function updateFeishuMarketplaceAppTicket(
+  db: Queryable,
+  input: {
+    appTicket: string
+    updatedByUserId?: string
+  },
+): Promise<FeishuIntegrationConfigInternal> {
+  const current = await readFeishuIntegrationConfig(db)
+  const now = new Date().toISOString()
+  return writeFeishuIntegrationConfig(db, {
+    ...current,
+    appTicket: toText(input.appTicket),
+    appTicketUpdatedAt: now,
+    updatedAt: now,
+    updatedByUserId: toText(input.updatedByUserId) || 'feishu_event',
+  })
+}
+
+export async function writeCasdoorIntegrationConfig(
+  db: Queryable,
+  config: CasdoorIntegrationConfigInternal,
+): Promise<CasdoorIntegrationConfigInternal> {
+  const normalized = normalizeCasdoorConfigInternal(config)
+  const hasMasterKey = hasConfigMasterKey()
+  const persistable = {
+    ...normalized,
+    clientSecret: hasMasterKey && normalized.clientSecret && !isEncryptedConfigValue(normalized.clientSecret)
+      ? encryptConfigSecret(normalized.clientSecret)
+      : normalized.clientSecret,
+  }
+  await db.query(
+    `INSERT INTO migrations_meta (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+    [CASDOOR_CONFIG_META_KEY, JSON.stringify(persistable)],
+  )
+  return normalized
+}
+
 export async function findAuthIdentityByProviderUserId(
   db: Queryable,
   input: {
-    provider: 'feishu'
+    provider: ExternalAuthProvider
     providerUserId: string
   },
 ): Promise<AuthIdentityRow | null> {
@@ -774,7 +1063,7 @@ export async function findAuthIdentityByProviderUserId(
 export async function findAuthIdentityByProviderAndUserId(
   db: Queryable,
   input: {
-    provider: 'feishu'
+    provider: ExternalAuthProvider
     userId: string
   },
 ): Promise<AuthIdentityRow | null> {
@@ -801,7 +1090,7 @@ export async function findAuthIdentityByProviderAndUserId(
 export async function upsertAuthIdentity(
   db: Queryable,
   input: {
-    provider: 'feishu'
+    provider: ExternalAuthProvider
     providerUserId: string
     userId: string
     profile?: Record<string, unknown>
@@ -857,6 +1146,32 @@ export async function getFeishuAuthBindStatusByUserId(
     enName: toText(profile.enName),
     email: toText(profile.email),
     mobile: toText(profile.mobile),
+    updatedAt: identity.updated_at || '',
+  }
+}
+
+export async function getCasdoorAuthBindStatusByUserId(
+  db: Queryable,
+  userId: string,
+): Promise<CasdoorAuthBindStatus> {
+  const identity = await findAuthIdentityByProviderAndUserId(db, {
+    provider: 'casdoor',
+    userId,
+  })
+
+  if (!identity) {
+    return {
+      linked: false,
+    }
+  }
+
+  const profile = parseJsonObject(identity.profile_json)
+  return {
+    linked: true,
+    subject: String(identity.provider_user_id || '').trim() || '',
+    name: toText(profile.name),
+    preferredUsername: toText(profile.preferredUsername),
+    email: toText(profile.email),
     updatedAt: identity.updated_at || '',
   }
 }
@@ -1584,6 +1899,7 @@ export async function listFeishuBitableSyncItems(
       t.view_id,
       t.source_json,
       t.writeback_json,
+      t.auto_sync_json,
       t.is_enabled,
       t.mapping_json,
       t.options_json,
@@ -1649,6 +1965,7 @@ export async function getFeishuBitableSyncItemById(
       t.view_id,
       t.source_json,
       t.writeback_json,
+      t.auto_sync_json,
       t.is_enabled,
       t.mapping_json,
       t.options_json,
@@ -1709,6 +2026,7 @@ export async function createFeishuBitableSyncItem(
     viewId?: string
     source?: FeishuBitableSourceConfig
     writeback?: FeishuBitableWritebackConfig
+    autoSync?: FeishuBitableAutoSyncConfig
     isEnabled?: boolean
     mapping?: Record<string, unknown>
     options?: Record<string, unknown>
@@ -1760,6 +2078,7 @@ export async function createFeishuBitableSyncItem(
       view_id,
       source_json,
       writeback_json,
+      auto_sync_json,
       is_enabled,
       mapping_json,
       options_json,
@@ -1779,7 +2098,7 @@ export async function createFeishuBitableSyncItem(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10, $11::JSONB, $12::JSONB, NULL, $13, $14, $15, $16, $17, $18, NULL, '', NULL, NULL, $19, $19, NOW(), NOW()
+      $1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10::JSONB, $11, $12::JSONB, $13::JSONB, NULL, $14, $15, $16, $17, $18, $19, NULL, '', NULL, NULL, $20, $20, NOW(), NOW()
     )
     RETURNING
       id,
@@ -1791,6 +2110,7 @@ export async function createFeishuBitableSyncItem(
       view_id,
       source_json,
       writeback_json,
+      auto_sync_json,
       is_enabled,
       mapping_json,
       options_json,
@@ -1824,6 +2144,7 @@ export async function createFeishuBitableSyncItem(
       toText(input.viewId),
       JSON.stringify(parseJsonObject(resolvedSource)),
       JSON.stringify(parseJsonObject(input.writeback)),
+      JSON.stringify(parseJsonObject(input.autoSync)),
       input.isEnabled !== false,
       JSON.stringify(parseJsonObject(input.mapping)),
       JSON.stringify(parseJsonObject(input.options)),
@@ -1879,6 +2200,7 @@ export async function patchFeishuBitableSyncItem(
       viewId?: string
       source?: FeishuBitableSourceConfig
       writeback?: FeishuBitableWritebackConfig
+      autoSync?: FeishuBitableAutoSyncConfig
       isEnabled?: boolean
       mapping?: Record<string, unknown>
       options?: Record<string, unknown>
@@ -1929,6 +2251,8 @@ export async function patchFeishuBitableSyncItem(
   }
   if (input.patch.writeback !== undefined)
     addSet('writeback_json', JSON.stringify(parseJsonObject(input.patch.writeback)))
+  if (input.patch.autoSync !== undefined)
+    addSet('auto_sync_json', JSON.stringify(parseJsonObject(input.patch.autoSync)))
   if (input.patch.isEnabled !== undefined)
     addSet('is_enabled', Boolean(input.patch.isEnabled))
   if (input.patch.mapping !== undefined)
@@ -2053,6 +2377,7 @@ export async function completeFeishuBitableSyncItemRun(
     skippedCount?: number
     errorCount?: number
     errorMessage?: string
+    diagnostics?: FeishuBitableSyncRunDiagnostics | Record<string, unknown>
   },
 ): Promise<void> {
   await db.query(
@@ -2065,7 +2390,8 @@ export async function completeFeishuBitableSyncItemRun(
        updated_count = $6,
        skipped_count = $7,
        error_count = $8,
-       error_message = $9
+       error_message = $9,
+       diagnostics_json = $10::JSONB
      WHERE id = $1
        AND sync_item_id = $2`,
     [
@@ -2078,6 +2404,7 @@ export async function completeFeishuBitableSyncItemRun(
       Math.max(0, Number(input.skippedCount || 0)),
       Math.max(0, Number(input.errorCount || 0)),
       String(input.errorMessage || '').slice(0, 1000),
+      JSON.stringify(parseJsonObject(input.diagnostics)),
     ],
   )
 
@@ -2089,6 +2416,151 @@ export async function completeFeishuBitableSyncItemRun(
      WHERE id = $1`,
     [input.syncItemId],
   )
+}
+
+export async function replaceFeishuBitableSyncRunSamples(
+  db: Queryable,
+  input: {
+    runId: string
+    syncItemId: string
+    samples: Array<{
+      sampleType: FeishuSyncRunSampleType
+      sampleIndex: number
+      recordId: string
+      externalId?: string | null
+      reasonCode?: string | null
+      payload?: Record<string, unknown>
+    }>
+  },
+): Promise<void> {
+  const runId = toText(input.runId)
+  const syncItemId = toText(input.syncItemId)
+  if (!runId || !syncItemId)
+    return
+
+  await db.query(
+    `DELETE FROM feishu_bitable_sync_run_samples
+     WHERE run_id = $1`,
+    [runId],
+  )
+
+  const samples = input.samples
+    .map(sample => ({
+      sampleType: sample.sampleType,
+      sampleIndex: Math.max(1, Math.trunc(Number(sample.sampleIndex) || 1)),
+      recordId: toText(sample.recordId),
+      externalId: toText(sample.externalId) || null,
+      reasonCode: toText(sample.reasonCode) || null,
+      payload: parseJsonObject(sample.payload),
+    }))
+    .filter(sample => Boolean(sample.recordId))
+
+  if (!samples.length)
+    return
+
+  const values: unknown[] = []
+  const placeholders: string[] = []
+  for (const sample of samples) {
+    const index = values.length
+    placeholders.push(`($${index + 1}, $${index + 2}, $${index + 3}, $${index + 4}, $${index + 5}, $${index + 6}, $${index + 7}, $${index + 8}, $${index + 9}, NOW())`)
+    values.push(
+      randomUUID(),
+      runId,
+      syncItemId,
+      sample.sampleType,
+      sample.sampleIndex,
+      sample.recordId,
+      sample.externalId,
+      sample.reasonCode,
+      JSON.stringify(sample.payload),
+    )
+  }
+
+  await db.query(
+    `INSERT INTO feishu_bitable_sync_run_samples (
+      id,
+      run_id,
+      sync_item_id,
+      sample_type,
+      sample_index,
+      record_id,
+      external_id,
+      reason_code,
+      payload_json,
+      created_at
+    ) VALUES ${placeholders.join(', ')}`,
+    values,
+  )
+}
+
+export async function listFeishuBitableSyncRunSamples(
+  db: Queryable,
+  input: {
+    syncId: string
+    syncItemId: string
+    runId: string
+    type: FeishuSyncRunSampleType
+    page?: number
+    pageSize?: number
+    includeArchived?: boolean
+  },
+): Promise<FeishuSyncRunSamplePage | null> {
+  const syncId = toText(input.syncId)
+  const syncItemId = toText(input.syncItemId)
+  const runId = toText(input.runId)
+  if (!syncId || !syncItemId || !runId)
+    return null
+
+  const item = await getFeishuBitableSyncItemById(db, syncItemId, {
+    includeArchived: input.includeArchived,
+  })
+  if (!item || item.syncId !== syncId)
+    return null
+
+  const runResult = await db.query<{ id: string }>(
+    `SELECT id
+     FROM feishu_bitable_sync_item_runs
+     WHERE id = $1
+       AND sync_item_id = $2
+     LIMIT 1`,
+    [runId, syncItemId],
+  )
+  if (!runResult.rows[0]?.id)
+    return null
+
+  const page = Math.max(1, Number(input.page || 1) || 1)
+  const pageSize = Math.max(1, Math.min(100, Number(input.pageSize || 12) || 12))
+  const offset = (page - 1) * pageSize
+
+  const result = await db.query<FeishuSyncRunSampleRow>(
+    `SELECT
+      id,
+      run_id,
+      sync_item_id,
+      sample_type,
+      sample_index,
+      record_id,
+      external_id,
+      reason_code,
+      payload_json,
+      created_at::TEXT,
+      COUNT(*) OVER()::INTEGER AS total_count
+     FROM feishu_bitable_sync_run_samples
+     WHERE run_id = $1
+       AND sync_item_id = $2
+       AND sample_type = $3
+     ORDER BY sample_index ASC, created_at ASC, id ASC
+     LIMIT $4
+     OFFSET $5`,
+    [runId, syncItemId, input.type, pageSize, offset],
+  )
+
+  return {
+    items: result.rows.map(toFeishuSyncRunSampleRecord),
+    total: Math.max(0, Number(result.rows[0]?.total_count || 0) || 0),
+    page,
+    pageSize,
+  }
 }
 
 export async function listFeishuBitableSyncItemRuns(
@@ -2116,6 +2588,7 @@ export async function listFeishuBitableSyncItemRuns(
       r.skipped_count,
       r.error_count,
       r.error_message,
+      r.diagnostics_json,
       r.created_by_user_id,
       r.created_at::TEXT
      FROM feishu_bitable_sync_item_runs r
@@ -2147,7 +2620,7 @@ export async function getFeishuBitableSyncItemDetail(
   const runLimit = Math.max(1, Math.min(100, Number(input.runLimit || 20)))
   const issueLimit = Math.max(1, Math.min(200, Number(input.issueLimit || 50)))
 
-  const [recentRuns, issues, issueStatsResult] = await Promise.all([
+  const [recentRuns, issues, issueStatsResult, issueReasonStatsResult] = await Promise.all([
     listFeishuBitableSyncItemRuns(db, {
       syncItemId: input.syncItemId,
       limit: runLimit,
@@ -2163,6 +2636,20 @@ export async function getFeishuBitableSyncItemDetail(
        GROUP BY status`,
       [input.syncItemId],
     ),
+    db.query<FeishuSyncIssueReasonStatRow>(
+      `SELECT
+         reason_code,
+         COUNT(*) FILTER (WHERE status = 'open')::INTEGER AS open_count,
+         COUNT(*)::INTEGER AS total_count
+       FROM feishu_sync_issues
+       WHERE sync_item_id = $1
+       GROUP BY reason_code
+       ORDER BY
+         COUNT(*) FILTER (WHERE status = 'open') DESC,
+         COUNT(*) DESC,
+         reason_code ASC`,
+      [input.syncItemId],
+    ),
   ])
 
   return {
@@ -2170,6 +2657,7 @@ export async function getFeishuBitableSyncItemDetail(
     recentRuns,
     issues,
     issueStats: toTaskIssueStats(issueStatsResult.rows),
+    issueReasonStats: issueReasonStatsResult.rows.map(toIssueReasonStat).filter(item => item.reasonCode),
   }
 }
 
@@ -2502,6 +2990,750 @@ export async function getFeishuExternalRef(
   }
 }
 
+export async function getFeishuExternalRefByEntityId(
+  db: Queryable,
+  input: {
+    scope: FeishuBitableSyncItemEntityType
+    entityId: string
+  },
+): Promise<{ id: string, externalId: string, metadata: Record<string, unknown> } | null> {
+  const result = await db.query<{
+    id: string
+    external_id: string
+    metadata: Record<string, unknown>
+  }>(
+    `SELECT id, external_id, metadata
+     FROM feishu_external_refs
+     WHERE provider = 'feishu_bitable'
+       AND scope = $1
+       AND entity_id = $2
+     LIMIT 1`,
+    [input.scope, input.entityId],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    return null
+
+  return {
+    id: row.id,
+    externalId: toText(row.external_id),
+    metadata: parseJsonObject(row.metadata),
+  }
+}
+
+export async function findFeishuExternalRefOwnerByExternalId(
+  db: Queryable,
+  input: {
+    scope: FeishuBitableSyncItemEntityType
+    externalId: string
+  },
+): Promise<{
+  syncItemId: string
+  syncItemName: string
+  syncId: string
+  syncName: string
+  entityId: string
+  metadata: Record<string, unknown>
+} | null> {
+  const scope = toText(input.scope)
+  const externalId = toText(input.externalId)
+  if (!scope || !externalId)
+    return null
+
+  const result = await db.query<{
+    sync_item_id: string | null
+    sync_item_name: string | null
+    sync_id: string | null
+    sync_name: string | null
+    entity_id: string
+    metadata: unknown
+  }>(
+    `SELECT
+      ref.sync_item_id,
+      item.name AS sync_item_name,
+      sync.id AS sync_id,
+      sync.name AS sync_name,
+      ref.entity_id,
+      ref.metadata
+     FROM feishu_external_refs ref
+     LEFT JOIN feishu_bitable_sync_items item ON item.id = ref.sync_item_id
+     LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+     WHERE ref.provider = 'feishu_bitable'
+       AND ref.scope = $1
+       AND ref.external_id = $2
+     LIMIT 1`,
+    [scope, externalId],
+  )
+
+  const row = result.rows[0]
+  const syncItemId = toText(row?.sync_item_id)
+  if (!row || !syncItemId)
+    return null
+
+  return {
+    syncItemId,
+    syncItemName: toText(row.sync_item_name),
+    syncId: toText(row.sync_id),
+    syncName: toText(row.sync_name),
+    entityId: row.entity_id,
+    metadata: parseJsonObject(row.metadata),
+  }
+}
+
+export async function listFeishuExternalRefExternalIdsBySyncItemId(
+  db: Queryable,
+  input: {
+    scope: FeishuBitableSyncItemEntityType
+    syncItemId: string
+  },
+): Promise<string[]> {
+  const syncItemId = toText(input.syncItemId)
+  if (!syncItemId)
+    return []
+
+  const result = await db.query<{ external_id: string }>(
+    `SELECT external_id
+     FROM feishu_external_refs
+     WHERE provider = 'feishu_bitable'
+       AND scope = $1
+       AND sync_item_id = $2
+     ORDER BY external_id ASC`,
+    [input.scope, syncItemId],
+  )
+
+  return result.rows
+    .map(row => toText(row.external_id))
+    .filter(Boolean)
+}
+
+export async function searchFeishuSyncedData(
+  db: Queryable,
+  input: FeishuSyncedDataQuery = {},
+): Promise<Omit<FeishuSyncedDataResult, 'syncOptions' | 'syncItemOptions'>> {
+  const page = Math.max(1, Number(input.page || 1) || 1)
+  const pageSize = Math.max(1, Math.min(100, Number(input.pageSize || 20) || 20))
+  const syncId = toText(input.syncId)
+  const syncItemId = toText(input.syncItemId)
+  const scope = toText(input.scope)
+  const externalId = toText(input.externalId)
+  const recordId = toText(input.recordId)
+  const keyword = toText(input.keyword)
+  const rawMetricAvailable = !keyword && !externalId && !recordId
+  const where: string[] = []
+  const values: unknown[] = []
+
+  if (syncId) {
+    values.push(syncId)
+    where.push(`rows.sync_id = $${values.length}`)
+  }
+  if (syncItemId) {
+    values.push(syncItemId)
+    where.push(`rows.sync_item_id = $${values.length}`)
+  }
+  if (scope) {
+    values.push(scope)
+    where.push(`rows.scope = $${values.length}`)
+  }
+  if (externalId) {
+    values.push(externalId)
+    where.push(`rows.external_id = $${values.length}`)
+  }
+  if (recordId) {
+    values.push(recordId)
+    where.push(`rows.record_id = $${values.length}`)
+  }
+  if (keyword) {
+    values.push(`%${keyword}%`)
+    where.push(`(
+      rows.title ILIKE $${values.length}
+      OR rows.summary ILIKE $${values.length}
+      OR rows.body ILIKE $${values.length}
+      OR rows.external_id ILIKE $${values.length}
+      OR rows.entity_id ILIKE $${values.length}
+      OR rows.record_id ILIKE $${values.length}
+    )`)
+  }
+
+  values.push(pageSize)
+  const limitParam = values.length
+  values.push((page - 1) * pageSize)
+  const offsetParam = values.length
+
+  const result = await db.query<FeishuSyncedDataRow>(
+    `WITH latest_index AS (
+      SELECT
+        ranked.id,
+        ranked.scope,
+        ranked.entity_id,
+        ranked.external_id,
+        ranked.sync_item_id,
+        ranked.run_id,
+        ranked.title,
+        ranked.summary,
+        ranked.body,
+        ranked.keywords,
+        ranked.metadata,
+        ranked.created_at,
+        ranked.updated_at
+      FROM (
+        SELECT
+          idx.id,
+          idx.scope,
+          idx.entity_id,
+          idx.external_id,
+          idx.sync_item_id,
+          idx.run_id,
+          idx.title,
+          idx.summary,
+          idx.body,
+          idx.keywords,
+          idx.metadata,
+          idx.created_at,
+          idx.updated_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY idx.scope, idx.entity_id
+            ORDER BY idx.updated_at DESC, idx.created_at DESC, idx.id DESC
+          ) AS row_number
+        FROM feishu_search_index idx
+      ) ranked
+      WHERE ranked.row_number = 1
+    ),
+    indexed_rows AS (
+      SELECT
+        'indexed'::TEXT AS status,
+        li.scope,
+        COALESCE(sync.id, ref_sync.id, '') AS sync_id,
+        COALESCE(sync.name, ref_sync.name, '') AS sync_name,
+        COALESCE(item.id, ref_item.id, '') AS sync_item_id,
+        COALESCE(item.name, ref_item.name, '') AS sync_item_name,
+        COALESCE(
+          NULLIF(li.title, ''),
+          NULLIF(ref.metadata ->> 'title', ''),
+          NULLIF(ref.metadata ->> 'name', ''),
+          NULLIF(ref.metadata ->> 'scopeTitle', ''),
+          NULLIF(li.external_id, ''),
+          NULLIF(ref.external_id, ''),
+          li.entity_id
+        ) AS title,
+        COALESCE(li.summary, '') AS summary,
+        COALESCE(li.body, '') AS body,
+        COALESCE(NULLIF(li.external_id, ''), NULLIF(ref.external_id, ''), '') AS external_id,
+        li.entity_id,
+        COALESCE(NULLIF(li.metadata ->> 'recordId', ''), NULLIF(ref.metadata ->> 'recordId', ''), '') AS record_id,
+        COALESCE(li.run_id, '') AS run_id,
+        li.keywords,
+        COALESCE(NULLIF(li.metadata, '{}'::JSONB), ref.metadata, '{}'::JSONB) AS metadata,
+        li.created_at,
+        li.updated_at
+      FROM latest_index li
+      LEFT JOIN LATERAL (
+        SELECT
+          ref.external_id,
+          ref.sync_item_id,
+          ref.metadata
+        FROM feishu_external_refs ref
+        WHERE ref.provider = 'feishu_bitable'
+          AND ref.scope = li.scope
+          AND ref.entity_id = li.entity_id
+        ORDER BY ref.updated_at DESC, ref.created_at DESC, ref.id DESC
+        LIMIT 1
+      ) ref ON TRUE
+      LEFT JOIN feishu_bitable_sync_items item ON item.id = li.sync_item_id
+      LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+      LEFT JOIN feishu_bitable_sync_items ref_item ON ref_item.id = ref.sync_item_id
+      LEFT JOIN feishu_bitable_syncs ref_sync ON ref_sync.id = ref_item.sync_id
+    ),
+      ref_only_rows AS (
+        SELECT
+          'ref_only'::TEXT AS status,
+        ref.scope,
+        COALESCE(sync.id, '') AS sync_id,
+        COALESCE(sync.name, '') AS sync_name,
+        COALESCE(item.id, '') AS sync_item_id,
+        COALESCE(item.name, '') AS sync_item_name,
+        COALESCE(
+          NULLIF(ref.metadata ->> 'title', ''),
+          NULLIF(ref.metadata ->> 'name', ''),
+          NULLIF(ref.metadata ->> 'scopeTitle', ''),
+          NULLIF(ref.external_id, ''),
+          ref.entity_id
+        ) AS title,
+        '' AS summary,
+        '' AS body,
+        ref.external_id,
+        ref.entity_id,
+        COALESCE(NULLIF(ref.metadata ->> 'recordId', ''), '') AS record_id,
+        '' AS run_id,
+        ARRAY[]::TEXT[] AS keywords,
+        ref.metadata,
+        ref.created_at,
+        ref.updated_at
+      FROM feishu_external_refs ref
+      LEFT JOIN latest_index li
+        ON li.scope = ref.scope
+       AND li.entity_id = ref.entity_id
+      LEFT JOIN feishu_bitable_sync_items item ON item.id = ref.sync_item_id
+      LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE ref.provider = 'feishu_bitable'
+          AND li.id IS NULL
+      ),
+      release_contest_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'contest'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(
+            NULLIF(rv.snapshot_json -> 'contest' ->> 'name', ''),
+            NULLIF(rv.scope_title, ''),
+            rv.scope_id
+          ) AS title,
+          COALESCE(rv.snapshot_json -> 'contest' ->> 'summary', '') AS summary,
+          COALESCE(rv.snapshot_json -> 'contest' ->> 'officialUrl', '') AS body,
+          COALESCE(NULLIF(rv.snapshot_json -> 'contest' ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':contest:', COALESCE(NULLIF(rv.snapshot_json -> 'contest' ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          '' AS record_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
+          ARRAY(
+            SELECT jsonb_array_elements_text(
+              CASE
+                WHEN jsonb_typeof(rv.snapshot_json -> 'contest' -> 'keywords') = 'array'
+                  THEN rv.snapshot_json -> 'contest' -> 'keywords'
+                ELSE '[]'::JSONB
+              END
+            )
+          ) AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'contest',
+            'snapshot', rv.snapshot_json -> 'contest'
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(rv.snapshot_json -> 'contest' -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(rv.snapshot_json -> 'contest' -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE owner_source.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'contest'
+          AND rv.status NOT IN ('superseded', 'rejected')
+          AND rv.snapshot_json -> 'contest' IS NOT NULL
+          AND rv.snapshot_json -> 'contest' <> 'null'::JSONB
+      ),
+      release_track_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'track'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(NULLIF(track_item.item ->> 'name', ''), NULLIF(track_item.item ->> 'externalId', ''), rv.scope_id) AS title,
+          COALESCE(track_item.item ->> 'summary', '') AS summary,
+          track_item.item::TEXT AS body,
+          COALESCE(NULLIF(track_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':track:', COALESCE(NULLIF(track_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          '' AS record_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
+          ARRAY[]::TEXT[] AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'track',
+            'snapshot', track_item.item
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(rv.snapshot_json -> 'tracks') = 'array'
+              THEN rv.snapshot_json -> 'tracks'
+            ELSE '[]'::JSONB
+          END
+        ) AS track_item(item) ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(track_item.item -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(track_item.item -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE owner_source.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'contest'
+          AND rv.status NOT IN ('superseded', 'rejected')
+      ),
+      release_track_timeline_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'track_timeline'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(NULLIF(timeline_item.item ->> 'note', ''), NULLIF(timeline_item.item ->> 'nodeType', ''), NULLIF(timeline_item.item ->> 'externalId', ''), rv.scope_id) AS title,
+          COALESCE(timeline_item.item ->> 'note', '') AS summary,
+          COALESCE(timeline_item.item ->> 'sourceLink', '') AS body,
+          COALESCE(NULLIF(timeline_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':track_timeline:', COALESCE(NULLIF(timeline_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          '' AS record_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
+          ARRAY[]::TEXT[] AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'track_timeline',
+            'snapshot', timeline_item.item
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(rv.snapshot_json -> 'trackTimelines') = 'array'
+              THEN rv.snapshot_json -> 'trackTimelines'
+            ELSE '[]'::JSONB
+          END
+        ) AS timeline_item(item) ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(timeline_item.item -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(timeline_item.item -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE owner_source.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'contest'
+          AND rv.status NOT IN ('superseded', 'rejected')
+      ),
+      release_resource_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'resource'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(NULLIF(resource_item.item ->> 'title', ''), NULLIF(resource_item.item ->> 'externalId', ''), rv.scope_id) AS title,
+          COALESCE(resource_item.item ->> 'summary', '') AS summary,
+          COALESCE(NULLIF(resource_item.item ->> 'content', ''), NULLIF(resource_item.item ->> 'url', ''), '') AS body,
+          COALESCE(NULLIF(resource_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':resource:', COALESCE(NULLIF(resource_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          COALESCE(NULLIF(resource_item.item -> 'metadata' ->> 'recordId', ''), '') AS record_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
+          ARRAY[]::TEXT[] AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'resource',
+            'snapshot', resource_item.item
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(rv.snapshot_json -> 'resources') = 'array'
+              THEN rv.snapshot_json -> 'resources'
+            ELSE '[]'::JSONB
+          END
+        ) AS resource_item(item) ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(resource_item.item -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(resource_item.item -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE owner_source.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'contest'
+          AND rv.status NOT IN ('superseded', 'rejected')
+      ),
+      release_policy_rows AS (
+        SELECT
+          'release_draft'::TEXT AS status,
+          'policy'::TEXT AS scope,
+          COALESCE(sync.id, '') AS sync_id,
+          COALESCE(sync.name, '') AS sync_name,
+          COALESCE(item.id, owner_source.sync_item_id, '') AS sync_item_id,
+          COALESCE(item.name, '') AS sync_item_name,
+          COALESCE(NULLIF(policy_item.item ->> 'meetingName', ''), NULLIF(policy_item.item ->> 'externalId', ''), rv.scope_id) AS title,
+          COALESCE(policy_item.item ->> 'summary', '') AS summary,
+          policy_item.item::TEXT AS body,
+          COALESCE(NULLIF(policy_item.item ->> 'externalId', ''), rv.scope_id) AS external_id,
+          CONCAT(rv.id, ':policy:', COALESCE(NULLIF(policy_item.item ->> 'externalId', ''), rv.scope_id)) AS entity_id,
+          '' AS record_id,
+          COALESCE(owner_source.sync_run_id, '') AS run_id,
+          ARRAY[]::TEXT[] AS keywords,
+          jsonb_build_object(
+            'releaseVersionId', rv.id,
+            'releaseStatus', rv.status,
+            'syncRunId', COALESCE(owner_source.sync_run_id, ''),
+            'scopeKind', rv.scope_kind,
+            'scopeId', rv.scope_id,
+            'snapshotType', 'policy',
+            'snapshot', policy_item.item
+          ) AS metadata,
+          rv.created_at,
+          rv.updated_at
+        FROM release_versions rv
+        JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(rv.snapshot_json -> 'items') = 'array'
+              THEN rv.snapshot_json -> 'items'
+            ELSE '[]'::JSONB
+          END
+        ) AS policy_item(item) ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(
+              NULLIF(policy_item.item -> 'syncSource' ->> 'syncItemId', ''),
+              NULLIF(rv.sync_item_id, '')
+            ) AS sync_item_id,
+            COALESCE(
+              NULLIF(policy_item.item -> 'syncSource' ->> 'syncRunId', ''),
+              NULLIF(rv.sync_run_id, '')
+            ) AS sync_run_id
+        ) AS owner_source ON TRUE
+        LEFT JOIN feishu_bitable_sync_items item ON item.id = owner_source.sync_item_id
+        LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+        WHERE owner_source.sync_item_id IS NOT NULL
+          AND rv.scope_kind = 'policy_library'
+          AND rv.status NOT IN ('superseded', 'rejected')
+      ),
+      all_rows AS (
+        SELECT * FROM indexed_rows
+        UNION ALL
+        SELECT * FROM ref_only_rows
+        UNION ALL
+        SELECT * FROM release_contest_rows
+        UNION ALL
+        SELECT * FROM release_track_rows
+        UNION ALL
+        SELECT * FROM release_track_timeline_rows
+        UNION ALL
+        SELECT * FROM release_resource_rows
+        UNION ALL
+        SELECT * FROM release_policy_rows
+      ),
+      filtered_rows AS (
+        SELECT
+          rows.*,
+          COALESCE(NULLIF(rows.external_id, ''), NULLIF(rows.entity_id, ''), rows.entity_id) AS business_key,
+          CASE
+            WHEN rows.status = 'release_draft' THEN 0
+            WHEN rows.status = 'indexed' THEN 1
+            ELSE 2
+          END AS status_rank
+        FROM all_rows rows
+        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ),
+      ranked_rows AS (
+        SELECT
+          rows.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY rows.scope, rows.business_key
+            ORDER BY rows.status_rank ASC, rows.updated_at DESC, rows.created_at DESC, rows.entity_id DESC
+          ) AS row_number
+        FROM filtered_rows rows
+      )
+    SELECT
+      rows.status,
+      rows.scope,
+      rows.sync_id,
+      rows.sync_name,
+      rows.sync_item_id,
+      rows.sync_item_name,
+      rows.title,
+      rows.summary,
+      rows.body,
+      rows.external_id,
+      rows.entity_id,
+      rows.record_id,
+      rows.run_id,
+      rows.keywords,
+      rows.metadata,
+      rows.created_at::TEXT,
+      rows.updated_at::TEXT,
+      COUNT(*) OVER()::INTEGER AS total_count
+    FROM ranked_rows rows
+    WHERE rows.row_number = 1
+    ORDER BY rows.updated_at DESC, rows.created_at DESC
+    LIMIT $${limitParam}
+    OFFSET $${offsetParam}`,
+    values,
+  )
+
+  const total = Math.max(0, Number(result.rows[0]?.total_count || 0) || 0)
+  let metrics = createDefaultFeishuSyncedDataMetrics(total)
+  if (rawMetricAvailable) {
+    const rawMetricWhere: string[] = []
+    const rawMetricValues: unknown[] = []
+    if (syncId) {
+      rawMetricValues.push(syncId)
+      rawMetricWhere.push(`item.sync_id = $${rawMetricValues.length}`)
+    }
+    if (syncItemId) {
+      rawMetricValues.push(syncItemId)
+      rawMetricWhere.push(`item.id = $${rawMetricValues.length}`)
+    }
+    if (scope) {
+      rawMetricValues.push(scope)
+      rawMetricWhere.push(`item.entity_type = $${rawMetricValues.length}`)
+    }
+
+    const metricResult = await db.query<FeishuSyncedDataMetricsRow>(
+      `WITH ranked_runs AS (
+        SELECT
+          run.sync_item_id,
+          run.fetched_count,
+          run.diagnostics_json,
+          ROW_NUMBER() OVER (
+            PARTITION BY run.sync_item_id
+            ORDER BY run.started_at DESC, run.created_at DESC, run.id DESC
+          ) AS row_number
+        FROM feishu_bitable_sync_item_runs run
+        JOIN feishu_bitable_sync_items item ON item.id = run.sync_item_id
+        ${rawMetricWhere.length ? `WHERE ${rawMetricWhere.join(' AND ')}` : ''}
+      ),
+      latest_runs AS (
+        SELECT
+          sync_item_id,
+          fetched_count,
+          diagnostics_json
+        FROM ranked_runs
+        WHERE row_number = 1
+      )
+      SELECT
+        COALESCE(SUM(
+          CASE
+            WHEN COALESCE(latest_runs.diagnostics_json ->> 'sourceFetchedCount', '') ~ '^[0-9]+$'
+              THEN (latest_runs.diagnostics_json ->> 'sourceFetchedCount')::INTEGER
+            ELSE COALESCE(latest_runs.fetched_count, 0)
+          END
+        ), 0)::INTEGER AS latest_run_source_row_total,
+        COALESCE(SUM(
+          CASE
+            WHEN COALESCE(latest_runs.diagnostics_json ->> 'autoSyncFilteredCount', '') ~ '^[0-9]+$'
+              THEN (latest_runs.diagnostics_json ->> 'autoSyncFilteredCount')::INTEGER
+            ELSE 0
+          END
+        ), 0)::INTEGER AS latest_run_auto_filtered_total,
+        COALESCE(SUM(
+          CASE
+            WHEN COALESCE(latest_runs.diagnostics_json ->> 'businessSkippedCount', '') ~ '^[0-9]+$'
+              THEN (latest_runs.diagnostics_json ->> 'businessSkippedCount')::INTEGER
+            ELSE 0
+          END
+        ), 0)::INTEGER AS latest_run_business_skipped_total,
+        COALESCE(SUM(
+          CASE
+            WHEN COALESCE(latest_runs.diagnostics_json ->> 'sourceDuplicateExternalIdCount', '') ~ '^[0-9]+$'
+              THEN (latest_runs.diagnostics_json ->> 'sourceDuplicateExternalIdCount')::INTEGER
+            ELSE 0
+          END
+        ), 0)::INTEGER AS latest_run_duplicate_external_id_total
+      FROM latest_runs`,
+      rawMetricValues,
+    )
+    metrics = toFeishuSyncedDataMetrics(metricResult.rows[0], total)
+  }
+
+  const rawMetricNotice = rawMetricAvailable
+    ? '下方列表展示的是当前仍然可见的有效业务实体；最近运行源行数按“各同步项最近一次运行”聚合，规则过滤、业务跳过和重复 externalId 折叠不会进入该列表。已发布版本会保留，但不会再和当前草稿/索引重复计数。'
+    : '当前列表仍按精确筛选结果展示，但“最近运行源行数”只支持按 syncId / syncItemId / scope 这类同步级筛选聚合；检测到关键词、externalId 或 recordId 细粒度筛选，已隐藏该指标。'
+
+  return {
+    items: result.rows.map(toSyncedDataRecord),
+    total,
+    page,
+    pageSize,
+    metrics,
+    rawMetricAvailable,
+    rawMetricNotice,
+  }
+}
+
+export async function listFeishuSyncedDataSyncItemOptions(
+  db: Queryable,
+  input: {
+    syncId?: string
+  } = {},
+): Promise<FeishuSyncedDataSyncItemOption[]> {
+  const syncId = toText(input.syncId)
+  const result = await db.query<{
+    sync_item_id: string
+    sync_item_name: string
+    sync_id: string | null
+    sync_name: string | null
+    entity_type: FeishuBitableSyncItemEntityType
+  }>(
+    `SELECT
+      item.id AS sync_item_id,
+      item.name AS sync_item_name,
+      sync.id AS sync_id,
+      sync.name AS sync_name,
+      item.entity_type
+     FROM feishu_bitable_sync_items item
+     LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+     WHERE ($1::TEXT = '' OR item.sync_id = $1)
+     ORDER BY sync.name ASC NULLS LAST, item.name ASC, item.updated_at DESC`,
+    [syncId],
+  )
+
+  return result.rows.map(row => ({
+    id: toText(row.sync_item_id),
+    name: toText(row.sync_item_name),
+    syncId: toText(row.sync_id),
+    syncName: toText(row.sync_name),
+    entityType: row.entity_type,
+  }))
+}
+
 export async function upsertFeishuExternalRef(
   db: Queryable,
   input: {
@@ -2541,6 +3773,47 @@ export async function upsertFeishuExternalRef(
       JSON.stringify(parseJsonObject(input.metadata)),
     ],
   )
+}
+
+export async function deleteFeishuExternalRefsByExternalIds(
+  db: Queryable,
+  input: {
+    scope: FeishuBitableSyncItemEntityType
+    syncItemId?: string | null
+    externalIds: string[]
+  },
+): Promise<number> {
+  const externalIds = [...new Set(input.externalIds.map(item => toText(item)).filter(Boolean))]
+  if (externalIds.length === 0)
+    return 0
+
+  const syncItemId = toText(input.syncItemId)
+  const result = syncItemId
+    ? await db.query<{ deleted_count: string }>(
+        `WITH deleted AS (
+          DELETE FROM feishu_external_refs
+          WHERE provider = 'feishu_bitable'
+            AND scope = $1
+            AND sync_item_id = $2
+            AND external_id = ANY($3::TEXT[])
+          RETURNING 1
+        )
+        SELECT COUNT(*)::TEXT AS deleted_count FROM deleted`,
+        [input.scope, syncItemId, externalIds],
+      )
+    : await db.query<{ deleted_count: string }>(
+        `WITH deleted AS (
+          DELETE FROM feishu_external_refs
+          WHERE provider = 'feishu_bitable'
+            AND scope = $1
+            AND external_id = ANY($2::TEXT[])
+          RETURNING 1
+        )
+        SELECT COUNT(*)::TEXT AS deleted_count FROM deleted`,
+        [input.scope, externalIds],
+      )
+
+  return Math.max(0, Number(result.rows[0]?.deleted_count || 0) || 0)
 }
 
 export function buildDefaultReconcileResult(input: {
@@ -2593,14 +3866,29 @@ export async function upsertFeishuSyncIssue(
     ON CONFLICT (sync_item_id, record_id, external_id)
     DO UPDATE SET
       entity_type = EXCLUDED.entity_type,
-      status = 'open',
+      status = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.status
+        ELSE 'open'
+      END,
       reason_code = EXCLUDED.reason_code,
       message = EXCLUDED.message,
       payload = EXCLUDED.payload,
-      resolution = '',
-      resolution_payload = '{}'::JSONB,
-      resolved_by_user_id = NULL,
-      resolved_at = NULL,
+      resolution = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.resolution
+        ELSE ''
+      END,
+      resolution_payload = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.resolution_payload
+        ELSE '{}'::JSONB
+      END,
+      resolved_by_user_id = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.resolved_by_user_id
+        ELSE NULL
+      END,
+      resolved_at = CASE
+        WHEN feishu_sync_issues.status = 'ignored' THEN feishu_sync_issues.resolved_at
+        ELSE NULL
+      END,
       updated_at = NOW()
     RETURNING
       id,
@@ -2633,11 +3921,57 @@ export async function upsertFeishuSyncIssue(
   return toIssue(result.rows[0]!)
 }
 
+export async function autoResolveFeishuSyncIssueByRecord(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    recordId: string
+    externalId: string
+    resolutionPayload?: Record<string, unknown>
+  },
+): Promise<number> {
+  const syncItemId = toText(input.syncItemId)
+  const recordId = toText(input.recordId)
+  const externalId = toText(input.externalId)
+  if (!syncItemId || !recordId || !externalId)
+    return 0
+
+  const result = await db.query<{ resolved_count: string }>(
+    `WITH updated AS (
+      UPDATE feishu_sync_issues
+      SET
+        status = 'resolved',
+        resolution = 'auto_recovered',
+        resolution_payload = $5::JSONB,
+        resolved_by_user_id = $1,
+        resolved_at = NOW(),
+        updated_at = NOW()
+      WHERE sync_item_id = $2
+        AND record_id = $3
+        AND external_id = $4
+        AND status = 'open'
+      RETURNING 1
+    )
+    SELECT COUNT(*)::TEXT AS resolved_count FROM updated`,
+    [
+      input.actorUserId,
+      syncItemId,
+      recordId,
+      externalId,
+      JSON.stringify(parseJsonObject(input.resolutionPayload)),
+    ],
+  )
+
+  return Math.max(0, Number(result.rows[0]?.resolved_count || 0) || 0)
+}
+
 export async function listFeishuSyncIssues(
   db: Queryable,
   input: {
     syncItemId?: string
     status?: FeishuSyncIssueStatus
+    reasonCode?: string
     limit?: number
   } = {},
 ): Promise<FeishuSyncIssue[]> {
@@ -2651,6 +3985,11 @@ export async function listFeishuSyncIssues(
   if (input.status) {
     values.push(input.status)
     where.push(`status = $${values.length}`)
+  }
+  const reasonCode = toText(input.reasonCode)
+  if (reasonCode) {
+    values.push(reasonCode)
+    where.push(`reason_code = $${values.length}`)
   }
   const limit = Math.max(1, Math.min(500, Number(input.limit || 100)))
   values.push(limit)
@@ -2729,6 +4068,60 @@ export async function resolveFeishuSyncIssue(
   return row ? toIssue(row) : null
 }
 
+export async function resolveFeishuSyncIssuesByFilter(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    status?: FeishuSyncIssueStatus
+    reasonCode?: string
+    resolution: FeishuSyncIssueResolution
+    resolutionPayload?: Record<string, unknown>
+  },
+): Promise<number> {
+  const syncItemId = toText(input.syncItemId)
+  if (!syncItemId)
+    return 0
+
+  const status = input.status || 'open'
+  const reasonCode = toText(input.reasonCode)
+  const values: unknown[] = [
+    input.actorUserId,
+    syncItemId,
+    input.resolution,
+    JSON.stringify(parseJsonObject(input.resolutionPayload)),
+    status,
+  ]
+  const where = [
+    'sync_item_id = $2',
+    'status = $5',
+  ]
+
+  if (reasonCode) {
+    values.push(reasonCode)
+    where.push(`reason_code = $${values.length}`)
+  }
+
+  const result = await db.query<{ affected_count: string }>(
+    `WITH updated AS (
+      UPDATE feishu_sync_issues
+      SET
+        status = CASE WHEN $3 = 'ignored' THEN 'ignored' ELSE 'resolved' END,
+        resolution = $3,
+        resolution_payload = $4::JSONB,
+        resolved_by_user_id = $1,
+        resolved_at = NOW(),
+        updated_at = NOW()
+      WHERE ${where.join(' AND ')}
+      RETURNING 1
+    )
+    SELECT COUNT(*)::TEXT AS affected_count FROM updated`,
+    values,
+  )
+
+  return Math.max(0, Number(result.rows[0]?.affected_count || 0) || 0)
+}
+
 export async function listActiveFeishuBitableSyncItemsBySource(
   db: Queryable,
   input: {
@@ -2754,6 +4147,7 @@ export async function listActiveFeishuBitableSyncItemsBySource(
       t.view_id,
       t.source_json,
       t.writeback_json,
+      t.auto_sync_json,
       t.is_enabled,
       t.mapping_json,
       t.options_json,

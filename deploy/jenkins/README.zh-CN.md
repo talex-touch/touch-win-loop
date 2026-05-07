@@ -67,6 +67,9 @@ Jenkins 容器只需要具备以下能力：
 - `.env.runtime`
 - `storage/`
 
+Jenkins 主链路在部署时还会把仓库里的 `scripts/migrations/*.sql` 一并同步到远端临时工作区，并在 `pull` 成功后、`up -d` 之前按文件名字典序执行。
+迁移执行状态会记录到目标库的 `migrations_meta`，已执行过的 SQL 会自动跳过。
+
 建议初始化命令：
 
 ```bash
@@ -81,6 +84,7 @@ chmod +x "deploy/jenkins/init-target-layout.sh"
 ```dotenv
 COMPOSE_PROJECT_NAME=touch-win-loop-staging
 SERVICE_NAME=winloop
+DOCKER_EXTERNAL_NETWORK=1panel-network
 RUNTIME_ENV_FILE=.env.runtime
 HEALTHCHECK_URL=http://127.0.0.1:3511/api/health
 HEALTHCHECK_ATTEMPTS=20
@@ -89,15 +93,34 @@ ROLLBACK_ON_FAILURE=true
 FORCE_RECREATE=true
 APP_BIND_IP=127.0.0.1
 APP_HOST_PORT=3511
-STORAGE_HOST_DIR=./storage
+DB_MIGRATION_DIR=
+DB_MIGRATION_FILES=
+DB_MIGRATION_CLIENT_IMAGE=postgres:18-alpine
+DB_MIGRATION_NETWORK=1panel-network
+MEETING_STACK_ENABLED=true
+MEETING_EGRESS_ENABLED=false
+MEETING_LIVEKIT_HTTP_PORT=17880
+MEETING_LIVEKIT_TCP_PORT=17881
+MEETING_LIVEKIT_RTC_UDP_RANGE=51000-51100
 ```
+
+其中：
+
+- `DOCKER_EXTERNAL_NETWORK` 用于指定应用容器加入的外部 Docker 网络，默认建议填 `1panel-network`
+- 如果 PostgreSQL / Redis / PgBouncer 通过容器名互联，应用必须与这些基础容器处于同一个外部网络
+- `DB_MIGRATION_*` 为可选项；默认会自动发现远端工作区里的 `scripts/migrations/*.sql`
+- 迁移不会参与自动回滚，因此所有上线 SQL 必须保持向后兼容或显式幂等
+- `MEETING_STACK_ENABLED=true` 时，标准 staging 部署会同时启动 LiveKit、meeting Redis、Prometheus、node-exporter、cAdvisor
+- 启用内置会议栈时，部署脚本会把 LiveKit 与 Prometheus 默认连接信息同步到系统配置 `platform_meeting_runtime_overrides.v1`
+- `MEETING_EGRESS_ENABLED=false` 是首轮默认值；录制压测阶段再打开 Egress profile
+- LiveKit 默认暴露宿主 `17880/tcp`、`17881/tcp`、`51000-51100/udp`，容器内 HTTP 仍为 `livekit:7880`；staging 旧默认 `7880/tcp`、`7881/tcp`、`50000-50100/udp` 会在部署时自动迁移到新默认，避免和宿主现有 LiveKit 冲突
+- Prometheus 默认不发布宿主端口，仅通过容器网络 `meeting-prometheus:9090` 访问
 
 production 只需要改成独立的：
 
 - `COMPOSE_PROJECT_NAME`
 - `HEALTHCHECK_URL`
 - `APP_HOST_PORT`
-- `STORAGE_HOST_DIR`（如需额外隔离可改）
 
 ## 3）.env.runtime 约定
 
@@ -109,8 +132,13 @@ production 只需要改成独立的：
 - `WINLOOP_PUBLIC_BASE_URL`
 - `WINLOOP_API_BASE_URL`
 - `WINLOOP_ONLYOFFICE_ENDPOINT` / `WINLOOP_ONLYOFFICE_JWT_SECRET`（如果启用再配）
+- `WINLOOP_SENTRY_DSN` / `WINLOOP_SENTRY_ENVIRONMENT`（如果启用 Sentry 再配）
 
+`WINLOOP_PUBLIC_BASE_URL` 是 Jenkins 发布通知里“环境访问 / 访问地址”的唯一来源，staging 与 production 必须分别配置为真实可访问的公网地址。未配置时不影响发布，但飞书通知不会展示访问地址。
+
+会议 RTC / ASR / worker / monitoring 配置属于系统配置，不再允许通过 `.env.runtime` 的 `WINLOOP_MEETING_*` 变量维护。标准 staging 内置会议栈会在部署时写入 `platform_meeting_runtime_overrides.v1`；手工调整请进入后台 `/admin/meeting-providers`。
 资源回收 worker 参数已改为后台 UI 管理，不再通过 `.env.runtime` 配置。
+Sentry 未配置时应用仍可正常运行，只是不启用错误上报。
 
 必须保证 staging 与 production：
 
@@ -118,6 +146,7 @@ production 只需要改成独立的：
 - 使用不同 Redis DB/index
 - 使用不同域名或端口
 - 不共享同一份 `.env.runtime`
+- `WINLOOP_SENTRY_ENVIRONMENT` 分别显式设置为 `staging` / `production`
 
 ## 4）Jenkins Job 创建
 
@@ -142,6 +171,7 @@ production 只需要改成独立的：
    - `IMAGE_REF`
    - `TRIGGERED_BY`
    - `WORKFLOW_RUN_URL`
+   - `COMMIT_CHANGES`（可选兜底，默认留空；Jenkins 会优先基于上次成功发布 commit 自动生成）
 4. Pipeline script 使用以下模板：
    - staging：`deploy/jenkins/job-bootstrap.groovy`
    - production：`deploy/jenkins/job-bootstrap-production.groovy`
@@ -183,13 +213,27 @@ feishuWebhookSecretCredentialsId: 'jenkins-feishu-webhook-secret',
 
 如果飞书机器人没有开启签名校验，只保留第一行即可。
 
+通知由 `pipeline.groovy` 内置 stage 控制：
+
+- `Notify Feishu Start`：参数校验通过后立即发送开始通知。
+- `Notify Feishu`：发布结束后发送成功 / 失败通知，即使部署失败也会尽力发送。
+
 通知内容会包含：
 
-- 部署结果（成功 / 失败）
+- 部署结果（开始 / 成功 / 失败）
 - 环境、分支、版本、Commit、镜像摘要
+- 当前环境访问地址（来自 `.env.runtime` 的 `WINLOOP_PUBLIC_BASE_URL`）
+- 本次发布 commit changes 列表
 - GitHub Actions 运行链接
 - Jenkins 构建链接
-- 失败阶段、失败信息、是否触发回滚
+- 流程阶段或失败阶段、失败信息、是否触发回滚
+
+commit changes 的生成规则：
+
+- 优先读取目标环境目录下 `last-successful-deployment.json` 的 `buildCommitSha`。
+- 结束通知使用 `git log <previous>..<current> --format='- %h %s (%an)' --no-merges` 生成，最多展示 20 条。
+- 首次发布、上次 commit 不可解析或生成失败时，降级为当前发布 commit 的一条摘要。
+- 只有健康检查成功的发布才会更新 `last-successful-deployment.json`；失败、回滚不会更新，避免污染下一次 changes 范围。
 
 ## 5）GitHub Secrets
 
@@ -200,6 +244,12 @@ feishuWebhookSecretCredentialsId: 'jenkins-feishu-webhook-secret',
 - `JENKINS_API_TOKEN`
 - `JENKINS_JOB_STAGING`
 - `JENKINS_JOB_PRODUCTION`
+
+如需在镜像构建阶段自动上传 Sentry source map，还需要补充：
+
+- `SENTRY_AUTH_TOKEN`
+- `WINLOOP_SENTRY_ORG`
+- `WINLOOP_SENTRY_PROJECT`
 
 Actions 会按分支调用不同 Job：
 
@@ -215,7 +265,92 @@ Actions 会按分支调用不同 Job：
 - `CI` 必须是 required check
 - `WinLoop Image Publish` 必须是 required check
 
-## 7）手工兜底
+## 7）Sentry staging 验收
+
+在对外宣称 “Sentry 接入完成” 之前，至少完成一次 staging 验收。建议按下面顺序执行：
+
+1. 先做仓库侧自检：
+
+```bash
+pnpm run sentry:doctor --mode production
+pnpm run build
+pnpm run ci:smoke
+```
+
+2. 若构建日志仍出现以下 warning：
+
+```text
+[sentry] Source map upload disabled because required build-time env is missing: ...
+```
+
+先检查 GitHub Actions 可见范围内是否已经提供：
+
+- `SENTRY_AUTH_TOKEN`
+- `WINLOOP_SENTRY_ORG`
+- `WINLOOP_SENTRY_PROJECT`
+
+如果这些 secret 已经存在，但日志仍提示 `SENTRY_AUTH_TOKEN` 缺失，再检查 workflow 是否仍在使用无效写法 `id=sentry_auth_token,env=SENTRY_AUTH_TOKEN`。当前仓库已改为 `docker/build-push-action@v7` 官方支持的 `secrets` 传法。
+
+3. 浏览器异常验收：
+
+- 打开 staging 任意前端页面，在浏览器控制台执行：
+
+```js
+setTimeout(() => {
+  throw new Error('winloop sentry browser smoke')
+}, 0)
+```
+
+- 在 Sentry 中确认：
+  - issue 已入库
+  - `environment=staging`
+  - `release` 与镜像 build version 对齐
+  - 前端堆栈可反解，不再是压缩产物位置
+
+4. Nitro 500 验收：
+
+- 直接调用 staging 内部验证接口：
+
+```bash
+curl -X POST "https://<staging-host>/api/admin/sentry/smoke" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: <your-session-cookie>" \
+  --data '{"target":"nitro"}' \
+  -i
+```
+
+- 该接口仅在 `WINLOOP_SENTRY_ENVIRONMENT=staging` 且当前用户具备 `contest.read_internal` 时可用。
+- 记录响应头里的 `x-trace-id`，在 Sentry 中按该 trace/message 搜索对应事件。
+- 预期 HTTP 状态为 `500`；如果返回 `404`，说明当前环境并非 `staging`；如果返回 `412`，说明服务端 Sentry SDK 还没初始化。
+- 在 Sentry 中确认：
+  - 服务端异常已入库
+  - 同一条请求链路可与前端 trace 串联
+
+5. 后台任务 / worker 验收：
+
+- 直接调用 staging 内部验证接口：
+
+```bash
+curl -X POST "https://<staging-host>/api/admin/sentry/smoke" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: <your-session-cookie>" \
+  --data '{"target":"worker"}'
+```
+
+- 返回体会携带 `traceId`，可用它在 Sentry 中定位对应 worker 事件。
+- 返回体里的 `release` / `environment` 应与 staging 当前配置一致。
+- 该路径内部只附加 `module`、`taskId`、`traceId` 和 build 信息，不带 cookie、token、Authorization、secret。
+- 预期 HTTP 状态为 `200`；如果返回 `404`，说明当前环境并非 `staging`；如果返回 `412`，说明服务端 Sentry SDK 还没初始化。
+- 在 Sentry 中确认：
+  - worker 异常已入库
+  - 事件上下文未出现敏感字段明文
+
+6. 运维收尾：
+
+- 配置 production 高优先级未处理异常告警
+- 根据业务预期补 ignore / discard 规则，过滤业务性 4xx 噪音
+
+## 8）手工兜底
 
 自动链路和手工链路统一走同一脚本：
 

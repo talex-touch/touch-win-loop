@@ -1,9 +1,7 @@
-import { setResponseStatus } from 'h3'
-import { fail, ok } from '~~/server/utils/api'
+import { defineApiHandler } from '~~/server/utils/api-handler'
 import { requireAuth } from '~~/server/utils/auth'
 import { createBillingPlan } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 interface CreatePlanBody {
@@ -16,36 +14,18 @@ interface CreatePlanBody {
   isActive?: boolean
 }
 
-export default defineEventHandler(async (event) => {
-  const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+export default defineApiHandler(async ({ event, fail, ok }) => {
   const { user } = await requireAuth(event)
   const body = await readBody<CreatePlanBody>(event)
 
   const canWritePricing = await checkPlatformPermission(event, user, 'pricing.write')
-  if (!canWritePricing) {
-    setResponseStatus(event, 403)
-    return fail('当前用户无权新增套餐。', {
-      startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 40385)
-  }
+  if (!canWritePricing)
+    return fail('当前用户无权新增套餐。', 40385, { status: 403 })
 
   const code = String(body?.code || '').trim()
   const name = String(body?.name || '').trim()
-  if (!code || !name) {
-    setResponseStatus(event, 400)
-    return fail('code 和 name 不能为空。', {
-      startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 40084)
-  }
+  if (!code || !name)
+    return fail('code 和 name 不能为空。', 40084, { status: 400 })
 
   const plan = await withTransaction(event, async (db) => {
     return createBillingPlan(db, {
@@ -59,11 +39,5 @@ export default defineEventHandler(async (event) => {
     })
   })
 
-  return ok(plan, {
-    startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
-    fallbackUsed: false,
-    attempts: 1,
-  })
+  return ok(plan)
 })

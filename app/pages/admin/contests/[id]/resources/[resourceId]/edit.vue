@@ -8,6 +8,12 @@ import type {
   ResourceDocumentTask,
   ResourceStatus,
 } from '~~/shared/types/domain'
+import {
+  adminResourceCategoryOptions,
+  isAdminResourceAvailability,
+  isAdminResourceCategory,
+  isAdminResourceStatus,
+} from '~/utils/admin-resource-form'
 
 definePageMeta({
   layout: 'admin',
@@ -15,48 +21,7 @@ definePageMeta({
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const route = useRoute()
-
-const categoryOptions: Array<{ value: ResourceCategory, label: string }> = [
-  { value: 'basic_info', label: '基本信息' },
-  { value: 'timeline', label: '时间轴' },
-  { value: 'tracks', label: '赛道设置' },
-  { value: 'scoring', label: '评分标准' },
-  { value: 'past_questions', label: '往届真题' },
-  { value: 'awarded_works', label: '获奖作品' },
-  { value: 'templates', label: '模板资料' },
-  { value: 'faq', label: 'FAQ' },
-  { value: 'judge_guidelines', label: '评委细则' },
-  { value: 'track_details', label: '赛道详解' },
-  { value: 'ai_prompts', label: 'AI 提示词' },
-  { value: 'submission_examples', label: '材料示例' },
-  { value: 'policy_notice', label: '政策通知' },
-  { value: 'compliance', label: '合规与版权' },
-]
-
-const contestId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.id
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const resourceId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.resourceId
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-const isEmbedMode = computed(() => {
-  const value = route.query.embed
-  if (Array.isArray(value))
-    return value[0] === '1'
-  return value === '1'
-})
-
-function withEmbed(path: string): string | { path: string, query: { embed: string } } {
-  if (isEmbedMode.value)
-    return { path, query: { embed: '1' } }
-  return path
-}
+const { contestId, resourceId, withEmbed } = useAdminContestRoute()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -125,16 +90,16 @@ function applyAiDraft() {
   const payload = moduleDraft.value?.payload || {}
 
   const category = String(payload.category || '').trim()
-  if (categoryOptions.some(item => item.value === category))
-    form.category = category as ResourceCategory
+  if (isAdminResourceCategory(category))
+    form.category = category
 
   const accessLevel = String(payload.accessLevel || '').trim()
-  if (accessLevel === 'public' || accessLevel === 'login_required' || accessLevel === 'unavailable')
-    form.accessLevel = accessLevel as ResourceAvailability
+  if (isAdminResourceAvailability(accessLevel))
+    form.accessLevel = accessLevel
 
   const status = String(payload.status || '').trim()
-  if (status === 'active' || status === 'pending_verify' || status === 'invalid' || status === 'archived')
-    form.status = status as ResourceStatus
+  if (isAdminResourceStatus(status))
+    form.status = status
 
   form.title = String(payload.title || '')
   form.year = Number(payload.year || new Date().getFullYear())
@@ -160,8 +125,8 @@ async function loadResource() {
   errorText.value = ''
   try {
     const [resourceResponse, docResponse] = await Promise.all([
-      $fetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`)),
-      $fetch<ApiResponse<(ResourceDocument & {
+      unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`)),
+      unsafeFetch<ApiResponse<(ResourceDocument & {
         latestTask: ResourceDocumentTask | null
         previewUrl: string
       })>>(endpoint(`/admin/contests/${contestId.value}/resources/${resourceId.value}/document`)).catch(() => null),
@@ -209,7 +174,7 @@ async function save() {
   errorText.value = ''
   try {
     const metadata = parseMetadataText(form.metadataText)
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/resources`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/resources`), {
       method: 'PATCH',
       body: {
         resourceId: resourceId.value,
@@ -242,7 +207,7 @@ async function reparse() {
   reparseLoading.value = true
   errorText.value = ''
   try {
-    await $fetch(endpoint(`/admin/documents/${documentInfo.value.id}/reparse`), {
+    await unsafeFetch(endpoint(`/admin/documents/${documentInfo.value.id}/reparse`), {
       method: 'POST',
     })
     await loadResource()
@@ -259,150 +224,36 @@ onMounted(loadResource)
 </script>
 
 <template>
-  <div class="space-y-4">
-    <section class="p-4 border border-slate-200 rounded-lg bg-white">
-      <div class="flex flex-wrap gap-2 items-center justify-between">
-        <div>
-          <h1 class="text-lg text-slate-900 font-semibold">
-            编辑资料
-          </h1>
-          <p class="text-xs text-slate-500 mt-1">
-            resource_id：{{ resourceId }}
-          </p>
-        </div>
+  <PageShell size="compact">
+    <PageHeader title="编辑资料" :meta="`resource_id：${resourceId}`">
+      <template #actions>
         <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/resources`)">
           返回资料列表
         </NuxtLink>
-      </div>
-    </section>
+      </template>
+    </PageHeader>
 
-    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
-      <a-skeleton :animation="true">
-        <a-skeleton-line :rows="6" />
-      </a-skeleton>
-    </section>
-
-    <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
-      <div v-if="moduleDraft" class="text-xs text-emerald-700 mb-4 p-3 border border-emerald-200 rounded bg-emerald-50">
-        <p class="font-semibold">
-          检测到 AI 草稿：{{ moduleDraft.title || '资料草稿' }}
-        </p>
-        <p class="mt-1">
-          更新时间：{{ draftUpdatedAt }}。应用后仍需手动保存。
-        </p>
-        <div class="mt-2 flex gap-2 items-center">
-          <a-button size="mini" type="outline" @click="applyAiDraft">
-            应用到表单
-          </a-button>
-          <a-button size="mini" status="danger" @click="clearAiDraft">
-            清除草稿
-          </a-button>
-        </div>
-      </div>
-
-      <div
-        v-if="documentInfo"
-        class="text-xs text-slate-700 mb-4 p-3 border border-slate-200 rounded-lg bg-slate-50"
-      >
-        <div class="flex flex-wrap gap-2 items-center justify-between">
-          <div class="space-y-1">
-            <p>文档状态：<span class="font-semibold">{{ documentInfo.parseStatus }}</span></p>
-            <p>页数：{{ documentInfo.pageCount || '-' }}；解析模型：{{ documentInfo.parserProvider || '-' }} / {{ documentInfo.parserModel || '-' }}</p>
-            <p v-if="documentInfo.parseError" class="text-rose-600">
-              错误：{{ documentInfo.parseError }}
-            </p>
-          </div>
-          <div class="flex gap-2 items-center">
-            <a
-              :href="documentInfo.previewUrl"
-              target="_blank"
-              class="dense-btn"
-            >
-              预览 PDF
-            </a>
-            <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/resources/${resourceId}/annotate`)">
-              标注编辑
-            </NuxtLink>
-            <a-button size="small" :loading="reparseLoading" @click="reparse">
-              {{ reparseLoading ? '提交中...' : '重试解析' }}
-            </a-button>
-          </div>
-        </div>
-      </div>
-
-      <div class="gap-2 grid md:grid-cols-3">
-        <a-select v-model="form.category" size="small" placeholder="分类">
-          <a-option v-for="item in categoryOptions" :key="item.value" :value="item.value">
-            {{ item.label }}
-          </a-option>
-        </a-select>
-        <a-input v-model="form.title" size="small" placeholder="标题" />
-        <a-input-number v-model="form.year" size="small" :min="2000" :max="2100" placeholder="年份" />
-        <a-input v-model="form.url" size="small" class="md:col-span-3" placeholder="链接 URL" />
-        <a-select v-model="form.accessLevel" size="small" placeholder="可访问性">
-          <a-option value="public">
-            public
-          </a-option>
-          <a-option value="login_required">
-            login_required
-          </a-option>
-          <a-option value="unavailable">
-            unavailable
-          </a-option>
-        </a-select>
-        <a-input v-model="form.sourceType" size="small" placeholder="来源类型（如 official）" />
-        <a-select v-model="form.status" size="small" placeholder="状态">
-          <a-option value="active">
-            active
-          </a-option>
-          <a-option value="pending_verify">
-            pending_verify
-          </a-option>
-          <a-option value="invalid">
-            invalid
-          </a-option>
-          <a-option value="archived">
-            archived
-          </a-option>
-        </a-select>
-      </div>
-
-      <a-textarea
-        v-model="form.summary"
-        class="mt-2"
-        :auto-size="{ minRows: 3, maxRows: 5 }"
-        placeholder="摘要"
-      />
-      <a-textarea
-        v-model="form.content"
-        class="mt-2"
-        :auto-size="{ minRows: 6, maxRows: 12 }"
-        placeholder="正文内容（内部知识条目可直接填写）"
-      />
-      <a-textarea
-        v-model="form.metadataText"
-        class="mt-2"
-        :auto-size="{ minRows: 4, maxRows: 8 }"
-        placeholder="metadata JSON（例如 AI 提示词目标、作用域、优先级）"
-      />
-      <a-textarea
-        v-model="form.copyrightNote"
-        class="mt-2"
-        :auto-size="{ minRows: 3, maxRows: 5 }"
-        placeholder="版权说明"
-      />
-
-      <a-button type="primary" size="small" class="mt-3" :loading="saving" @click="save">
-        {{ saving ? '保存中...' : '保存' }}
-      </a-button>
-    </section>
-
-    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
-      {{ errorText }}
-    </section>
-
-    <section v-if="draftText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
-      {{ draftText }}
-    </section>
-  </div>
+    <AdminResourceForm
+      :form="form"
+      :category-options="adminResourceCategoryOptions"
+      :loading="loading"
+      :saving="saving"
+      :error-text="errorText"
+      :draft-text="draftText"
+      :draft-title="moduleDraft?.title || (moduleDraft ? '资料草稿' : '')"
+      :draft-updated-at="draftUpdatedAt"
+      :document-info="documentInfo"
+      :reparse-loading="reparseLoading"
+      @submit="save"
+      @apply-draft="applyAiDraft"
+      @clear-draft="clearAiDraft"
+      @reparse="reparse"
+    >
+      <template #documentActions>
+        <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/resources/${resourceId}/annotate`)">
+          标注编辑
+        </NuxtLink>
+      </template>
+    </AdminResourceForm>
+  </PageShell>
 </template>

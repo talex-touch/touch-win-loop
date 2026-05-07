@@ -1,5 +1,6 @@
 import type { ApiResponse, ApiResponseMeta } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
+import { UNCONFIGURED_RUNTIME_MARKER } from '~~/server/utils/ai-runtime'
 
 interface MetaPayload {
   startedAt: number
@@ -17,8 +18,8 @@ export function createTraceId(): string {
 export function buildMeta(payload: MetaPayload): ApiResponseMeta {
   return {
     traceId: payload.traceId ?? createTraceId(),
-    provider: payload.provider ?? 'mock',
-    model: payload.model ?? 'fallback',
+    provider: payload.provider ?? UNCONFIGURED_RUNTIME_MARKER,
+    model: payload.model ?? '',
     latencyMs: Date.now() - payload.startedAt,
     fallbackUsed: payload.fallbackUsed ?? false,
     attempts: payload.attempts ?? 1,

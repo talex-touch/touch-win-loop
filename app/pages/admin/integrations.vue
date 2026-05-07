@@ -2,9 +2,11 @@
 import type {
   ApiResponse,
   AuthMeResult,
+  CasdoorIntegrationConfig,
   FeishuIntegrationConfig,
   PlatformPermission,
 } from '~~/shared/types/domain'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'admin',
@@ -26,9 +28,57 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
+type ApiRequestError = Error & {
+  statusCode?: number
+  data?: {
+    message?: string
+    meta?: ApiResponse<null>['meta']
+  }
+}
+
+function createApiRequestError(message: string, statusCode = 0, payload: ApiResponse<unknown> | null = null): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.statusCode = statusCode
+  error.data = {
+    message,
+    ...(payload?.meta ? { meta: payload.meta } : {}),
+  }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage), response.status, payload)
+  return payload.data
+}
+
 const loadingPermissions = ref(true)
+const loadingCasdoorStatus = ref(false)
 const loadingFeishuStatus = ref(false)
 const permissions = ref<PlatformPermission[]>([])
+const casdoorEnabled = ref<boolean | null>(null)
 const feishuEnabled = ref<boolean | null>(null)
 
 const errorText = ref('')
@@ -37,17 +87,48 @@ const infoText = ref('')
 const canManageConfig = computed(() => permissions.value.includes('role.assign'))
 const canManageBitable = computed(() => permissions.value.includes('contest.write'))
 const canAccessPage = computed(() => canManageConfig.value || canManageBitable.value)
-const loadingAny = computed(() => loadingPermissions.value || loadingFeishuStatus.value)
+const loadingAny = computed(() => loadingPermissions.value || loadingFeishuStatus.value || loadingCasdoorStatus.value)
 const normalizedPath = computed(() => route.path.replace(/\/+$/, '') || '/')
 const isDirectoryRoute = computed(() => normalizedPath.value === '/admin/integrations')
+
+function isCasdoorConfigReady(config: CasdoorIntegrationConfig): boolean {
+  const hasProviderConfig = config.protocolMode === 'oauth2_manual'
+    ? Boolean(
+        config.authorizeEndpoint.trim()
+        && config.tokenEndpoint.trim()
+        && config.userinfoEndpoint.trim(),
+      )
+    : Boolean(config.issuer.trim())
+
+  return Boolean(
+    config.enabled
+    && hasProviderConfig
+    && config.clientId.trim()
+    && config.clientSecretConfigured
+    && config.redirectUri.trim(),
+  )
+}
 
 const integrationCards = computed<IntegrationCard[]>(() => {
   const feishuStatus = feishuEnabled.value === null
     ? (canManageConfig.value ? '状态未知' : '可进入')
     : (feishuEnabled.value ? '已启用' : '未启用')
   const feishuTone = feishuEnabled.value ? 'text-emerald-600' : 'text-slate-500'
+  const casdoorStatus = casdoorEnabled.value === null
+    ? (canManageConfig.value ? '状态未知' : '可进入')
+    : (casdoorEnabled.value ? '已就绪' : '未完成')
+  const casdoorTone = casdoorEnabled.value ? 'text-emerald-600' : 'text-slate-500'
 
   return [
+    {
+      key: 'casdoor',
+      name: 'OAuth / OIDC',
+      summary: '第三方单点登录、账号绑定、OIDC 参数托管',
+      status: casdoorStatus,
+      tone: casdoorTone,
+      clickAction: 'navigate',
+      path: '/admin/integrations/oauth',
+    },
     {
       key: 'feishu',
       name: '飞书',
@@ -92,12 +173,20 @@ function setInfo(message: string) {
 async function loadPermissions() {
   loadingPermissions.value = true
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
-    permissions.value = response.data.user.platformPermissions || []
+    const data = await requestApi<AuthMeResult>(endpoint('/auth/me'), {}, '权限加载失败，请先登录。')
+    permissions.value = data.user.platformPermissions || []
   }
   catch (error: any) {
+    const info = resolveAuthRequestErrorInfo(error)
     permissions.value = []
-    setError(String(error?.data?.message || '权限加载失败，请先登录。'))
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/admin/integrations') },
+      }, { replace: true })
+      return
+    }
+    setError(resolveAuthDisplayMessage(error, '权限加载失败，请稍后重试。'))
   }
   finally {
     loadingPermissions.value = false
@@ -112,8 +201,8 @@ async function loadFeishuStatus() {
 
   loadingFeishuStatus.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuIntegrationConfig>>(endpoint('/admin/integrations/feishu/config'))
-    feishuEnabled.value = Boolean(response.data.enabled)
+    const data = await requestApi<FeishuIntegrationConfig>(endpoint('/admin/integrations/feishu/config'), {}, '飞书状态加载失败。')
+    feishuEnabled.value = Boolean(data.enabled)
   }
   catch {
     feishuEnabled.value = null
@@ -123,12 +212,34 @@ async function loadFeishuStatus() {
   }
 }
 
+async function loadCasdoorStatus() {
+  if (!canManageConfig.value) {
+    casdoorEnabled.value = null
+    return
+  }
+
+  loadingCasdoorStatus.value = true
+  try {
+    const data = await requestApi<CasdoorIntegrationConfig>(endpoint('/admin/integrations/oauth/config'), {}, 'OAuth / OIDC 状态加载失败。')
+    casdoorEnabled.value = isCasdoorConfigReady(data)
+  }
+  catch {
+    casdoorEnabled.value = null
+  }
+  finally {
+    loadingCasdoorStatus.value = false
+  }
+}
+
 async function initializePage() {
   clearFeedback()
   await loadPermissions()
   if (!canAccessPage.value)
     return
-  await loadFeishuStatus()
+  await Promise.all([
+    loadCasdoorStatus(),
+    loadFeishuStatus(),
+  ])
 }
 
 async function openCard(card: IntegrationCard) {

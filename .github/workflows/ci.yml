@@ -13,25 +13,17 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CI_NODE_VERSION: '20'
 
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+
+      - uses: ./.github/actions/setup-pnpm
         with:
-          node-version: lts/*
-          package-manager-cache: false
-
-      - name: Enable Corepack (pnpm)
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.29.2 --activate
-          pnpm --version
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
+          node-version: ${{ env.CI_NODE_VERSION }}
 
       - name: Lint
         run: pnpm run lint
@@ -40,19 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+
+      - uses: ./.github/actions/setup-pnpm
         with:
-          node-version: lts/*
-          package-manager-cache: false
-
-      - name: Enable Corepack (pnpm)
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.29.2 --activate
-          pnpm --version
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
+          node-version: ${{ env.CI_NODE_VERSION }}
 
       - name: Typecheck
         run: pnpm run typecheck
@@ -60,27 +43,50 @@ jobs:
       - name: Project Visibility Guard
         run: pnpm run test:project-visibility
 
-  build_and_smoke:
+  test_unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.CI_NODE_VERSION }}
+
+      - name: Unit Tests
+        run: pnpm run test:unit
+
+  smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+
+      - uses: ./.github/actions/setup-pnpm
         with:
-          node-version: lts/*
-          package-manager-cache: false
-
-      - name: Enable Corepack (pnpm)
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.29.2 --activate
-          pnpm --version
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
+          node-version: ${{ env.CI_NODE_VERSION }}
 
       - name: Build
         run: pnpm run build
 
       - name: Smoke
         run: pnpm run ci:smoke
+
+  e2e_smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.CI_NODE_VERSION }}
+
+      - name: E2E Smoke
+        env:
+          WINLOOP_PG_URL: ${{ secrets.WINLOOP_PG_URL }}
+        run: |
+          if [ -z "$WINLOOP_PG_URL" ]; then
+            echo "WINLOOP_PG_URL 未配置，跳过 E2E smoke。"
+            exit 0
+          fi
+          pnpm run test:e2e

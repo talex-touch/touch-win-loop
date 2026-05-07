@@ -1,13 +1,20 @@
 <script setup lang="ts">
 const { endpoint } = useApiEndpoint()
-const { data } = await useFetch<{ pageview: number, startAt: number }>(endpoint('/pageview'))
+const pageviewData = ref<{ pageview: number, startAt: number } | null>(null)
+const pageviewUrl = import.meta.server
+  ? new URL(String(endpoint('/pageview')), useRequestURL()).toString()
+  : String(endpoint('/pageview'))
 
-const time = useTimeAgo(() => data.value?.startAt || 0)
+pageviewData.value = await fetch(pageviewUrl)
+  .then(response => response.json())
+  .catch(() => null) as { pageview: number, startAt: number } | null
+
+const time = useTimeAgo(() => pageviewData.value?.startAt || 0)
 </script>
 
 <template>
   <div text-gray:80>
-    <span text-gray font-500>{{ data?.pageview }}</span>
+    <span text-gray font-500>{{ pageviewData?.pageview }}</span>
     page views since
     <span text-gray>{{ time }}</span>
   </div>

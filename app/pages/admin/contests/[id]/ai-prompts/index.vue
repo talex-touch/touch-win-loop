@@ -101,12 +101,12 @@ async function loadData() {
   errorText.value = ''
   try {
     const [resourceRes, trackRes] = await Promise.all([
-      $fetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`), {
+      unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`), {
         query: {
           category: 'ai_prompts',
         },
       }),
-      $fetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
+      unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
     ])
     promptResources.value = resourceRes.data
     tracks.value = trackRes.data
@@ -163,7 +163,7 @@ async function save() {
 
   try {
     if (activeResourceId.value) {
-      await $fetch(endpoint(`/admin/contests/${contestId.value}/resources`), {
+      await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/resources`), {
         method: 'PATCH',
         body: {
           resourceId: activeResourceId.value,
@@ -172,7 +172,7 @@ async function save() {
       })
     }
     else {
-      await $fetch(endpoint(`/admin/contests/${contestId.value}/resources`), {
+      await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/resources`), {
         method: 'POST',
         body: payload,
       })

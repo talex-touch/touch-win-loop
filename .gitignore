@@ -9,8 +9,16 @@ dist
 .env.prod
 .env.local
 .idea/
+.serena/
+.spec-workflow/
+coverage/
 public/assets/fonts
 --port/
 tmp/document-storage/
+tmp/document-storage-*/
 .golutra/
 output/
+.playwright-mcp/
+docs.zip
+__pycache__/
+*.py[cod]

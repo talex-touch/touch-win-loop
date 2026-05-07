@@ -36,7 +36,7 @@ async function createContest() {
   saving.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Contest>>(endpoint('/admin/contests'), {
+    const response = await unsafeFetch<ApiResponse<Contest>>(endpoint('/admin/contests'), {
       method: 'POST',
       body: {
         name: form.name.trim(),

@@ -1,62 +1,32 @@
-import type { H3Event } from 'h3'
 import { createError, sendRedirect, setResponseStatus } from 'h3'
-import { buildFeishuAuthorizeUrl } from '~~/server/services/feishu/client'
+import { buildFeishuAuthorizeUrl, resolveFeishuOAuthRedirectUri } from '~~/server/services/feishu/client'
 import {
   issueFeishuOAuthState,
+  persistFeishuOAuthCallback,
   persistFeishuOAuthRedirect,
 } from '~~/server/services/feishu/security'
 import { fail } from '~~/server/utils/api'
+import { resolveServerRequestOrigin, warnIfPublicBaseHostMismatch } from '~~/server/utils/api-url'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readFeishuIntegrationConfig } from '~~/server/utils/feishu-integration-store'
-import { buildApiEndpoint, extractApiBasePathPrefix, isHttpUrl } from '~~/shared/utils/api-url'
 
 function sanitizeRedirectTarget(value: unknown): string {
   const redirect = String(value || '').trim()
   if (!redirect)
-    return '/dashboard'
+    return ''
   if (!redirect.startsWith('/') || redirect.startsWith('//'))
-    return '/dashboard'
+    return ''
   if (redirect.startsWith('/login'))
-    return '/dashboard'
+    return ''
   return redirect
 }
 
-function getFirstHeaderValue(rawValue: string | string[] | undefined): string {
-  const first = Array.isArray(rawValue) ? (rawValue[0] || '') : (rawValue || '')
-  return String(first).split(',')[0]?.trim() || ''
-}
-
-function resolveRequestOrigin(event: H3Event): string {
-  const req = event.node?.req
-  const forwardedProto = getFirstHeaderValue(req.headers['x-forwarded-proto'])
-  const forwardedHost = getFirstHeaderValue(req.headers['x-forwarded-host'])
-  const host = forwardedHost || getFirstHeaderValue(req.headers.host)
-  if (!host)
-    return ''
-
-  const socket = req.socket as { encrypted?: boolean } | undefined
-  const protocol = forwardedProto
-    ? forwardedProto.toLowerCase()
-    : (socket?.encrypted ? 'https' : 'http')
-  const normalizedProtocol = protocol === 'https' ? 'https' : 'http'
-  try {
-    return new URL(`${normalizedProtocol}://${host}`).origin
-  }
-  catch {
-    return ''
-  }
-}
-
-function resolveRuntimeOAuthRedirectUri(runtime: ReturnType<typeof readRuntimeSettings>): string {
-  const publicBaseUrl = String(runtime.onlyOffice.sourceBaseURL || '').trim()
-  if (!isHttpUrl(publicBaseUrl))
-    return ''
-
-  const apiBasePathPrefix = extractApiBasePathPrefix(runtime.apiBaseUrl) || '/'
-  const apiCallbackPath = buildApiEndpoint(apiBasePathPrefix, '/auth/feishu/callback')
-  const redirectUri = buildApiEndpoint(publicBaseUrl, apiCallbackPath)
-  return isHttpUrl(redirectUri) ? redirectUri : ''
+export function resolveRuntimeOAuthRedirectUri(runtime: ReturnType<typeof readRuntimeSettings>): string {
+  return resolveFeishuOAuthRedirectUri({
+    publicBaseUrl: runtime.onlyOffice.sourceBaseURL,
+    apiBaseUrl: runtime.apiBaseUrl,
+  })
 }
 
 export default defineEventHandler(async (event) => {
@@ -80,15 +50,22 @@ export default defineEventHandler(async (event) => {
 
   const state = issueFeishuOAuthState(event)
   const redirectTarget = sanitizeRedirectTarget(getQuery(event).redirect)
+  const redirectUri = config.oauthRedirectUri || resolveRuntimeOAuthRedirectUri(runtime)
   persistFeishuOAuthRedirect(event, redirectTarget)
+  persistFeishuOAuthCallback(event, redirectUri)
+  warnIfPublicBaseHostMismatch({
+    event,
+    publicBaseUrl: runtime.onlyOffice.sourceBaseURL,
+    context: 'auth.feishu.authorize',
+  })
 
   let authorizeUrl = ''
   try {
     authorizeUrl = buildFeishuAuthorizeUrl({
       config,
       state,
-      redirectUri: resolveRuntimeOAuthRedirectUri(runtime) || undefined,
-      requestOrigin: resolveRequestOrigin(event),
+      redirectUri: redirectUri || undefined,
+      requestOrigin: resolveServerRequestOrigin(event),
     })
   }
   catch (error) {

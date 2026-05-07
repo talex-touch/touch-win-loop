@@ -1,4 +1,5 @@
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { deleteObjectsAcrossStorageChannels } from '~~/server/storage/document-storage'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withTransaction } from '~~/server/utils/db'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import {
@@ -9,6 +10,7 @@ import {
   listUnreferencedUploadObjectKeys,
   purgeExpiredProjectResourcesFromRecycleBinGlobal,
 } from '~~/server/utils/project-resource-store'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const WORKER_RUNTIME_STATE_KEY = Symbol.for('winloop.project-resource-recycle-worker.runtime.v1')
 
@@ -46,6 +48,9 @@ function logWorkerError(stage: 'bootstrap' | 'tick', error: unknown): void {
     ? '[project-resource-recycle-worker] bootstrap failed:'
     : '[project-resource-recycle-worker] tick failed:'
   console.error(prefix, toErrorMessage(error))
+  captureServerException(error, {
+    module: 'project-resource-recycle-worker',
+  })
 }
 
 function ensureTickTimer(intervalMs: number): void {
@@ -95,8 +100,6 @@ async function runTick(): Promise<void> {
   let errorMessage = ''
 
   try {
-    const storage = getDocumentStorage()
-
     for (let round = 0; round < 5; round += 1) {
       const purged = await withTransaction(undefined, async (db) => {
         return purgeExpiredProjectResourcesFromRecycleBinGlobal(db, {
@@ -119,8 +122,8 @@ async function runTick(): Promise<void> {
         : []
 
       if (deletableObjectKeys.length > 0) {
-        const deleteResults = await Promise.allSettled(deletableObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
-        totalObjectDeleted += deleteResults.filter(item => item.status === 'fulfilled').length
+        await deleteObjectsAcrossStorageChannels(deletableObjectKeys, runtime)
+        totalObjectDeleted += deletableObjectKeys.length
       }
 
       if (purged.length < runtime.resourceRecycle.batchSize)
@@ -171,6 +174,9 @@ async function runTick(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const runtimeState = getWorkerRuntimeState()
   if (runtimeState.booted)
     return

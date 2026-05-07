@@ -1,5 +1,5 @@
 import { setResponseStatus } from 'h3'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { deleteObjectsAcrossStorageChannels } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient, withTransaction } from '~~/server/utils/db'
@@ -61,17 +61,14 @@ export default defineEventHandler(async (event) => {
 
     const uploadObjectKeys = [
       ...result.expiredPurged.filter(item => item.source === 'upload' && item.objectKey).map(item => item.objectKey),
-      ...(result.purged.source === 'upload' && result.purged.objectKey ? [result.purged.objectKey] : []),
+      ...result.purged.filter(item => item.source === 'upload' && item.objectKey).map(item => item.objectKey),
     ]
 
     const deletableObjectKeys = uploadObjectKeys.length > 0
       ? await withClient(event, async db => listUnreferencedUploadObjectKeys(db, uploadObjectKeys))
       : []
 
-    if (deletableObjectKeys.length > 0) {
-      const storage = getDocumentStorage()
-      await Promise.allSettled(deletableObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
-    }
+    await deleteObjectsAcrossStorageChannels(deletableObjectKeys, runtime).catch(() => undefined)
 
     await Promise.allSettled([
       emitRealtimeEvent({
@@ -86,7 +83,7 @@ export default defineEventHandler(async (event) => {
       }),
     ])
 
-    return ok({ resourceId: result.purged.resourceId }, {
+    return ok({ resourceId, purgedCount: result.purged.length }, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

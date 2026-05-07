@@ -1,4 +1,5 @@
 import type {
+  FeishuBitableAutoSyncConfig,
   FeishuBitableSourceConfig,
   FeishuBitableSyncItem,
   FeishuBitableSyncItemEntityType,
@@ -20,13 +21,18 @@ interface PatchItemBody {
   viewId?: string
   source?: FeishuBitableSourceConfig
   writeback?: FeishuBitableWritebackConfig
+  autoSync?: FeishuBitableAutoSyncConfig
   isEnabled?: boolean
   mapping?: Record<string, unknown>
   options?: Record<string, unknown>
   schedule?: Partial<FeishuTaskScheduleConfig>
 }
 
-const ENTITY_TYPES: FeishuBitableSyncItemEntityType[] = ['contest', 'track', 'resource']
+const ENTITY_TYPES: FeishuBitableSyncItemEntityType[] = ['contest', 'track', 'track_timeline', 'resource', 'policy', 'persona', 'faq']
+
+function toText(raw: unknown): string {
+  return String(raw || '').trim()
+}
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -59,6 +65,18 @@ export default defineEventHandler(async (event) => {
     }, 40159)
   }
 
+  const rawEntityType = toText(body.entityType)
+  if (rawEntityType && !ENTITY_TYPES.includes(body.entityType as FeishuBitableSyncItemEntityType)) {
+    setResponseStatus(event, 400)
+    return fail(`entityType 不支持：${rawEntityType}。`, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40160)
+  }
+
   const item = await withTransaction(event, async (db) => {
     return patchFeishuBitableSyncItem(db, {
       actorUserId: user.id,
@@ -73,6 +91,7 @@ export default defineEventHandler(async (event) => {
         viewId: body.viewId,
         source: body.source,
         writeback: body.writeback,
+        autoSync: body.autoSync,
         isEnabled: body.isEnabled,
         mapping: body.mapping,
         options: body.options,
@@ -87,7 +106,7 @@ export default defineEventHandler(async (event) => {
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40160)
+    }, 40161)
   })
 
   if (!item || 'code' in item) {

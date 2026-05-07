@@ -6,21 +6,33 @@ import type {
   FeishuAdminOverview,
   FeishuBitableSourceConfig,
   FeishuBitableSync,
+  FeishuBitableSyncConfigImportPreview,
+  FeishuBitableSyncConfigImportResult,
+  FeishuBitableSyncConfigPackage,
+  FeishuBitableSyncConfigPackageSummary,
+  FeishuBitableSyncConfigShare,
+  FeishuBitableSyncDetail,
   FeishuBitableSyncEnvironment,
+  FeishuBitableSyncItem,
+  FeishuBitableSyncItemDetail,
+  FeishuBitableSyncItemEntityType,
   FeishuBitableTableMeta,
   FeishuBitableViewMeta,
   FeishuChatCandidate,
   FeishuIntegrationConfig,
+  FeishuSyncIssue,
   PlatformPermission,
 } from '~~/shared/types/domain'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'admin',
 })
 
 type SecretMode = 'keep' | 'replace' | 'clear'
-type BuildValueSource = 'env' | 'runtime' | 'fallback' | 'missing'
+type BuildValueSource = 'env' | 'runtime' | 'missing'
 type CreateSyncSourceMode = 'url' | 'manual'
+type SyncConfigImportSourceType = 'url' | 'file'
 
 interface FeishuIntegrationConfigView extends FeishuIntegrationConfig {
   startupEffectiveVersion?: string
@@ -36,6 +48,54 @@ interface SourceViewsPayload {
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
+const route = useRoute()
+const router = useRouter()
+
+type ApiRequestError = Error & {
+  statusCode?: number
+  data?: {
+    message?: string
+    meta?: ApiResponse<null>['meta']
+  }
+}
+
+function createApiRequestError(message: string, statusCode = 0, payload: ApiResponse<unknown> | null = null): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.statusCode = statusCode
+  error.data = {
+    message,
+    ...(payload?.meta ? { meta: payload.meta } : {}),
+  }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage), response.status, payload)
+  return payload.data
+}
 
 const loadingPermissions = ref(true)
 const loadingConfig = ref(false)
@@ -50,16 +110,24 @@ const manualAddingKey = ref('')
 const syncToggleMutating = reactive<Record<string, boolean>>({})
 const archivingSyncMutating = reactive<Record<string, boolean>>({})
 const restoringSyncMutating = reactive<Record<string, boolean>>({})
+const syncConfigShareMutating = reactive<Record<string, boolean>>({})
+const syncItemToggleMutating = reactive<Record<string, boolean>>({})
+const issueActionMutating = reactive<Record<string, boolean>>({})
 
 const createSyncDrawerVisible = ref(false)
 const editSyncDrawerVisible = ref(false)
+const syncConfigImportDrawerVisible = ref(false)
+const syncConfigImportMenuVisible = ref(false)
+const syncActionMenuVisibleId = ref('')
 const createSourceMode = ref<CreateSyncSourceMode>('url')
 const configDialogVisible = ref(false)
 const editingSyncId = ref('')
+const editingSelectedItemId = ref('')
 const editingDraftTableId = ref('')
 const editingDraftViewId = ref('')
 const editingSyncIncludeArchived = ref(false)
 const showArchivedSyncs = ref(false)
+const expandedSyncKeys = ref<string[]>([])
 
 const errorText = ref('')
 const successText = ref('')
@@ -71,23 +139,55 @@ const adminOverview = ref<FeishuAdminOverview | null>(null)
 const syncs = ref<FeishuBitableSync[]>([])
 const startupNotifyChatOptions = ref<FeishuChatCandidate[]>([])
 const startupNotifyChatSearchKeyword = ref('')
+const syncConfigShares = reactive<Record<string, FeishuBitableSyncConfigShare | null>>({})
+const syncConfigImportFileInputRef = ref<HTMLInputElement | null>(null)
+const syncConfigImportSourceType = ref<SyncConfigImportSourceType>('url')
+const syncConfigImportUrl = ref('')
+const syncConfigImportFileName = ref('')
+const syncConfigImportPackage = ref<FeishuBitableSyncConfigPackage | null>(null)
+const syncConfigImportPreview = ref<FeishuBitableSyncConfigImportPreview | null>(null)
+const syncConfigImportLoading = ref(false)
+const syncConfigImporting = ref(false)
+const syncConfigImportErrorText = ref('')
+const expandedSyncDetails = reactive<Record<string, FeishuBitableSyncDetail | null>>({})
+const expandedSyncLoading = reactive<Record<string, boolean>>({})
+const expandedSyncErrors = reactive<Record<string, string>>({})
+const syncItemLogVisible = ref(false)
+const syncItemLogLoading = ref(false)
+const syncItemLogErrorText = ref('')
+const syncItemLogSyncId = ref('')
+const syncItemLogSyncName = ref('')
+const syncItemLogIncludeArchived = ref(false)
+const syncItemLogItemDetail = ref<FeishuBitableSyncItemDetail | null>(null)
 let startupNotifyChatSearchSequence = 0
 
 const syncColumns = [
   { title: '同步信息', dataIndex: 'name', slotName: 'name', width: 220 },
   { title: '主库来源', dataIndex: 'source', slotName: 'source', width: 340 },
-  { title: '子表同步项', dataIndex: 'itemCount', slotName: 'itemCount', width: 140 },
+  { title: '子表同步项', dataIndex: 'itemCount', slotName: 'itemCount', width: 240 },
   { title: '最近执行', dataIndex: 'latestRun', slotName: 'latestRun', width: 220 },
   { title: '主调度', dataIndex: 'schedule', slotName: 'schedule', width: 220 },
   { title: '问题', dataIndex: 'issueStats', slotName: 'issueStats', width: 120 },
   { title: '更新时间', dataIndex: 'updatedAt', slotName: 'updatedAt', width: 170 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 340 },
+  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 560 },
+]
+
+const syncItemPreviewColumns = [
+  { title: '子表同步项', dataIndex: 'name', slotName: 'itemName', width: 260 },
+  { title: '飞书来源', dataIndex: 'source', slotName: 'itemSource', width: 260 },
+  { title: '状态', dataIndex: 'status', slotName: 'itemStatus', width: 170 },
+  { title: '最近执行', dataIndex: 'latestRun', slotName: 'itemLatestRun', width: 240 },
+  { title: '调度状态', dataIndex: 'schedule', slotName: 'itemSchedule', width: 220 },
+  { title: '操作', dataIndex: 'actions', slotName: 'itemActions', width: 220 },
 ]
 
 const canManageConfig = computed(() => permissions.value.includes('role.assign'))
 const canManageBitable = computed(() => permissions.value.includes('contest.write'))
+const canReadSyncedData = computed(() => permissions.value.includes('contest.read_internal'))
 const canAccessPage = computed(() => canManageConfig.value || canManageBitable.value)
 const loadingAny = computed(() => loadingPermissions.value || loadingConfig.value || loadingSyncs.value)
+const normalizedPath = computed(() => route.path.replace(/\/+$/, '') || '/')
+const isOverviewRoute = computed(() => normalizedPath.value === '/admin/integrations/feishu')
 
 const {
   loading: feishuDirectoryLoading,
@@ -119,14 +219,13 @@ const {
 const configForm = reactive({
   enabled: false,
   appId: '',
+  marketplaceAppUrl: '',
   oauthRedirectUri: '',
   adminGroupIdsText: '',
   webSdkScriptUrl: '',
   startupNotifyEnabled: false,
   startupNotifyChatId: '',
   startupNotifyRemark: '',
-  startupFallbackVersion: '',
-  startupFallbackCommitSha: '',
   appSecretMode: 'keep' as SecretMode,
   appSecret: '',
   eventTokenMode: 'keep' as SecretMode,
@@ -152,6 +251,39 @@ const SYNC_ENVIRONMENT_OPTIONS: Array<{ value: FeishuBitableSyncEnvironment, lab
   { value: 'test', label: '测试环境', tagColor: 'gold', namePrefix: '[测试]' },
   { value: 'production', label: '正式环境', tagColor: 'green', namePrefix: '[正式]' },
 ]
+
+const CREATE_SYNC_MILESTONES = [
+  {
+    step: '01',
+    title: '先建主库',
+    description: '先保存 appToken、环境标签和可选的 table/view 草稿，不在这一步处理字段映射。',
+  },
+  {
+    step: '02',
+    title: '再配子表',
+    description: '进入编辑抽屉，为每个子表创建同步项，并确认同步到哪类平台实体。',
+  },
+  {
+    step: '03',
+    title: '先预检再执行',
+    description: '先补映射、回填和自动同步规则，再用预检和单行模拟确认结果。',
+  },
+  {
+    step: '04',
+    title: '最后启用调度',
+    description: '首轮手动执行通过后，再决定是否开启主同步和定时调度。',
+  },
+]
+
+const SYNC_ITEM_ENTITY_TYPE_LABELS: Record<FeishuBitableSyncItemEntityType, string> = {
+  contest: '竞赛',
+  track: '赛道',
+  resource: '资料',
+  persona: '人设',
+  policy: '政策',
+  track_timeline: '赛道时间线',
+  faq: 'FAQ',
+}
 
 const sourceResolveLoading = ref(false)
 const sourceViewsLoading = ref(false)
@@ -191,6 +323,47 @@ function runStatusLabel(status?: string | null): string {
   return status || '未知'
 }
 
+function runStatusColor(status?: string | null): string {
+  if (status === 'success')
+    return 'green'
+  if (status === 'partial_success')
+    return 'gold'
+  if (status === 'failed')
+    return 'red'
+  return 'gray'
+}
+
+interface RunHealthSummaryLike {
+  status?: string | null
+  errorCount?: number | null
+}
+
+function runHealthFailed(summary?: RunHealthSummaryLike | null): boolean {
+  return summary?.status === 'failed'
+}
+
+function runHealthWarned(summary?: RunHealthSummaryLike | null): boolean {
+  return summary?.status === 'partial_success' || Boolean(summary?.errorCount)
+}
+
+function runHealthLabel(summary?: RunHealthSummaryLike | null): string {
+  if (!summary)
+    return '未执行'
+  if (summary.status === 'success' && Number(summary.errorCount || 0) > 0)
+    return '成功但有告警'
+  return runStatusLabel(summary.status)
+}
+
+function runHealthColor(summary?: RunHealthSummaryLike | null): string {
+  if (!summary)
+    return 'gray'
+  if (runHealthFailed(summary))
+    return 'red'
+  if (runHealthWarned(summary))
+    return 'gold'
+  return runStatusColor(summary.status)
+}
+
 function triggerSourceLabel(source?: string | null): string {
   if (source === 'manual')
     return '手动'
@@ -206,27 +379,199 @@ function buildValueSourceLabel(source: BuildValueSource | undefined): string {
     return '环境变量'
   if (source === 'runtime')
     return '构建推导'
-  if (source === 'fallback')
-    return '集成配置兜底'
   return '未命中'
 }
 
 function syncLatestRunSummary(sync: FeishuBitableSync): string {
   if (!sync.latestRunSummary)
     return '暂无执行记录'
-  return `${formatDateTime(sync.latestRunSummary.startedAt)} / ${runStatusLabel(sync.latestRunSummary.status)} / ${triggerSourceLabel(sync.latestRunSummary.triggerSource)}`
+  return `${formatDateTime(sync.latestRunSummary.startedAt)} / ${runHealthLabel(sync.latestRunSummary)} / ${triggerSourceLabel(sync.latestRunSummary.triggerSource)}`
+}
+
+function syncItemEntityTypeLabel(entityType?: FeishuBitableSyncItemEntityType | null): string {
+  if (!entityType)
+    return '未知类型'
+  return SYNC_ITEM_ENTITY_TYPE_LABELS[entityType] || entityType
+}
+
+function syncItemLatestRunSummary(item: FeishuBitableSyncItem): string {
+  if (!item.latestRunSummary)
+    return '暂无执行记录'
+  return `${formatDateTime(item.latestRunSummary.startedAt)} / ${runHealthLabel(item.latestRunSummary)} / ${triggerSourceLabel(item.latestRunSummary.triggerSource)}`
+}
+
+function syncItemScheduleStatusLabel(sync: FeishuBitableSync, item: FeishuBitableSyncItem): string {
+  if (!sync.enabled)
+    return '受主同步影响'
+  if (!item.isEnabled)
+    return '子项已禁用'
+  if (!item.schedule?.enabled)
+    return '未启用调度'
+  return '已启用调度'
+}
+
+function syncItemScheduleStatusColor(sync: FeishuBitableSync, item: FeishuBitableSyncItem): string {
+  if (!sync.enabled)
+    return 'gold'
+  if (!item.isEnabled)
+    return 'gray'
+  if (!item.schedule?.enabled)
+    return 'gray'
+  return 'green'
+}
+
+function syncIssueStatusLabel(status?: string | null): string {
+  if (status === 'open')
+    return '待处理'
+  if (status === 'resolved')
+    return '已解决'
+  if (status === 'ignored')
+    return '已忽略'
+  return status || '未知'
+}
+
+function syncIssueStatusColor(status?: string | null): string {
+  if (status === 'open')
+    return 'red'
+  if (status === 'resolved')
+    return 'green'
+  if (status === 'ignored')
+    return 'gray'
+  return 'gray'
+}
+
+function sortedSyncIssues(issues: FeishuSyncIssue[] = []): FeishuSyncIssue[] {
+  const statusOrder: Record<string, number> = {
+    open: 0,
+    resolved: 1,
+    ignored: 2,
+  }
+  return [...issues].sort((left, right) => {
+    const statusDiff = (statusOrder[left.status] ?? 9) - (statusOrder[right.status] ?? 9)
+    if (statusDiff !== 0)
+      return statusDiff
+    return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''))
+  })
+}
+
+function syncRunModeLabel(mode?: string | null): string {
+  if (mode === 'full')
+    return '全量'
+  if (mode === 'delta')
+    return '增量'
+  return mode || '未标记'
 }
 
 function syncScheduleStatusLabel(sync: FeishuBitableSync): string {
   if (!sync.schedule.enabled)
-    return '未启用'
-  return sync.enabled ? '已启用' : '主同步已禁用'
+    return '已配置未启用'
+  return sync.enabled ? '已启用调度' : '主同步已禁用'
 }
 
 function syncScheduleStatusColor(sync: FeishuBitableSync): string {
   if (!sync.schedule.enabled)
     return 'gray'
   return sync.enabled ? 'green' : 'gold'
+}
+
+function syncEnabledItemSummary(record: FeishuBitableSync): string {
+  return record.enabled ? `已启用 ${record.enabledItemCount}` : '主同步已禁用'
+}
+
+function syncLatestRunFailed(sync: FeishuBitableSync): boolean {
+  return runHealthFailed(sync.latestRunSummary)
+}
+
+function syncLatestRunWarned(sync: FeishuBitableSync): boolean {
+  return runHealthWarned(sync.latestRunSummary)
+}
+
+function syncProgressStageLabel(sync: FeishuBitableSync): string {
+  if (sync.archivedAt)
+    return '只读归档'
+  if (!sync.itemCount)
+    return '待配子表'
+  if (!sync.enabled)
+    return '主同步停用'
+  if (!sync.enabledItemCount)
+    return '待启用子项'
+  if (syncLatestRunFailed(sync))
+    return '最近运行失败'
+  if (syncLatestRunWarned(sync))
+    return '最近运行告警'
+  if (sync.issueStats.open)
+    return '待处理问题'
+  if (!sync.latestRunSummary)
+    return '待首轮验证'
+  if (!sync.schedule.enabled)
+    return '手动运行稳定'
+  return '稳定运行中'
+}
+
+function syncProgressStageColor(sync: FeishuBitableSync): string {
+  if (sync.archivedAt)
+    return 'gray'
+  if (!sync.itemCount)
+    return 'gold'
+  if (!sync.enabled)
+    return 'gray'
+  if (!sync.enabledItemCount)
+    return 'gold'
+  if (syncLatestRunFailed(sync))
+    return 'red'
+  if (syncLatestRunWarned(sync))
+    return 'gold'
+  if (sync.issueStats.open)
+    return 'red'
+  if (!sync.latestRunSummary)
+    return 'arcoblue'
+  if (!sync.schedule.enabled)
+    return 'green'
+  return 'green'
+}
+
+function syncProgressSummary(sync: FeishuBitableSync): string {
+  if (sync.archivedAt)
+    return '当前只保留历史配置，不再参与导入链路。'
+  if (!sync.itemCount)
+    return '主库已接入，当前还没有子表同步项。'
+  if (!sync.enabled)
+    return '子表与配置保留，但主同步停用后不会响应事件或调度。'
+  if (!sync.enabledItemCount)
+    return '已有子表同步项，但还没有任何启用中的导入入口。'
+  if (syncLatestRunFailed(sync))
+    return `最近一次执行失败${sync.latestRunSummary?.errorCount ? `，错误 ${sync.latestRunSummary.errorCount} 条。` : '。'}先回到子表同步项处理异常，再继续导入。`
+  if (syncLatestRunWarned(sync))
+    return `最近一次执行仍有错误或部分成功${sync.latestRunSummary?.errorCount ? `，当前错误 ${sync.latestRunSummary.errorCount} 条。` : '。'}这条链路暂时不应视为稳定运行。`
+  if (sync.issueStats.open)
+    return `当前有 ${sync.issueStats.open} 个待处理问题，建议先清理映射或回填问题。`
+  if (!sync.latestRunSummary)
+    return '已有启用中的子表同步项，但还没完成首轮手动验证。'
+  if (!sync.schedule.enabled)
+    return '首轮验证已完成，当前更适合手动控制执行节奏。'
+  return '主同步与调度均已进入可持续运行状态。'
+}
+
+function syncNextActionText(sync: FeishuBitableSync): string {
+  if (sync.archivedAt)
+    return '如需继续使用，先恢复归档。'
+  if (!sync.itemCount)
+    return '打开编辑抽屉，至少创建一个子表同步项。'
+  if (!sync.enabled)
+    return '确认配置后再重新启用主同步。'
+  if (!sync.enabledItemCount)
+    return '进入子表同步项，先启用至少一个可运行入口。'
+  if (syncLatestRunFailed(sync))
+    return '先打开子表同步项查看错误日志，修复后再手动重跑。'
+  if (syncLatestRunWarned(sync))
+    return '先核对错误记录和跳过原因，确认干净后再考虑启用调度。'
+  if (sync.issueStats.open)
+    return '先处理问题单，再继续预检或启用调度。'
+  if (!sync.latestRunSummary)
+    return '先做一次手动执行，确认落库和回填。'
+  if (!sync.schedule.enabled)
+    return '验证稳定后，再按需开启主调度。'
+  return '持续关注最近运行结果和问题单。'
 }
 
 function scheduleModeLabel(mode?: string | null): string {
@@ -312,14 +657,13 @@ const selectedStartupNotifyChat = computed(() => {
 function fillConfigForm(payload: FeishuIntegrationConfig) {
   configForm.enabled = Boolean(payload.enabled)
   configForm.appId = payload.appId || ''
+  configForm.marketplaceAppUrl = payload.marketplaceAppUrl || ''
   configForm.oauthRedirectUri = payload.oauthRedirectUri || ''
   configForm.adminGroupIdsText = Array.isArray(payload.adminGroupIds) ? payload.adminGroupIds.join('\n') : ''
   configForm.webSdkScriptUrl = payload.webSdkScriptUrl || ''
   configForm.startupNotifyEnabled = Boolean(payload.startupNotifyEnabled)
   configForm.startupNotifyChatId = payload.startupNotifyChatId || ''
   configForm.startupNotifyRemark = payload.startupNotifyRemark || ''
-  configForm.startupFallbackVersion = payload.startupFallbackVersion || ''
-  configForm.startupFallbackCommitSha = payload.startupFallbackCommitSha || ''
   startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions(startupNotifyChatOptions.value, payload.startupNotifyChatId || '')
   resetSecretInputs()
 }
@@ -350,6 +694,29 @@ function buildSuggestedCreateSyncName(): string {
   const prefix = SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === environment)?.namePrefix || ''
   const baseName = createSyncForm.appName.trim() || buildDefaultSyncName()
   return prefix ? `${prefix} ${baseName}` : baseName
+}
+
+function buildSyncedDataLink(options?: { syncId?: string }) {
+  const query: Record<string, string> = {}
+  const syncId = String(options?.syncId || '').trim()
+  if (syncId)
+    query.syncId = syncId
+  if ((Array.isArray(route.query.embed) ? route.query.embed[0] : route.query.embed) === '1')
+    query.embed = '1'
+  return Object.keys(query).length
+    ? { path: '/admin/integrations/feishu/data', query }
+    : '/admin/integrations/feishu/data'
+}
+
+async function openSyncedData(options?: { syncId?: string }) {
+  const target = buildSyncedDataLink(options)
+  try {
+    await navigateTo(target)
+  }
+  catch {
+    if (import.meta.client)
+      window.location.assign(router.resolve(target).href)
+  }
 }
 
 function buildCreateSourceConfig(): FeishuBitableSourceConfig {
@@ -404,15 +771,232 @@ function onViewIdChanged() {
   createSyncForm.viewName = selected?.name || ''
 }
 
+function pruneExpandedSyncPreviewState(availableSyncIds: string[]) {
+  const availableKeys = new Set(availableSyncIds)
+  expandedSyncKeys.value = expandedSyncKeys.value.filter(key => availableKeys.has(key))
+
+  for (const key of Object.keys(expandedSyncDetails)) {
+    if (!availableKeys.has(key))
+      delete expandedSyncDetails[key]
+  }
+
+  for (const key of Object.keys(expandedSyncLoading)) {
+    if (!availableKeys.has(key))
+      delete expandedSyncLoading[key]
+  }
+
+  for (const key of Object.keys(expandedSyncErrors)) {
+    if (!availableKeys.has(key))
+      delete expandedSyncErrors[key]
+  }
+}
+
+async function loadExpandedSyncDetail(sync: FeishuBitableSync, force = false) {
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  if (expandedSyncLoading[syncId])
+    return
+  if (!force && expandedSyncDetails[syncId])
+    return
+
+  expandedSyncLoading[syncId] = true
+  expandedSyncErrors[syncId] = ''
+
+  try {
+    const query = new URLSearchParams({
+      includeInactive: 'true',
+    })
+    if (sync.archivedAt)
+      query.set('includeArchived', 'true')
+
+    expandedSyncDetails[syncId] = await requestApi<FeishuBitableSyncDetail>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}?${query.toString()}`),
+      {},
+      '子表同步项预览加载失败。',
+    )
+  }
+  catch (error: any) {
+    expandedSyncDetails[syncId] = null
+    expandedSyncErrors[syncId] = String(error?.data?.message || '子表同步项预览加载失败。')
+  }
+  finally {
+    expandedSyncLoading[syncId] = false
+  }
+}
+
+function toggleSyncExpanded(sync: FeishuBitableSync) {
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  if (expandedSyncKeys.value.includes(syncId)) {
+    expandedSyncKeys.value = expandedSyncKeys.value.filter(key => key !== syncId)
+    return
+  }
+
+  expandedSyncKeys.value = [...expandedSyncKeys.value, syncId]
+  void loadExpandedSyncDetail(sync)
+}
+
+function handleSyncRowExpand(_: string | number, record: FeishuBitableSync) {
+  void loadExpandedSyncDetail(record)
+}
+
+async function toggleExpandedSyncItemEnabled(sync: FeishuBitableSync, item: FeishuBitableSyncItem, enabled: boolean) {
+  const syncId = String(sync.id || '').trim()
+  const itemId = String(item.id || '').trim()
+  if (!syncId || !itemId)
+    return
+
+  syncItemToggleMutating[itemId] = true
+  clearFeedback()
+  try {
+    await requestApi<FeishuBitableSyncItem>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/items/${encodeURIComponent(itemId)}`),
+      {
+        method: 'PATCH',
+        body: {
+          isEnabled: enabled,
+        },
+      },
+      `子表同步项${enabled ? '启用' : '禁用'}失败。`,
+    )
+    await loadSyncs()
+    setSuccess(`子表同步项“${item.name || itemId}”已${enabled ? '启用' : '禁用'}。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || `子表同步项${enabled ? '启用' : '禁用'}失败。`))
+  }
+  finally {
+    syncItemToggleMutating[itemId] = false
+  }
+}
+
+async function openSyncItemLogDrawer(sync: FeishuBitableSync, item: FeishuBitableSyncItem) {
+  const syncId = String(sync.id || '').trim()
+  const itemId = String(item.id || '').trim()
+  if (!syncId || !itemId)
+    return
+
+  syncItemLogVisible.value = true
+  syncItemLogSyncId.value = syncId
+  syncItemLogSyncName.value = String(sync.name || '').trim()
+  syncItemLogIncludeArchived.value = Boolean(sync.archivedAt)
+  syncItemLogItemDetail.value = {
+    ...(item as FeishuBitableSyncItemDetail),
+    issues: [],
+    recentRuns: [],
+  }
+  await refreshSyncItemLogDrawer()
+}
+
+function openSyncItemEditor(sync: FeishuBitableSync, item: FeishuBitableSyncItem) {
+  const syncId = String(sync.id || '').trim()
+  const itemId = String(item.id || '').trim()
+  if (!syncId || !itemId)
+    return
+
+  openEditSyncDrawer(syncId, {
+    selectedItemId: itemId,
+    includeArchived: Boolean(sync.archivedAt),
+  })
+}
+
+async function refreshSyncItemLogDrawer() {
+  const syncId = String(syncItemLogSyncId.value || '').trim()
+  const itemId = String(syncItemLogItemDetail.value?.id || '').trim()
+  if (!syncId || !itemId)
+    return
+
+  syncItemLogLoading.value = true
+  syncItemLogErrorText.value = ''
+  try {
+    const query = new URLSearchParams({
+      runLimit: '20',
+      issueLimit: '50',
+    })
+    if (syncItemLogIncludeArchived.value)
+      query.set('includeArchived', 'true')
+    syncItemLogItemDetail.value = await requestApi<FeishuBitableSyncItemDetail>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/items/${encodeURIComponent(itemId)}?${query.toString()}`),
+      {},
+      '子表同步项日志加载失败。',
+    )
+  }
+  catch (error: any) {
+    syncItemLogErrorText.value = String(error?.data?.message || '子表同步项日志加载失败。')
+  }
+  finally {
+    syncItemLogLoading.value = false
+  }
+}
+
+async function handleSyncIssueAction(issue: FeishuSyncIssue, action: 'resolve' | 'ignore') {
+  const issueId = String(issue.id || '').trim()
+  if (!issueId || issue.status !== 'open')
+    return
+
+  issueActionMutating[issueId] = true
+  setError('')
+  setSuccess('')
+  try {
+    const path = action === 'resolve'
+      ? `/admin/integrations/feishu/link-issues/${encodeURIComponent(issueId)}/resolve`
+      : `/admin/integrations/feishu/link-issues/${encodeURIComponent(issueId)}/ignore`
+    await requestApi<FeishuSyncIssue>(
+      endpoint(path),
+      {
+        method: 'POST',
+        body: action === 'resolve'
+          ? { resolutionPayload: { source: 'feishu_integration_page' } }
+          : { reason: '管理员手动忽略' },
+      },
+      action === 'resolve' ? '关联问题标记失败。' : '关联问题忽略失败。',
+    )
+
+    await refreshSyncItemLogDrawer()
+    await loadSyncs()
+    setSuccess(action === 'resolve' ? '关联问题已标记为已解决。' : '关联问题已忽略。')
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || (action === 'resolve' ? '关联问题标记失败。' : '关联问题忽略失败。')))
+  }
+  finally {
+    issueActionMutating[issueId] = false
+  }
+}
+
+function openSyncItemLogEditor() {
+  const itemId = String(syncItemLogItemDetail.value?.id || '').trim()
+  if (!syncItemLogSyncId.value || !itemId)
+    return
+
+  syncItemLogVisible.value = false
+  openEditSyncDrawer(syncItemLogSyncId.value, {
+    selectedItemId: itemId,
+    includeArchived: syncItemLogIncludeArchived.value,
+  })
+}
+
 async function loadPermissions() {
   loadingPermissions.value = true
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
-    permissions.value = response.data.user.platformPermissions || []
+    const data = await requestApi<AuthMeResult>(endpoint('/auth/me'), {}, '权限加载失败，请先登录。')
+    permissions.value = data.user.platformPermissions || []
   }
   catch (error: any) {
+    const info = resolveAuthRequestErrorInfo(error)
     permissions.value = []
-    setError(String(error?.data?.message || '权限加载失败，请先登录。'))
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/admin/integrations/feishu') },
+      }, { replace: true })
+      return
+    }
+    setError(resolveAuthDisplayMessage(error, '权限加载失败，请稍后重试。'))
   }
   finally {
     loadingPermissions.value = false
@@ -427,9 +1011,9 @@ async function loadConfig() {
 
   loadingConfig.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuIntegrationConfigView>>(endpoint('/admin/integrations/feishu/config'))
-    config.value = response.data
-    fillConfigForm(response.data)
+    const data = await requestApi<FeishuIntegrationConfigView>(endpoint('/admin/integrations/feishu/config'), {}, '飞书配置加载失败。')
+    config.value = data
+    fillConfigForm(data)
   }
   catch (error: any) {
     config.value = null
@@ -448,8 +1032,7 @@ async function loadAdminOverview() {
 
   adminOverviewLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuAdminOverview>>(endpoint('/admin/integrations/feishu/admin-overview'))
-    adminOverview.value = response.data
+    adminOverview.value = await requestApi<FeishuAdminOverview>(endpoint('/admin/integrations/feishu/admin-overview'), {}, '管理员概览加载失败。')
   }
   catch (error: any) {
     adminOverview.value = null
@@ -469,11 +1052,22 @@ async function loadSyncs() {
   loadingSyncs.value = true
   try {
     const query = showArchivedSyncs.value ? '?includeArchived=true' : ''
-    const response = await $fetch<ApiResponse<FeishuBitableSync[]>>(endpoint(`/admin/integrations/feishu/bitable-syncs${query}`))
-    syncs.value = response.data || []
+    syncs.value = await requestApi<FeishuBitableSync[]>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs${query}`),
+      {},
+      '多维同步信息加载失败。',
+    ) || []
+
+    pruneExpandedSyncPreviewState(syncs.value.map(sync => String(sync.id || '').trim()))
+    for (const syncId of expandedSyncKeys.value) {
+      const target = syncs.value.find(sync => sync.id === syncId)
+      if (target)
+        void loadExpandedSyncDetail(target, true)
+    }
   }
   catch (error: any) {
     syncs.value = []
+    pruneExpandedSyncPreviewState([])
     setError(String(error?.data?.message || '多维同步信息加载失败。'))
   }
   finally {
@@ -494,8 +1088,11 @@ async function loadBitableTablesAndViews() {
 
   sourceViewsLoading.value = true
   try {
-    const tablesResponse = await $fetch<ApiResponse<FeishuBitableTableMeta[]>>(endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables`))
-    sourceTables.value = tablesResponse.data || []
+    sourceTables.value = await requestApi<FeishuBitableTableMeta[]>(
+      endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables`),
+      {},
+      '加载表/视图失败。',
+    ) || []
 
     if (!tableId) {
       sourceViews.value = []
@@ -504,8 +1101,12 @@ async function loadBitableTablesAndViews() {
       return
     }
 
-    const viewsResponse = await $fetch<ApiResponse<SourceViewsPayload>>(endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`))
-    sourceViews.value = viewsResponse.data.views || []
+    const viewsPayload = await requestApi<SourceViewsPayload>(
+      endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`),
+      {},
+      '加载表/视图失败。',
+    )
+    sourceViews.value = viewsPayload.views || []
     onTableIdChanged(true)
     onViewIdChanged()
     setSuccess(`已加载 ${sourceTables.value.length} 个子表、${sourceViews.value.length} 个视图。`)
@@ -532,13 +1133,16 @@ async function resolveBitableSourceInput() {
 
   sourceResolveLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableSourceConfig>>(endpoint('/admin/integrations/feishu/bitable/sources/resolve'), {
-      method: 'POST',
-      body: {
-        input: sourceInput,
+    const source = await requestApi<FeishuBitableSourceConfig>(
+      endpoint('/admin/integrations/feishu/bitable/sources/resolve'),
+      {
+        method: 'POST',
+        body: {
+          input: sourceInput,
+        },
       },
-    })
-    const source = response.data
+      '来源解析失败。',
+    )
     createSyncForm.appToken = source.appToken || ''
     createSyncForm.tableId = source.tableId || ''
     createSyncForm.viewId = source.viewId || ''
@@ -580,32 +1184,35 @@ async function saveConfig() {
 
   savingConfig.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuIntegrationConfig>>(endpoint('/admin/integrations/feishu/config'), {
-      method: 'PATCH',
-      body: {
-        enabled: configForm.enabled,
-        appId: configForm.appId.trim(),
-        oauthRedirectUri: configForm.oauthRedirectUri.trim(),
-        adminGroupIds: parseMultilineList(configForm.adminGroupIdsText),
-        webSdkScriptUrl: configForm.webSdkScriptUrl.trim(),
-        startupNotifyEnabled: configForm.startupNotifyEnabled,
-        startupNotifyChatId: configForm.startupNotifyChatId.trim(),
-        startupNotifyRemark: configForm.startupNotifyRemark.trim(),
-        startupFallbackVersion: configForm.startupFallbackVersion.trim(),
-        startupFallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
-        appSecretMode: configForm.appSecretMode,
-        appSecret: configForm.appSecret,
-        eventTokenMode: configForm.eventTokenMode,
-        eventToken: configForm.eventToken,
-        eventEncryptKeyMode: configForm.eventEncryptKeyMode,
-        eventEncryptKey: configForm.eventEncryptKey,
+    const data = await requestApi<FeishuIntegrationConfig>(
+      endpoint('/admin/integrations/feishu/config'),
+      {
+        method: 'PATCH',
+        body: {
+          enabled: configForm.enabled,
+          appId: configForm.appId.trim(),
+          marketplaceAppUrl: configForm.marketplaceAppUrl.trim(),
+          oauthRedirectUri: configForm.oauthRedirectUri.trim(),
+          adminGroupIds: parseMultilineList(configForm.adminGroupIdsText),
+          webSdkScriptUrl: configForm.webSdkScriptUrl.trim(),
+          startupNotifyEnabled: configForm.startupNotifyEnabled,
+          startupNotifyChatId: configForm.startupNotifyChatId.trim(),
+          startupNotifyRemark: configForm.startupNotifyRemark.trim(),
+          appSecretMode: configForm.appSecretMode,
+          appSecret: configForm.appSecret,
+          eventTokenMode: configForm.eventTokenMode,
+          eventToken: configForm.eventToken,
+          eventEncryptKeyMode: configForm.eventEncryptKeyMode,
+          eventEncryptKey: configForm.eventEncryptKey,
+        },
       },
-    })
+      '飞书配置保存失败。',
+    )
 
-    config.value = response.data
-    fillConfigForm(response.data)
+    config.value = data
+    fillConfigForm(data)
     configDialogVisible.value = false
-    setSuccess('飞书集成配置已保存。')
+    setSuccess('平台飞书配置已保存。')
   }
   catch (error: any) {
     setError(String(error?.data?.message || '飞书配置保存失败。'))
@@ -628,22 +1235,24 @@ async function testStartupNotify() {
 
   testingStartupNotify.value = true
   try {
-    const response = await $fetch<ApiResponse<{
+    const data = await requestApi<{
       chatId: string
       version: string
       commitSha: string
       testedAt: string
-    }>>(endpoint('/admin/integrations/feishu/startup-notify/test'), {
-      method: 'POST',
-      body: {
-        chatId,
-        remark: configForm.startupNotifyRemark.trim(),
-        fallbackVersion: configForm.startupFallbackVersion.trim(),
-        fallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
+    }>(
+      endpoint('/admin/integrations/feishu/startup-notify/test'),
+      {
+        method: 'POST',
+        body: {
+          chatId,
+          remark: configForm.startupNotifyRemark.trim(),
+        },
       },
-    })
+      '启动通知测试失败。',
+    )
 
-    startupNotifyTestSuccessText.value = `测试消息已发送到 ${response.data.chatId}（版本 ${response.data.version} / Commit ${response.data.commitSha}）。`
+    startupNotifyTestSuccessText.value = `测试消息已发送到 ${data.chatId}（版本 ${data.version} / Commit ${data.commitSha}）。`
   }
   catch (error: any) {
     startupNotifyTestErrorText.value = String(error?.data?.message || '启动通知测试失败。')
@@ -671,10 +1280,14 @@ async function loadStartupNotifyChatOptions(keyword = '') {
   const currentSequence = ++startupNotifyChatSearchSequence
   startupNotifyChatOptionsLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuChatCandidate[]>>(endpoint(`/admin/integrations/feishu/startup-groups/search?${query.toString()}`))
+    const data = await requestApi<FeishuChatCandidate[]>(
+      endpoint(`/admin/integrations/feishu/startup-groups/search?${query.toString()}`),
+      {},
+      '飞书群列表加载失败。',
+    )
     if (currentSequence !== startupNotifyChatSearchSequence)
       return
-    startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions(response.data || [], selectedChatId)
+    startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions(data || [], selectedChatId)
   }
   catch (error: any) {
     if (currentSequence !== startupNotifyChatSearchSequence)
@@ -719,15 +1332,164 @@ function openCreateSyncDrawer() {
   createSyncDrawerVisible.value = true
 }
 
+function resetSyncConfigImportState(sourceType: SyncConfigImportSourceType = 'url') {
+  syncConfigImportSourceType.value = sourceType
+  syncConfigImportUrl.value = ''
+  syncConfigImportFileName.value = ''
+  syncConfigImportPackage.value = null
+  syncConfigImportPreview.value = null
+  syncConfigImportErrorText.value = ''
+}
+
+function openSyncConfigImportDrawer(sourceType: SyncConfigImportSourceType = 'url') {
+  clearFeedback()
+  resetSyncConfigImportState(sourceType)
+  syncConfigImportDrawerVisible.value = true
+}
+
+function openSyncConfigUrlImport() {
+  syncConfigImportMenuVisible.value = false
+  openSyncConfigImportDrawer('url')
+}
+
+function setSyncActionMenuVisible(syncId: string, visible: boolean) {
+  const normalizedSyncId = String(syncId || '').trim()
+  if (!normalizedSyncId)
+    return
+  if (visible) {
+    syncActionMenuVisibleId.value = normalizedSyncId
+    return
+  }
+  if (syncActionMenuVisibleId.value === normalizedSyncId)
+    syncActionMenuVisibleId.value = ''
+}
+
+function closeSyncActionMenu(sync: FeishuBitableSync) {
+  const syncId = String(sync.id || '').trim()
+  if (syncActionMenuVisibleId.value === syncId)
+    syncActionMenuVisibleId.value = ''
+}
+
+function readSyncConfigImportFile(file: File): Promise<FeishuBitableSyncConfigPackage> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('配置文件读取失败。'))
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || '').trim()
+        if (!text) {
+          reject(new Error('配置文件为空。'))
+          return
+        }
+        resolve(JSON.parse(text) as FeishuBitableSyncConfigPackage)
+      }
+      catch {
+        reject(new Error('配置文件解析失败，请确认选择的是导出的 JSON 配置包。'))
+      }
+    }
+    reader.readAsText(file)
+  })
+}
+
+function selectSyncConfigImportFile() {
+  if (!canManageBitable.value)
+    return
+  clearFeedback()
+  resetSyncConfigImportState('file')
+  syncConfigImportMenuVisible.value = false
+  syncConfigImportFileInputRef.value?.click()
+}
+
+async function handleSyncConfigImportFileChange(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (input)
+    input.value = ''
+  if (!file)
+    return
+
+  resetSyncConfigImportState('file')
+  syncConfigImportFileName.value = file.name || '配置文件'
+  syncConfigImportDrawerVisible.value = true
+  syncConfigImportLoading.value = true
+  try {
+    syncConfigImportPackage.value = await readSyncConfigImportFile(file)
+    await previewSyncConfigImport()
+  }
+  catch (error) {
+    syncConfigImportErrorText.value = error instanceof Error ? error.message : '配置文件解析失败。'
+  }
+  finally {
+    syncConfigImportLoading.value = false
+  }
+}
+
+function syncConfigShareFor(sync: FeishuBitableSync): FeishuBitableSyncConfigShare | null {
+  const syncId = String(sync.id || '').trim()
+  return syncId ? syncConfigShares[syncId] || null : null
+}
+
+function syncConfigEntityTypeText(summary?: FeishuBitableSyncConfigPackageSummary | null): string {
+  const entityTypes = summary?.entityTypes || []
+  if (!entityTypes.length)
+    return '无子表实体'
+  return entityTypes.map(item => syncItemEntityTypeLabel(item)).join('、')
+}
+
+function extractShareKeyFromConfigUrl(rawUrl: string): string {
+  const url = String(rawUrl || '').trim()
+  if (!url)
+    return ''
+  const match = url.match(/\/bitable-sync-config\/([^/?#]+)/)
+  return match ? decodeURIComponent(match[1] || '') : ''
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  const value = String(text || '').trim()
+  if (!value || !import.meta.client)
+    return
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value)
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+}
+
+function downloadJsonFile(filename: string, payload: unknown) {
+  if (!import.meta.client)
+    return
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: 'application/json;charset=utf-8',
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 function resetEditSyncDrawerState() {
   editingSyncId.value = ''
+  editingSelectedItemId.value = ''
   editingDraftTableId.value = ''
   editingDraftViewId.value = ''
   editingSyncIncludeArchived.value = false
 }
 
-function openEditSyncDrawer(syncId: string, options?: { draftTableId?: string, draftViewId?: string, includeArchived?: boolean }) {
+function openEditSyncDrawer(syncId: string, options?: { selectedItemId?: string, draftTableId?: string, draftViewId?: string, includeArchived?: boolean }) {
   editingSyncId.value = String(syncId || '').trim()
+  editingSelectedItemId.value = String(options?.selectedItemId || '').trim()
   editingDraftTableId.value = String(options?.draftTableId || '').trim()
   editingDraftViewId.value = String(options?.draftViewId || '').trim()
   editingSyncIncludeArchived.value = options?.includeArchived === true
@@ -760,17 +1522,20 @@ async function createSync() {
 
   creatingSync.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableSync>>(endpoint('/admin/integrations/feishu/bitable-syncs'), {
-      method: 'POST',
-      body: {
-        name,
-        source: {
-          ...resolvedSource,
-          appToken,
+    const createdSync = await requestApi<FeishuBitableSync>(
+      endpoint('/admin/integrations/feishu/bitable-syncs'),
+      {
+        method: 'POST',
+        body: {
+          name,
+          source: {
+            ...resolvedSource,
+            appToken,
+          },
         },
       },
-    })
-    const createdSync = response.data
+      '多维同步信息创建失败。',
+    )
     const draftTableId = createSyncForm.tableId.trim()
     const draftViewId = createSyncForm.viewId.trim()
     createSyncDrawerVisible.value = false
@@ -794,6 +1559,193 @@ async function refreshSyncList() {
   await loadSyncs()
 }
 
+async function downloadSyncConfigPackage(sync: FeishuBitableSync) {
+  if (!canManageBitable.value)
+    return
+
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  clearFeedback()
+  try {
+    const pkg = await requestApi<FeishuBitableSyncConfigPackage>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/config-package`),
+      {},
+      '同步配置包导出失败。',
+    )
+    const safeName = String(sync.name || syncId).replace(/[^\w\u4E00-\u9FA5.-]+/g, '-')
+    downloadJsonFile(`feishu-bitable-sync-config-${safeName}.json`, pkg)
+    setSuccess(`同步信息“${sync.name || syncId}”配置包已导出。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '同步配置包导出失败。'))
+  }
+}
+
+async function createSyncConfigShare(sync: FeishuBitableSync) {
+  if (!canManageBitable.value)
+    return
+
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  syncConfigShareMutating[syncId] = true
+  clearFeedback()
+  try {
+    const share = await requestApi<FeishuBitableSyncConfigShare>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/config-share`),
+      {
+        method: 'POST',
+      },
+      '公网配置创建失败。',
+    )
+    syncConfigShares[syncId] = share
+    setSuccess(`公网配置已创建，默认有效至 ${formatDateTime(share.expiresAt)}。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '公网配置创建失败。'))
+  }
+  finally {
+    syncConfigShareMutating[syncId] = false
+  }
+}
+
+async function copySyncConfigShareUrl(sync: FeishuBitableSync) {
+  const share = syncConfigShareFor(sync)
+  if (!share?.shareUrl) {
+    setError('请先创建公网配置，再复制链接。')
+    return
+  }
+  try {
+    await copyTextToClipboard(share.shareUrl)
+    setSuccess('公网配置链接已复制。')
+  }
+  catch {
+    setError('公网配置链接复制失败，请手动复制。')
+  }
+}
+
+async function revokeSyncConfigShare(sync: FeishuBitableSync) {
+  if (!canManageBitable.value)
+    return
+
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  syncConfigShareMutating[syncId] = true
+  clearFeedback()
+  try {
+    await requestApi<{ revokedCount: number }>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/config-share`),
+      {
+        method: 'DELETE',
+        body: {
+          shareKey: syncConfigShareFor(sync)?.shareKey || '',
+        },
+      },
+      '公网配置撤销失败。',
+    )
+    syncConfigShares[syncId] = null
+    setSuccess(`同步信息“${sync.name || syncId}”的公网配置已撤销。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '公网配置撤销失败。'))
+  }
+  finally {
+    syncConfigShareMutating[syncId] = false
+  }
+}
+
+async function previewSyncConfigImport() {
+  if (!canManageBitable.value)
+    return
+
+  const url = syncConfigImportUrl.value.trim()
+  const filePackage = syncConfigImportPackage.value
+  const body = syncConfigImportSourceType.value === 'file'
+    ? { package: filePackage }
+    : { url }
+
+  if (syncConfigImportSourceType.value === 'file') {
+    if (!filePackage) {
+      syncConfigImportErrorText.value = '请先选择配置文件。'
+      return
+    }
+  }
+  else if (!url) {
+    syncConfigImportErrorText.value = '请先填写公网配置 URL。'
+    return
+  }
+
+  syncConfigImportLoading.value = true
+  syncConfigImportErrorText.value = ''
+  syncConfigImportPreview.value = null
+  try {
+    syncConfigImportPreview.value = await requestApi<FeishuBitableSyncConfigImportPreview>(
+      endpoint('/admin/integrations/feishu/bitable-syncs/config-import/preview'),
+      {
+        method: 'POST',
+        body,
+      },
+      '配置包预览失败。',
+    )
+  }
+  catch (error: any) {
+    syncConfigImportErrorText.value = String(error?.data?.message || '配置包预览失败。')
+  }
+  finally {
+    syncConfigImportLoading.value = false
+  }
+}
+
+async function confirmSyncConfigImport() {
+  if (!canManageBitable.value)
+    return
+
+  if (!syncConfigImportPreview.value)
+    await previewSyncConfigImport()
+  if (!syncConfigImportPreview.value)
+    return
+
+  syncConfigImporting.value = true
+  syncConfigImportErrorText.value = ''
+  try {
+    const importBody = syncConfigImportSourceType.value === 'file'
+      ? {
+          package: syncConfigImportPreview.value.package,
+        }
+      : {
+          url: syncConfigImportUrl.value.trim(),
+          shareKey: extractShareKeyFromConfigUrl(syncConfigImportUrl.value),
+          package: syncConfigImportPreview.value.package,
+        }
+    const result = await requestApi<FeishuBitableSyncConfigImportResult>(
+      endpoint('/admin/integrations/feishu/bitable-syncs/config-import/import'),
+      {
+        method: 'POST',
+        body: importBody,
+      },
+      '配置包导入失败。',
+    )
+    syncConfigImportDrawerVisible.value = false
+    await loadSyncs()
+    await nextTick()
+    openEditSyncDrawer(result.sync.id, {
+      includeArchived: false,
+    })
+    setSuccess(`配置包已导入为“${result.sync.name}”，主同步、子表和调度均保持禁用，请先预检并手动执行。`)
+  }
+  catch (error: any) {
+    syncConfigImportErrorText.value = String(error?.data?.message || '配置包导入失败。')
+  }
+  finally {
+    syncConfigImporting.value = false
+  }
+}
+
 async function toggleSyncEnabled(sync: FeishuBitableSync, enabled: boolean) {
   if (!canManageBitable.value || sync.archivedAt)
     return
@@ -805,12 +1757,16 @@ async function toggleSyncEnabled(sync: FeishuBitableSync, enabled: boolean) {
   syncToggleMutating[syncId] = true
   clearFeedback()
   try {
-    await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}`), {
-      method: 'PATCH',
-      body: {
-        enabled,
+    await requestApi<unknown>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}`),
+      {
+        method: 'PATCH',
+        body: {
+          enabled,
+        },
       },
-    })
+      `同步信息${enabled ? '启用' : '禁用'}失败。`,
+    )
     await loadSyncs()
     setSuccess(`同步信息“${sync.name || syncId}”已${enabled ? '启用' : '禁用'}。`)
   }
@@ -833,9 +1789,13 @@ async function archiveSync(sync: FeishuBitableSync) {
   archivingSyncMutating[syncId] = true
   clearFeedback()
   try {
-    await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/archive`), {
-      method: 'POST',
-    })
+    await requestApi<unknown>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/archive`),
+      {
+        method: 'POST',
+      },
+      '同步信息归档失败。',
+    )
 
     if (editingSyncId.value === syncId)
       editSyncDrawerVisible.value = false
@@ -862,9 +1822,13 @@ async function restoreSync(sync: FeishuBitableSync) {
   restoringSyncMutating[syncId] = true
   clearFeedback()
   try {
-    await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/restore`), {
-      method: 'POST',
-    })
+    await requestApi<unknown>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/restore`),
+      {
+        method: 'POST',
+      },
+      '同步信息恢复失败。',
+    )
 
     await loadSyncs()
     setSuccess(`同步信息“${sync.name || syncId}”已恢复。为避免误触发，子表同步项与定时调度仍保持停用，请按需手动重新启用。`)
@@ -877,11 +1841,57 @@ async function restoreSync(sync: FeishuBitableSync) {
   }
 }
 
+function downloadSyncConfigPackageFromMenu(sync: FeishuBitableSync) {
+  closeSyncActionMenu(sync)
+  void downloadSyncConfigPackage(sync)
+}
+
+function createSyncConfigShareFromMenu(sync: FeishuBitableSync) {
+  closeSyncActionMenu(sync)
+  void createSyncConfigShare(sync)
+}
+
+function copySyncConfigShareUrlFromMenu(sync: FeishuBitableSync) {
+  closeSyncActionMenu(sync)
+  void copySyncConfigShareUrl(sync)
+}
+
+async function revokeSyncConfigShareFromMenu(sync: FeishuBitableSync) {
+  await revokeSyncConfigShare(sync)
+  closeSyncActionMenu(sync)
+}
+
+function toggleSyncEnabledFromMenu(sync: FeishuBitableSync) {
+  closeSyncActionMenu(sync)
+  void toggleSyncEnabled(sync, !sync.enabled)
+}
+
+async function archiveSyncFromMenu(sync: FeishuBitableSync) {
+  await archiveSync(sync)
+  closeSyncActionMenu(sync)
+}
+
+async function restoreSyncFromMenu(sync: FeishuBitableSync) {
+  await restoreSync(sync)
+  closeSyncActionMenu(sync)
+}
+
 watch(editSyncDrawerVisible, (visible, oldVisible) => {
   if (visible || !oldVisible)
     return
   resetEditSyncDrawerState()
   void refreshSyncList()
+})
+
+watch(expandedSyncKeys, (currentKeys, previousKeys) => {
+  const previousKeySet = new Set(previousKeys)
+  for (const syncId of currentKeys) {
+    if (previousKeySet.has(syncId))
+      continue
+    const target = syncs.value.find(sync => sync.id === syncId)
+    if (target)
+      void loadExpandedSyncDetail(target)
+  }
 })
 
 async function manualAddContestAdmin(targetUserId: string) {
@@ -891,16 +1901,20 @@ async function manualAddContestAdmin(targetUserId: string) {
   manualAddingKey.value = `user:${targetUserId}`
   clearFeedback()
   try {
-    const response = await $fetch<ApiResponse<FeishuAdminManualAddResult>>(endpoint('/admin/integrations/feishu/admin-members/manual-add'), {
-      method: 'POST',
-      body: {
-        targetUserId,
+    const data = await requestApi<FeishuAdminManualAddResult>(
+      endpoint('/admin/integrations/feishu/admin-members/manual-add'),
+      {
+        method: 'POST',
+        body: {
+          targetUserId,
+        },
       },
-    })
+      '手动添加管理员失败。',
+    )
 
-    setSuccess(response.data.granted
-      ? `已添加 ${response.data.username} 为 contest_admin。`
-      : `${response.data.username} 已经是 contest_admin。`)
+    setSuccess(data.granted
+      ? `已添加 ${data.username} 为 contest_admin。`
+      : `${data.username} 已经是 contest_admin。`)
     await Promise.all([
       loadAdminOverview(),
       loadFeishuDirectoryBrowser(true),
@@ -921,16 +1935,20 @@ async function manualAddContestAdminByUnionId(unionId: string) {
   manualAddingKey.value = `union:${unionId}`
   clearFeedback()
   try {
-    const response = await $fetch<ApiResponse<FeishuAdminManualAddResult>>(endpoint('/admin/integrations/feishu/admin-members/manual-add'), {
-      method: 'POST',
-      body: {
-        targetUnionId: unionId,
+    const data = await requestApi<FeishuAdminManualAddResult>(
+      endpoint('/admin/integrations/feishu/admin-members/manual-add'),
+      {
+        method: 'POST',
+        body: {
+          targetUnionId: unionId,
+        },
       },
-    })
+      '按飞书成员添加管理员失败。',
+    )
 
-    setSuccess(response.data.granted
-      ? `已添加 ${response.data.username} 为 contest_admin。`
-      : `${response.data.username} 已经是 contest_admin。`)
+    setSuccess(data.granted
+      ? `已添加 ${data.username} 为 contest_admin。`
+      : `${data.username} 已经是 contest_admin。`)
     await Promise.all([
       loadAdminOverview(),
       loadFeishuDirectoryBrowser(true),
@@ -946,6 +1964,8 @@ async function manualAddContestAdminByUnionId(unionId: string) {
 
 async function initializePage() {
   clearFeedback()
+  if (!isOverviewRoute.value)
+    return
   await loadPermissions()
   if (!canAccessPage.value)
     return
@@ -956,281 +1976,568 @@ async function initializePage() {
   ])
 }
 
+watch(
+  () => isOverviewRoute.value,
+  (value, previousValue) => {
+    if (value && !previousValue)
+      void initializePage()
+  },
+)
+
 onMounted(initializePage)
 </script>
 
 <template>
   <div class="text-[11px] space-y-3">
-    <section class="p-3 border border-slate-200 bg-white">
-      <div class="flex flex-wrap gap-2 items-center justify-between">
-        <div>
-          <h1 class="text-[13px] text-slate-900 tracking-tight font-bold uppercase">
-            飞书多维同步中心
-          </h1>
-          <p class="text-[11px] text-slate-500 mt-1">
-            统一管理飞书多维主库、子表同步项、运行记录与回填链路。
-          </p>
-        </div>
-        <NuxtLink
-          to="/admin/integrations"
-          class="text-[10px] text-slate-700 px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50"
-        >
-          返回集成中心
-        </NuxtLink>
-      </div>
-    </section>
-
-    <section v-if="loadingAny" class="p-3 border border-slate-200 bg-white">
-      <a-skeleton :animation="true">
-        <a-skeleton-line :rows="10" />
-      </a-skeleton>
-    </section>
-
-    <template v-else>
-      <section
-        v-if="errorText"
-        class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
-      >
-        {{ errorText }}
-      </section>
-      <section
-        v-if="successText"
-        class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50"
-      >
-        {{ successText }}
-      </section>
-
-      <section
-        v-if="!canAccessPage"
-        class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
-      >
-        403：当前账号无飞书集成权限。需要 `role.assign` 或 `contest.write`。
+    <template v-if="isOverviewRoute">
+      <section v-if="loadingAny" class="p-3 border border-slate-200 bg-white">
+        <a-skeleton :animation="true">
+          <a-skeleton-line :rows="10" />
+        </a-skeleton>
       </section>
 
       <template v-else>
-        <section v-if="canManageConfig" class="p-3 border border-slate-200 bg-white space-y-3">
-          <div class="flex flex-wrap gap-2 items-center justify-between">
+        <section
+          v-if="errorText"
+          class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
+        >
+          {{ errorText }}
+        </section>
+        <section
+          v-if="successText"
+          class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50"
+        >
+          {{ successText }}
+        </section>
+
+        <section
+          v-if="!canAccessPage"
+          class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
+        >
+          403：当前账号无飞书集成权限。需要 `role.assign` 或 `contest.write`。
+        </section>
+
+        <template v-else>
+          <section v-if="canReadSyncedData" class="p-3 border border-slate-200 bg-white flex flex-wrap gap-2 items-center justify-between">
             <div>
               <h2 class="text-[12px] text-slate-900 font-semibold m-0">
-                飞书集成配置
+                飞书多维同步数据
               </h2>
               <p class="text-[10px] text-slate-500 m-0 mt-1">
-                `role.assign` 权限可维护 OAuth、事件回调与管理员手动授权配置。
+                浏览平台多维同步导入后的索引、映射和待审草稿。
               </p>
             </div>
-            <a-button size="small" type="primary" @click="openConfigDialog">
-              打开配置
+            <a-button size="small" type="primary" @click="openSyncedData()">
+              查看所有已同步的数据
             </a-button>
-          </div>
+          </section>
 
-          <div class="text-[10px] text-slate-600 p-3 border border-slate-200 bg-slate-50 space-y-1">
-            <p class="m-0">
-              当前状态：{{ config?.enabled ? '已启用' : '未启用' }}，App ID：{{ config?.appId || '-' }}
-            </p>
-            <p class="m-0">
-              当前生效版本：{{ config?.startupEffectiveVersion || '-' }}；
-              Commit：{{ config?.startupEffectiveCommitSha || '-' }}
-            </p>
-            <p class="text-slate-500 m-0">
-              版本来源：{{ buildValueSourceLabel(config?.startupVersionSource) }}；
-              Commit 来源：{{ buildValueSourceLabel(config?.startupCommitShaSource) }}
-            </p>
-            <p class="m-0">
-              App Secret：{{ config?.appSecretConfigured ? '已配置' : '未配置' }}；
-              Event Token：{{ config?.eventTokenConfigured ? '已配置' : '未配置' }}；
-              Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}
-            </p>
-            <p v-if="config?.updatedAt" class="m-0">
-              最近更新：{{ config.updatedAt }}（{{ config.updatedByUserId || 'unknown' }}）
-            </p>
-          </div>
-        </section>
+          <section v-if="canManageConfig" class="p-3 border border-slate-200 bg-white space-y-3">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
+              <div>
+                <h2 class="text-[12px] text-slate-900 font-semibold m-0">
+                  平台飞书登录配置
+                </h2>
+                <p class="text-[10px] text-slate-500 m-0 mt-1">
+                  `role.assign` 权限可维护全局飞书应用、登录回调、事件回调与管理员授权配置。
+                </p>
+              </div>
+              <div class="flex flex-wrap gap-2 items-center">
+                <a-button size="small" type="primary" @click="openConfigDialog">
+                  打开配置
+                </a-button>
+              </div>
+            </div>
 
-        <section v-if="canManageBitable" class="p-3 border border-slate-200 bg-white space-y-3">
-          <div class="flex flex-wrap gap-2 items-center justify-between">
-            <div>
-              <h2 class="text-[12px] text-slate-900 font-semibold m-0">
-                多维表格同步信息
-              </h2>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                一条记录代表一个飞书多维主库。创建后直接在编辑抽屉里继续配置多个子表同步项与字段映射。
+            <div class="text-[10px] text-slate-600 p-3 border border-slate-200 bg-slate-50 space-y-1">
+              <p class="m-0">
+                当前状态：{{ config?.enabled ? '已启用' : '未启用' }}，App ID：{{ config?.appId || '-' }}
+              </p>
+              <p class="m-0">
+                当前生效版本：{{ config?.startupEffectiveVersion || '-' }}；
+                Commit：{{ config?.startupEffectiveCommitSha || '-' }}
+              </p>
+              <p class="text-slate-500 m-0">
+                版本来源：{{ buildValueSourceLabel(config?.startupVersionSource) }}；
+                Commit 来源：{{ buildValueSourceLabel(config?.startupCommitShaSource) }}
+              </p>
+              <p class="m-0">
+                App Secret：{{ config?.appSecretConfigured ? '已配置' : '未配置' }}；
+                Event Token：{{ config?.eventTokenConfigured ? '已配置' : '未配置' }}；
+                Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}
+              </p>
+              <p v-if="config?.updatedAt" class="m-0">
+                最近更新：{{ config.updatedAt }}（{{ config.updatedByUserId || 'unknown' }}）
               </p>
             </div>
-            <div class="flex gap-3 items-center">
-              <label class="text-[10px] text-slate-500 flex gap-2 items-center">
-                <a-switch v-model="showArchivedSyncs" size="small" @change="refreshSyncList" />
-                <span>显示已归档</span>
-              </label>
-              <a-button size="small" type="primary" @click="openCreateSyncDrawer">
-                新建同步信息
-              </a-button>
-              <a-button size="small" :loading="loadingSyncs" @click="refreshSyncList">
-                刷新
-              </a-button>
-            </div>
-          </div>
+          </section>
 
-          <a-table
-            :columns="syncColumns"
-            :data="syncs"
-            :pagination="false"
-            row-key="id"
-            size="small"
-            :bordered="{ cell: true }"
-          >
-            <template #name="{ record }">
-              <div class="min-w-0">
-                <div class="flex gap-2 min-w-0 items-center">
-                  <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
-                    {{ record.name }}
+          <section v-if="canManageBitable" class="p-3 border border-slate-200 bg-white space-y-3">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
+              <div>
+                <h2 class="text-[12px] text-slate-900 font-semibold m-0">
+                  飞书多维同步
+                </h2>
+                <p class="text-[10px] text-slate-500 m-0 mt-1">
+                  一条记录代表一个平台托管的飞书多维主库；Workspace 连接器不在这里配置 OAuth 登录。
+                </p>
+              </div>
+              <div class="flex gap-3 items-center">
+                <label class="text-[10px] text-slate-500 flex gap-2 items-center">
+                  <a-switch v-model="showArchivedSyncs" size="small" @change="refreshSyncList" />
+                  <span>显示已归档</span>
+                </label>
+                <a-trigger
+                  trigger="click"
+                  position="bottom"
+                  :popup-visible="syncConfigImportMenuVisible"
+                  @popup-visible-change="syncConfigImportMenuVisible = $event"
+                >
+                  <a-button size="small" @click.stop>
+                    导入
+                  </a-button>
+
+                  <template #content>
+                    <div class="p-2 border border-slate-200 bg-white w-44">
+                      <button
+                        class="text-[12px] text-slate-700 px-3 py-2 text-left flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+                        type="button"
+                        @click.stop="openSyncConfigUrlImport"
+                      >
+                        <span>从配置 URL 导入</span>
+                      </button>
+                      <button
+                        class="text-[12px] text-slate-700 px-3 py-2 text-left flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+                        type="button"
+                        @click.stop="selectSyncConfigImportFile"
+                      >
+                        <span>从配置文件导入</span>
+                      </button>
+                    </div>
+                  </template>
+                </a-trigger>
+                <input
+                  ref="syncConfigImportFileInputRef"
+                  class="hidden"
+                  accept="application/json,.json"
+                  type="file"
+                  @change="handleSyncConfigImportFileChange"
+                >
+                <a-button size="small" type="primary" @click="openCreateSyncDrawer">
+                  新建同步信息
+                </a-button>
+                <a-button size="small" :loading="loadingSyncs" @click="refreshSyncList">
+                  刷新
+                </a-button>
+              </div>
+            </div>
+
+            <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-4">
+              <div
+                v-for="step in CREATE_SYNC_MILESTONES"
+                :key="step.step"
+                class="p-3 border border-slate-200 bg-slate-50"
+              >
+                <p class="text-[10px] text-slate-400 tracking-[0.18em] font-medium m-0 uppercase">
+                  {{ step.step }}
+                </p>
+                <p class="text-[11px] text-slate-900 font-semibold m-0 mt-2">
+                  {{ step.title }}
+                </p>
+                <p class="text-[10px] text-slate-500 leading-5 m-0 mt-1">
+                  {{ step.description }}
+                </p>
+              </div>
+            </div>
+
+            <a-table
+              v-model:expanded-keys="expandedSyncKeys"
+              :columns="syncColumns"
+              :data="syncs"
+              :pagination="false"
+              row-key="id"
+              size="small"
+              :bordered="{ cell: true }"
+              :expandable="{ width: 48 }"
+              @expand="handleSyncRowExpand"
+            >
+              <template #name="{ record }">
+                <div class="min-w-0">
+                  <div class="flex gap-2 min-w-0 items-center">
+                    <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
+                      {{ record.name }}
+                    </p>
+                    <a-tag v-if="record.source?.environment" :color="syncEnvironmentTagColor(record.source.environment)" size="small">
+                      {{ syncEnvironmentLabel(record.source.environment) }}
+                    </a-tag>
+                    <a-tag v-if="!record.enabled && !record.archivedAt" color="gold" size="small">
+                      已禁用
+                    </a-tag>
+                    <a-tag v-if="record.archivedAt" color="gray" size="small">
+                      已归档
+                    </a-tag>
+                  </div>
+                  <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
+                    {{ record.id }}
                   </p>
-                  <a-tag v-if="record.source?.environment" :color="syncEnvironmentTagColor(record.source.environment)" size="small">
-                    {{ syncEnvironmentLabel(record.source.environment) }}
-                  </a-tag>
-                  <a-tag v-if="!record.enabled && !record.archivedAt" color="gold" size="small">
-                    已禁用
-                  </a-tag>
-                  <a-tag v-if="record.archivedAt" color="gray" size="small">
-                    已归档
-                  </a-tag>
+                  <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
+                    归档时间：{{ formatDateTime(record.archivedAt) }}
+                  </p>
                 </div>
-                <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
-                  {{ record.id }}
-                </p>
-                <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
-                  归档时间：{{ formatDateTime(record.archivedAt) }}
-                </p>
-              </div>
-            </template>
+              </template>
 
-            <template #source="{ record }">
-              <p class="text-[10px] text-slate-600 font-mono m-0">
-                {{ record.source?.appName || record.source?.appToken }}
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                环境：{{ syncEnvironmentLabel(record.source?.environment) }}
-              </p>
-              <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
-                {{ record.source?.appToken || '-' }}
-              </p>
-            </template>
+              <template #source="{ record }">
+                <p class="text-[10px] text-slate-600 font-mono m-0">
+                  {{ record.source?.appName || record.source?.appToken }}
+                </p>
+                <p class="text-[10px] text-slate-500 m-0 mt-1">
+                  环境：{{ syncEnvironmentLabel(record.source?.environment) }}
+                </p>
+                <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                  {{ record.source?.appToken || '-' }}
+                </p>
+              </template>
 
-            <template #itemCount="{ record }">
-              <div class="space-y-1">
-                <a-tag color="arcoblue" size="small">
-                  {{ record.itemCount }} 个子表项
+              <template #itemCount="{ record }">
+                <div class="space-y-1">
+                  <div class="flex flex-wrap gap-1">
+                    <a-tag color="arcoblue" size="small">
+                      {{ record.itemCount }} 个子表项
+                    </a-tag>
+                    <a-tag :color="record.enabled ? 'green' : 'gold'" size="small">
+                      {{ syncEnabledItemSummary(record) }}
+                    </a-tag>
+                    <a-tag :color="syncProgressStageColor(record)" size="small">
+                      {{ syncProgressStageLabel(record) }}
+                    </a-tag>
+                  </div>
+                  <p class="text-[10px] text-slate-500 m-0">
+                    {{ syncProgressSummary(record) }}
+                  </p>
+                  <p class="text-[10px] text-slate-400 m-0">
+                    下一步：{{ syncNextActionText(record) }}
+                  </p>
+                  <a-button size="mini" type="text" class="!px-0" @click.stop="toggleSyncExpanded(record)">
+                    {{ expandedSyncKeys.includes(record.id) ? '收起子项' : '展开查看' }}
+                  </a-button>
+                </div>
+              </template>
+
+              <template #latestRun="{ record }">
+                <div>
+                  <p class="text-[10px] text-slate-700 m-0">
+                    {{ syncLatestRunSummary(record) }}
+                  </p>
+                  <p class="text-[10px] text-slate-400 m-0 mt-1">
+                    更新时间：{{ formatDateTime(record.updatedAt) }}
+                  </p>
+                </div>
+              </template>
+
+              <template #schedule="{ record }">
+                <div class="space-y-1">
+                  <a-tag :color="syncScheduleStatusColor(record)" size="small">
+                    {{ syncScheduleStatusLabel(record) }}
+                  </a-tag>
+                  <p class="text-[10px] text-slate-500 m-0">
+                    模式：{{ scheduleModeLabel(record.schedule?.mode) }}
+                  </p>
+                  <p class="text-[10px] text-slate-500 m-0">
+                    下次：{{ formatDateTime(record.scheduleRuntime?.nextRunAt) }}
+                  </p>
+                  <p v-if="record.scheduleRuntime?.lastError" class="text-[10px] text-rose-500 m-0 break-all">
+                    错误：{{ record.scheduleRuntime.lastError }}
+                  </p>
+                </div>
+              </template>
+
+              <template #issueStats="{ record }">
+                <a-tag :color="record.issueStats.open ? 'red' : 'gray'" size="small">
+                  待处理 {{ record.issueStats.open }}
                 </a-tag>
-                <p class="text-[10px] text-slate-500 m-0">
-                  {{ record.enabled ? `已启用 ${record.enabledItemCount}` : '主同步已禁用' }}
-                </p>
-              </div>
-            </template>
+              </template>
 
-            <template #latestRun="{ record }">
-              <div>
-                <p class="text-[10px] text-slate-700 m-0">
-                  {{ syncLatestRunSummary(record) }}
-                </p>
-                <p class="text-[10px] text-slate-400 m-0 mt-1">
-                  更新时间：{{ formatDateTime(record.updatedAt) }}
-                </p>
-              </div>
-            </template>
+              <template #updatedAt="{ record }">
+                <div>
+                  <p class="text-[10px] text-slate-700 m-0">
+                    {{ formatDateTime(record.updatedAt) }}
+                  </p>
+                  <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
+                    已归档
+                  </p>
+                </div>
+              </template>
 
-            <template #schedule="{ record }">
-              <div class="space-y-1">
-                <a-tag :color="syncScheduleStatusColor(record)" size="small">
-                  {{ syncScheduleStatusLabel(record) }}
-                </a-tag>
-                <p class="text-[10px] text-slate-500 m-0">
-                  模式：{{ scheduleModeLabel(record.schedule?.mode) }}
-                </p>
-                <p class="text-[10px] text-slate-500 m-0">
-                  下次：{{ formatDateTime(record.scheduleRuntime?.nextRunAt) }}
-                </p>
-                <p v-if="record.scheduleRuntime?.lastError" class="text-[10px] text-rose-500 m-0 break-all">
-                  错误：{{ record.scheduleRuntime.lastError }}
-                </p>
-              </div>
-            </template>
-
-            <template #issueStats="{ record }">
-              <a-tag :color="record.issueStats.open ? 'red' : 'gray'" size="small">
-                待处理 {{ record.issueStats.open }}
-              </a-tag>
-            </template>
-
-            <template #updatedAt="{ record }">
-              <div>
-                <p class="text-[10px] text-slate-700 m-0">
-                  {{ formatDateTime(record.updatedAt) }}
-                </p>
-                <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
-                  已归档
-                </p>
-              </div>
-            </template>
-
-            <template #actions="{ record }">
-              <div class="flex flex-wrap gap-1">
-                <a-button
-                  size="mini"
-                  type="primary"
-                  :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
-                  @click="openEditSyncDrawer(record.id, { includeArchived: Boolean(record.archivedAt) })"
-                >
-                  {{ record.archivedAt ? '查看同步信息' : '编辑同步信息' }}
-                </a-button>
-                <a-button
-                  v-if="!record.archivedAt"
-                  size="mini"
-                  :type="record.enabled ? 'outline' : 'primary'"
-                  :status="record.enabled ? 'warning' : 'success'"
-                  :loading="syncToggleMutating[record.id]"
-                  :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id]"
-                  @click="toggleSyncEnabled(record, !record.enabled)"
-                >
-                  {{ record.enabled ? '禁用' : '启用' }}
-                </a-button>
-                <a-popconfirm
-                  v-if="!record.archivedAt"
-                  content="确认归档该同步信息吗？归档后会自动停用全部子表同步项与定时调度，列表默认不再展示。"
-                  type="warning"
-                  @ok="archiveSync(record)"
-                >
+              <template #actions="{ record }">
+                <div class="flex flex-wrap gap-1 items-center">
+                  <a-button
+                    v-if="canReadSyncedData"
+                    size="mini"
+                    :data-sync-data-link="buildSyncedDataLink({ syncId: record.id })"
+                    @click="openSyncedData({ syncId: record.id })"
+                  >
+                    查看同步数据
+                  </a-button>
                   <a-button
                     size="mini"
-                    status="danger"
-                    :loading="archivingSyncMutating[record.id]"
-                    :disabled="restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
+                    type="primary"
+                    :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
+                    @click="openEditSyncDrawer(record.id, { includeArchived: Boolean(record.archivedAt) })"
                   >
-                    归档
+                    {{ record.archivedAt ? '查看同步信息' : '编辑同步信息' }}
                   </a-button>
-                </a-popconfirm>
-                <a-popconfirm
-                  v-else
-                  content="确认恢复该同步信息吗？恢复后只会恢复主记录本身，子表同步项与定时调度仍保持停用，需要手动重新启用。"
-                  type="warning"
-                  @ok="restoreSync(record)"
-                >
-                  <a-button
-                    size="mini"
-                    :loading="restoringSyncMutating[record.id]"
-                    :disabled="archivingSyncMutating[record.id] || syncToggleMutating[record.id]"
+                  <a-trigger
+                    trigger="click"
+                    position="br"
+                    :popup-visible="syncActionMenuVisibleId === record.id"
+                    @popup-visible-change="setSyncActionMenuVisible(record.id, $event)"
                   >
-                    恢复归档
-                  </a-button>
-                </a-popconfirm>
-              </div>
-            </template>
-          </a-table>
-        </section>
+                    <a-button size="mini" @click.stop>
+                      更多
+                    </a-button>
+
+                    <template #content>
+                      <div class="p-2 border border-slate-200 bg-white w-44 space-y-1">
+                        <a-button long size="mini" @click="downloadSyncConfigPackageFromMenu(record)">
+                          导出配置
+                        </a-button>
+                        <a-button
+                          long
+                          size="mini"
+                          :loading="syncConfigShareMutating[record.id]"
+                          @click="createSyncConfigShareFromMenu(record)"
+                        >
+                          创建公网配置
+                        </a-button>
+                        <a-button
+                          long
+                          size="mini"
+                          :disabled="!syncConfigShareFor(record)"
+                          @click="copySyncConfigShareUrlFromMenu(record)"
+                        >
+                          复制公网配置
+                        </a-button>
+                        <a-popconfirm
+                          content="确认撤销该同步信息的公网配置链接吗？撤销后已有链接将无法继续导入。"
+                          type="warning"
+                          @ok="revokeSyncConfigShareFromMenu(record)"
+                        >
+                          <a-button
+                            long
+                            size="mini"
+                            :disabled="syncConfigShareMutating[record.id]"
+                          >
+                            撤销公网配置
+                          </a-button>
+                        </a-popconfirm>
+                        <div class="my-1 border-t border-slate-100" />
+                        <a-button
+                          v-if="!record.archivedAt"
+                          long
+                          size="mini"
+                          :type="record.enabled ? 'outline' : 'primary'"
+                          :status="record.enabled ? 'warning' : 'success'"
+                          :loading="syncToggleMutating[record.id]"
+                          :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id]"
+                          @click="toggleSyncEnabledFromMenu(record)"
+                        >
+                          {{ record.enabled ? '禁用' : '启用' }}
+                        </a-button>
+                        <a-popconfirm
+                          v-if="!record.archivedAt"
+                          content="确认归档该同步信息吗？归档后会自动停用全部子表同步项与定时调度，列表默认不再展示。"
+                          type="warning"
+                          @ok="archiveSyncFromMenu(record)"
+                        >
+                          <a-button
+                            long
+                            size="mini"
+                            status="danger"
+                            :loading="archivingSyncMutating[record.id]"
+                            :disabled="restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
+                          >
+                            归档
+                          </a-button>
+                        </a-popconfirm>
+                        <a-popconfirm
+                          v-else
+                          content="确认恢复该同步信息吗？恢复后只会恢复主记录本身，子表同步项与定时调度仍保持停用，需要手动重新启用。"
+                          type="warning"
+                          @ok="restoreSyncFromMenu(record)"
+                        >
+                          <a-button
+                            long
+                            size="mini"
+                            :loading="restoringSyncMutating[record.id]"
+                            :disabled="archivingSyncMutating[record.id] || syncToggleMutating[record.id]"
+                          >
+                            恢复归档
+                          </a-button>
+                        </a-popconfirm>
+                      </div>
+                    </template>
+                  </a-trigger>
+                </div>
+              </template>
+
+              <template #expand-row="{ record: syncRecord }">
+                <div class="p-3 bg-slate-50 space-y-3">
+                  <div class="flex flex-wrap gap-2 items-center justify-between">
+                    <div>
+                      <p class="text-[11px] text-slate-900 font-semibold m-0">
+                        子表同步项快速预览
+                      </p>
+                      <p class="text-[10px] text-slate-500 m-0 mt-1">
+                        这里展示当前主同步下的子表同步项、运行状态和调度概况。
+                      </p>
+                    </div>
+                    <a-button
+                      size="mini"
+                      type="outline"
+                      @click="openEditSyncDrawer(syncRecord.id, { includeArchived: Boolean(syncRecord.archivedAt) })"
+                    >
+                      进入完整编辑
+                    </a-button>
+                  </div>
+
+                  <section v-if="expandedSyncLoading[syncRecord.id]" class="p-3 border border-slate-200 bg-white">
+                    <a-skeleton :animation="true">
+                      <a-skeleton-line :rows="4" />
+                    </a-skeleton>
+                  </section>
+
+                  <section
+                    v-else-if="expandedSyncErrors[syncRecord.id]"
+                    class="p-3 border border-rose-200 bg-rose-50 flex flex-wrap gap-2 items-center justify-between"
+                  >
+                    <p class="text-[10px] text-rose-600 m-0">
+                      {{ expandedSyncErrors[syncRecord.id] }}
+                    </p>
+                    <a-button size="mini" status="danger" @click="loadExpandedSyncDetail(syncRecord, true)">
+                      重试
+                    </a-button>
+                  </section>
+
+                  <template v-else-if="expandedSyncDetails[syncRecord.id]?.items?.length">
+                    <div class="text-[10px] text-slate-500 flex flex-wrap gap-2 items-center">
+                      <span>共 {{ expandedSyncDetails[syncRecord.id]?.items?.length || 0 }} 个子表同步项</span>
+                      <span>已启用 {{ expandedSyncDetails[syncRecord.id]?.items?.filter(item => item.isEnabled).length || 0 }} 个</span>
+                    </div>
+
+                    <a-table
+                      :columns="syncItemPreviewColumns"
+                      :data="expandedSyncDetails[syncRecord.id]?.items || []"
+                      :pagination="false"
+                      row-key="id"
+                      size="small"
+                      :bordered="{ cell: true }"
+                    >
+                      <template #itemName="{ record: item }">
+                        <div class="min-w-0">
+                          <div class="flex flex-wrap gap-2 items-center">
+                            <p class="text-[10px] text-slate-900 font-semibold m-0">
+                              {{ item.name }}
+                            </p>
+                            <a-tag size="small" color="arcoblue">
+                              {{ syncItemEntityTypeLabel(item.entityType) }}
+                            </a-tag>
+                            <a-tag v-if="!item.isEnabled" size="small" color="gray">
+                              已禁用
+                            </a-tag>
+                            <a-tag v-else-if="!syncRecord.enabled" size="small" color="gold">
+                              受主同步影响
+                            </a-tag>
+                          </div>
+                          <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                            {{ item.id }}
+                          </p>
+                        </div>
+                      </template>
+
+                      <template #itemSource="{ record: item }">
+                        <div>
+                          <p class="text-[10px] text-slate-700 m-0">
+                            {{ item.source?.tableName || item.tableId || '-' }}
+                            <span class="text-slate-400"> / </span>
+                            {{ item.source?.viewName || item.viewId || '-' }}
+                          </p>
+                          <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                            {{ item.tableId || '-' }}
+                          </p>
+                        </div>
+                      </template>
+
+                      <template #itemStatus="{ record: item }">
+                        <div class="space-y-1">
+                          <label class="text-[10px] text-slate-500 flex gap-2 items-center">
+                            <span>启用</span>
+                            <a-switch
+                              :model-value="item.isEnabled"
+                              size="small"
+                              :loading="syncItemToggleMutating[item.id]"
+                              :disabled="Boolean(syncRecord.archivedAt)"
+                              @change="(value) => toggleExpandedSyncItemEnabled(syncRecord, item, Boolean(value))"
+                            />
+                          </label>
+                          <a-tag v-if="!syncRecord.enabled" size="small" color="gold">
+                            主同步已禁用
+                          </a-tag>
+                        </div>
+                      </template>
+
+                      <template #itemLatestRun="{ record: item }">
+                        <div class="space-y-1">
+                          <a-tag :color="runHealthColor(item.latestRunSummary)" size="small">
+                            {{ runHealthLabel(item.latestRunSummary) }}
+                          </a-tag>
+                          <p class="text-[10px] text-slate-500 m-0">
+                            {{ syncItemLatestRunSummary(item) }}
+                          </p>
+                          <p v-if="item.latestRunSummary?.errorCount" class="text-[10px] text-rose-500 m-0">
+                            最近错误数：{{ item.latestRunSummary.errorCount }}
+                          </p>
+                        </div>
+                      </template>
+
+                      <template #itemSchedule="{ record: item }">
+                        <div class="space-y-1">
+                          <a-tag :color="syncItemScheduleStatusColor(syncRecord, item)" size="small">
+                            {{ syncItemScheduleStatusLabel(syncRecord, item) }}
+                          </a-tag>
+                          <p class="text-[10px] text-slate-500 m-0">
+                            模式：{{ scheduleModeLabel(item.schedule?.mode) }}
+                          </p>
+                          <p class="text-[10px] text-slate-500 m-0">
+                            下次：{{ formatDateTime(item.scheduleRuntime?.nextRunAt) }}
+                          </p>
+                        </div>
+                      </template>
+
+                      <template #itemActions="{ record: item }">
+                        <div class="flex flex-wrap gap-2 items-center">
+                          <a-button size="mini" type="text" class="!px-0" @click="openSyncItemLogDrawer(syncRecord, item)">
+                            执行日志
+                          </a-button>
+                          <a-button size="mini" type="text" class="!px-0" @click="openSyncItemEditor(syncRecord, item)">
+                            进入子项配置
+                          </a-button>
+                        </div>
+                      </template>
+                    </a-table>
+                  </template>
+                </div>
+              </template>
+            </a-table>
+          </section>
+        </template>
       </template>
     </template>
 
+    <NuxtPage v-else />
+
     <a-drawer
       v-model:visible="configDialogVisible"
-      title="飞书集成配置"
+      title="平台飞书配置"
       :mask-closable="!savingConfig"
       :closable="!savingConfig"
       :esc-to-close="!savingConfig"
@@ -1241,10 +2548,10 @@ onMounted(initializePage)
         <section class="p-3 border border-slate-200 bg-white space-y-3">
           <div class="space-y-1">
             <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-              1. 基础信息配置
+              1. 平台飞书应用
             </h3>
             <p class="text-[10px] text-slate-500 m-0">
-              维护飞书集成的启用状态、OAuth 回调地址和管理页前端依赖地址。
+              维护全局飞书应用、平台登录回调地址和管理页前端依赖地址。
             </p>
           </div>
 
@@ -1261,8 +2568,13 @@ onMounted(initializePage)
               <a-input v-model="configForm.appId" class="mt-1" allow-clear size="small" placeholder="cli_xxx" />
             </label>
 
+            <label class="text-[10px] text-slate-600 font-medium block">
+              商店应用安装地址
+              <a-input v-model="configForm.marketplaceAppUrl" class="mt-1" allow-clear size="small" placeholder="https://open.feishu.cn/app/..." />
+            </label>
+
             <label class="text-[10px] text-slate-600 font-medium block md:col-span-2">
-              OAuth Redirect URI
+              平台登录 Redirect URI
               <a-input v-model="configForm.oauthRedirectUri" class="mt-1" allow-clear size="small" placeholder="https://domain/api/auth/feishu/callback" />
             </label>
 
@@ -1361,7 +2673,11 @@ onMounted(initializePage)
             <p class="m-0">
               App Secret：{{ config?.appSecretConfigured ? '已配置' : '未配置' }}；
               Event Token：{{ config?.eventTokenConfigured ? '已配置' : '未配置' }}；
-              Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}
+              Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}；
+              App Ticket：{{ config?.appTicketConfigured ? '已接收' : '未接收' }}
+            </p>
+            <p v-if="config?.appTicketUpdatedAt" class="m-0">
+              App Ticket 最近更新：{{ config.appTicketUpdatedAt }}
             </p>
             <p v-if="config?.updatedAt" class="m-0">
               最近更新：{{ config.updatedAt }}（{{ config.updatedByUserId || 'unknown' }}）
@@ -1372,7 +2688,7 @@ onMounted(initializePage)
         <section class="p-3 border border-slate-200 bg-white space-y-3">
           <div class="space-y-1">
             <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-              3. 通知配置
+              3. 启动通知配置
             </h3>
             <p class="text-[10px] text-slate-500 m-0">
               配置进程首次启动时的飞书通知渠道，以及版本信息的兜底来源。
@@ -1448,32 +2764,10 @@ onMounted(initializePage)
                   placeholder="例如：已优化启动流程，准备回归验证。"
                 />
               </label>
-
-              <label class="text-[10px] text-slate-600 font-medium block">
-                兜底 Version
-                <a-input
-                  v-model="configForm.startupFallbackVersion"
-                  class="mt-1"
-                  allow-clear
-                  size="small"
-                  placeholder="v2026.03.29-main"
-                />
-              </label>
-
-              <label class="text-[10px] text-slate-600 font-medium block">
-                兜底 Commit SHA
-                <a-input
-                  v-model="configForm.startupFallbackCommitSha"
-                  class="mt-1"
-                  allow-clear
-                  size="small"
-                  placeholder="fe77787"
-                />
-              </label>
             </div>
 
             <p class="text-[10px] text-slate-500 m-0">
-              版本优先级：CI/CD 环境变量（WINLOOP_BUILD_VERSION / WINLOOP_BUILD_COMMIT_SHA）> 构建推导（git）> 集成配置兜底值。
+              版本来源：CI/CD 环境变量（WINLOOP_BUILD_VERSION / WINLOOP_BUILD_COMMIT_SHA）或构建推导（git）；缺失时启动通知会阻断发送。
             </p>
           </div>
         </section>
@@ -1481,10 +2775,10 @@ onMounted(initializePage)
         <section class="p-3 border border-slate-200 bg-white space-y-3">
           <div class="space-y-1">
             <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-              4. 管理页配置
+              4. 平台管理员授权
             </h3>
             <p class="text-[10px] text-slate-500 m-0">
-              维护管理员组降级目录、平台管理员概览，以及飞书成员浏览与手动授权入口。
+              维护管理员组降级目录、平台管理员概览，以及飞书成员浏览与手动授权入口；不影响 Workspace 连接器登录行为。
             </p>
           </div>
 
@@ -1586,10 +2880,27 @@ onMounted(initializePage)
       width="720px"
     >
       <div class="space-y-3">
-        <div class="p-3 border border-slate-200 bg-slate-50">
+        <div class="p-3 border border-slate-200 bg-slate-50 space-y-3">
           <p class="text-[11px] text-slate-700 m-0">
             创建阶段只识别并保存主库来源。字段映射、回填、预检与启用都在创建成功后的编辑抽屉里继续配置。
           </p>
+          <div class="gap-3 grid md:grid-cols-2">
+            <div
+              v-for="step in CREATE_SYNC_MILESTONES"
+              :key="`create-${step.step}`"
+              class="p-3 border border-slate-200 bg-white"
+            >
+              <p class="text-[10px] text-slate-400 tracking-[0.18em] font-medium m-0 uppercase">
+                {{ step.step }}
+              </p>
+              <p class="text-[11px] text-slate-900 font-semibold m-0 mt-2">
+                {{ step.title }}
+              </p>
+              <p class="text-[10px] text-slate-500 leading-5 m-0 mt-1">
+                {{ step.description }}
+              </p>
+            </div>
+          </div>
         </div>
 
         <div class="gap-3 grid md:grid-cols-2">
@@ -1779,6 +3090,114 @@ onMounted(initializePage)
     </a-drawer>
 
     <a-drawer
+      v-model:visible="syncConfigImportDrawerVisible"
+      :title="syncConfigImportSourceType === 'file' ? '从配置文件导入' : '从配置 URL 导入'"
+      :mask-closable="!syncConfigImporting"
+      :closable="!syncConfigImporting"
+      :esc-to-close="!syncConfigImporting"
+      :footer="false"
+      width="680px"
+    >
+      <div class="space-y-3">
+        <section class="p-3 border border-slate-200 bg-slate-50 space-y-2">
+          <p class="text-[11px] text-slate-700 font-medium m-0">
+            导入策略
+          </p>
+          <p class="text-[10px] text-slate-500 leading-5 m-0">
+            配置包只迁移主库、子表、字段映射、回填、自动同步和调度草案；不会迁移运行记录、问题记录或已同步业务数据。导入后不会自动启用主同步、子表或调度。
+          </p>
+        </section>
+
+        <label v-if="syncConfigImportSourceType === 'url'" class="text-[10px] text-slate-600 font-medium block">
+          公网配置 URL
+          <a-textarea
+            v-model="syncConfigImportUrl"
+            class="mt-1"
+            allow-clear
+            :auto-size="{ minRows: 2, maxRows: 4 }"
+            placeholder="https://your-domain/api/feishu/bitable-sync-config/..."
+          />
+        </label>
+        <section v-else class="p-3 border border-slate-200 bg-white flex flex-wrap gap-2 items-center justify-between">
+          <div>
+            <p class="text-[10px] text-slate-500 m-0">
+              配置文件
+            </p>
+            <p class="text-[11px] text-slate-900 font-medium m-0 mt-1 break-all">
+              {{ syncConfigImportFileName || '未选择' }}
+            </p>
+          </div>
+          <a-button size="small" :disabled="syncConfigImporting" @click="selectSyncConfigImportFile">
+            重新选择
+          </a-button>
+        </section>
+
+        <div class="flex gap-2 justify-end">
+          <a-button
+            size="small"
+            :loading="syncConfigImportLoading"
+            :disabled="syncConfigImportSourceType === 'file' && !syncConfigImportPackage"
+            @click="previewSyncConfigImport"
+          >
+            预览配置
+          </a-button>
+        </div>
+
+        <section v-if="syncConfigImportErrorText" class="p-3 border border-rose-200 bg-rose-50">
+          <p class="text-[10px] text-rose-600 m-0 break-all">
+            {{ syncConfigImportErrorText }}
+          </p>
+        </section>
+
+        <section v-if="syncConfigImportPreview" class="p-3 border border-slate-200 bg-white space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+              配置摘要
+            </h3>
+            <a-tag size="small" color="arcoblue">
+              {{ syncConfigImportPreview.summary.itemCount }} 个子表项
+            </a-tag>
+          </div>
+          <div class="gap-2 grid md:grid-cols-2">
+            <p class="text-[10px] text-slate-500 m-0">
+              名称：{{ syncConfigImportPreview.summary.name || '-' }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0">
+              主库：{{ syncConfigImportPreview.summary.appName || syncConfigImportPreview.summary.appToken || '-' }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0">
+              环境：{{ syncEnvironmentLabel(syncConfigImportPreview.summary.environment || undefined) }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0">
+              实体：{{ syncConfigEntityTypeText(syncConfigImportPreview.summary) }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0">
+              映射字段：{{ syncConfigImportPreview.summary.mappingFieldCount }}
+            </p>
+          </div>
+          <p class="text-[10px] text-amber-600 m-0">
+            导入后会创建一条新的同步信息，且默认保持禁用。请先完成预检和手动执行，再决定是否启用调度。
+          </p>
+        </section>
+
+        <div class="flex gap-2 justify-end">
+          <a-button size="small" :disabled="syncConfigImporting" @click="syncConfigImportDrawerVisible = false">
+            取消
+          </a-button>
+          <a-button
+            size="small"
+            type="primary"
+            :loading="syncConfigImporting"
+            :disabled="!syncConfigImportPreview"
+            @click="confirmSyncConfigImport"
+          >
+            确认导入
+          </a-button>
+        </div>
+      </div>
+    </a-drawer>
+
+    <a-drawer
       v-model:visible="editSyncDrawerVisible"
       title="编辑多维同步信息"
       width="96vw"
@@ -1788,13 +3207,161 @@ onMounted(initializePage)
       <AdminFeishuBitableSyncEditor
         v-if="editingSyncId"
         :sync-id="editingSyncId"
+        :selected-item-id="editingSelectedItemId"
         :draft-table-id="editingDraftTableId"
         :draft-view-id="editingDraftViewId"
         :include-archived="editingSyncIncludeArchived"
         :embedded="true"
         :show-back-button="false"
+        @item-change="(itemId) => editingSelectedItemId = itemId"
         @updated="refreshSyncList"
       />
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="syncItemLogVisible"
+      title="子表同步项执行日志"
+      width="960px"
+      :footer="false"
+    >
+      <div class="space-y-4">
+        <section class="p-3 border border-slate-200 bg-slate-50 space-y-2">
+          <div class="flex flex-wrap gap-2 items-center justify-between">
+            <div class="space-y-1">
+              <p class="text-[12px] text-slate-900 font-semibold m-0">
+                {{ syncItemLogItemDetail?.name || '正在加载子表同步项' }}
+              </p>
+              <p class="text-[10px] text-slate-500 m-0">
+                主同步：{{ syncItemLogSyncName || syncItemLogSyncId || '-' }}
+              </p>
+              <p v-if="syncItemLogItemDetail" class="text-[10px] text-slate-500 m-0 break-all">
+                子表：{{ syncItemLogItemDetail.source?.tableName || syncItemLogItemDetail.tableId || '-' }}
+                /
+                视图：{{ syncItemLogItemDetail.source?.viewName || syncItemLogItemDetail.viewId || '全部视图' }}
+              </p>
+            </div>
+            <div class="flex gap-2">
+              <a-button size="small" :loading="syncItemLogLoading" :disabled="!syncItemLogItemDetail" @click="refreshSyncItemLogDrawer">
+                刷新
+              </a-button>
+              <a-button
+                size="small"
+                type="primary"
+                :disabled="!syncItemLogItemDetail"
+                @click="openSyncItemLogEditor"
+              >
+                进入子项配置
+              </a-button>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="syncItemLogLoading" class="p-3 border border-slate-200 bg-white">
+          <a-skeleton :animation="true">
+            <a-skeleton-line :rows="8" />
+          </a-skeleton>
+        </section>
+
+        <section v-else-if="syncItemLogErrorText" class="p-3 border border-rose-200 bg-rose-50 space-y-2">
+          <p class="text-[10px] text-rose-600 m-0">
+            {{ syncItemLogErrorText }}
+          </p>
+          <a-button size="small" status="danger" @click="refreshSyncItemLogDrawer">
+            重新加载
+          </a-button>
+        </section>
+
+        <template v-else-if="syncItemLogItemDetail">
+          <section class="gap-4 grid xl:grid-cols-2">
+            <div class="p-4 border border-slate-200 bg-white space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                  最近执行
+                </h3>
+                <a-tag size="small" :color="runHealthColor(syncItemLogItemDetail.latestRunSummary)">
+                  {{ runHealthLabel(syncItemLogItemDetail.latestRunSummary) }}
+                </a-tag>
+              </div>
+              <div v-if="syncItemLogItemDetail.recentRuns.length" class="space-y-2">
+                <div v-for="run in syncItemLogItemDetail.recentRuns" :key="run.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <a-tag :color="runHealthColor(run)" size="small">
+                      {{ runHealthLabel(run) }}
+                    </a-tag>
+                    <a-tag size="small">
+                      {{ triggerSourceLabel(run.triggerSource) }}
+                    </a-tag>
+                    <a-tag size="small" color="arcoblue">
+                      {{ syncRunModeLabel(run.mode) }}
+                    </a-tag>
+                    <span class="text-[10px] text-slate-500 font-mono">{{ run.id }}</span>
+                  </div>
+                  <p class="text-[10px] text-slate-700 m-0">
+                    开始：{{ formatDateTime(run.startedAt) }} / 结束：{{ formatDateTime(run.finishedAt) }}
+                  </p>
+                  <p class="text-[10px] text-slate-500 m-0">
+                    抓取 {{ run.fetchedCount }} / 新增 {{ run.createdCount }} / 更新 {{ run.updatedCount }} / 跳过 {{ run.skippedCount }} / 错误 {{ run.errorCount }}
+                  </p>
+                  <p v-if="run.deltaRecordCount !== undefined" class="text-[10px] text-slate-500 m-0">
+                    Delta 记录数：{{ run.deltaRecordCount }}
+                  </p>
+                  <p v-if="run.errorMessage" class="text-[10px] text-rose-500 m-0 break-all">
+                    错误摘要：{{ run.errorMessage }}
+                  </p>
+                </div>
+              </div>
+              <a-empty v-else description="暂无执行记录" />
+            </div>
+
+            <div class="p-4 border border-slate-200 bg-white space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                  关联问题
+                </h3>
+                <div class="flex gap-2">
+                  <a-tag size="small" color="gold">
+                    待处理 {{ syncItemLogItemDetail.issueStats.open }}
+                  </a-tag>
+                  <a-tag size="small">
+                    总计 {{ syncItemLogItemDetail.issueStats.total }}
+                  </a-tag>
+                </div>
+              </div>
+              <div v-if="syncItemLogItemDetail.issues.length" class="space-y-2">
+                <div v-for="issue in sortedSyncIssues(syncItemLogItemDetail.issues)" :key="issue.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <a-tag :color="syncIssueStatusColor(issue.status)" size="small">
+                      {{ syncIssueStatusLabel(issue.status) }}
+                    </a-tag>
+                    <a-tag size="small">
+                      {{ issue.reasonCode || '未标记原因' }}
+                    </a-tag>
+                    <span class="text-[10px] text-slate-500 font-mono">{{ issue.id }}</span>
+                    <div v-if="issue.status === 'open'" class="ml-auto flex gap-1">
+                      <a-button size="mini" :loading="issueActionMutating[issue.id]" @click="handleSyncIssueAction(issue, 'resolve')">
+                        标记已解决
+                      </a-button>
+                      <a-button size="mini" status="warning" :loading="issueActionMutating[issue.id]" @click="handleSyncIssueAction(issue, 'ignore')">
+                        忽略
+                      </a-button>
+                    </div>
+                  </div>
+                  <p class="text-[10px] text-slate-700 m-0 break-all">
+                    {{ issue.message }}
+                  </p>
+                  <p class="text-[10px] text-slate-500 m-0 break-all">
+                    externalId={{ issue.externalId || '-' }} / recordId={{ issue.recordId || '-' }}
+                  </p>
+                  <p class="text-[10px] text-slate-500 m-0">
+                    更新时间：{{ formatDateTime(issue.updatedAt) }}
+                  </p>
+                </div>
+              </div>
+              <a-empty v-else description="暂无问题单" />
+            </div>
+          </section>
+        </template>
+      </div>
     </a-drawer>
 
     <a-modal

@@ -3,11 +3,26 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
 
+const DB_SCHEMA_FILE = resolve(process.cwd(), 'server/database/bootstrap/schema.ts')
+const DOMAIN_LEGACY_FILE = resolve(process.cwd(), 'shared/types/domain-legacy.ts')
+const STORE_FILE = resolve(process.cwd(), 'server/utils/feishu-integration-store.ts')
+const PATCH_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id].patch.ts')
+const CREATE_ITEM_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/index.post.ts')
+const PATCH_ITEM_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId].patch.ts')
+const PREVIEW_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId]/preview.post.ts')
+const SERVICE_FILE = resolve(process.cwd(), 'server/services/feishu/bitable-sync.ts')
+const SCHEDULER_FILE = resolve(process.cwd(), 'server/plugins/feishu-bitable-scheduler-worker.ts')
+const RUN_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId]/run.post.ts')
+const EDITOR_FILE = resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue')
+const OVERVIEW_FILE = resolve(process.cwd(), 'app/pages/admin/integrations/feishu.vue')
+
 it('主同步信息会持久化 enabled 字段并支持补丁更新', async () => {
-  const dbSource = await readFile(resolve(process.cwd(), 'server/utils/db.ts'), 'utf8')
-  const storeSource = await readFile(resolve(process.cwd(), 'server/utils/feishu-integration-store.ts'), 'utf8')
-  const typeSource = await readFile(resolve(process.cwd(), 'shared/types/domain.ts'), 'utf8')
-  const apiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id].patch.ts'), 'utf8')
+  const [dbSource, storeSource, typeSource, apiSource] = await Promise.all([
+    readFile(DB_SCHEMA_FILE, 'utf8'),
+    readFile(STORE_FILE, 'utf8'),
+    readFile(DOMAIN_LEGACY_FILE, 'utf8'),
+    readFile(PATCH_API_FILE, 'utf8'),
+  ])
 
   assert.match(dbSource, /CREATE TABLE IF NOT EXISTS feishu_bitable_syncs[\s\S]*is_enabled BOOLEAN NOT NULL DEFAULT TRUE/, '主同步信息表未持久化 is_enabled 字段')
   assert.match(dbSource, /ALTER TABLE feishu_bitable_syncs[\s\S]*ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE/, '主同步信息表缺少 is_enabled 兼容迁移')
@@ -28,16 +43,18 @@ it('主同步信息会持久化 enabled 字段并支持补丁更新', async () =
 })
 
 it('调度、事件和手动执行都会尊重主同步信息的 enabled 状态', async () => {
-  const storeSource = await readFile(resolve(process.cwd(), 'server/utils/feishu-integration-store.ts'), 'utf8')
-  const serviceSource = await readFile(resolve(process.cwd(), 'server/services/feishu/bitable-sync.ts'), 'utf8')
-  const schedulerSource = await readFile(resolve(process.cwd(), 'server/plugins/feishu-bitable-scheduler-worker.ts'), 'utf8')
-  const runApiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId]/run.post.ts'), 'utf8')
+  const [storeSource, serviceSource, schedulerSource, runApiSource] = await Promise.all([
+    readFile(STORE_FILE, 'utf8'),
+    readFile(SERVICE_FILE, 'utf8'),
+    readFile(SCHEDULER_FILE, 'utf8'),
+    readFile(RUN_API_FILE, 'utf8'),
+  ])
 
   assert.match(storeSource, /listFeishuBitableSyncItems[\s\S]*COALESCE\(s\.is_enabled, TRUE\) = TRUE/, '同步项活动列表未过滤已禁用的主同步信息')
   assert.match(storeSource, /claimNextDueFeishuBitableSync[\s\S]*s\.is_enabled = TRUE/, '主同步调度领取逻辑未过滤已禁用的主同步信息')
   assert.match(storeSource, /listActiveFeishuBitableSyncItemsBySource[\s\S]*COALESCE\(s\.is_enabled, TRUE\) = TRUE/, '事件同步入口未过滤已禁用的主同步信息')
   assert.match(schedulerSource, /claimNextDueFeishuBitableSync/, '调度 worker 未切换到主同步级别领取逻辑')
-  assert.match(schedulerSource, /listFeishuBitableSyncItems\(db,\s*\{[\s\S]*syncId: input\.syncId/, '调度 worker 未按主同步批量执行子表同步项')
+  assert.match(schedulerSource, /runFeishuBitableSync\(undefined,\s*\{[\s\S]*syncId: input\.syncId[\s\S]*triggerSource: 'scheduled'/, '调度 worker 未按主同步批量执行子表同步项')
   assert.match(serviceSource, /const sync = task\?\.syncId \? await getFeishuBitableSyncById\(db, task\.syncId\) : null/, '执行服务层未补查主同步信息')
   assert.match(serviceSource, /configAndTask\.sync && !configAndTask\.sync\.enabled[\s\S]*FEISHU_BITABLE_SYNC_DISABLED/, '执行服务层未阻断已禁用主同步信息')
   assert.match(runApiSource, /FEISHU_BITABLE_SYNC_DISABLED/, '手动执行接口未处理主同步已禁用错误')
@@ -45,22 +62,52 @@ it('调度、事件和手动执行都会尊重主同步信息的 enabled 状态'
 })
 
 it('编辑器会提供主同步启停和子表快捷启停入口', async () => {
-  const editorSource = await readFile(resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue'), 'utf8')
-  const overviewSource = await readFile(resolve(process.cwd(), 'app/pages/admin/integrations/feishu.vue'), 'utf8')
+  const [editorSource, overviewSource] = await Promise.all([
+    readFile(EDITOR_FILE, 'utf8'),
+    readFile(OVERVIEW_FILE, 'utf8'),
+  ])
 
   assert.match(editorSource, /const syncForm = reactive\(\{[\s\S]*enabled: true/, '同步信息表单未接入 enabled 字段')
   assert.match(editorSource, /const syncForm = reactive\(\{[\s\S]*scheduleEnabled: false[\s\S]*scheduleMode: 'interval'/, '同步信息表单未接入主调度字段')
-  assert.match(editorSource, /syncForm\.enabled = Boolean\(response\.data\.enabled\)/, '同步详情加载后未回填 enabled')
-  assert.match(editorSource, /syncForm\.scheduleEnabled = Boolean\(response\.data\.schedule\?\.enabled\)/, '同步详情加载后未回填主调度状态')
+  assert.match(editorSource, /const selectPopupContainer = computed\(\(\) => editorRootRef\.value\)/, '编辑器未固定 Select 弹层容器')
+  assert.match(editorSource, /<div ref="editorRootRef" class="space-y-4"/, '编辑器根节点未暴露 Select 弹层挂载容器')
+  assert.match(editorSource, /type SaveCurrentItemContext = 'main' \| 'mapping' \| 'writeback' \| 'autoSync'/, '编辑器未声明子表配置专用保存上下文')
+  assert.match(editorSource, /syncForm\.enabled = Boolean\(detail\.enabled\)/, '同步详情加载后未回填 enabled')
+  assert.match(editorSource, /syncForm\.scheduleEnabled = Boolean\(detail\.schedule\?\.enabled\)/, '同步详情加载后未回填主调度状态')
   assert.match(editorSource, /body:\s*\{[\s\S]*enabled:\s*syncForm\.enabled[\s\S]*schedule:\s*\{/, '保存同步信息时未提交主调度')
   assert.match(editorSource, /environment:\s*syncForm\.environment === 'production' \|\| syncForm\.environment === 'test'/, '保存同步信息时未提交环境标签')
+  assert.match(editorSource, /v-model="syncForm\.environment"[\s\S]*:popup-container="selectPopupContainer"/, '运行环境下拉未绑定固定弹层容器')
   assert.match(editorSource, /启用主同步/, '编辑器未展示主同步启用开关')
   assert.match(editorSource, /主同步调度/, '编辑器未展示主同步调度区域')
   assert.match(editorSource, /运行环境/, '编辑器未展示运行环境选择')
-  assert.match(editorSource, /主同步状态/, '编辑器未展示主同步状态摘要')
   assert.match(editorSource, /syncExecutionDisabled/, '编辑器未根据主同步状态禁用执行入口')
   assert.match(editorSource, /async function toggleItemEnabled\(item: FeishuBitableSyncItem, enabled: boolean\)/, '编辑器未提供子表快捷启停方法')
-  assert.match(editorSource, /@change="\(value\) => toggleItemEnabled\(item, Boolean\(value\)\)"/, '编辑器未绑定子表快捷启停开关')
+  assert.match(editorSource, /v-model="itemForm\.tableId"[\s\S]*placeholder="选择子表"/, '来源区子表下拉缺少明确占位提示')
+  assert.match(editorSource, /v-model="itemForm\.viewId"[\s\S]*全部视图（不限制）/, '来源区视图下拉未提供全部视图选项')
+  assert.doesNotMatch(editorSource, /v-model="itemForm\.tableId"[^>]*allow-clear/, '来源区子表下拉不应再使用 allow-clear')
+  assert.doesNotMatch(editorSource, /v-model="itemForm\.viewId"[^>]*allow-clear/, '来源区视图下拉不应再使用 allow-clear')
+  assert.match(editorSource, /<a-table[\s\S]*row-key="id"[\s\S]*<a-table-column title="同步项"[\s\S]*<a-table-column title="来源子表"[\s\S]*<a-table-column title="状态"[\s\S]*<a-table-column title="最近结果"[\s\S]*<a-table-column title="操作"/, '编辑器未将子表同步项改为表格列表')
+  assert.match(editorSource, /@change="\(value\) => toggleItemEnabled\(record, Boolean\(value\)\)"/, '编辑器未绑定子表快捷启停开关')
+  assert.match(editorSource, /title="如何配置一个同步项"/, '编辑器未提供同步项帮助弹窗')
+  assert.match(editorSource, /quickStartGuideVisible = true/, '编辑器未提供同步项帮助入口')
+  assert.match(editorSource, /预检与执行日志仍在详情 Drawer 内查看/, '编辑器未提示预检与执行日志入口仍在详情 Drawer')
+  assert.match(editorSource, /回填配置[\s\S]*刷新字段/, '回填配置未提供刷新字段按钮')
+  assert.match(editorSource, /writebackSaveSuccess\.value = '回填配置已保存。'/, '回填配置保存成功后未设置专用成功提示')
+  assert.match(editorSource, /<a-alert v-else-if="writebackSaveSuccess" type="success" :show-icon="true">/, '回填配置抽屉未展示成功提示')
+  assert.match(editorSource, /saveCurrentItem\('writeback'\)/, '回填配置保存按钮未走专用保存上下文')
+  assert.match(editorSource, /openWritebackDrawer/, '回填配置未通过专用入口打开以清理旧反馈')
+  assert.match(editorSource, /<p v-if="writebackSaveSuccess" class="text-\[11px\] text-emerald-700 m-0">/, '回填配置摘要区未展示保存成功提示')
+  assert.match(editorSource, /const currentItemLogVisible = ref\(false\)/, '编辑器未声明执行日志 Drawer 状态')
+  assert.match(editorSource, /async function openCurrentItemLogDrawer\(preferredRunId = ''\)/, '编辑器未提供当前子项执行日志加载方法')
+  assert.match(editorSource, /点击任意一条执行记录，可查看详细执行日志/, '编辑器未提示最近执行支持点击查看详情')
+  assert.match(editorSource, /@click="openCurrentItemLogDrawer\(run\.id\)"/, '编辑器未将最近执行记录绑定为日志入口')
+  assert.match(editorSource, /v-model:visible="currentItemLogVisible"/, '编辑器未接入当前子项执行日志 Drawer')
+  assert.match(editorSource, /function syncIssueCategoryLabel\(code\?: string \| null, message\?: string \| null\): string/, '编辑器未提供问题归因标签函数')
+  assert.match(editorSource, /function syncIssueSuggestion\(code\?: string \| null, message\?: string \| null\): string/, '编辑器未提供问题排查建议函数')
+  assert.match(editorSource, /归因：\{\{ syncIssueCategoryLabel\(item\.kind, item\.message\) \}\}/, '预检诊断未展示问题归因标签')
+  assert.match(editorSource, /排查建议：\{\{ syncIssueSuggestion\(item\.kind, item\.message\) \}\}/, '预检诊断未展示问题排查建议')
+  assert.match(editorSource, /归因：\{\{ syncIssueCategoryLabel\(issue\.reasonCode, issue\.message\) \}\}/, '关联问题未展示问题归因标签')
+  assert.match(editorSource, /排查建议：\{\{ syncIssueSuggestion\(issue\.reasonCode, issue\.message\) \}\}/, '关联问题未展示问题排查建议')
   assert.match(editorSource, /主同步已禁用/, '编辑器未提示子表受主同步开关影响')
   assert.doesNotMatch(editorSource, /itemForm\.scheduleEnabled/, '子表同步项仍然保留了调度表单状态')
   assert.match(overviewSource, /!record\.enabled && !record\.archivedAt/, '同步信息总览未展示主同步禁用态')
@@ -69,8 +116,94 @@ it('编辑器会提供主同步启停和子表快捷启停入口', async () => {
   assert.match(overviewSource, /syncScheduleStatusLabel\(record\)/, '同步信息总览未展示主调度状态')
   assert.match(overviewSource, /formatDateTime\(record\.scheduleRuntime\?\.nextRunAt\)/, '同步信息总览未展示主调度下次执行时间')
   assert.match(overviewSource, /async function toggleSyncEnabled\(sync: FeishuBitableSync, enabled: boolean\)/, '同步信息总览未提供一键启停动作')
-  assert.match(overviewSource, /@click="toggleSyncEnabled\(record, !record\.enabled\)"/, '同步信息总览未绑定一键启停按钮')
+  assert.match(overviewSource, /function toggleSyncEnabledFromMenu\(sync: FeishuBitableSync\)/, '同步信息总览未提供菜单内一键启停动作')
+  assert.match(overviewSource, /@click="toggleSyncEnabledFromMenu\(record\)"/, '同步信息总览未绑定菜单内一键启停按钮')
+  assert.match(overviewSource, /v-model:expanded-keys="expandedSyncKeys"/, '同步信息总览未接入展开行状态')
+  assert.match(overviewSource, /:expandable="\{ width: 48 \}"/, '同步信息总览未启用展开行能力')
+  assert.match(overviewSource, /<template #expand-row="\{ record: syncRecord \}">/, '同步信息总览未提供子表同步项展开区')
+  assert.match(overviewSource, /includeInactive: 'true'/, '同步信息展开预览未按需请求包含停用子项的详情')
+  assert.match(overviewSource, /toggleSyncExpanded\(record\)/, '子表同步项列未提供快捷展开入口')
+  assert.match(overviewSource, /async function toggleExpandedSyncItemEnabled\(sync: FeishuBitableSync, item: FeishuBitableSyncItem, enabled: boolean\)/, '展开预览未提供子表快捷启停方法')
+  assert.match(overviewSource, /@change="\(value\) => toggleExpandedSyncItemEnabled\(syncRecord, item, Boolean\(value\)\)"/, '展开预览未绑定子表快捷启停开关')
+  assert.match(overviewSource, /<template #itemStatus="\{ record: item \}">/, '展开预览未展示子表状态列')
+  assert.match(overviewSource, /async function openSyncItemLogDrawer\(sync: FeishuBitableSync, item: FeishuBitableSyncItem\)/, '展开预览未提供执行日志加载方法')
+  assert.match(overviewSource, /runLimit: '20'[\s\S]*issueLimit: '50'/, '执行日志加载未请求最近运行与问题明细')
+  assert.match(overviewSource, /v-model:visible="syncItemLogVisible"/, '执行日志抽屉未接入显示状态')
+  assert.match(overviewSource, /syncItemLogItemDetail\.recentRuns\.length/, '执行日志抽屉未展示最近运行记录')
+  assert.match(overviewSource, /syncItemLogItemDetail\.issues\.length/, '执行日志抽屉未展示关联问题列表')
+  assert.match(overviewSource, /@click="openSyncItemLogDrawer\(syncRecord, item\)"/, '展开预览未提供执行日志入口')
+  assert.match(overviewSource, /openSyncItemEditor\(syncRecord, item\)/, '展开预览未提供子表同步项编辑入口')
+  assert.match(overviewSource, /:selected-item-id="editingSelectedItemId"/, '编辑抽屉未支持从总览定位指定子项')
   assert.match(overviewSource, /syncEnvironmentLabel\(record\.source\?\.environment\)/, '同步信息总览未展示环境标签')
   assert.match(overviewSource, /buildSuggestedCreateSyncName\(\)/, '新建同步信息未生成环境感知的推荐名称')
   assert.match(overviewSource, /v-model="createSyncForm\.environment"/, '新建同步信息未提供环境标签选择')
+})
+
+it('自动同步规则会在类型、存储、接口、执行链路和编辑器中生效', async () => {
+  const [dbSource, typeSource, storeSource, createApiSource, patchItemApiSource, previewApiSource, runApiSource, serviceSource, editorSource] = await Promise.all([
+    readFile(DB_SCHEMA_FILE, 'utf8'),
+    readFile(DOMAIN_LEGACY_FILE, 'utf8'),
+    readFile(STORE_FILE, 'utf8'),
+    readFile(CREATE_ITEM_API_FILE, 'utf8'),
+    readFile(PATCH_ITEM_API_FILE, 'utf8'),
+    readFile(PREVIEW_API_FILE, 'utf8'),
+    readFile(RUN_API_FILE, 'utf8'),
+    readFile(SERVICE_FILE, 'utf8'),
+    readFile(EDITOR_FILE, 'utf8'),
+  ])
+
+  assert.match(dbSource, /CREATE TABLE IF NOT EXISTS feishu_bitable_sync_items[\s\S]*auto_sync_json JSONB NOT NULL DEFAULT '\{\}'::JSONB/, '子表同步项表未持久化 auto_sync_json')
+  assert.match(dbSource, /ALTER TABLE feishu_bitable_sync_items[\s\S]*ADD COLUMN IF NOT EXISTS auto_sync_json JSONB NOT NULL DEFAULT '\{\}'::JSONB/, '子表同步项表缺少 auto_sync_json 兼容迁移')
+  assert.match(typeSource, /export interface FeishuBitableAutoSyncConfig \{[\s\S]*recordStatusField\?: string[\s\S]*ignoredFieldNames\?: string\[\]/, '领域类型未声明自动同步配置结构')
+  assert.match(typeSource, /export interface FeishuBitableSyncItemPreviewRequest \{[\s\S]*autoSync\?: FeishuBitableAutoSyncConfig \| Record<string, unknown>/, '预检草稿类型未暴露 autoSync')
+  assert.match(typeSource, /export interface FeishuBitableSyncItem \{[\s\S]*autoSync\?: FeishuBitableAutoSyncConfig/, '同步项领域类型未暴露 autoSync')
+  assert.match(storeSource, /interface FeishuBitableSyncItemRow \{[\s\S]*auto_sync_json: Record<string, unknown>/, '存储层行模型未声明 auto_sync_json')
+  assert.match(storeSource, /autoSync:\s*normalizeAutoSyncConfig\(row\.auto_sync_json\)/, '存储层未回填 autoSync')
+  assert.match(storeSource, /INSERT INTO feishu_bitable_sync_items \([\s\S]*auto_sync_json,/, '存储层创建同步项时未写入 auto_sync_json')
+  assert.match(storeSource, /addSet\('auto_sync_json', JSON\.stringify\(parseJsonObject\(input\.patch\.autoSync\)\)\)/, '存储层更新同步项时未写入 auto_sync_json')
+  assert.match(createApiSource, /interface CreateItemBody \{[\s\S]*autoSync\?: FeishuBitableAutoSyncConfig/, '新增同步项接口未接收 autoSync')
+  assert.match(createApiSource, /autoSync:\s*body\.autoSync/, '新增同步项接口未透传 autoSync')
+  assert.match(patchItemApiSource, /interface PatchItemBody \{[\s\S]*autoSync\?: FeishuBitableAutoSyncConfig/, '更新同步项接口未接收 autoSync')
+  assert.match(patchItemApiSource, /autoSync:\s*body\.autoSync/, '更新同步项接口未透传 autoSync')
+  assert.match(previewApiSource, /previewFeishuBitableSyncItem\(event,\s*\{[\s\S]*draft: body/, '预检接口未透传自动同步草稿配置')
+  assert.match(previewApiSource, /return fail\(error instanceof Error \? error\.message : '预检失败。'/, '预检接口未将自动同步配置错误回传前端')
+  assert.match(runApiSource, /code\.includes\('自动同步规则'\)/, '手动执行接口未识别自动同步规则配置错误')
+  assert.match(serviceSource, /function normalizeAutoSyncConfig\(raw: unknown\): NormalizedAutoSync/, '服务层未标准化自动同步配置')
+  assert.match(serviceSource, /function ensureAutoSyncConfigReady\(autoSync: NormalizedAutoSync\): void/, '服务层未校验自动同步必要字段')
+  assert.match(serviceSource, /function validateAutoSyncFields\(autoSync: NormalizedAutoSync, records: FeishuBitableRecord\[\]\): void/, '服务层未校验自动同步字段是否存在于当前视图')
+  assert.match(serviceSource, /function filterRecordsByAutoSync\(records: FeishuBitableRecord\[\], autoSync: NormalizedAutoSync\): FeishuBitableRecord\[\]/, '服务层未按自动同步规则过滤记录')
+  assert.match(serviceSource, /const autoSync = normalizeAutoSyncConfig\(autoSyncRaw\)[\s\S]*const filteredRecords = filterRecordsByAutoSync\(records, autoSync\)/, '预检链路未按自动同步规则过滤记录')
+  assert.match(serviceSource, /const autoSync = normalizeAutoSyncConfig\(task\.autoSync\)[\s\S]*const filteredRecords = ignoreAutoSyncStatus \? records : filterRecordsByAutoSync\(records, autoSync\)/, '执行链路未按自动同步规则过滤记录')
+  assert.match(serviceSource, /function normalizeWritebackStatusField/, '自动同步规则未为回填状态字段提供同步信息兜底')
+  assert.match(serviceSource, /field === autoSync\.recordStatusField && autoSync\.syncStatusField/, '回填状态字段误选记录状态时未改写到同步信息')
+  assert.match(editorSource, /const autoSyncDrawerVisible = ref\(false\)/, '编辑器未声明自动同步 Drawer 状态')
+  assert.match(editorSource, /const autoSyncForm = reactive<SyncAutoSyncFormState>\(/, '编辑器未声明自动同步表单')
+  assert.match(editorSource, /const autoSyncDraftText = ref\(/, '编辑器未声明自动同步 Drawer 草稿 JSON')
+  assert.match(editorSource, /const writebackDraftText = ref\(/, '编辑器未声明回填配置 Drawer 草稿 JSON')
+  assert.match(editorSource, /watch\(autoSyncForm, \(\) => \{[\s\S]*syncAutoSyncFormToJson\(false\)/, '编辑器未在自动同步表单变更后同步 JSON')
+  assert.match(editorSource, /function syncAutoSyncFormToJson\(showNotice = false\) \{[\s\S]*autoSyncDraftText\.value = formatJson\(buildAutoSyncPayload\(\)\)/, '自动同步表单变更后未写入 Drawer 草稿 JSON')
+  assert.doesNotMatch(editorSource, /function syncAutoSyncFormToJson\(showNotice = false\) \{[\s\S]*itemForm\.autoSyncText = formatJson\(buildAutoSyncPayload\(\)\)/, '自动同步表单变更仍直接写回已保存配置')
+  assert.match(editorSource, /watch\(autoSyncDrawerVisible, \(visible, previousVisible\) => \{[\s\S]*resetAutoSyncDraft\(false\)/, '自动同步 Drawer 关闭后未丢弃未保存草稿')
+  assert.match(editorSource, /function openAutoSyncDrawer\(\) \{[\s\S]*resetAutoSyncDraft\(false\)[\s\S]*autoSyncDrawerVisible\.value = true/, '编辑器未在打开自动同步 Drawer 时重载已保存配置')
+  assert.match(editorSource, /function syncWritebackFormToJson\(showNotice = false\) \{[\s\S]*writebackDraftText\.value = formatJson\(buildWritebackPayload\(\)\)/, '回填表单变更后未写入 Drawer 草稿 JSON')
+  assert.doesNotMatch(editorSource, /function syncWritebackFormToJson\(showNotice = false\) \{\s*itemForm\.writebackText = formatJson\(buildWritebackPayload\(\)\)/, '回填表单变更仍直接写回已保存配置')
+  assert.match(editorSource, /watch\(writebackDrawerVisible, \(visible, previousVisible\) => \{[\s\S]*resetWritebackDraft\(false\)/, '回填配置 Drawer 关闭后未丢弃未保存草稿')
+  assert.match(editorSource, /function openWritebackDrawer\(\) \{[\s\S]*resetWritebackDraft\(false\)[\s\S]*writebackDrawerVisible\.value = true/, '编辑器未在打开回填配置 Drawer 时重载已保存配置')
+  assert.match(editorSource, /function closeWritebackDrawer\(\) \{[\s\S]*resetWritebackDraft\(false\)[\s\S]*writebackDrawerVisible\.value = false/, '回填配置关闭按钮未显式丢弃未保存草稿')
+  assert.match(editorSource, /writeback = parseJsonText\(saveContext === 'writeback' \? writebackDraftText\.value : itemForm\.writebackText/, '保存回填配置时未从 Drawer 草稿读取')
+  assert.match(editorSource, /if \(saveContext === 'writeback'\)[\s\S]*itemForm\.writebackText = formatJson\(writeback\)/, '保存回填配置时未将草稿提交到同步项配置')
+  assert.match(editorSource, /applyContestAutoSyncPreset/, '编辑器未提供竞赛库自动同步预设')
+  assert.match(editorSource, /saveCurrentItem\('autoSync'\)/, '编辑器未提供自动同步规则专用保存入口')
+  assert.match(editorSource, /自动同步规则[\s\S]*刷新字段/, '自动同步规则抽屉未提供刷新字段入口')
+  assert.match(editorSource, /v-model="autoSyncForm\.recordStatusField"[\s\S]*placeholder="选择飞书字段"/, '自动同步规则未将字段名改为下拉选择')
+  assert.match(editorSource, /v-model="autoSyncPendingValues"[\s\S]*从同步信息样本值里选择/, '自动同步规则未将状态值改为样本值下拉选择')
+  assert.match(editorSource, /v-model="autoSyncWatchedFields"[\s\S]*multiple/, '自动同步规则未将额外监听字段改为多选下拉')
+  assert.match(editorSource, /v-model="autoSyncDraftText"/, '自动同步高级 JSON 模式未绑定 Drawer 草稿')
+  assert.match(editorSource, /v-model="writebackDraftText"/, '回填高级 JSON 模式未绑定 Drawer 草稿')
+  assert.match(editorSource, /关闭（不保存）/, '回填配置关闭按钮未明确说明不会保存')
+  assert.match(editorSource, /已完成 \+ 未同步 => 自动同步/, '编辑器未说明自动同步触发规则')
+  assert.match(editorSource, /如果同步成功后需要自动写成“已同步”/, '编辑器未提示自动同步与回填配置的关系')
+  assert.match(editorSource, /同步状态回填字段/, '回填配置未把状态字段文案改成同步状态回填字段')
+  assert.match(editorSource, /writebackStatusFieldRisk/, '回填配置未提示状态回填字段误选记录状态')
+  assert.match(editorSource, /status: resolveWritebackStatusFieldForPayload\(\)/, '保存回填配置时未纠正状态回填字段')
 })

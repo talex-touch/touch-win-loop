@@ -10,6 +10,7 @@ export interface WorkflowRunInput {
   triggerSource: WorkflowTriggerSource
   mode?: FeishuSyncRunMode
   recordIds?: string[]
+  force?: boolean
 }
 
 export interface WorkflowProvider {

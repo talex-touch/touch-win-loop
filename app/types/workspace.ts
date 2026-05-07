@@ -8,21 +8,29 @@ import type {
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
 
-export type MappingTone = 'complete' | 'warning' | 'todo'
+export type MappingTone = 'critical' | 'high' | 'medium' | 'low' | 'complete' | 'warning' | 'todo'
+
+export interface WorkspaceStatusToneMeta {
+  label: string
+  badgeClass: string
+  barClass: string
+}
 
 export interface WorkspaceMappingRow {
   id: string
   metric: string
   hint: string
   score: number
+  scoreLabel: string
   ability: string
-  tags: string[]
+  supportingNote: string
   tone: MappingTone
+  tags: string[]
 }
 
 export interface WorkspaceKeyword {
   label: string
-  count: number
+  count?: number | null
   active?: boolean
 }
 
@@ -38,10 +46,13 @@ export interface WorkspaceFormState {
   summary: string
 }
 
-export interface WorkspaceStatusToneMeta {
-  label: string
-  badgeClass: string
-  barClass: string
+export interface WorkspaceTopicBoardDraft {
+  discipline: string
+  topicType: string
+  expectedDifficulty: string
+  keywordsText: string
+  teamSkillTagsText: string
+  candidateCount: number
 }
 
 export interface WorkspaceChatPanelState {
@@ -83,6 +94,8 @@ export interface WorkspaceLinkedContestResourceGroup {
 export interface WorkspaceProjectCommonForm {
   title: string
   summary: string
+  icon: string
+  accentColor: string
   problemStatement: string
   innovationPointsText: string
   techRouteStepsText: string

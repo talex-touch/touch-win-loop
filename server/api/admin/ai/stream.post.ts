@@ -8,6 +8,7 @@ import { createEventStream, setResponseStatus } from 'h3'
 import { executeAdminAgent } from '~~/server/services/admin-ai/orchestrator'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { upsertAiChatSessionContext } from '~~/server/utils/chat-session-context-store'
 import {
   appendAiChatMessage,
   createAiChatSession,
@@ -17,14 +18,13 @@ import {
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 
 const ALLOWED_TASK_TYPES: AdminAgentTaskType[] = [
   'publish_assistant',
-  'import_sync_analysis',
   'general',
 ]
 
@@ -45,9 +45,6 @@ function normalizeRequest(body: Partial<AdminAgentRunRequest> | null | undefined
     context: {
       trackId: String(context.trackId || '').trim() || undefined,
       major: String(context.major || '').trim() || undefined,
-      csvText: String(context.csvText || '').trim() || undefined,
-      sourceId: String(context.sourceId || '').trim() || undefined,
-      sourceUrl: String(context.sourceUrl || '').trim() || undefined,
       targetModule: context.targetModule,
     },
   }
@@ -56,11 +53,18 @@ function normalizeRequest(body: Partial<AdminAgentRunRequest> | null | undefined
 function buildSessionTitle(request: AdminAgentRunRequest): string {
   const map: Record<AdminAgentTaskType, string> = {
     publish_assistant: '发布助手',
-    import_sync_analysis: '导入同步分析',
     general: '管理助手',
   }
 
   return `管理助手 · ${map[request.taskType]}`
+}
+
+function buildAdminSessionContextSnapshot(request: AdminAgentRunRequest) {
+  return {
+    assistantLabel: buildSessionTitle(request),
+    activeTabId: String(request.context?.targetModule || '').trim(),
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function toErrorMessage(error: unknown): string {
@@ -69,11 +73,9 @@ function toErrorMessage(error: unknown): string {
   return 'UNKNOWN_ERROR'
 }
 
-function resolveAdminChannelKey(taskType: AdminAgentTaskType): 'admin_general' | 'admin_publish_assistant' | 'admin_import_sync_analysis' {
+function resolveAdminChannelKey(taskType: AdminAgentTaskType): 'admin_general' | 'admin_publish_assistant' {
   if (taskType === 'publish_assistant')
     return 'admin_publish_assistant'
-  if (taskType === 'import_sync_analysis')
-    return 'admin_import_sync_analysis'
   return 'admin_general'
 }
 
@@ -148,6 +150,22 @@ export default defineEventHandler(async (event) => {
       trackId: request.context?.trackId,
       major: request.context?.major,
       title: buildSessionTitle(request),
+    })
+
+    await upsertAiChatSessionContext(db, {
+      workspaceId: request.workspaceId,
+      sessionId: session.id,
+      contextSnapshot: buildAdminSessionContextSnapshot(request),
+      runState: {
+        status: 'running',
+        lastEventSeq: 0,
+        degraded: false,
+        degradedReason: '',
+        resumeAvailable: false,
+      },
+      lastCheckpointRef: '',
+      lastError: '',
+      touchActiveAt: true,
     })
 
     const quota = await teamConsumeAiQuota(db, {
@@ -231,23 +249,28 @@ export default defineEventHandler(async (event) => {
         sessionId: prepared.sessionId,
       })
 
-      const execution = await executeAdminAgent(event, request, {
-        onProgress: message => pushEvent('progress', { message }),
-        onTool: (name, payload) => pushEvent('tool', {
-          name,
-          payload,
-        }),
-        onDelta: text => pushEvent('delta', { text }),
-        onArtifact: artifact => pushEvent('artifact', { artifact }),
-      }, {
-        runtime: {
-          ...runtime,
-          ai: {
-            ...runtime.ai,
-            ...adminAiConfig,
+      const execution = await runWithPlatformAiChannelFallback(runtime, resolveAdminChannelKey(request.taskType), async ({ ai, prompt }) => {
+        return executeAdminAgent(event, {
+          ...request,
+          sessionId: prepared.sessionId,
+        }, {
+          onProgress: message => pushEvent('progress', { message }),
+          onTool: (name, payload) => pushEvent('tool', {
+            name,
+            payload,
+          }),
+          onDelta: text => pushEvent('delta', { text }),
+          onArtifact: artifact => pushEvent('artifact', { artifact }),
+        }, {
+          runtime: {
+            ...runtime,
+            ai: {
+              ...runtime.ai,
+              ...ai,
+            },
           },
-        },
-        channelPrompt: channelRuntime.prompt,
+          channelPrompt: prompt,
+        })
       })
 
       await withTransaction(event, async (db) => {
@@ -261,8 +284,8 @@ export default defineEventHandler(async (event) => {
             sessionId: prepared.sessionId,
             role: 'user',
             content: request.message,
-            provider: adminAiConfig.provider,
-            model: adminAiConfig.model,
+            provider: execution.ai.provider,
+            model: execution.ai.model,
             fallbackUsed: false,
             createdByUserId: user.id,
           })
@@ -272,10 +295,17 @@ export default defineEventHandler(async (event) => {
           workspaceId: request.workspaceId,
           sessionId: prepared.sessionId,
           role: 'assistant',
-          content: execution.data.assistantReply,
-          provider: adminAiConfig.provider,
-          model: adminAiConfig.model,
-          fallbackUsed: execution.fallbackUsed,
+          content: execution.data.data.assistantReply,
+          provider: execution.ai.provider,
+          model: execution.ai.model,
+          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+          metadata: {
+            taskType: request.taskType,
+            channelKey: execution.channel.key,
+            providerId: execution.provider?.id || null,
+            attemptChain: execution.attemptChain,
+            latencyMs: execution.latencyMs,
+          },
           createdByUserId: user.id,
         })
 
@@ -288,6 +318,21 @@ export default defineEventHandler(async (event) => {
           title: buildSessionTitle(request),
         })
 
+        await upsertAiChatSessionContext(db, {
+          workspaceId: request.workspaceId,
+          sessionId: prepared.sessionId,
+          contextSnapshot: buildAdminSessionContextSnapshot(request),
+          runState: {
+            status: 'completed',
+            degraded: execution.usedFallback || execution.data.fallbackUsed,
+            degradedReason: execution.usedFallback || execution.data.fallbackUsed ? 'ADMIN_AGENT_DEGRADED' : '',
+            resumeAvailable: true,
+          },
+          lastCheckpointRef: '',
+          lastError: '',
+          touchActiveAt: true,
+        })
+
         await recordContestAuditLog(db, {
           actorUserId: user.id,
           action: 'ai.invoke.admin_agent',
@@ -297,11 +342,12 @@ export default defineEventHandler(async (event) => {
             workspaceId: request.workspaceId,
             sessionId: prepared.sessionId,
             taskType: request.taskType,
-            channelKey: channelRuntime.key,
-            providerId: channelRuntime.provider?.id || null,
-            fallbackUsed: execution.fallbackUsed,
-            attempts: execution.attempts,
-            latencyMs: Date.now() - startedAt,
+            channelKey: execution.channel.key,
+            providerId: execution.provider?.id || null,
+            fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+            attempts: execution.attemptChain.length,
+            attemptChain: execution.attemptChain,
+            latencyMs: execution.latencyMs,
             remainingQuota: prepared.remainingQuota,
           },
         })
@@ -309,13 +355,13 @@ export default defineEventHandler(async (event) => {
 
       await pushEvent('done', {
         result: {
-          ...execution.data,
+          ...execution.data.data,
           sessionId: prepared.sessionId,
         },
         meta: {
-          attempts: execution.attempts,
-          fallbackUsed: execution.fallbackUsed,
-          latencyMs: Date.now() - startedAt,
+          attempts: execution.attemptChain.length,
+          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+          latencyMs: execution.latencyMs,
         },
       })
     }
@@ -323,6 +369,18 @@ export default defineEventHandler(async (event) => {
       const message = toErrorMessage(error)
 
       await withTransaction(event, async (db) => {
+        await upsertAiChatSessionContext(db, {
+          workspaceId: request.workspaceId,
+          sessionId: prepared.sessionId,
+          contextSnapshot: buildAdminSessionContextSnapshot(request),
+          runState: {
+            status: 'failed',
+            lastError: message,
+            resumeAvailable: false,
+          },
+          lastError: message,
+          touchActiveAt: true,
+        })
         await recordContestAuditLog(db, {
           actorUserId: user.id,
           action: 'ai.invoke.admin_agent_failed',

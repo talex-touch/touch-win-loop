@@ -133,8 +133,13 @@ async function loadStatus(showLoading = false) {
 
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<RecycleWorkerStatusPayload>>(endpoint('/admin/resources/recycle-worker'))
-    payload.value = response.data
+    const response = await fetch(endpoint('/admin/resources/recycle-worker'), {
+      credentials: 'include',
+    })
+    const result = await response.json().catch(() => null) as ApiResponse<RecycleWorkerStatusPayload> | null
+    if (!response.ok || !result || result.code !== 0)
+      throw new Error(String(result?.message || '回收站清理任务状态加载失败。'))
+    payload.value = result.data
   }
   catch (error: any) {
     payload.value = null

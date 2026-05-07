@@ -1,9 +1,9 @@
 <template>
-  <main class="px-10 py-20 text-center">
+  <PageShell size="auth" gap="lg" tag="main">
     <slot />
     <Footer />
-    <div class="text-sm mx-auto mt-5 text-center opacity-25">
-      [Home Layout]
+    <div class="wl-text-meta mx-auto text-center opacity-70">
+      Home Playground
     </div>
-  </main>
+  </PageShell>
 </template>

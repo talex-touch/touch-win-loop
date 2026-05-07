@@ -3,12 +3,10 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { getTaskContextById } from '~~/server/utils/document-store'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const taskId = getRouterParam(event, 'taskId') || ''
 
@@ -16,8 +14,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少 taskId。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40099)
@@ -28,8 +24,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权查看任务状态。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40399)
@@ -40,8 +34,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 404)
     return fail('task not found', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40499)
@@ -57,8 +49,6 @@ export default defineEventHandler(async (event) => {
     resource: context.resource,
   }, {
     startedAt,
-    provider: runtime.docAi.provider,
-    model: runtime.docAi.model,
     fallbackUsed: false,
     attempts: 1,
   })

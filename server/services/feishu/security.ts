@@ -7,6 +7,7 @@ import { createSessionToken } from '~~/server/utils/security'
 
 const FEISHU_OAUTH_STATE_COOKIE_NAME = 'wl_feishu_oauth_state'
 const FEISHU_OAUTH_REDIRECT_COOKIE_NAME = 'wl_feishu_oauth_redirect'
+const FEISHU_OAUTH_CALLBACK_COOKIE_NAME = 'wl_feishu_oauth_callback'
 const FEISHU_OAUTH_STATE_TTL_SECONDS = 10 * 60
 
 function resolveSecureCookie(event: H3Event): boolean {
@@ -61,11 +62,35 @@ export function consumeFeishuOAuthRedirect(event: H3Event): string {
   return value
 }
 
+export function persistFeishuOAuthCallback(event: H3Event, callbackUrl: string): void {
+  const normalized = String(callbackUrl || '').trim()
+  if (!normalized) {
+    deleteCookie(event, FEISHU_OAUTH_CALLBACK_COOKIE_NAME, { path: '/' })
+    return
+  }
+  setCookie(event, FEISHU_OAUTH_CALLBACK_COOKIE_NAME, normalized, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: FEISHU_OAUTH_STATE_TTL_SECONDS,
+    secure: resolveSecureCookie(event),
+  })
+}
+
+export function consumeFeishuOAuthCallback(event: H3Event): string {
+  const value = String(getCookie(event, FEISHU_OAUTH_CALLBACK_COOKIE_NAME) || '').trim()
+  deleteCookie(event, FEISHU_OAUTH_CALLBACK_COOKIE_NAME, { path: '/' })
+  return value
+}
+
 export function clearFeishuOAuthState(event: H3Event): void {
   deleteCookie(event, FEISHU_OAUTH_STATE_COOKIE_NAME, {
     path: '/',
   })
   deleteCookie(event, FEISHU_OAUTH_REDIRECT_COOKIE_NAME, {
+    path: '/',
+  })
+  deleteCookie(event, FEISHU_OAUTH_CALLBACK_COOKIE_NAME, {
     path: '/',
   })
 }

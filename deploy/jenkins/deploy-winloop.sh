@@ -27,6 +27,9 @@ Environment:
   WINLOOP_DEPLOY_REPORT_FILE    Output report path (default: ./deployment.json)
   WINLOOP_DEPLOY_TEMPLATE_FILE  Compose template path (default: deploy/jenkins/compose.yaml)
   WINLOOP_DEPLOY_LOCK_ROOT      Lock directory root (default: /tmp/winloop-deploy-locks)
+  WINLOOP_DEPLOY_SUCCESS_STATE_FILE
+                                  Successful deployment state path
+                                  (default: <env dir>/last-successful-deployment.json)
 USAGE
 }
 
@@ -90,6 +93,272 @@ load_env_file() {
   set +a
 }
 
+trim_spaces() {
+  local value="$1"
+  value="$(printf '%s' "$value" | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')"
+  printf '%s' "$value"
+}
+
+escape_sql_literal() {
+  printf '%s' "$1" | sed "s/'/''/g"
+}
+
+resolve_db_migration_dir() {
+  local configured_dir="${DB_MIGRATION_DIR:-}"
+  local candidate=""
+
+  if [[ -n "$configured_dir" ]]; then
+    resolve_path "$configured_dir" "$SCRIPT_DIR"
+    return 0
+  fi
+
+  for candidate in \
+    "$SCRIPT_DIR/scripts/migrations" \
+    "$SCRIPT_DIR/../scripts/migrations" \
+    "$SCRIPT_DIR/../../scripts/migrations"
+  do
+    if [[ -d "$candidate" ]]; then
+      (
+        cd "$candidate"
+        pwd
+      )
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+resolve_db_migration_file_list() {
+  local migration_dir="$1"
+  local raw_list="${DB_MIGRATION_FILES:-}"
+  local item=""
+  local candidate=""
+  local -a requested=()
+
+  DB_MIGRATION_FILE_PATHS=()
+
+  if [[ -n "$raw_list" ]]; then
+    IFS=',' read -r -a requested <<< "$raw_list"
+    for item in "${requested[@]}"; do
+      item="$(trim_spaces "$item")"
+      if [[ -z "$item" ]]; then
+        continue
+      fi
+
+      if [[ "$item" == /* ]]; then
+        candidate="$item"
+      else
+        candidate="${migration_dir}/${item}"
+      fi
+
+      if [[ ! -f "$candidate" ]]; then
+        error "DB migration file not found: $candidate"
+        exit 1
+      fi
+
+      DB_MIGRATION_FILE_PATHS+=("$candidate")
+    done
+    return 0
+  fi
+
+  while IFS= read -r candidate; do
+    DB_MIGRATION_FILE_PATHS+=("$candidate")
+  done < <(find "$migration_dir" -maxdepth 1 -type f -name '*.sql' | sort)
+}
+
+db_client_psql() {
+  docker run --rm \
+    --network "$DB_MIGRATION_NETWORK" \
+    --entrypoint psql \
+    -e PGAPPNAME=winloop-deploy-migrate \
+    -e PGCONNECT_TIMEOUT=10 \
+    -v "${DB_MIGRATION_DIR_RESOLVED}:/migrations:ro" \
+    "$DB_MIGRATION_CLIENT_IMAGE" \
+    "$@" \
+    "$WINLOOP_PG_URL"
+}
+
+db_client_psql_query() {
+  docker run --rm \
+    --network "$DB_MIGRATION_NETWORK" \
+    --entrypoint psql \
+    -e PGAPPNAME=winloop-deploy-config \
+    -e PGCONNECT_TIMEOUT=10 \
+    "$DB_MIGRATION_CLIENT_IMAGE" \
+    "$@" \
+    "$WINLOOP_PG_URL"
+}
+
+run_db_migrations() {
+  local migration_dir=""
+  local file=""
+  local migration_key=""
+  local migration_key_sql=""
+  local existing=""
+  local output=""
+  local output_compact=""
+
+  if [[ -z "${WINLOOP_PG_URL:-}" ]]; then
+    log "DB migration skipped: WINLOOP_PG_URL is empty"
+    return 0
+  fi
+
+  if ! migration_dir="$(resolve_db_migration_dir)"; then
+    log "DB migration files: <none>"
+    return 0
+  fi
+
+  DB_MIGRATION_DIR_RESOLVED="$migration_dir"
+  resolve_db_migration_file_list "$DB_MIGRATION_DIR_RESOLVED"
+
+  if [[ ${#DB_MIGRATION_FILE_PATHS[@]} -eq 0 ]]; then
+    log "DB migration files: <none>"
+    return 0
+  fi
+
+  log "DB migration dir: $DB_MIGRATION_DIR_RESOLVED"
+  log "DB migration client image: $DB_MIGRATION_CLIENT_IMAGE"
+  log "DB migration network: $DB_MIGRATION_NETWORK"
+  log "DB migration files: ${DB_MIGRATION_FILE_PATHS[*]}"
+
+  db_client_psql_query -v ON_ERROR_STOP=1 -Atqc "
+    CREATE TABLE IF NOT EXISTS migrations_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  "
+
+  for file in "${DB_MIGRATION_FILE_PATHS[@]}"; do
+    migration_key="$(basename "$file")"
+    migration_key="${migration_key%.sql}"
+    migration_key_sql="$(escape_sql_literal "$migration_key")"
+
+    existing="$(db_client_psql -Atqc "SELECT value FROM migrations_meta WHERE key = '${migration_key_sql}' LIMIT 1;")"
+    if [[ "$existing" == "1" ]]; then
+      log "DB migration skipped: $migration_key"
+      continue
+    fi
+
+    log "DB migration apply: $migration_key"
+    output="$(db_client_psql -v ON_ERROR_STOP=1 -Atqf "/migrations/$(basename "$file")")"
+    output_compact="$(printf '%s' "$output" | tr -d '[:space:]')"
+    if [[ -n "$output_compact" ]]; then
+      error "DB migration validation failed: $migration_key"
+      printf '%s\n' "$output" >&2
+      exit 1
+    fi
+
+    db_client_psql -v ON_ERROR_STOP=1 -Atqc "
+      INSERT INTO migrations_meta (key, value, updated_at)
+      VALUES ('${migration_key_sql}', '1', NOW())
+      ON CONFLICT (key) DO UPDATE
+      SET value = EXCLUDED.value,
+          updated_at = EXCLUDED.updated_at;
+    "
+    log "DB migration applied: $migration_key"
+  done
+}
+
+sync_meeting_runtime_system_config() {
+  local public_base_url=""
+  local livekit_server_url=""
+  local payload=""
+  local payload_sql=""
+
+  if [[ "$MEETING_STACK_ENABLED" != "true" ]]; then
+    return 0
+  fi
+
+  if [[ -z "${WINLOOP_PG_URL:-}" ]]; then
+    log "Meeting system config skipped: WINLOOP_PG_URL is empty"
+    return 0
+  fi
+
+  public_base_url="${WINLOOP_PUBLIC_BASE_URL:-}"
+  if [[ -n "$public_base_url" ]]; then
+    livekit_server_url="${public_base_url%/}:${MEETING_LIVEKIT_HTTP_PORT}"
+  else
+    livekit_server_url="http://127.0.0.1:${MEETING_LIVEKIT_HTTP_PORT}"
+  fi
+
+  payload="$(python3 - "$DEPLOY_ENV" "$livekit_server_url" "$MEETING_LIVEKIT_API_KEY" "$MEETING_LIVEKIT_API_SECRET" "http://meeting-prometheus:9090" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+env, server_url, api_key, api_secret, prometheus_url = sys.argv[1:6]
+room_prefix = f"{env}-winloop"
+payload = {
+    "rtc": {
+        "provider": "livekit",
+        "serverUrl": server_url.rstrip("/"),
+        "apiKey": api_key,
+        "apiSecret": api_secret,
+        "roomPrefix": room_prefix,
+    },
+    "worker": {
+        "enabled": True,
+        "intervalMs": 5000,
+        "batchSize": 6,
+        "maxAttempts": 5,
+    },
+    "monitoring": {
+        "prometheusBaseUrl": prometheus_url.rstrip("/"),
+    },
+    "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "updatedByUserId": "jenkins-deploy",
+}
+print(json.dumps(payload, ensure_ascii=False))
+PY
+)"
+  payload_sql="$(escape_sql_literal "$payload")"
+
+  db_client_psql_query -v ON_ERROR_STOP=1 -Atqc "
+    CREATE TABLE IF NOT EXISTS migrations_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    WITH incoming AS (
+      SELECT '${payload_sql}'::jsonb AS value
+    ),
+    current AS (
+      SELECT COALESCE((SELECT value::jsonb FROM migrations_meta WHERE key = 'platform_meeting_runtime_overrides.v1'), '{}'::jsonb) AS value
+    ),
+    merged AS (
+      SELECT
+        jsonb_strip_nulls(
+          jsonb_build_object(
+            'rtc', jsonb_strip_nulls(jsonb_build_object(
+              'provider', incoming.value #> '{rtc,provider}',
+              'serverUrl', incoming.value #> '{rtc,serverUrl}',
+              'apiKey', COALESCE(NULLIF(current.value #> '{rtc,apiKey}', to_jsonb(''::text)), incoming.value #> '{rtc,apiKey}'),
+              'apiSecret', COALESCE(NULLIF(current.value #> '{rtc,apiSecret}', to_jsonb(''::text)), incoming.value #> '{rtc,apiSecret}'),
+              'embedBaseUrl', NULLIF(current.value #> '{rtc,embedBaseUrl}', to_jsonb(''::text)),
+              'webhookSecret', NULLIF(current.value #> '{rtc,webhookSecret}', to_jsonb(''::text)),
+              'roomPrefix', incoming.value #> '{rtc,roomPrefix}'
+            )),
+            'asr', NULLIF(current.value->'asr', 'null'::jsonb),
+            'worker', incoming.value->'worker',
+            'monitoring', incoming.value->'monitoring',
+            'updatedAt', incoming.value->'updatedAt',
+            'updatedByUserId', incoming.value->'updatedByUserId'
+          )
+        ) AS value
+      FROM incoming, current
+    )
+    INSERT INTO migrations_meta (key, value, updated_at)
+    SELECT 'platform_meeting_runtime_overrides.v1', merged.value::text, NOW()
+    FROM merged
+    ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value,
+        updated_at = EXCLUDED.updated_at;
+  "
+  log "Meeting system config synced: platform_meeting_runtime_overrides.v1"
+}
+
 check_health() {
   local attempt
   for ((attempt = 1; attempt <= HEALTHCHECK_ATTEMPTS; attempt++)); do
@@ -101,6 +370,262 @@ check_health() {
     sleep "$HEALTHCHECK_INTERVAL_SEC"
   done
   return 1
+}
+
+generate_secret_token() {
+  python3 - <<'PY'
+import secrets
+
+print(secrets.token_urlsafe(32))
+PY
+}
+
+generate_livekit_api_key() {
+  python3 - "$DEPLOY_ENV" <<'PY'
+import re
+import secrets
+import sys
+
+env = re.sub(r"[^a-z0-9_]+", "_", sys.argv[1].lower()).strip("_") or "staging"
+print(f"{env[:16]}_{secrets.token_hex(6)}")
+PY
+}
+
+read_existing_livekit_credential() {
+  local config_file="$1"
+  local field="$2"
+  if [[ ! -f "$config_file" ]]; then
+    return 0
+  fi
+
+  python3 - "$config_file" "$field" <<'PY'
+import pathlib
+import sys
+
+config_file = pathlib.Path(sys.argv[1])
+field = sys.argv[2]
+lines = config_file.read_text(encoding="utf-8").splitlines()
+inside_keys = False
+for line in lines:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if stripped == "keys:":
+        inside_keys = True
+        continue
+    if inside_keys and not line.startswith((" ", "\t")):
+        break
+    if inside_keys and ":" in stripped:
+        key, secret = stripped.split(":", 1)
+        print(key.strip() if field == "key" else secret.strip().strip("'\""))
+        break
+PY
+}
+
+normalize_port_range() {
+  local raw_range="$1"
+  if [[ ! "$raw_range" =~ ^[0-9]+-[0-9]+$ ]]; then
+    error "MEETING_LIVEKIT_RTC_UDP_RANGE must use <start>-<end>, got: $raw_range"
+    exit 1
+  fi
+
+  MEETING_LIVEKIT_RTC_UDP_START="${raw_range%-*}"
+  MEETING_LIVEKIT_RTC_UDP_END="${raw_range#*-}"
+  if (( MEETING_LIVEKIT_RTC_UDP_START > MEETING_LIVEKIT_RTC_UDP_END )); then
+    error "MEETING_LIVEKIT_RTC_UDP_RANGE start must be <= end: $raw_range"
+    exit 1
+  fi
+}
+
+apply_meeting_port_defaults() {
+  if [[ "$DEPLOY_ENV" == "staging" ]]; then
+    if [[ -z "${MEETING_LIVEKIT_HTTP_PORT:-}" || "${MEETING_LIVEKIT_HTTP_PORT:-}" == "7880" ]]; then
+      MEETING_LIVEKIT_HTTP_PORT="17880"
+    fi
+    if [[ -z "${MEETING_LIVEKIT_TCP_PORT:-}" || "${MEETING_LIVEKIT_TCP_PORT:-}" == "7881" ]]; then
+      MEETING_LIVEKIT_TCP_PORT="17881"
+    fi
+    if [[ -z "${MEETING_LIVEKIT_RTC_UDP_RANGE:-}" || "${MEETING_LIVEKIT_RTC_UDP_RANGE:-}" == "50000-50100" ]]; then
+      MEETING_LIVEKIT_RTC_UDP_RANGE="51000-51100"
+    fi
+  else
+    MEETING_LIVEKIT_HTTP_PORT="${MEETING_LIVEKIT_HTTP_PORT:-17880}"
+    MEETING_LIVEKIT_TCP_PORT="${MEETING_LIVEKIT_TCP_PORT:-17881}"
+    MEETING_LIVEKIT_RTC_UDP_RANGE="${MEETING_LIVEKIT_RTC_UDP_RANGE:-51000-51100}"
+  fi
+
+  export MEETING_LIVEKIT_HTTP_PORT MEETING_LIVEKIT_TCP_PORT MEETING_LIVEKIT_RTC_UDP_RANGE
+}
+
+write_meeting_configs() {
+  local existing_key=""
+  local existing_secret=""
+  local prometheus_egress_scrape=""
+
+  MEETING_LIVEKIT_CONFIG_FILE_PATH="$(resolve_path "${MEETING_LIVEKIT_CONFIG_FILE:-livekit.yaml}" "$TARGET_DIR")"
+  MEETING_EGRESS_CONFIG_FILE_PATH="$(resolve_path "${MEETING_EGRESS_CONFIG_FILE:-egress.yaml}" "$TARGET_DIR")"
+  MEETING_PROMETHEUS_CONFIG_FILE_PATH="$(resolve_path "${MEETING_PROMETHEUS_CONFIG_FILE:-prometheus.yml}" "$TARGET_DIR")"
+  MEETING_DATA_HOST_DIR_PATH="$(resolve_path "${MEETING_DATA_HOST_DIR:-./meeting-data}" "$TARGET_DIR")"
+  MEETING_EGRESS_OUTPUT_HOST_DIR_PATH="$(resolve_path "${MEETING_EGRESS_OUTPUT_HOST_DIR:-${MEETING_DATA_HOST_DIR_PATH}/egress}" "$TARGET_DIR")"
+
+  existing_key="$(read_existing_livekit_credential "$MEETING_LIVEKIT_CONFIG_FILE_PATH" key || true)"
+  existing_secret="$(read_existing_livekit_credential "$MEETING_LIVEKIT_CONFIG_FILE_PATH" secret || true)"
+
+  MEETING_LIVEKIT_API_KEY="${MEETING_LIVEKIT_API_KEY:-$existing_key}"
+  MEETING_LIVEKIT_API_SECRET="${MEETING_LIVEKIT_API_SECRET:-$existing_secret}"
+  MEETING_LIVEKIT_API_KEY="${MEETING_LIVEKIT_API_KEY:-$(generate_livekit_api_key)}"
+  MEETING_LIVEKIT_API_SECRET="${MEETING_LIVEKIT_API_SECRET:-$(generate_secret_token)}"
+  MEETING_LIVEKIT_USE_EXTERNAL_IP="$(to_bool "${MEETING_LIVEKIT_USE_EXTERNAL_IP:-true}")"
+  MEETING_LIVEKIT_LOG_LEVEL="${MEETING_LIVEKIT_LOG_LEVEL:-info}"
+  MEETING_LIVEKIT_WEBHOOK_URL="${MEETING_LIVEKIT_WEBHOOK_URL:-http://${SERVICE_NAME}:3000/api/internal/meetings/provider-events}"
+  apply_meeting_port_defaults
+  normalize_port_range "$MEETING_LIVEKIT_RTC_UDP_RANGE"
+
+  mkdir -p \
+    "$(dirname "$MEETING_LIVEKIT_CONFIG_FILE_PATH")" \
+    "$(dirname "$MEETING_EGRESS_CONFIG_FILE_PATH")" \
+    "$(dirname "$MEETING_PROMETHEUS_CONFIG_FILE_PATH")" \
+    "${MEETING_DATA_HOST_DIR_PATH}/redis" \
+    "${MEETING_DATA_HOST_DIR_PATH}/prometheus" \
+    "$MEETING_EGRESS_OUTPUT_HOST_DIR_PATH"
+
+  cat > "$MEETING_LIVEKIT_CONFIG_FILE_PATH" <<EOF_LIVEKIT
+port: 7880
+
+rtc:
+  tcp_port: ${MEETING_LIVEKIT_TCP_PORT}
+  port_range_start: ${MEETING_LIVEKIT_RTC_UDP_START}
+  port_range_end: ${MEETING_LIVEKIT_RTC_UDP_END}
+  use_external_ip: ${MEETING_LIVEKIT_USE_EXTERNAL_IP}
+
+redis:
+  address: meeting-redis:6379
+
+keys:
+  ${MEETING_LIVEKIT_API_KEY}: ${MEETING_LIVEKIT_API_SECRET}
+
+room:
+  auto_create: true
+
+webhook:
+  api_key: ${MEETING_LIVEKIT_API_KEY}
+  urls:
+    - ${MEETING_LIVEKIT_WEBHOOK_URL}
+
+prometheus:
+  port: 6789
+
+logging:
+  level: ${MEETING_LIVEKIT_LOG_LEVEL}
+EOF_LIVEKIT
+  chmod 0600 "$MEETING_LIVEKIT_CONFIG_FILE_PATH"
+
+  cat > "$MEETING_EGRESS_CONFIG_FILE_PATH" <<EOF_EGRESS
+api_key: ${MEETING_LIVEKIT_API_KEY}
+api_secret: ${MEETING_LIVEKIT_API_SECRET}
+ws_url: ws://livekit:7880
+
+redis:
+  address: meeting-redis:6379
+
+health_port: 8089
+
+logging:
+  level: ${MEETING_LIVEKIT_LOG_LEVEL}
+EOF_EGRESS
+  chmod 0600 "$MEETING_EGRESS_CONFIG_FILE_PATH"
+
+  if [[ "$MEETING_EGRESS_ENABLED" == "true" ]]; then
+    prometheus_egress_scrape='
+  - job_name: egress
+    static_configs:
+      - targets: ["egress:8089"]'
+  fi
+
+  cat > "$MEETING_PROMETHEUS_CONFIG_FILE_PATH" <<EOF_PROMETHEUS
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: livekit
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["livekit:6789"]${prometheus_egress_scrape}
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+EOF_PROMETHEUS
+  chmod 0644 "$MEETING_PROMETHEUS_CONFIG_FILE_PATH"
+
+  MEETING_LIVEKIT_CONFIG_FILE="$MEETING_LIVEKIT_CONFIG_FILE_PATH"
+  MEETING_EGRESS_CONFIG_FILE="$MEETING_EGRESS_CONFIG_FILE_PATH"
+  MEETING_PROMETHEUS_CONFIG_FILE="$MEETING_PROMETHEUS_CONFIG_FILE_PATH"
+  MEETING_DATA_HOST_DIR="$MEETING_DATA_HOST_DIR_PATH"
+  MEETING_EGRESS_OUTPUT_HOST_DIR="$MEETING_EGRESS_OUTPUT_HOST_DIR_PATH"
+  export MEETING_LIVEKIT_CONFIG_FILE MEETING_EGRESS_CONFIG_FILE MEETING_PROMETHEUS_CONFIG_FILE
+  export MEETING_DATA_HOST_DIR MEETING_EGRESS_OUTPUT_HOST_DIR
+}
+
+read_success_state_commit() {
+  local state_file="$1"
+  if [[ ! -f "$state_file" ]]; then
+    return 0
+  fi
+
+  python3 - "$state_file" <<'PY'
+import json
+import sys
+
+state_file = sys.argv[1]
+try:
+    with open(state_file, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+except Exception:
+    raise SystemExit(0)
+
+print(str(payload.get("buildCommitSha") or "").strip())
+PY
+}
+
+write_success_state() {
+  local state_file="$1"
+  local tmp_file="${state_file}.tmp"
+
+  python3 - "$tmp_file" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+state_file = sys.argv[1]
+finished_at = os.environ.get("REPORT_FINISHED_AT", "").strip()
+if not finished_at:
+    finished_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+payload = {
+    "status": "success",
+    "environment": os.environ.get("REPORT_DEPLOY_ENV", ""),
+    "buildVersion": os.environ.get("REPORT_BUILD_VERSION", ""),
+    "buildCommitSha": os.environ.get("REPORT_BUILD_COMMIT_SHA", ""),
+    "imageRef": os.environ.get("REPORT_IMAGE_REF", ""),
+    "publicBaseUrl": os.environ.get("REPORT_PUBLIC_BASE_URL", ""),
+    "finishedAt": finished_at,
+}
+with open(state_file, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, ensure_ascii=False)
+    handle.write("\n")
+PY
+  mv "$tmp_file" "$state_file"
 }
 
 write_report() {
@@ -122,8 +647,10 @@ payload = {
     "previousImage": os.environ.get("REPORT_PREVIOUS_IMAGE", ""),
     "rolledBack": os.environ.get("REPORT_ROLLED_BACK", "false").lower() == "true",
     "healthcheckUrl": os.environ.get("REPORT_HEALTHCHECK_URL", ""),
+    "publicBaseUrl": os.environ.get("REPORT_PUBLIC_BASE_URL", ""),
     "buildVersion": os.environ.get("REPORT_BUILD_VERSION", ""),
     "buildCommitSha": os.environ.get("REPORT_BUILD_COMMIT_SHA", ""),
+    "previousSuccessfulCommitSha": os.environ.get("REPORT_PREVIOUS_SUCCESSFUL_COMMIT_SHA", ""),
     "startedAt": os.environ.get("REPORT_STARTED_AT", ""),
     "finishedAt": os.environ.get("REPORT_FINISHED_AT", ""),
 }
@@ -137,6 +664,17 @@ compose_with_override() {
   "${COMPOSE_CMD[@]}" --project-name "$COMPOSE_PROJECT_NAME" -f "$TARGET_COMPOSE_PATH" -f "$OVERRIDE_FILE" "$@"
 }
 
+compose_with_meeting_profiles() {
+  local -a profile_args=(--profile meeting)
+  local -a services=(meeting-redis livekit prometheus node-exporter cadvisor)
+  if [[ "$MEETING_EGRESS_ENABLED" == "true" ]]; then
+    profile_args+=(--profile egress)
+    services+=(egress)
+  fi
+  "${COMPOSE_CMD[@]}" "${profile_args[@]}" --project-name "$COMPOSE_PROJECT_NAME" -f "$TARGET_COMPOSE_PATH" -f "$OVERRIDE_FILE" "$@" "${services[@]}"
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_ENV=""
 IMAGE_REF=""
 BUILD_VERSION=""
@@ -158,15 +696,18 @@ REPORT_SERVICE_NAME=""
 REPORT_IMAGE_REF=""
 REPORT_PREVIOUS_IMAGE=""
 REPORT_HEALTHCHECK_URL=""
+REPORT_PUBLIC_BASE_URL=""
 REPORT_BUILD_VERSION=""
 REPORT_BUILD_COMMIT_SHA=""
+REPORT_PREVIOUS_SUCCESSFUL_COMMIT_SHA=""
 OVERRIDE_FILE=""
 
 on_exit() {
   REPORT_FINISHED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   export REPORT_STATUS REPORT_STAGE REPORT_MESSAGE REPORT_ROLLED_BACK REPORT_STARTED_AT REPORT_FINISHED_AT
   export REPORT_DEPLOY_ENV REPORT_TARGET_DIR REPORT_COMPOSE_PROJECT_NAME REPORT_SERVICE_NAME
-  export REPORT_IMAGE_REF REPORT_PREVIOUS_IMAGE REPORT_HEALTHCHECK_URL REPORT_BUILD_VERSION REPORT_BUILD_COMMIT_SHA
+  export REPORT_IMAGE_REF REPORT_PREVIOUS_IMAGE REPORT_HEALTHCHECK_URL REPORT_PUBLIC_BASE_URL
+  export REPORT_BUILD_VERSION REPORT_BUILD_COMMIT_SHA REPORT_PREVIOUS_SUCCESSFUL_COMMIT_SHA
   if [[ -n "$OVERRIDE_FILE" ]]; then
     rm -f "$OVERRIDE_FILE"
   fi
@@ -243,6 +784,7 @@ TARGET_DIR="${DEPLOY_BASE_DIR}/${DEPLOY_ENV}"
 DEPLOY_ENV_FILE_PATH="${TARGET_DIR}/deploy.env"
 TARGET_COMPOSE_PATH="${TARGET_DIR}/compose.yaml"
 LOCK_DIR="${LOCK_ROOT}/touch-win-loop-${DEPLOY_ENV}.lock"
+SUCCESS_STATE_FILE="${WINLOOP_DEPLOY_SUCCESS_STATE_FILE:-${TARGET_DIR}/last-successful-deployment.json}"
 
 REPORT_DEPLOY_ENV="$DEPLOY_ENV"
 REPORT_TARGET_DIR="$TARGET_DIR"
@@ -268,6 +810,7 @@ fi
 
 REPORT_STAGE="load_env"
 load_env_file "$DEPLOY_ENV_FILE_PATH"
+REPORT_PREVIOUS_SUCCESSFUL_COMMIT_SHA="$(read_success_state_commit "$SUCCESS_STATE_FILE")"
 
 SERVICE_NAME="${SERVICE_NAME:-winloop}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-touch-win-loop-${DEPLOY_ENV}}"
@@ -277,8 +820,19 @@ HEALTHCHECK_ATTEMPTS="${HEALTHCHECK_ATTEMPTS:-20}"
 HEALTHCHECK_INTERVAL_SEC="${HEALTHCHECK_INTERVAL_SEC:-3}"
 ROLLBACK_ON_FAILURE="$(to_bool "${ROLLBACK_ON_FAILURE:-true}")"
 FORCE_RECREATE="$(to_bool "${FORCE_RECREATE:-true}")"
-STORAGE_HOST_DIR="${STORAGE_HOST_DIR:-./storage}"
+MEETING_STACK_ENABLED_DEFAULT="false"
+if [[ "$DEPLOY_ENV" == "staging" ]]; then
+  MEETING_STACK_ENABLED_DEFAULT="true"
+fi
+MEETING_STACK_ENABLED="$(to_bool "${MEETING_STACK_ENABLED:-$MEETING_STACK_ENABLED_DEFAULT}")"
+MEETING_EGRESS_ENABLED="$(to_bool "${MEETING_EGRESS_ENABLED:-false}")"
 RUNTIME_ENV_FILE_PATH="$(resolve_path "$RUNTIME_ENV_FILE" "$TARGET_DIR")"
+DB_MIGRATION_DIR="${DB_MIGRATION_DIR:-}"
+DB_MIGRATION_FILES="${DB_MIGRATION_FILES:-}"
+DB_MIGRATION_CLIENT_IMAGE="${DB_MIGRATION_CLIENT_IMAGE:-postgres:18-alpine}"
+DB_MIGRATION_NETWORK="${DB_MIGRATION_NETWORK:-${DOCKER_EXTERNAL_NETWORK:-1panel-network}}"
+DB_MIGRATION_FILE_PATHS=()
+DB_MIGRATION_DIR_RESOLVED=""
 
 REPORT_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME"
 REPORT_SERVICE_NAME="$SERVICE_NAME"
@@ -298,17 +852,17 @@ if [[ ! -f "$RUNTIME_ENV_FILE_PATH" ]]; then
   exit 1
 fi
 
-mkdir -p "$TARGET_DIR"
-if [[ "$STORAGE_HOST_DIR" == /* ]]; then
-  mkdir -p "$STORAGE_HOST_DIR"
-else
-  mkdir -p "$(resolve_path "$STORAGE_HOST_DIR" "$TARGET_DIR")"
+mkdir -p "$TARGET_DIR/storage"
+if [[ "$MEETING_STACK_ENABLED" == "true" ]]; then
+  write_meeting_configs
 fi
 
 REPORT_STAGE="sync_compose"
 install -m 0644 "$TEMPLATE_FILE" "$TARGET_COMPOSE_PATH"
 
+unset WINLOOP_PUBLIC_BASE_URL
 load_env_file "$RUNTIME_ENV_FILE_PATH"
+REPORT_PUBLIC_BASE_URL="${WINLOOP_PUBLIC_BASE_URL:-}"
 export RUNTIME_ENV_FILE
 
 cd "$TARGET_DIR"
@@ -325,6 +879,7 @@ OVERRIDE_FILE="$(mktemp)"
 
 write_override() {
   local target_image_ref="$1"
+
   cat > "$OVERRIDE_FILE" <<EOF_OVERRIDE
 services:
   ${SERVICE_NAME}:
@@ -348,11 +903,23 @@ write_override "$IMAGE_REF"
 REPORT_STAGE="pull"
 compose_with_override pull "$SERVICE_NAME"
 
+REPORT_STAGE="migrate"
+run_db_migrations
+sync_meeting_runtime_system_config
+
 REPORT_STAGE="deploy"
 if [[ "$FORCE_RECREATE" == "true" ]]; then
   compose_with_override up -d --force-recreate "$SERVICE_NAME"
 else
   compose_with_override up -d "$SERVICE_NAME"
+fi
+if [[ "$MEETING_STACK_ENABLED" == "true" ]]; then
+  REPORT_STAGE="deploy_meeting"
+  if [[ "$FORCE_RECREATE" == "true" ]]; then
+    compose_with_meeting_profiles up -d --force-recreate
+  else
+    compose_with_meeting_profiles up -d
+  fi
 fi
 
 REPORT_STAGE="healthcheck"
@@ -360,6 +927,11 @@ if check_health; then
   REPORT_STATUS="success"
   REPORT_STAGE="completed"
   REPORT_MESSAGE="Deployment succeeded"
+  REPORT_FINISHED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  export REPORT_DEPLOY_ENV REPORT_BUILD_VERSION REPORT_BUILD_COMMIT_SHA REPORT_IMAGE_REF REPORT_PUBLIC_BASE_URL REPORT_FINISHED_AT
+  if ! write_success_state "$SUCCESS_STATE_FILE"; then
+    log "Success state update failed: $SUCCESS_STATE_FILE"
+  fi
   log "$REPORT_MESSAGE"
   exit 0
 fi
@@ -393,6 +965,9 @@ if [[ "$FORCE_RECREATE" == "true" ]]; then
   compose_with_override up -d --force-recreate "$SERVICE_NAME"
 else
   compose_with_override up -d "$SERVICE_NAME"
+fi
+if [[ "$MEETING_STACK_ENABLED" == "true" ]]; then
+  compose_with_meeting_profiles up -d || true
 fi
 
 if check_health; then

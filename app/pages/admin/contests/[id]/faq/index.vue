@@ -9,6 +9,54 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+interface ContestDraftSaveResult {
+  scopeId: string
+  unchanged: boolean
+  version?: {
+    id: string
+    versionNumber: number
+  } | null
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const contestId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>
   const value = params.id
@@ -33,9 +81,9 @@ async function loadData() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${contestId.value}`))
-    faqItems.value = (response.data.contest.faqItems || []).length > 0
-      ? [...(response.data.contest.faqItems || [])]
+    const data = await requestApi<ContestDetailPayload>(endpoint(`/admin/contests/${contestId.value}`), {}, 'FAQ 加载失败。')
+    faqItems.value = (data.contest.faqItems || []).length > 0
+      ? [...(data.contest.faqItems || [])]
       : [{ question: '', answer: '', sortOrder: 0 }]
   }
   catch (error: any) {
@@ -51,19 +99,26 @@ async function save() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}`), {
-      method: 'PATCH',
-      body: {
-        faqItems: faqItems.value
-          .map((item, index) => ({
-            question: String(item.question || '').trim(),
-            answer: String(item.answer || '').trim(),
-            sortOrder: index,
-          }))
-          .filter(item => item.question || item.answer),
+    const result = await requestApi<ContestDraftSaveResult>(
+      endpoint(`/admin/contests/${contestId.value}`),
+      {
+        method: 'PATCH',
+        body: {
+          sourceModule: 'faq',
+          faqItems: faqItems.value
+            .map((item, index) => ({
+              question: String(item.question || '').trim(),
+              answer: String(item.answer || '').trim(),
+              sortOrder: index,
+            }))
+            .filter(item => item.question || item.answer),
+        },
       },
-    })
-    successText.value = 'FAQ 已保存。'
+      'FAQ 保存失败。',
+    )
+    successText.value = result.unchanged
+      ? '本次保存无内容变化，未生成新版本。'
+      : `已生成待审核版本 V${result.version?.versionNumber || '-'}，需完成双人审核并发布后前台才会更新。`
   }
   catch (error: any) {
     errorText.value = String(error?.data?.message || 'FAQ 保存失败。')
@@ -86,15 +141,20 @@ onMounted(loadData)
 
     <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
       <div class="flex items-center justify-between">
-        <p class="text-xs text-slate-700 font-semibold">
-          结构化 FAQ
-        </p>
+        <div>
+          <p class="text-xs text-slate-700 font-semibold">
+            结构化 FAQ
+          </p>
+          <p class="text-xs text-amber-600 mt-1">
+            保存 FAQ 会生成新的待审核版本，不会直接改动前台已发布内容。
+          </p>
+        </div>
         <div class="flex gap-2 items-center">
           <a-button size="mini" type="outline" @click="addFaqItem">
             新增 FAQ
           </a-button>
           <a-button type="primary" size="mini" :loading="saving" @click="save">
-            保存 FAQ
+            生成 FAQ 待审核版本
           </a-button>
         </div>
       </div>

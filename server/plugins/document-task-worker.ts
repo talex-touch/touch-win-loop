@@ -1,6 +1,7 @@
 import { analyzePdfBufferWithDocAi } from '~~/server/services/document/analysis'
 import { convertWordBufferToPdf, isPdfDocument, isWordDocument } from '~~/server/services/document/convert'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, getDocumentStorageByChannel, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import {
   claimNextQueuedDocumentTask,
@@ -12,7 +13,10 @@ import {
   updateDocumentPageCount,
   updateResourceDocumentFileAsset,
 } from '~~/server/utils/document-store'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { resolvePlatformAiDocumentRuntime } from '~~/server/utils/platform-ai-channels'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
+import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const WORKER_STATE_KEY = Symbol.for('winloop.document-worker.state')
 
@@ -46,8 +50,8 @@ function toErrorMessage(error: unknown): string {
 }
 
 async function processSingleTask(): Promise<boolean> {
-  const runtime = readRuntimeSettings()
-  const storage = getDocumentStorage()
+  const runtime = (await readEffectivePlatformRuntimeSettings()).runtime
+  const documentRuntime = resolvePlatformAiDocumentRuntime(runtime)
 
   const context = await withTransaction(undefined, async (db) => {
     const task = await claimNextQueuedDocumentTask(db)
@@ -69,7 +73,8 @@ async function processSingleTask(): Promise<boolean> {
     return false
 
   try {
-    const sourceBuffer = await storage.getObjectBuffer(context.document.objectKey)
+    const sourceStorage = getDocumentStorageByChannel(context.document.storageProvider || 'local', runtime)
+    const sourceBuffer = await sourceStorage.getObjectBuffer(context.document.objectKey)
     let parseBuffer = sourceBuffer
     let parseFileName = context.document.fileName
     let conversionPayload: Record<string, unknown> | null = null
@@ -81,6 +86,10 @@ async function processSingleTask(): Promise<boolean> {
       })
 
       const convertedObjectKey = buildDocumentObjectKey(context.resource.contestId, converted.fileName)
+      const storage = await selectDocumentWriteStorage({
+        incomingBytes: converted.pdfBuffer.length,
+        runtime,
+      })
       await storage.putObject({
         key: convertedObjectKey,
         body: converted.pdfBuffer,
@@ -90,6 +99,7 @@ async function processSingleTask(): Promise<boolean> {
         await updateResourceDocumentFileAsset(db, {
           documentId: context.document.id,
           objectKey: convertedObjectKey,
+          storageProvider: storage.channelId,
           fileName: converted.fileName,
           mimeType: 'application/pdf',
           fileSize: converted.pdfBuffer.length,
@@ -123,14 +133,19 @@ async function processSingleTask(): Promise<boolean> {
       await finishDocumentTaskSuccess(db, {
         taskId: context.task.id,
         documentId: context.document.id,
-        parserProvider: runtime.docAi.provider,
-        parserModel: runtime.docAi.model,
+        parserProvider: documentRuntime.provider,
+        parserModel: documentRuntime.model,
         analysisJson: parsed.analysis,
         resultPayload: {
           source: parsed.analysis.source,
           pageCount: parsed.pageCount,
           conversion: conversionPayload,
         },
+      })
+      await enqueueResourceGovernanceTask(db, {
+        contestId: context.resource.contestId,
+        resourceId: context.resource.id,
+        taskType: 'profile_analyze',
       })
     })
   }
@@ -146,6 +161,10 @@ async function processSingleTask(): Promise<boolean> {
         },
       })
     })
+    captureServerException(error, {
+      module: 'document-worker',
+      taskId: context.task.id,
+    })
   }
 
   return true
@@ -154,6 +173,9 @@ async function processSingleTask(): Promise<boolean> {
 function logWorkerError(stage: 'bootstrap' | 'tick', error: unknown): void {
   const prefix = stage === 'bootstrap' ? '[document-worker] bootstrap failed:' : '[document-worker] tick failed:'
   console.error(prefix, toErrorMessage(error))
+  captureServerException(error, {
+    module: 'document-worker',
+  })
 }
 
 async function runTick(state: WorkerState): Promise<void> {
@@ -179,6 +201,9 @@ async function runTick(state: WorkerState): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const state = getWorkerState()
   if (state.started)
     return

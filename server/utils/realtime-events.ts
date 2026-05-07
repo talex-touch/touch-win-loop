@@ -2,6 +2,7 @@ import type { ResourceKind } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { query } from '~~/server/utils/db'
 import {
+  broadcastRealtimeMeetingEvent,
   broadcastRealtimeProjectEvent,
   broadcastRealtimeRoomEvent,
   broadcastRealtimeWorkspaceEvent,
@@ -12,7 +13,17 @@ import {
 export const REALTIME_PG_CHANNEL = 'wl_realtime'
 const REALTIME_INSTANCE_ID_KEY = Symbol.for('winloop.realtime.instance-id.v1')
 
-export type RealtimeEventType = 'project.resources.changed' | 'project.outline.changed' | 'collab.update' | 'collab.presence'
+export type RealtimeEventType
+  = | 'project.resources.changed'
+    | 'project.outline.changed'
+    | 'collab.update'
+    | 'collab.presence'
+    | 'meeting.state.updated'
+    | 'meeting.participant.updated'
+    | 'meeting.share.updated'
+    | 'meeting.caption.partial'
+    | 'meeting.caption.final'
+    | 'meeting.summary.ready'
 
 export interface RealtimePresenceMemberPayload {
   peerId: string
@@ -20,6 +31,9 @@ export interface RealtimePresenceMemberPayload {
   username: string
   cursorX?: number
   cursorY?: number
+  awarenessClientId?: number
+  awarenessUpdateBase64?: string
+  activityState: 'active' | 'background'
   updatedAt: string
 }
 
@@ -31,6 +45,7 @@ export interface RealtimeEventPayload {
   projectId: string
   resourceId?: string
   revision?: number
+  payload?: Record<string, unknown>
   sentAt: string
 }
 
@@ -43,6 +58,7 @@ export interface PublishRealtimeEventOptions {
   presence?: {
     members?: RealtimePresenceMemberPayload[]
   }
+  payload?: Record<string, unknown>
 }
 
 function normalizeString(value: unknown): string {
@@ -63,16 +79,26 @@ function normalizePresenceMembers(rawMembers: unknown): RealtimePresenceMemberPa
       continue
     const cursorX = Number(record.cursorX)
     const cursorY = Number(record.cursorY)
+    const awarenessClientId = Number(record.awarenessClientId)
     normalized.push({
       peerId,
       userId: normalizeString(record.userId),
       username: normalizeString(record.username),
       cursorX: Number.isFinite(cursorX) ? cursorX : undefined,
       cursorY: Number.isFinite(cursorY) ? cursorY : undefined,
+      awarenessClientId: Number.isInteger(awarenessClientId) ? Math.trunc(awarenessClientId) : undefined,
+      awarenessUpdateBase64: normalizeString(record.awarenessUpdateBase64) || undefined,
+      activityState: normalizeString(record.activityState) === 'background' ? 'background' : 'active',
       updatedAt: normalizeString(record.updatedAt) || new Date().toISOString(),
     })
   }
   return normalized
+}
+
+function normalizePayload(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return undefined
+  return value as Record<string, unknown>
 }
 
 export function getRealtimeInstanceId(): string {
@@ -92,6 +118,7 @@ export function createRealtimeEvent(input: {
   projectId: string
   resourceId?: string
   revision?: number
+  payload?: Record<string, unknown>
 }): RealtimeEventPayload {
   const revision = Number(input.revision)
   return {
@@ -102,6 +129,7 @@ export function createRealtimeEvent(input: {
     projectId: normalizeString(input.projectId),
     resourceId: normalizeString(input.resourceId) || undefined,
     revision: Number.isFinite(revision) && revision > 0 ? Math.trunc(revision) : undefined,
+    payload: normalizePayload(input.payload),
     sentAt: new Date().toISOString(),
   }
 }
@@ -122,6 +150,7 @@ export async function notifyRealtimeEvent(
     projectId: normalizeString(event.projectId),
     resourceId: normalizeString(event.resourceId) || undefined,
     revision: Number.isFinite(Number(event.revision)) ? Number(event.revision) : undefined,
+    payload: normalizePayload(options.payload) || normalizePayload(event.payload),
     sentAt: normalizeString(event.sentAt) || new Date().toISOString(),
     presenceMembers: presenceMembers.length > 0 ? presenceMembers : undefined,
   })
@@ -168,7 +197,7 @@ export function broadcastRealtimeEventLocally(
     return
   }
 
-  const payload = {
+  const nextPayload = {
     type: event.type,
     workspaceId,
     projectId,
@@ -176,13 +205,25 @@ export function broadcastRealtimeEventLocally(
     revision,
     payload: {
       eventId,
+      ...(normalizePayload(event.payload) || {}),
+      ...(normalizePayload(options.payload) || {}),
     },
+  } as {
+    type: RealtimeEventType
+    workspaceId: string
+    projectId: string
+    resourceId?: string
+    revision?: number
+    payload: Record<string, unknown>
   }
+  const meetingId = normalizeString(nextPayload.payload.meetingId)
 
   if (workspaceId)
-    broadcastRealtimeWorkspaceEvent(workspaceId, payload, excludePeerId)
+    broadcastRealtimeWorkspaceEvent(workspaceId, nextPayload, excludePeerId)
   if (projectId)
-    broadcastRealtimeProjectEvent(projectId, payload, excludePeerId)
+    broadcastRealtimeProjectEvent(projectId, nextPayload, excludePeerId)
+  if (meetingId)
+    broadcastRealtimeMeetingEvent(meetingId, nextPayload, excludePeerId)
 }
 
 export async function publishRealtimeEvent(
@@ -201,6 +242,7 @@ export async function emitRealtimeEvent(
     projectId: string
     resourceId?: string
     revision?: number
+    payload?: Record<string, unknown>
   },
   options: PublishRealtimeEventOptions = {},
 ): Promise<RealtimeEventPayload> {

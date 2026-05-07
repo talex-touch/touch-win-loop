@@ -4,9 +4,12 @@ import { randomUUID } from 'node:crypto'
 
 const CHAT_SESSION_MODE_SET = new Set<WorkspaceAiMode>([
   'dialog_ask',
+  'loopy_page',
   'auto_optimize',
   'issue_discovery',
   'defense',
+  'document_assist',
+  'contextual_agent',
 ])
 
 interface AiChatSessionRow {
@@ -19,6 +22,9 @@ interface AiChatSessionRow {
   contest_id: string
   track_id: string
   major: string
+  has_context_snapshot: boolean
+  resume_available: boolean
+  degraded: boolean
   message_count: number | string
   last_message_at: string | null
   created_at: string
@@ -39,7 +45,7 @@ interface AiChatMessageRow {
   created_at: string
 }
 
-function toMetadataRecord(value: unknown): Record<string, unknown> {
+export function normalizeAiChatMetadata(value: unknown): Record<string, unknown> {
   if (!value)
     return {}
   if (typeof value === 'string') {
@@ -69,6 +75,21 @@ function normalizeChatSessionMode(value: unknown): WorkspaceAiMode {
   return 'dialog_ask'
 }
 
+function isStrictScopeSatisfied(
+  strictScope: boolean,
+  hasModeFilter: boolean,
+  normalizedMode: WorkspaceAiMode,
+  normalizedProjectId: string,
+): boolean {
+  if (!strictScope)
+    return true
+  if (!hasModeFilter)
+    return false
+  if (normalizedMode === 'dialog_ask' || normalizedMode === 'loopy_page')
+    return true
+  return Boolean(normalizedProjectId)
+}
+
 function mapChatSession(row: AiChatSessionRow): AiChatSession {
   return {
     id: row.id,
@@ -80,6 +101,9 @@ function mapChatSession(row: AiChatSessionRow): AiChatSession {
     contestId: row.contest_id || '',
     trackId: row.track_id || '',
     major: row.major || '',
+    hasContextSnapshot: Boolean(row.has_context_snapshot),
+    resumeAvailable: Boolean(row.resume_available),
+    degraded: Boolean(row.degraded),
     messageCount: Number(row.message_count || 0),
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
@@ -97,7 +121,7 @@ function mapChatMessage(row: AiChatMessageRow): AiChatMessage {
     provider: row.provider,
     model: row.model,
     fallbackUsed: Boolean(row.fallback_used),
-    metadata: toMetadataRecord(row.metadata),
+    metadata: normalizeAiChatMetadata(row.metadata),
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
   }
@@ -142,6 +166,9 @@ export async function createAiChatSession(
       contest_id,
       track_id,
       major,
+      FALSE AS has_context_snapshot,
+      FALSE AS resume_available,
+      FALSE AS degraded,
       0::INT AS message_count,
       NULL::TEXT AS last_message_at,
       created_at::TEXT,
@@ -152,7 +179,7 @@ export async function createAiChatSession(
       normalizeProjectId(input.projectId),
       normalizeChatSessionMode(input.mode),
       input.createdByUserId,
-      String(input.title || '').trim() || 'AI 对话',
+      String(input.title || '').trim() || 'Loopy 对话',
       String(input.contestId || '').trim(),
       String(input.trackId || '').trim(),
       String(input.major || '').trim(),
@@ -178,7 +205,7 @@ export async function listAiChatSessionsByWorkspace(
   const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
   const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
 
-  if (strictScope && (!normalizedProjectId || !hasModeFilter))
+  if (!isStrictScopeSatisfied(strictScope, hasModeFilter, normalizedMode, normalizedProjectId))
     return []
 
   const limit = Math.max(1, Math.min(100, Number(input.limit || 20)))
@@ -208,11 +235,20 @@ export async function listAiChatSessionsByWorkspace(
       s.contest_id,
       s.track_id,
       s.major,
+      CASE
+        WHEN c.session_id IS NULL THEN FALSE
+        ELSE c.context_json <> '{}'::JSONB
+      END AS has_context_snapshot,
+      COALESCE((c.run_state_json ->> 'resumeAvailable')::BOOLEAN, FALSE) AS resume_available,
+      COALESCE((c.run_state_json ->> 'degraded')::BOOLEAN, FALSE) AS degraded,
       COALESCE(m.message_count, 0)::INT AS message_count,
       m.last_message_at,
       s.created_at::TEXT,
       s.updated_at::TEXT
      FROM ai_chat_sessions s
+     LEFT JOIN ai_chat_session_context c
+       ON c.session_id = s.id
+      AND c.workspace_id = s.workspace_id
      LEFT JOIN LATERAL (
        SELECT
          COUNT(*) FILTER (WHERE role IN ('user', 'assistant'))::INT AS message_count,
@@ -245,7 +281,7 @@ export async function getAiChatSessionById(
   const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
   const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
 
-  if (strictScope && (!normalizedProjectId || !hasModeFilter))
+  if (!isStrictScopeSatisfied(strictScope, hasModeFilter, normalizedMode, normalizedProjectId))
     return null
 
   const where: string[] = ['s.workspace_id = $1', 's.id = $2']
@@ -272,11 +308,20 @@ export async function getAiChatSessionById(
       s.contest_id,
       s.track_id,
       s.major,
+      CASE
+        WHEN c.session_id IS NULL THEN FALSE
+        ELSE c.context_json <> '{}'::JSONB
+      END AS has_context_snapshot,
+      COALESCE((c.run_state_json ->> 'resumeAvailable')::BOOLEAN, FALSE) AS resume_available,
+      COALESCE((c.run_state_json ->> 'degraded')::BOOLEAN, FALSE) AS degraded,
       COALESCE(m.message_count, 0)::INT AS message_count,
       m.last_message_at,
       s.created_at::TEXT,
       s.updated_at::TEXT
      FROM ai_chat_sessions s
+     LEFT JOIN ai_chat_session_context c
+       ON c.session_id = s.id
+      AND c.workspace_id = s.workspace_id
      LEFT JOIN LATERAL (
        SELECT
          COUNT(*) FILTER (WHERE role IN ('user', 'assistant'))::INT AS message_count,
@@ -291,6 +336,48 @@ export async function getAiChatSessionById(
 
   const row = result.rows[0]
   return row ? mapChatSession(row) : null
+}
+
+export async function deleteAiChatSession(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    sessionId: string
+    projectId?: string
+    mode?: WorkspaceAiMode
+    strictScope?: boolean
+  },
+): Promise<boolean> {
+  const strictScope = Boolean(input.strictScope)
+  const hasProjectFilter = input.projectId !== undefined
+  const hasModeFilter = input.mode !== undefined
+  const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
+  const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
+
+  if (!isStrictScopeSatisfied(strictScope, hasModeFilter, normalizedMode, normalizedProjectId))
+    return false
+
+  const where: string[] = ['workspace_id = $1', 'id = $2']
+  const values: unknown[] = [input.workspaceId, input.sessionId]
+
+  if (hasProjectFilter) {
+    values.push(normalizedProjectId)
+    where.push(`project_id = $${values.length}`)
+  }
+
+  if (hasModeFilter) {
+    values.push(normalizedMode)
+    where.push(`mode = $${values.length}`)
+  }
+
+  const result = await db.query<{ id: string }>(
+    `DELETE FROM ai_chat_sessions
+     WHERE ${where.join(' AND ')}
+     RETURNING id`,
+    values,
+  )
+
+  return (result.rowCount || 0) > 0
 }
 
 export async function listAiChatMessagesBySession(
@@ -310,7 +397,7 @@ export async function listAiChatMessagesBySession(
   const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
   const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
 
-  if (strictScope && (!normalizedProjectId || !hasModeFilter))
+  if (!isStrictScopeSatisfied(strictScope, hasModeFilter, normalizedMode, normalizedProjectId))
     return []
 
   const limit = Math.max(1, Math.min(500, Number(input.limit || 200)))

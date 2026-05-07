@@ -7,30 +7,12 @@ definePageMeta({
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const route = useRoute()
-
-const contestId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.id
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const isEmbedMode = computed(() => {
-  const value = route.query.embed
-  if (Array.isArray(value))
-    return value[0] === '1'
-  return value === '1'
-})
-
-function withEmbed(path: string): string | { path: string, query: { embed: string } } {
-  if (isEmbedMode.value)
-    return { path, query: { embed: '1' } }
-  return path
-}
+const { contestId, withEmbed } = useAdminContestRoute()
 
 const loading = ref(false)
 const errorText = ref('')
 const items = ref<ContestTimeline[]>([])
+let loadRequestId = 0
 const timelineColumns = [
   { title: '年份', dataIndex: 'year', width: 100 },
   { title: '节点类型', dataIndex: 'nodeType', slotName: 'nodeType', width: 160 },
@@ -40,27 +22,52 @@ const timelineColumns = [
   { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 120, fixed: 'right' as const },
 ]
 
+const visibleItems = computed(() => {
+  return items.value.filter((item) => {
+    const state = item as ContestTimeline & { deletedAt?: string | null, status?: string | null }
+    return item.contestId === contestId.value
+      && !state.deletedAt
+      && state.status !== 'deleted'
+      && state.status !== 'archived'
+  })
+})
+
 function formatTime(value?: string | null): string {
   return value?.trim() || '待补充'
 }
 
 async function loadItems() {
-  loading.value = true
+  const requestId = ++loadRequestId
+  const targetContestId = contestId.value
   errorText.value = ''
+  if (!targetContestId) {
+    loading.value = false
+    items.value = []
+    return
+  }
+
+  loading.value = true
   try {
-    const response = await $fetch<ApiResponse<ContestTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/timelines`))
+    const response = await unsafeFetch<ApiResponse<ContestTimeline[]>>(endpoint(`/admin/contests/${targetContestId}/timelines`))
+    if (requestId !== loadRequestId)
+      return
     items.value = response.data
   }
   catch (error: any) {
+    if (requestId !== loadRequestId)
+      return
     items.value = []
     errorText.value = String(error?.data?.message || '时间轴加载失败。')
   }
   finally {
-    loading.value = false
+    if (requestId === loadRequestId)
+      loading.value = false
   }
 }
 
-onMounted(loadItems)
+watch(contestId, () => {
+  void loadItems()
+}, { immediate: true })
 </script>
 
 <template>
@@ -76,6 +83,9 @@ onMounted(loadItems)
           </p>
         </div>
         <div class="flex gap-2 items-center">
+          <button class="dense-btn" type="button" :disabled="loading" @click="loadItems">
+            刷新
+          </button>
           <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/timelines/new`)">
             新增节点
           </NuxtLink>
@@ -91,7 +101,7 @@ onMounted(loadItems)
 
     <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-table
-        :data="items"
+        :data="visibleItems"
         :columns="timelineColumns"
         row-key="id"
         size="small"

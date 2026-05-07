@@ -8,6 +8,7 @@ import { deleteProjectSettingsDraft } from '~~/server/utils/platform-store'
 
 interface DeleteProjectSettingsDraftBody {
   expectedRevision?: number | null
+  deviceId?: string
 }
 
 function normalizeExpectedRevision(value: unknown): number | null {
@@ -43,6 +44,18 @@ export default defineEventHandler(async (event) => {
 
   const payload: ProjectSettingsDraftDeleteInput = {
     expectedRevision: normalizeExpectedRevision(body.expectedRevision),
+    deviceId: String(body.deviceId || '').trim(),
+  }
+
+  if (!payload.deviceId) {
+    setResponseStatus(event, 400)
+    return fail('缺少 deviceId。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40086)
   }
 
   try {
@@ -90,6 +103,17 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40976)
+    }
+
+    if (error instanceof Error && error.message === 'DEVICE_ID_REQUIRED') {
+      setResponseStatus(event, 400)
+      return fail('缺少 deviceId。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40087)
     }
 
     throw error

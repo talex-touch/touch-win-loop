@@ -5,6 +5,7 @@ import type {
   Resource,
   ResourceCategory,
   TimelineNodeType,
+  Track,
 } from '~~/shared/types/domain'
 
 definePageMeta({
@@ -14,6 +15,31 @@ definePageMeta({
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
+
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const response = await fetch(path, {
+    credentials: 'include',
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
 
 const activeTab = ref<'overview' | 'track' | 'judge' | 'timeline' | 'faq' | 'resources' | 'policy'>('overview')
 
@@ -112,6 +138,27 @@ function getCategoryResources(category: ResourceCategory): Resource[] {
   return resourcesByCategory.value.get(category) || []
 }
 
+function joinUniqueText(values: Array<string | undefined>, fallback = '待补充') {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const normalized = String(value || '').trim()
+    if (!normalized || seen.has(normalized))
+      continue
+    seen.add(normalized)
+    result.push(normalized)
+  }
+  return result.length > 0 ? result.join(' / ') : fallback
+}
+
+function aggregateTrackField(key: 'organizer' | 'participantRequirements' | 'teamRule') {
+  return joinUniqueText((contest.value?.tracks || []).map(track => track[key]))
+}
+
+function formatTrackField(track: Track, key: 'organizer' | 'participantRequirements' | 'teamRule') {
+  return String(track[key] || '').trim() || '待补充'
+}
+
 const tabItems = [
   { key: 'overview', label: '概览' },
   { key: 'track', label: '赛道详解' },
@@ -125,15 +172,13 @@ const tabItems = [
 async function loadDetail() {
   if (!contestId.value)
     return
-  const response = await $fetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${contestId.value}`))
-  detail.value = response.data
+  detail.value = await requestApi<ContestDetailPayload>(endpoint(`/contests/${contestId.value}`), '赛事详情加载失败。')
 }
 
 async function loadResources() {
   if (!contestId.value)
     return
-  const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/contests/${contestId.value}/resources`))
-  resources.value = response.data
+  resources.value = await requestApi<Resource[]>(endpoint(`/contests/${contestId.value}/resources`), '赛事资料加载失败。')
 }
 
 async function loadData() {
@@ -207,8 +252,7 @@ onMounted(loadData)
             </h2>
             <div class="text-xs text-slate-600 flex flex-wrap gap-2 items-center">
               <span class="px-2 py-1 rounded bg-slate-100">{{ contest.level }}</span>
-              <span>主办方：{{ contest.organizer || '待补充' }}</span>
-              <span>届次：{{ contest.currentSeason || '待补充' }}</span>
+              <span>学科门类：{{ contest.disciplines?.join(' / ') || '待补充' }}</span>
               <span>状态：{{ contest.status || 'draft' }}</span>
             </div>
           </div>
@@ -246,8 +290,8 @@ onMounted(loadData)
             参赛信息
           </h3>
           <div class="text-sm text-slate-700 mt-2 space-y-2">
-            <p><span class="font-medium">参赛对象：</span>{{ contest.participantRequirements || '待补充' }}</p>
-            <p><span class="font-medium">组队规则：</span>{{ contest.teamRule || '待补充' }}</p>
+            <p><span class="font-medium">参赛对象：</span>{{ aggregateTrackField('participantRequirements') }}</p>
+            <p><span class="font-medium">组队规则：</span>{{ aggregateTrackField('teamRule') }}</p>
             <p><span class="font-medium">适配人群：</span>{{ contest.recommendedFor?.join(' / ') || '待补充' }}</p>
             <p><span class="font-medium">学科门类：</span>{{ contest.disciplines?.join(' / ') || '待补充' }}</p>
           </div>
@@ -290,6 +334,15 @@ onMounted(loadData)
               </h4>
               <p class="text-xs text-slate-600 mt-1">
                 {{ track.summary || '暂无赛道说明。' }}
+              </p>
+              <p class="text-xs text-slate-600 mt-2">
+                主办方：{{ formatTrackField(track, 'organizer') }}
+              </p>
+              <p class="text-xs text-slate-600 mt-1">
+                参赛对象：{{ formatTrackField(track, 'participantRequirements') }}
+              </p>
+              <p class="text-xs text-slate-600 mt-1">
+                组队规则：{{ formatTrackField(track, 'teamRule') }}
               </p>
               <p class="text-xs text-slate-600 mt-2">
                 适配专业：{{ track.suitableMajors?.join(' / ') || '待补充' }}

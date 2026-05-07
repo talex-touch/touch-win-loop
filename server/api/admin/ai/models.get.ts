@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
     return fail('当前用户无权查看 AI models。', {
       startedAt,
       provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40397)
@@ -85,7 +85,7 @@ export default defineEventHandler(async (event) => {
   return ok(payload, {
     startedAt,
     provider: runtime.ai.provider,
-    model: runtime.ai.model,
+    model: '',
     fallbackUsed: false,
     attempts: 1,
   })

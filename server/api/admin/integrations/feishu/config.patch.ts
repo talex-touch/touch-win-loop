@@ -20,6 +20,7 @@ interface PatchFeishuConfigBody {
   appId?: string
   appSecret?: string
   appSecretMode?: SecretMode
+  marketplaceAppUrl?: string
   oauthRedirectUri?: string
   eventToken?: string
   eventTokenMode?: SecretMode
@@ -30,8 +31,6 @@ interface PatchFeishuConfigBody {
   startupNotifyEnabled?: boolean
   startupNotifyChatId?: string
   startupNotifyRemark?: string
-  startupFallbackVersion?: string
-  startupFallbackCommitSha?: string
 }
 
 function toMode(raw: unknown): SecretMode {
@@ -109,6 +108,8 @@ export default defineEventHandler(async (event) => {
         next.enabled = Boolean(body.enabled)
       if (body.appId !== undefined)
         next.appId = toText(body.appId)
+      if (body.marketplaceAppUrl !== undefined)
+        next.marketplaceAppUrl = toText(body.marketplaceAppUrl)
       if (body.oauthRedirectUri !== undefined)
         next.oauthRedirectUri = toText(body.oauthRedirectUri)
       if (body.adminGroupIds !== undefined)
@@ -121,10 +122,6 @@ export default defineEventHandler(async (event) => {
         next.startupNotifyChatId = toText(body.startupNotifyChatId)
       if (body.startupNotifyRemark !== undefined)
         next.startupNotifyRemark = toText(body.startupNotifyRemark)
-      if (body.startupFallbackVersion !== undefined)
-        next.startupFallbackVersion = toText(body.startupFallbackVersion)
-      if (body.startupFallbackCommitSha !== undefined)
-        next.startupFallbackCommitSha = toText(body.startupFallbackCommitSha)
 
       if (next.startupNotifyEnabled && !next.startupNotifyChatId)
         throw new Error(STARTUP_NOTIFY_CHAT_ID_REQUIRED)

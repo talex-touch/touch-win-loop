@@ -1,11 +1,13 @@
 import { convertOfficeToPdfByOnlyOffice } from '~~/server/services/document/onlyoffice-converter'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import {
   getProjectDocumentPreviewWorkerState,
   pushProjectDocumentPreviewWorkerRunRecord,
 } from '~~/server/utils/project-document-preview-worker-state'
+import { markProjectKnowledgeSourceStale } from '~~/server/utils/project-knowledge-store'
 import { buildOnlyOfficeProjectSourceUrl } from '~~/server/utils/project-resource-access-url'
 import {
   claimNextQueuedProjectDocumentTask,
@@ -18,6 +20,7 @@ import {
   updateProjectDocumentPreviewAsset,
   updateProjectDocumentTaskProgress,
 } from '~~/server/utils/project-resource-document-store'
+import { captureServerException } from '~~/server/utils/sentry'
 import {
   buildOnlyOfficeUserFacingErrorMessage,
   parseOnlyOfficeConvertErrorMessage,
@@ -80,6 +83,8 @@ function toUserFacingPreviewError(rawErrorMessage: string): string {
     return '当前文件类型暂不支持转换预览，请下载源文件查看。'
   if (normalized === 'ONLYOFFICE_ENDPOINT_NOT_CONFIGURED')
     return '预览服务未配置（ONLYOFFICE endpoint 缺失），请联系管理员。'
+  if (normalized === 'ONLYOFFICE_SOURCE_BASE_URL_NOT_CONFIGURED')
+    return '预览服务缺少对外 sourceBaseURL，当前无法生成 ONLYOFFICE 可访问的源文件地址，请联系管理员配置 WINLOOP_PUBLIC_BASE_URL。'
   if (normalized.startsWith('ONLYOFFICE_CONVERT_TIMEOUT:'))
     return '文件转换超时，请稍后重试。'
   if (normalized.startsWith('ONLYOFFICE_CONVERT_HTTP_FAILED:'))
@@ -95,36 +100,15 @@ function toUserFacingPreviewError(rawErrorMessage: string): string {
 
 let lastSourceBaseGuardWarnAtMs = 0
 
-function isLoopbackHttpUrl(rawUrl: string): boolean {
-  const normalized = normalizeString(rawUrl)
-  if (!/^https?:\/\//i.test(normalized))
-    return false
-
-  try {
-    const parsed = new URL(normalized)
-    const host = normalizeString(parsed.hostname).toLowerCase()
-    return host === '127.0.0.1'
-      || host === 'localhost'
-      || host === '::1'
-      || host === '0.0.0.0'
-  }
-  catch {
-    return false
-  }
-}
-
 function shouldPauseTaskConsumption(sourceBaseURL: string, onlyOfficeEndpoint: string): boolean {
   const normalizedEndpoint = normalizeString(onlyOfficeEndpoint)
   if (!normalizedEndpoint)
     return false
-  if (!isLoopbackHttpUrl(sourceBaseURL))
-    return false
-  return !isLoopbackHttpUrl(normalizedEndpoint)
+  return !normalizeString(sourceBaseURL)
 }
 
 async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
-  const runtime = readRuntimeSettings()
-  const storage = getDocumentStorage()
+  const { runtime } = await readEffectivePlatformRuntimeSettings()
 
   const context = await withTransaction(undefined, async (db) => {
     const task = await claimNextQueuedProjectDocumentTask(db)
@@ -223,6 +207,10 @@ async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
     })
 
     const previewObjectKey = buildDocumentObjectKey(`project-${context.document.projectId}`, converted.fileName)
+    const storage = await selectDocumentWriteStorage({
+      incomingBytes: converted.pdfBuffer.length,
+      runtime,
+    })
     await storage.putObject({
       key: previewObjectKey,
       body: converted.pdfBuffer,
@@ -232,7 +220,7 @@ async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
       await updateProjectDocumentPreviewAsset(db, {
         documentId: context.document.id,
         previewObjectKey,
-        previewStorageProvider: storage.provider,
+        previewStorageProvider: storage.channelId,
         previewFileName: converted.fileName,
         previewMimeType: 'application/pdf',
         previewFileSize: converted.pdfBuffer.length,
@@ -248,6 +236,11 @@ async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
           previewFileName: converted.fileName,
           previewSize: converted.pdfBuffer.length,
         },
+      })
+      await markProjectKnowledgeSourceStale(db, {
+        projectId: context.document.projectId,
+        resourceId: context.document.projectResourceId,
+        autoEnqueue: true,
       })
     })
 
@@ -303,6 +296,11 @@ async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
       rawError: rawErrorMessage,
       errorStack: error instanceof Error ? normalizeString(error.stack) : '',
     })
+    captureServerException(error, {
+      module: 'project-document-preview-worker',
+      projectId: context.document.projectId,
+      taskId: context.task.id,
+    })
   }
 
   return taskResult
@@ -313,6 +311,9 @@ function logWorkerError(stage: 'bootstrap' | 'tick', error: unknown): void {
     ? '[project-document-preview-worker] bootstrap failed:'
     : '[project-document-preview-worker] tick failed:'
   console.error(prefix, toErrorMessage(error))
+  captureServerException(error, {
+    module: 'project-document-preview-worker',
+  })
 }
 
 async function runTick(): Promise<void> {
@@ -320,7 +321,7 @@ async function runTick(): Promise<void> {
   if (state.ticking)
     return
 
-  const runtime = readRuntimeSettings()
+  const { runtime } = await readEffectivePlatformRuntimeSettings()
   state.enabled = Boolean(runtime.onlyOffice.workerEnabled)
   state.intervalMs = Math.max(1000, runtime.onlyOffice.workerIntervalMs)
   const batchSize = Math.max(1, runtime.onlyOffice.workerBatchSize)
@@ -330,7 +331,7 @@ async function runTick(): Promise<void> {
     return
 
   if (shouldPauseTaskConsumption(runtime.onlyOffice.sourceBaseURL, runtime.onlyOffice.endpoint)) {
-    const warningMessage = 'ONLYOFFICE sourceBaseURL 仍为本地回退地址，已暂停任务消费。请设置 WINLOOP_PUBLIC_BASE_URL，或先通过外网域名访问一次服务。'
+    const warningMessage = 'ONLYOFFICE sourceBaseURL 未配置，已暂停任务消费。请设置 WINLOOP_PUBLIC_BASE_URL，确保 worker 能生成可被 ONLYOFFICE 访问的绝对地址。'
     state.lastError = warningMessage
     const now = Date.now()
     if (now - lastSourceBaseGuardWarnAtMs >= 60_000) {
@@ -409,32 +410,15 @@ async function runTick(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const runtimeState = getWorkerRuntimeState()
   if (runtimeState.booted)
     return
   runtimeState.booted = true
 
   const state = getProjectDocumentPreviewWorkerState()
-  const runtime = readRuntimeSettings()
-  state.enabled = Boolean(runtime.onlyOffice.workerEnabled)
-  state.intervalMs = Math.max(1000, runtime.onlyOffice.workerIntervalMs)
-  state.batchSize = Math.max(1, runtime.onlyOffice.workerBatchSize)
-
-  if (!state.enabled)
-    return
-
-  if (!normalizeString(runtime.onlyOffice.endpoint)) {
-    console.warn('[project-document-preview-worker] ONLYOFFICE endpoint 未配置，worker 不会启动。')
-    return
-  }
-
-  console.warn('[project-document-preview-worker] worker_started', {
-    sourceBaseURL: runtime.onlyOffice.sourceBaseURL,
-    onlyOfficeEndpoint: runtime.onlyOffice.endpoint,
-    intervalMs: runtime.onlyOffice.workerIntervalMs,
-    batchSize: runtime.onlyOffice.workerBatchSize,
-  })
-
   state.started = true
   void withClient(undefined, async (db) => {
     await resetStaleProjectDocumentTasks(db, {
@@ -444,10 +428,9 @@ export default defineNitroPlugin((nitroApp) => {
     logWorkerError('bootstrap', error)
   })
 
-  const intervalMs = Math.max(1000, runtime.onlyOffice.workerIntervalMs)
   runtimeState.timer = setInterval(() => {
     void runTick()
-  }, intervalMs)
+  }, 5000)
   runtimeState.timer.unref?.()
 
   nitroApp.hooks.hookOnce('close', () => {

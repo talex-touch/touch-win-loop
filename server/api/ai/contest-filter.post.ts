@@ -1,13 +1,13 @@
-import type { AiContestFilterRequest } from '~~/shared/types/domain'
+import type { AiContestFilterRequest, AiContestFilterResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { runContestFilterChain } from '~~/server/services/ai/contest-filter-chain'
-import { runContestFilterFallback } from '~~/server/services/ai/fallback'
+import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { listContestLibrary, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { runWithRetry } from '~~/server/utils/retry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
@@ -45,6 +45,17 @@ export default defineEventHandler(async (event) => {
       fallbackUsed: false,
       attempts: 1,
     }, 40061)
+  }
+
+  if (!isAiRuntimeConfigured(activeAiConfig)) {
+    setResponseStatus(event, 503)
+    return fail(buildAiNotConfiguredMessage('赛事筛选 AI'), {
+      startedAt,
+      provider: activeAiConfig.provider,
+      model: activeAiConfig.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 50361)
   }
 
   let quotaResult: { allowed: boolean, remaining: number | null }
@@ -111,40 +122,34 @@ export default defineEventHandler(async (event) => {
       target: 'contest_filter',
     })
   })
-  const mergedPrompt = buildMergedPrompt(channelRuntime.prompt, injectedPrompt)
-
-  const onlyFallback = activeAiConfig.provider === 'mock' || !activeAiConfig.apiKey
-  if (onlyFallback) {
-    const data = runContestFilterFallback(safeRequest, contests)
-    await withTransaction(event, async (db) => {
-      await recordContestAuditLog(db, {
-        actorUserId: user.id,
-        action: 'ai.invoke.contest_filter',
-        contestId: safeRequest.contestId,
-        payload: {
-          trackId: safeRequest.trackId,
-          workspaceId,
-          channelKey: channelRuntime.key,
-          providerId: channelRuntime.provider?.id || null,
-          fallbackUsed: true,
-          attempts: 1,
-        },
+  let execution: Awaited<ReturnType<typeof runWithPlatformAiChannelFallback<{
+    data: AiContestFilterResult
+    fallbackUsed: boolean
+    attempts: number
+  }>>>
+  try {
+    execution = await runWithPlatformAiChannelFallback(runtime, 'contest_filter', async ({ ai, prompt }) => {
+      return runWithRetry({
+        maxRetries: ai.maxRetries,
+        run: () => runContestFilterChain({
+          request: safeRequest,
+          contests,
+          ai,
+          injectedPrompt: buildMergedPrompt(prompt, injectedPrompt),
+        }),
       })
     })
-    return ok(data, {
+  }
+  catch (error) {
+    setResponseStatus(event, 502)
+    return fail(error instanceof Error ? error.message || '赛事筛选 AI 调用失败。' : '赛事筛选 AI 调用失败。', {
       startedAt,
       provider: activeAiConfig.provider,
       model: activeAiConfig.model,
-      fallbackUsed: true,
+      fallbackUsed: false,
       attempts: 1,
-    }, 'fallback used')
+    }, 50261)
   }
-
-  const result = await runWithRetry({
-    maxRetries: activeAiConfig.maxRetries,
-    run: () => runContestFilterChain({ request: safeRequest, contests, ai: activeAiConfig, injectedPrompt: mergedPrompt }),
-    fallback: () => runContestFilterFallback(safeRequest, contests),
-  })
 
   await withTransaction(event, async (db) => {
     await recordContestAuditLog(db, {
@@ -155,18 +160,20 @@ export default defineEventHandler(async (event) => {
         trackId: safeRequest.trackId,
         workspaceId,
         channelKey: channelRuntime.key,
-        providerId: channelRuntime.provider?.id || null,
-        fallbackUsed: result.fallbackUsed,
-        attempts: result.attempts,
+        providerId: execution.provider?.id || null,
+        fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+        attempts: execution.attemptChain.length,
+        attemptChain: execution.attemptChain,
+        latencyMs: execution.latencyMs,
       },
     })
   })
 
-  return ok(result.data, {
+  return ok(execution.data.data, {
     startedAt,
-    provider: activeAiConfig.provider,
-    model: activeAiConfig.model,
-    fallbackUsed: result.fallbackUsed,
-    attempts: result.attempts,
-  }, result.fallbackUsed ? 'fallback used' : 'ok')
+    provider: execution.ai.provider,
+    model: execution.ai.model,
+    fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+    attempts: execution.attemptChain.length,
+  }, 'ok')
 })

@@ -11,6 +11,13 @@ interface PatchTrackBody {
   trackId?: string
   name?: string
   summary?: string
+  coverImageUrl?: string
+  location?: string
+  organizer?: string
+  undertaker?: string
+  participantRequirements?: string
+  teamRule?: string
+  awardRatio?: string
   suitableMajors?: string[]
   deliverableTypes?: string[]
   rubricId?: string | null
@@ -58,6 +65,13 @@ export default defineEventHandler(async (event) => {
         patch: {
           name: body?.name,
           summary: body?.summary,
+          coverImageUrl: body?.coverImageUrl,
+          location: body?.location,
+          organizer: body?.organizer,
+          undertaker: body?.undertaker,
+          participantRequirements: body?.participantRequirements,
+          teamRule: body?.teamRule,
+          awardRatio: body?.awardRatio,
           suitableMajors: body?.suitableMajors,
           deliverableTypes: body?.deliverableTypes,
           rubricId: body?.rubricId,
@@ -68,6 +82,16 @@ export default defineEventHandler(async (event) => {
     })
   }
   catch (error) {
+    if (error instanceof Error && error.message === 'CONTEST_RELEASE_WORKFLOW_REQUIRED') {
+      setResponseStatus(event, 409)
+      return fail('当前赛事已接入版本流，请通过“审核/版本”生成新版本后再发布。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 409691)
+    }
     if (error instanceof Error && error.message === 'FEISHU_SOURCE_OF_TRUTH_CONFLICT') {
       setResponseStatus(event, 409)
       return fail('当前赛道由飞书多维主库托管，请在飞书侧修改后同步。', {

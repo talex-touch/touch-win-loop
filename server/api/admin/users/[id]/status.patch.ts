@@ -17,8 +17,8 @@ export default defineEventHandler(async (event) => {
   const body = await readBody<PatchUserStatusBody>(event)
   const nextStatus = body?.status
 
-  const canAssign = await checkPlatformPermission(event, user, 'role.assign')
-  if (!canAssign) {
+  const canWriteStatus = await checkPlatformPermission(event, user, 'user.status.write')
+  if (!canWriteStatus) {
     setResponseStatus(event, 403)
     return fail('当前用户无权修改用户状态。', {
       startedAt,
@@ -94,12 +94,12 @@ export default defineEventHandler(async (event) => {
              AND u.is_disabled = FALSE
              AND (
                u.is_platform_admin = TRUE
-               OR EXISTS (
-                 SELECT 1
-                 FROM platform_user_roles pr
-                 WHERE pr.user_id = u.id
-                   AND pr.role = 'platform_super_admin'
-               )
+              OR EXISTS (
+                SELECT 1
+                FROM platform_user_roles pr
+                WHERE pr.user_id = u.id
+                  AND pr.role = 'platform_super_admin'
+              )
              )`,
           [target.id],
         )

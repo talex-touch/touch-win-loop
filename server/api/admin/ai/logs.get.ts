@@ -1,6 +1,7 @@
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { normalizeAiChatMetadata } from '~~/server/utils/chat-store'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
@@ -27,7 +28,16 @@ interface LogRow {
   contest_name: string | null
   track_id: string
   major: string
+  metadata: unknown
   created_at: string
+}
+
+interface LogAttemptItem {
+  provider: string
+  model: string
+  success: boolean
+  latencyMs: number
+  error?: string
 }
 
 function readQueryText(value: unknown): string {
@@ -43,6 +53,41 @@ function toPreview(content: string): string {
   return `${normalized.slice(0, 180)}...`
 }
 
+function toLatencyMs(metadata: Record<string, unknown>): number | null {
+  const raw = metadata.latencyMs
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0)
+    return null
+  return Math.round(value)
+}
+
+function toAttemptChain(metadata: Record<string, unknown>): LogAttemptItem[] {
+  const raw = metadata.attemptChain
+  if (!Array.isArray(raw))
+    return []
+
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item))
+      return []
+
+    const record = item as Record<string, unknown>
+    const provider = String(record.provider || '').trim()
+    const model = String(record.model || '').trim()
+    const success = Boolean(record.success)
+    const latencyMs = Number(record.latencyMs)
+    if (!provider && !model)
+      return []
+
+    return [{
+      provider,
+      model,
+      success,
+      latencyMs: Number.isFinite(latencyMs) && latencyMs >= 0 ? Math.round(latencyMs) : 0,
+      error: record.error ? String(record.error) : undefined,
+    }]
+  })
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
@@ -55,7 +100,7 @@ export default defineEventHandler(async (event) => {
     return fail('当前用户无权查看 AI logs。', {
       startedAt,
       provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40399)
@@ -145,6 +190,7 @@ export default defineEventHandler(async (event) => {
         c.name AS contest_name,
         s.track_id,
         s.major,
+        m.metadata,
         m.created_at::TEXT
        FROM ai_chat_messages m
        JOIN ai_chat_sessions s ON s.id = m.session_id AND s.workspace_id = m.workspace_id
@@ -163,26 +209,32 @@ export default defineEventHandler(async (event) => {
       pageSize,
       total: Number(countResult.rows[0]?.total || 0),
       days,
-      items: itemResult.rows.map(row => ({
-        id: row.id,
-        workspaceId: row.workspace_id,
-        workspaceName: row.workspace_name || '',
-        sessionId: row.session_id,
-        sessionTitle: row.session_title || '',
-        role: row.role,
-        provider: row.provider || '',
-        model: row.model || '',
-        fallbackUsed: Boolean(row.fallback_used),
-        actorUserId: row.created_by_user_id || '',
-        actorName: row.actor_name || '',
-        contestId: row.contest_id || '',
-        contestName: row.contest_name || '',
-        trackId: row.track_id || '',
-        major: row.major || '',
-        content: row.content || '',
-        contentPreview: toPreview(row.content || ''),
-        createdAt: row.created_at,
-      })),
+      items: itemResult.rows.map((row) => {
+        const metadata = normalizeAiChatMetadata(row.metadata)
+        return {
+          id: row.id,
+          workspaceId: row.workspace_id,
+          workspaceName: row.workspace_name || '',
+          sessionId: row.session_id,
+          sessionTitle: row.session_title || '',
+          role: row.role,
+          provider: row.provider || '',
+          model: row.model || '',
+          fallbackUsed: Boolean(row.fallback_used),
+          actorUserId: row.created_by_user_id || '',
+          actorName: row.actor_name || '',
+          contestId: row.contest_id || '',
+          contestName: row.contest_name || '',
+          trackId: row.track_id || '',
+          major: row.major || '',
+          channelKey: String(metadata.channelKey || '').trim(),
+          latencyMs: toLatencyMs(metadata),
+          attemptChain: toAttemptChain(metadata),
+          content: row.content || '',
+          contentPreview: toPreview(row.content || ''),
+          createdAt: row.created_at,
+        }
+      }),
     }
   })
 
@@ -207,7 +259,7 @@ export default defineEventHandler(async (event) => {
   return ok(payload, {
     startedAt,
     provider: runtime.ai.provider,
-    model: runtime.ai.model,
+    model: '',
     fallbackUsed: false,
     attempts: 1,
   })

@@ -11,7 +11,7 @@ import {
 } from '~~/server/utils/feishu-integration-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
-type BuildValueSource = 'env' | 'runtime' | 'fallback' | 'missing'
+type BuildValueSource = 'env' | 'runtime' | 'missing'
 
 interface FeishuIntegrationConfigView extends FeishuIntegrationConfig {
   startupEffectiveVersion: string
@@ -23,14 +23,11 @@ interface FeishuIntegrationConfigView extends FeishuIntegrationConfig {
 function resolveBuildValueSource(
   runtimeValue: string,
   runtimeValueFromEnv: string,
-  fallbackValue: string,
 ): BuildValueSource {
   if (runtimeValueFromEnv)
     return 'env'
   if (runtimeValue)
     return 'runtime'
-  if (fallbackValue)
-    return 'fallback'
   return 'missing'
 }
 
@@ -60,16 +57,14 @@ export default defineEventHandler(async (event) => {
   const runtimeCommitSha = String(runtime.build.commitSha || '').trim()
   const runtimeVersionFromEnv = String(process.env.WINLOOP_BUILD_VERSION || '').trim()
   const runtimeCommitShaFromEnv = String(process.env.WINLOOP_BUILD_COMMIT_SHA || '').trim()
-  const fallbackVersion = String(publicConfig.startupFallbackVersion || '').trim()
-  const fallbackCommitSha = String(publicConfig.startupFallbackCommitSha || '').trim()
 
-  const startupVersionSource = resolveBuildValueSource(runtimeVersion, runtimeVersionFromEnv, fallbackVersion)
-  const startupCommitShaSource = resolveBuildValueSource(runtimeCommitSha, runtimeCommitShaFromEnv, fallbackCommitSha)
+  const startupVersionSource = resolveBuildValueSource(runtimeVersion, runtimeVersionFromEnv)
+  const startupCommitShaSource = resolveBuildValueSource(runtimeCommitSha, runtimeCommitShaFromEnv)
 
   const payload: FeishuIntegrationConfigView = {
     ...publicConfig,
-    startupEffectiveVersion: runtimeVersion || fallbackVersion,
-    startupEffectiveCommitSha: runtimeCommitSha || fallbackCommitSha,
+    startupEffectiveVersion: runtimeVersion,
+    startupEffectiveCommitSha: runtimeCommitSha,
     startupVersionSource,
     startupCommitShaSource,
   }

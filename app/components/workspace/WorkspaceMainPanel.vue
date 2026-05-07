@@ -1,18 +1,55 @@
 <script setup lang="ts">
+import type { Awareness } from 'y-protocols/awareness'
 import type { Doc as YDoc } from 'yjs'
 import type {
+  AiWorkspaceDocumentAction,
+  AiWorkspaceDocumentDraft,
+  AiWorkspaceInlineCompletionAcceptResult,
+  AiWorkspaceInlineCompletionResult,
   CollabPurpose,
   Contest,
+  DefenseRealtimeMediaMode,
+  DefenseRealtimeProvider,
+  DefenseRealtimeRuntimeOptions,
+  DefenseRealtimeSessionMeta,
   Project,
   ProjectInvitationSummary,
+  ProjectKnowledgeIndexDashboard,
+  ProjectMeeting,
+  ProjectMeetingDetail,
+  ProjectMeetingGuestShare,
+  ProjectMeetingMode,
+  ProjectMeetingRuntimeHealth,
+  ProjectMeetingUtterance,
   ProjectMemberRole,
   ProjectMemberSummary,
+  ProjectResourceCommentAnchor,
+  ProjectResourceCommentImageNodeAnchor,
+  ProjectResourceCommentTextSelectionAnchor,
+  ProjectResourceCommentThread,
   ProjectResourceShare,
   Resource,
   ResourcePreviewStatus,
   Track,
+  WorkspaceDisplayPreferenceSnapshot,
+  WorkspaceFontSizePreset,
+  WorkspaceMeetingCreateTabId,
+  WorkspaceOpenTabState,
+  WorkspaceTabSpacingPreset,
   WorkspaceType,
 } from '~~/shared/types/domain'
+import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
+import type {
+  NullableWorkspaceFontSizePreset,
+  NullableWorkspaceTabSpacingPreset,
+  WorkspaceDisplayPreferencePatchPayload,
+} from '~/composables/useWorkspaceDisplayPreferences'
+import type {
+  WorkspaceMainTab,
+} from '~/composables/useWorkspaceMainTabs'
+import type { WorkspacePreviewMode } from '~/composables/useWorkspaceProjectResources'
+import type { WorkspaceMainTabId } from '~/composables/useWorkspaceProjectShell'
+import type { ContextMenuItem, ContextMenuRequest } from '~/types/ui-context-menu'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -24,12 +61,51 @@ import type {
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
-import { buildOnlyOfficeUserFacingErrorMessage } from '~~/shared/constants/onlyoffice'
-import RichTextEditor from '~/components/editor/RichTextEditor.vue'
-import CollabPresencePanel from '~/components/workspace/collab/CollabPresencePanel.vue'
-import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
+import type { CollabMarkdownHeadingAnchorItem } from '~/utils/collab-markdown-navigation'
+import type { WorkspaceOutlineNode } from '~/utils/workspace-outline'
+import { resolveCollabResourceDisplayLabel } from '~~/shared/utils/collab-resource'
+import { resolveWorkspaceTabDensityTokens } from '~~/shared/utils/workspace-tab-layout'
+import {
+  normalizeWorkspaceCollabPresenceActivityState,
+  resolveWorkspaceCollabPresenceColor,
+} from '~/components/workspace/collab/presence'
+import {
+  defaultWorkspaceDisplayPreferenceSnapshot,
+  normalizeWorkspaceFontSizeDraft,
+  normalizeWorkspaceTabSpacingDraft,
+  resolveWorkspaceDisplayPreferenceSourceLabel,
+  resolveWorkspaceFontSizePresetLabel,
+  resolveWorkspaceTabSpacingPresetLabel,
+  WORKSPACE_FONT_SIZE_PRESET_OPTIONS,
+  WORKSPACE_TAB_SPACING_PRESET_OPTIONS,
+} from '~/composables/useWorkspaceDisplayPreferences'
+import {
+  useWorkspaceMainTabs,
+} from '~/composables/useWorkspaceMainTabs'
+import {
+  isDeviceArrangementResource,
+  resolveCollabPurpose,
+  resolveCollabResourceLabel,
+} from '~/utils/workspace-left-sidebar-helpers'
+import {
+  formatWorkspaceDateTime as formatDateTime,
+  formatEtaSeconds,
+  getShareStatus,
+  previewErrorMessage,
+  previewStatusLabel,
+  shareStatusBadgeClass,
+  shareStatusLabel,
+  shareVisibilityLabel,
+  workspaceInvitationScopeLabel,
+  workspaceInvitationStatusBadgeClass,
+  workspaceInvitationStatusLabel,
+  workspaceRoleLabel,
+  workspaceTypeLabel,
+} from '~/utils/workspace-main-panel-formatters'
 
 const props = withDefaults(defineProps<{
+  activeTabId?: WorkspaceOpenTabState | ''
+  openTabs?: WorkspaceOpenTabState[]
   selectedContest?: Contest | null
   selectedTrack?: Track | null
   selectedTrackId?: string
@@ -42,7 +118,9 @@ const props = withDefaults(defineProps<{
   trackType?: string
   topK?: number
   openSettingsSignal?: number
+  openLoopyDataSignal?: number
   openMemberManagementSignal?: number
+  openDisplayPreferencesSignal?: number
   openFlowSignal?: number
   openPreviewSignal?: number
   closePreviewSignal?: number
@@ -56,19 +134,64 @@ const props = withDefaults(defineProps<{
   previewMode?: WorkspacePreviewMode
   previewPdfUrl?: string
   previewSourceDownloadUrl?: string
+  collabPreviewLoading?: boolean
+  collabPreviewError?: string
+  currentUserId?: string
+  currentUserName?: string
+  currentUserAvatarUrl?: string
+  isPlatformAdminUser?: boolean
+  collabResourceId?: string
   collabMarkdownDoc?: YDoc | null
+  collabMarkdownAwareness?: Awareness | null
   collabDrawValue?: string
   collabDrawError?: string
   collabRevision?: number
   collabConnected?: boolean
   collabStatusText?: string
   collabPresenceMembers?: WorkspaceCollabPresenceMember[]
+  inlineCompletionEnabled?: boolean
+  inlineCompletionRequestHandler?: ((payload: {
+    requestKey: string
+    selectionRange: {
+      anchorLine: number
+      anchorColumn: number
+      headLine: number
+      headColumn: number
+      isCollapsed: boolean
+      selectionLength: number
+    }
+    signal?: AbortSignal
+  }) => Promise<AiWorkspaceInlineCompletionResult | null>) | null
+  inlineCompletionAcceptHandler?: ((payload: {
+    requestKey: string
+    suggestion: string
+    selectionRange: {
+      anchorLine: number
+      anchorColumn: number
+      headLine: number
+      headColumn: number
+      isCollapsed: boolean
+      selectionLength: number
+    }
+  }) => Promise<AiWorkspaceInlineCompletionAcceptResult | null>) | null
+  markdownImageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
+  imageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
+  commentThreads?: ProjectResourceCommentThread[]
+  activeCommentThreadId?: string
+  commentDraftAnchor?: ProjectResourceCommentAnchor | null
+  commentLoading?: boolean
+  commentMutating?: boolean
   mappingRows?: WorkspaceMappingRow[]
+  mappingLoading?: boolean
+  mappingRefreshing?: boolean
   keywordCloud?: WorkspaceKeyword[]
   trendBars?: number[]
   formState?: WorkspaceFormState
   formSubmitting?: boolean
+  workspacePreparing?: boolean
+  topicBoardFetching?: boolean
   activeProject?: Project | null
+  activeProjectId?: string
   workspaceName?: string
   workspaceType?: WorkspaceType | ''
   workspaceMembers?: ProjectMemberSummary[]
@@ -85,6 +208,7 @@ const props = withDefaults(defineProps<{
   workspaceSupportsSeatAdd?: boolean
   workspaceInvitationSubmitting?: boolean
   workspaceInvitationLink?: string
+  workspaceInvitationError?: string
   workspaceSeatLimitSaveLoading?: boolean
   workspaceSeatLimitError?: string
   workspaceSeatLimitUpdatedSignal?: number
@@ -95,10 +219,47 @@ const props = withDefaults(defineProps<{
   projectSettingsCurrentContestId?: string
   projectSettingsAdaptation?: WorkspaceProjectAdaptationForm
   projectSettingsHasCurrentContest?: boolean
+  projectKnowledgeDashboard?: ProjectKnowledgeIndexDashboard | null
+  projectKnowledgeLoading?: boolean
+  projectKnowledgeError?: string
+  projectKnowledgeReindexingTarget?: '' | 'all' | 'stale' | 'failed'
+  projectKnowledgeRetryingSourceId?: string
+  workspaceDisplayPreferences?: WorkspaceDisplayPreferenceSnapshot
+  workspaceDisplayPreferencesLoading?: boolean
+  workspaceDisplayPreferencesSavingScope?: '' | 'user' | 'team'
+  workspaceDisplayPreferencesError?: string
   projectResourceShares?: ProjectResourceShare[]
   projectResourceSharesLoading?: boolean
+  meetings?: ProjectMeeting[]
+  activeMeetingId?: string
+  activeMeeting?: ProjectMeetingDetail | null
+  meetingUtterances?: ProjectMeetingUtterance[]
+  meetingLiveCaptions?: WorkspaceMeetingCaptionItem[]
+  meetingLoading?: boolean
+  meetingDetailLoading?: boolean
+  meetingRefreshing?: boolean
+  meetingDetailRefreshing?: boolean
+  meetingMutating?: boolean
+  meetingJoinUrl?: string
+  meetingJoinToken?: string
+  meetingJoinExpiresAt?: string
+  meetingRtcServerUrl?: string
+  activeMeetingGuestShare?: ProjectMeetingGuestShare | null
+  meetingGuestShareLoading?: boolean
+  meetingPlanTier?: 'personal_team' | 'business_team' | null
+  meetingRuntimeHealth?: ProjectMeetingRuntimeHealth | null
+  defenseRealtimeState?: DefenseRealtimeSessionMeta | null
+  defenseRealtimeOptions?: DefenseRealtimeRuntimeOptions | null
+  defenseRealtimeLogs?: Array<{
+    id: string
+    level: 'info' | 'warning' | 'error'
+    message: string
+    createdAt: string
+  }>
   toneMeta: Record<MappingTone, WorkspaceStatusToneMeta>
 }>(), {
+  activeTabId: '',
+  openTabs: () => [],
   selectedContest: null,
   selectedTrack: null,
   selectedTrackId: '',
@@ -111,7 +272,9 @@ const props = withDefaults(defineProps<{
   trackType: '',
   topK: 6,
   openSettingsSignal: 0,
+  openLoopyDataSignal: 0,
   openMemberManagementSignal: 0,
+  openDisplayPreferencesSignal: 0,
   openFlowSignal: 0,
   openPreviewSignal: 0,
   closePreviewSignal: 0,
@@ -125,14 +288,34 @@ const props = withDefaults(defineProps<{
   previewMode: 'binary',
   previewPdfUrl: '',
   previewSourceDownloadUrl: '',
+  collabPreviewLoading: false,
+  collabPreviewError: '',
+  currentUserId: '',
+  currentUserName: '',
+  currentUserAvatarUrl: '',
+  isPlatformAdminUser: false,
+  collabResourceId: '',
   collabMarkdownDoc: null,
+  collabMarkdownAwareness: null,
   collabDrawValue: '{}',
   collabDrawError: '',
   collabRevision: 0,
   collabConnected: false,
   collabStatusText: '',
   collabPresenceMembers: () => [],
+  inlineCompletionEnabled: false,
+  inlineCompletionRequestHandler: null,
+  inlineCompletionAcceptHandler: null,
+  markdownImageUploadHandler: null,
+  imageUploadHandler: null,
+  commentThreads: () => [],
+  activeCommentThreadId: '',
+  commentDraftAnchor: null,
+  commentLoading: false,
+  commentMutating: false,
   mappingRows: () => [],
+  mappingLoading: false,
+  mappingRefreshing: false,
   keywordCloud: () => [],
   trendBars: () => [],
   formState: () => ({
@@ -147,7 +330,10 @@ const props = withDefaults(defineProps<{
     summary: '',
   }),
   formSubmitting: false,
+  workspacePreparing: false,
+  topicBoardFetching: false,
   activeProject: null,
+  activeProjectId: '',
   workspaceName: '',
   workspaceType: '',
   workspaceMembers: () => [],
@@ -164,6 +350,7 @@ const props = withDefaults(defineProps<{
   workspaceSupportsSeatAdd: false,
   workspaceInvitationSubmitting: false,
   workspaceInvitationLink: '',
+  workspaceInvitationError: '',
   workspaceSeatLimitSaveLoading: false,
   workspaceSeatLimitError: '',
   workspaceSeatLimitUpdatedSignal: 0,
@@ -172,6 +359,8 @@ const props = withDefaults(defineProps<{
   projectSettingsCommon: () => ({
     title: '',
     summary: '',
+    icon: '',
+    accentColor: '',
     problemStatement: '',
     innovationPointsText: '',
     techRouteStepsText: '',
@@ -193,12 +382,43 @@ const props = withDefaults(defineProps<{
     summary: '',
   }),
   projectSettingsHasCurrentContest: false,
+  projectKnowledgeDashboard: null,
+  projectKnowledgeLoading: false,
+  projectKnowledgeError: '',
+  projectKnowledgeReindexingTarget: '',
+  projectKnowledgeRetryingSourceId: '',
+  workspaceDisplayPreferences: () => defaultWorkspaceDisplayPreferenceSnapshot(),
+  workspaceDisplayPreferencesLoading: false,
+  workspaceDisplayPreferencesSavingScope: '',
+  workspaceDisplayPreferencesError: '',
   projectResourceShares: () => [],
   projectResourceSharesLoading: false,
+  meetings: () => [],
+  activeMeetingId: '',
+  activeMeeting: null,
+  meetingUtterances: () => [],
+  meetingLiveCaptions: () => [],
+  meetingLoading: false,
+  meetingDetailLoading: false,
+  meetingRefreshing: false,
+  meetingDetailRefreshing: false,
+  meetingMutating: false,
+  meetingJoinUrl: '',
+  meetingJoinToken: '',
+  meetingJoinExpiresAt: '',
+  meetingRtcServerUrl: '',
+  activeMeetingGuestShare: null,
+  meetingGuestShareLoading: false,
+  meetingPlanTier: null,
+  meetingRuntimeHealth: null,
+  defenseRealtimeState: null,
+  defenseRealtimeOptions: null,
+  defenseRealtimeLogs: () => [],
 })
 
 const emit = defineEmits<{
   'update:activeTabId': [value: WorkspaceMainTabId | '']
+  'update:openTabs': [value: WorkspaceMainTabId[]]
   'update:selectedTrackId': [value: string]
   'update:selectedContestId': [value: string]
   'update:major': [value: string]
@@ -212,38 +432,72 @@ const emit = defineEmits<{
   'update:projectSettingsBindings': [value: WorkspaceProjectContestBindingForm[]]
   'update:projectSettingsAdaptation': [value: WorkspaceProjectAdaptationForm]
   'saveProjectSettings': []
+  'reloadProjectKnowledge': []
+  'reindexProjectKnowledge': [target: 'all' | 'stale' | 'failed']
+  'reindexProjectKnowledgeSource': [resourceId: string]
+  'saveWorkspaceDisplayUserOverride': [value: WorkspaceDisplayPreferencePatchPayload]
+  'saveWorkspaceDisplayTeamDefault': [value: WorkspaceDisplayPreferencePatchPayload]
   'reloadWorkspaceMemberManagement': []
   'createWorkspaceInvitation': [value: { inviteeUsername: string, projectRole: ProjectMemberRole, expiresInDays: number }]
   'patchWorkspaceMemberRole': [value: { userId: string, role: 'manager' | 'editor' | 'viewer' }]
   'removeWorkspaceMember': [userId: string]
   'revokeWorkspaceInvitation': [invitationId: string]
   'copyWorkspaceInvitationLink': []
+  'prepareWorkspaceInvitation': []
   'openWorkspaceSeatModal': []
   'saveWorkspaceSeatLimit': [seatLimit: number]
   'copyProjectResourceShare': [shareId: string]
   'revokeProjectResourceShare': [shareId: string]
+  'createMeeting': [value: { mode: ProjectMeetingMode }]
+  'quickCreateMeeting': [value: WorkspaceMeetingCreatePayload]
+  'submitMeetingCreate': [value: WorkspaceMeetingCreatePayload]
+  'refreshMeetings': []
+  'joinMeeting': [meetingId: string]
+  'startMeeting': [meetingId: string]
+  'endMeeting': [meetingId: string]
+  'createMeetingGuestShare': [meetingId: string]
+  'regenerateMeetingGuestShare': [meetingId: string]
+  'revokeMeetingGuestShare': [meetingId: string]
+  'selectMeeting': [meetingId: string]
+  'openMeetingResource': [resourceId: string]
+  'startDefenseRealtimeSidecar': []
+  'updateDefenseRealtimeProvider': [provider: DefenseRealtimeProvider]
+  'updateDefenseRealtimeMediaMode': [mode: DefenseRealtimeMediaMode]
+  'toggleDefenseRealtimeAudio': [enabled: boolean]
+  'toggleDefenseRealtimeVideo': [enabled: boolean]
+  'interruptDefenseRealtime': []
+  'reconnectDefenseRealtime': []
+  'openResource': [resourceId: string]
+  'createDeviceArrangement': [payload?: { title?: string, document?: Record<string, unknown> }]
   'loadContests': []
   'reconvertPreview': []
   'downloadPreviewSource': []
   'activatePreviewResource': [resourceId: string]
   'closePreviewResource': [resourceId: string]
   'update:collabDrawValue': [value: string]
+  'requestWorkflowCanvasRebuild': []
+  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
+  'updateCollabSelectionStatus': [value: { line: number, column: number, selectionLength: number, selection: WorkspaceCollabSelectionSummary | null }]
+  'markdownPrimaryHeadingChange': [value: string]
+  'markdownOutlineChange': [value: CollabMarkdownHeadingAnchorItem[]]
+  'markdownCreateCommentFromSelection': [value: ProjectResourceCommentTextSelectionAnchor]
+  'markdownCreateCommentFromImage': [value: ProjectResourceCommentImageNodeAnchor]
+  'markdownOpenCommentThread': [threadId: string]
+  'markdownRequestImageAction': [value: {
+    resourceId?: string | null
+    src: string
+    mode: 'open_resource' | 'delete_node' | 'delete_and_recycle'
+  }]
+  'markdownCancelCommentDraft': []
+  'markdownReplyCommentThread': [value: { threadId: string, body: string }]
+  'markdownResolveCommentThread': [threadId: string]
+  'markdownReopenCommentThread': [threadId: string]
+  'markdownCreateCommentThread': [body: string]
+  'requestContextMenu': [payload: ContextMenuRequest]
 }>()
 
-type WorkspaceFixedTabId = 'dashboard' | 'members' | 'flow' | 'settings'
+type WorkspaceMeetingTabId = `meeting:${string}`
 type WorkspaceResourceTabId = `resource:${string}`
-type WorkspaceMainTabId = WorkspaceFixedTabId | WorkspaceResourceTabId
-type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
-
-interface WorkspaceMainTab {
-  id: WorkspaceMainTabId
-  kind: 'fixed' | 'resource'
-  title: string
-  icon: string
-  closeable: boolean
-  resourceId?: string
-  previewMode?: WorkspacePreviewMode
-}
 
 interface LinkedContestEntry {
   contest: Contest
@@ -266,13 +520,22 @@ interface WorkspacePreviewStatusPayload {
   sourceDownloadUrlExpiresAt: string
 }
 
-interface WorkspaceCollabPresenceMember {
-  peerId: string
-  userId: string
-  username: string
-  cursorX?: number
-  cursorY?: number
-  updatedAt?: string
+interface WorkspaceMeetingCaptionItem {
+  id: string
+  text: string
+  speakerName: string
+  speakerLabel: string
+  startedAtMs: number
+  endedAtMs: number
+  final: boolean
+}
+
+interface WorkspaceMeetingCreatePayload {
+  mode: ProjectMeetingMode
+  title?: string
+  invitedUserIds: string[]
+  scheduledStartAt: string
+  scheduledEndAt: string
 }
 
 const fixedTabs: WorkspaceMainTab[] = [
@@ -281,6 +544,13 @@ const fixedTabs: WorkspaceMainTab[] = [
     kind: 'fixed',
     title: '仪表盘',
     icon: 'space_dashboard',
+    closeable: true,
+  },
+  {
+    id: 'meeting',
+    kind: 'fixed',
+    title: '项目会议',
+    icon: 'video_call',
     closeable: true,
   },
   {
@@ -304,17 +574,278 @@ const fixedTabs: WorkspaceMainTab[] = [
     icon: 'settings',
     closeable: true,
   },
+  {
+    id: 'loopy_data',
+    kind: 'fixed',
+    title: 'Loopy 数据',
+    icon: 'database',
+    closeable: true,
+  },
 ]
 
-const openTabs = ref<WorkspaceMainTab[]>(fixedTabs.filter(tab => tab.id === 'dashboard'))
-const activeTabId = ref<WorkspaceMainTabId | ''>('dashboard')
-const draggingTabId = ref<WorkspaceMainTabId | ''>('')
-const dragOverTabId = ref<WorkspaceMainTabId | ''>('')
-const tabContextMenuVisible = ref(false)
-const tabContextMenuTabId = ref<WorkspaceMainTabId | ''>('')
-const tabContextMenuPosition = reactive({ x: 0, y: 0 })
+type WorkspaceSettingsSecondaryTabId = 'project' | 'myDisplay' | 'teamDefault'
+type WorkspaceSettingsGroupId = 'workspace' | 'personal'
+type WorkspaceSettingsSectionId = 'projectOverview'
+  | 'contestBindings'
+  | 'contestAdaptation'
+  | 'resourceShares'
+  | 'teamDefault'
+  | 'displayPreferences'
+type WorkspaceProjectPanelSectionId = 'projectOverview'
+  | 'contestBindings'
+  | 'contestAdaptation'
+  | 'resourceShares'
 
-const hasActiveProject = computed(() => Boolean(props.activeProject?.id))
+interface WorkspaceSettingsGroupItem {
+  id: WorkspaceSettingsGroupId
+  label: string
+  description: string
+}
+
+interface WorkspaceSettingsSectionItem {
+  id: WorkspaceSettingsSectionId
+  groupId: WorkspaceSettingsGroupId
+  domId: string
+  label: string
+  icon: string
+  description: string
+  legacyTabId?: WorkspaceSettingsSecondaryTabId
+  testId: string
+}
+
+const workspaceSettingsGroups: WorkspaceSettingsGroupItem[] = [
+  { id: 'workspace', label: 'Workspace', description: '项目底座、共享配置与团队默认统一在这里维护。' },
+  { id: 'personal', label: 'Personal', description: '只影响当前工作区的个人显示偏好。' },
+]
+const workspaceSettingsSections: WorkspaceSettingsSectionItem[] = [
+  {
+    id: 'projectOverview',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-project-overview',
+    label: '项目基础信息',
+    icon: 'settings',
+    description: '维护项目标题、摘要、标识与基础陈述。',
+    legacyTabId: 'project',
+    testId: 'workspace-settings-nav-project-overview',
+  },
+  {
+    id: 'contestBindings',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-contest-bindings',
+    label: '竞赛与赛道绑定',
+    icon: 'trophy',
+    description: '整理项目参与的竞赛与赛道，并指定当前竞赛。',
+    testId: 'workspace-settings-nav-contest-bindings',
+  },
+  {
+    id: 'contestAdaptation',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-contest-adaptation',
+    label: '当前竞赛适配稿',
+    icon: 'task',
+    description: '围绕当前竞赛补齐终审与答辩底稿。',
+    testId: 'workspace-settings-nav-contest-adaptation',
+  },
+  {
+    id: 'resourceShares',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-resource-shares',
+    label: '资源共享',
+    icon: 'share',
+    description: '集中查看分享链接状态与资源分发情况。',
+    testId: 'workspace-settings-nav-resource-shares',
+  },
+  {
+    id: 'teamDefault',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-team-default',
+    label: '团队默认显示偏好',
+    icon: 'groups',
+    description: '配置新成员进入当前工作区时的默认显示方案。',
+    legacyTabId: 'teamDefault',
+    testId: 'workspace-settings-nav-team-default',
+  },
+  {
+    id: 'displayPreferences',
+    groupId: 'personal',
+    domId: 'workspace-settings-section-display-preferences',
+    label: '显示偏好',
+    icon: 'tune',
+    description: '为当前工作区保存个人字号与标签边距偏好。',
+    legacyTabId: 'myDisplay',
+    testId: 'workspace-settings-nav-display-preferences',
+  },
+]
+const WORKSPACE_SETTINGS_SECONDARY_TAB_TEST_IDS: Record<WorkspaceSettingsSecondaryTabId, string> = {
+  project: 'workspace-settings-tab-project',
+  myDisplay: 'workspace-settings-tab-myDisplay',
+  teamDefault: 'workspace-settings-tab-teamDefault',
+}
+const WORKSPACE_SETTINGS_GROUP_TEST_IDS: Record<WorkspaceSettingsGroupId, string> = {
+  workspace: 'workspace-settings-group-workspace',
+  personal: 'workspace-settings-group-personal',
+}
+const settingsPrimaryGroup = ref<WorkspaceSettingsGroupId>('workspace')
+const settingsActiveSectionId = ref<WorkspaceSettingsSectionId>('projectOverview')
+const workspaceMainBodyRef = ref<HTMLElement | null>(null)
+const WORKSPACE_FONT_SIZE_PRESET_ORDER: WorkspaceFontSizePreset[] = WORKSPACE_FONT_SIZE_PRESET_OPTIONS.map(item => item.value)
+const WORKSPACE_TAB_SPACING_PRESET_ORDER: WorkspaceTabSpacingPreset[] = WORKSPACE_TAB_SPACING_PRESET_OPTIONS.map(item => item.value)
+const userWorkspaceDisplayFontSizeDraft = ref<NullableWorkspaceFontSizePreset>('')
+const userWorkspaceDisplayTabSpacingDraft = ref<NullableWorkspaceTabSpacingPreset>('')
+const teamWorkspaceDisplayFontSizeDraft = ref<NullableWorkspaceFontSizePreset>('')
+const teamWorkspaceDisplayTabSpacingDraft = ref<NullableWorkspaceTabSpacingPreset>('')
+const workspaceDisplayFontSizeSelectOptions = computed(() => [
+  { value: '', label: '跟随系统默认' },
+  ...WORKSPACE_FONT_SIZE_PRESET_OPTIONS.map(option => ({
+    value: option.value,
+    label: option.label,
+  })),
+])
+const workspaceDisplayTabSpacingSelectOptions = computed(() => [
+  { value: '', label: '跟随系统默认' },
+  ...WORKSPACE_TAB_SPACING_PRESET_OPTIONS.map(option => ({
+    value: option.value,
+    label: option.label,
+  })),
+])
+
+function migrateLegacyTabIdFromProps(tabId: WorkspaceMainTabId | '' | undefined): WorkspaceMainTabId | '' {
+  const normalizedTabId = String(tabId || '').trim()
+  if (!normalizedTabId)
+    return ''
+  return normalizedTabId as WorkspaceMainTabId
+}
+
+function migrateLegacyOpenTabsFromProps(tabIds: WorkspaceMainTabId[] | undefined): WorkspaceMainTabId[] {
+  const nextTabIds: WorkspaceMainTabId[] = []
+  const used = new Set<string>()
+
+  for (const item of tabIds || []) {
+    const normalizedTabId = String(item || '').trim()
+    if (!normalizedTabId)
+      continue
+    const migratedTabId = normalizedTabId
+    if (!migratedTabId || used.has(migratedTabId))
+      continue
+    nextTabIds.push(migratedTabId as WorkspaceMainTabId)
+    used.add(migratedTabId)
+  }
+
+  return nextTabIds
+}
+
+const migratedPropOpenTabs = computed<WorkspaceMainTabId[]>(() => {
+  return migrateLegacyOpenTabsFromProps(props.openTabs)
+})
+
+const migratedPropActiveTabId = computed<WorkspaceMainTabId | ''>(() => {
+  const migratedActiveTabId = migrateLegacyTabIdFromProps(props.activeTabId)
+  if (migratedActiveTabId)
+    return migratedActiveTabId
+  return migratedPropOpenTabs.value[0] || ''
+})
+const resourcePreviewTabRef = ref<{
+  applyDocumentDraft: (payload: AiWorkspaceDocumentDraft) => boolean
+  applyDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
+  openSearch: () => boolean
+  scrollToCommentThread: (threadId: string) => void
+  scrollToHeadingAnchor: (anchorId: string) => boolean
+} | null>(null)
+const designPanelRef = ref<{
+  locateOutlineItem: (node: WorkspaceOutlineNode) => boolean
+} | null>(null)
+const flowTabRef = ref<{
+  locateOutlineItem: (node: WorkspaceOutlineNode) => boolean
+} | null>(null)
+
+const {
+  openTabs,
+  activeTabId,
+  hasOpenTabs,
+  draggingTabId: _draggingTabId,
+  dragOverTabId,
+  tabContextMenuVisible,
+  tabContextMenuPosition,
+  tabContextMenuTab,
+  tabContextMenuLeftIds,
+  tabContextMenuRightIds,
+  ensureFixedTabOpen,
+  ensurePreviewTabOpen,
+  closeTabContextMenu,
+  activateTab,
+  closeTab,
+  closeResourceTabByResourceId,
+  closeTabsToLeft,
+  closeTabsToRight,
+  closeOtherTabs,
+  closeAllTabs,
+  openTabContextMenu,
+  onTabDragStart,
+  onTabDragOver,
+  onTabDrop,
+  onTabDragEnd,
+} = useWorkspaceMainTabs({
+  fixedTabs,
+  propOpenTabs: () => migratedPropOpenTabs.value,
+  propActiveTabId: () => migratedPropActiveTabId.value,
+  previewResourceId: () => String(props.previewResourceId || '').trim(),
+  resolveTabFromId,
+  resolvePreviewTab: previewTabFromProps,
+  onActivateResource: emitActivatePreviewResource,
+  onClosePreviewResource: resourceId => emit('closePreviewResource', resourceId),
+  emitUpdateOpenTabs: tabIds => emit('update:openTabs', tabIds),
+  emitUpdateActiveTabId: tabId => emit('update:activeTabId', tabId),
+})
+
+const markdownImageUploadHandler = computed(() => props.markdownImageUploadHandler || props.imageUploadHandler)
+const visibleWorkspaceSettingsSections = computed<WorkspaceSettingsSectionItem[]>(() => {
+  return workspaceSettingsSections.filter((item) => {
+    if (item.id === 'teamDefault')
+      return props.workspaceDisplayPreferences.canManageTeamDefault
+    return true
+  })
+})
+const workspaceSettingsSectionsByGroup = computed<Record<WorkspaceSettingsGroupId, WorkspaceSettingsSectionItem[]>>(() => {
+  return {
+    workspace: visibleWorkspaceSettingsSections.value.filter(item => item.groupId === 'workspace'),
+    personal: visibleWorkspaceSettingsSections.value.filter(item => item.groupId === 'personal'),
+  }
+})
+const activeWorkspaceSettingsGroup = computed<WorkspaceSettingsGroupItem | null>(() => {
+  return workspaceSettingsGroups.find(item => item.id === settingsPrimaryGroup.value) || null
+})
+const activeWorkspaceSettingsSection = computed<WorkspaceSettingsSectionItem | null>(() => {
+  return visibleWorkspaceSettingsSections.value.find(item => item.id === settingsActiveSectionId.value) || visibleWorkspaceSettingsSections.value[0] || null
+})
+const activeWorkspaceProjectSectionId = computed<WorkspaceProjectPanelSectionId | ''>(() => {
+  const activeSectionId = settingsActiveSectionId.value
+  if (activeSectionId === 'displayPreferences' || activeSectionId === 'teamDefault')
+    return ''
+  return activeSectionId
+})
+const isDisplayPreferencesSectionActive = computed(() => settingsActiveSectionId.value === 'displayPreferences')
+const isTeamDefaultSectionActive = computed(() => settingsActiveSectionId.value === 'teamDefault')
+const recommendedWorkspaceDisplayTagText = computed(() => {
+  return '研发工作台推荐'
+})
+const workspaceMainTabLayoutStyle = computed<Record<string, string | undefined>>(() => {
+  const density = resolveWorkspaceTabDensityTokens(props.workspaceDisplayPreferences.effective.tabSpacingPreset || 'relaxed')
+  return {
+    '--workspace-main-tab-min-width': density.minWidth,
+    '--workspace-main-tab-padding-x': density.paddingX,
+    '--workspace-main-tab-gap': density.gap,
+    '--workspace-main-tab-trigger-gap': density.triggerGap,
+    '--workspace-main-tab-close-padding': density.closePadding,
+    '--workspace-main-tab-close-button-size': density.closeButtonSize,
+    '--workspace-main-tab-active-indicator-inset': density.activeIndicatorInset,
+    '--workspace-main-tab-strip-height': density.stripHeight,
+    '--workspace-main-tab-label-size': density.labelSize,
+    '--workspace-main-tab-icon-size': density.iconSize,
+    '--workspace-main-tab-close-icon-size': density.closeIconSize,
+    '--workspace-main-breadcrumb-padding-x': density.breadcrumbPaddingX,
+    '--workspace-main-breadcrumb-padding-y': density.breadcrumbPaddingY,
+  }
+})
 
 const projectSettingsContestOptions = computed<Contest[]>(() => {
   const dedupe = new Map<string, Contest>()
@@ -446,43 +977,294 @@ const workspaceInviteProjectLabel = computed(() => {
   return '接受邀请后会自动获得当前项目权限。'
 })
 
-const materialCoverage = computed(() => Math.min(props.selectedResources.length * 20, 100))
+function findWorkspaceSettingsSection(sectionId: WorkspaceSettingsSectionId): WorkspaceSettingsSectionItem | null {
+  return visibleWorkspaceSettingsSections.value.find(item => item.id === sectionId) || null
+}
 
-const dashboardGuide = computed(() => {
-  return [
-    {
-      id: 'contest',
-      title: '锁定竞赛与赛道',
-      done: Boolean(props.selectedContest && props.selectedTrack),
-      doneText: `${props.selectedContest?.name || ''} / ${props.selectedTrack?.name || ''}`,
-      todoText: '请先在左侧完成竞赛筛选并选择赛道。',
-    },
-    {
-      id: 'resource',
-      title: '补齐申报资料',
-      done: props.selectedResources.length > 0,
-      doneText: `已归档 ${props.selectedResources.length} 份资料`,
-      todoText: '资料池为空，建议先补齐规则文档和样例。',
-    },
-    {
-      id: 'mapping',
-      title: '完成核心指标对标',
-      done: props.mappingRows.length > 0,
-      doneText: `已生成 ${props.mappingRows.length} 条映射指标`,
-      todoText: '尚未生成映射指标。',
-    },
-    {
-      id: 'submit',
-      title: '按比赛提交草案',
-      done: Boolean(props.formState.title.trim()),
-      doneText: '草案标题已填写，可进入关联比赛提交。',
-      todoText: '请先完善项目草案字段。',
-    },
-  ]
+function resolveWorkspaceSettingsDefaultSection(groupId: WorkspaceSettingsGroupId): WorkspaceSettingsSectionId {
+  return workspaceSettingsSectionsByGroup.value[groupId][0]?.id || visibleWorkspaceSettingsSections.value[0]?.id || 'projectOverview'
+}
+
+function syncWorkspaceSettingsSectionFromScroll(): void {
+  // Settings now uses explicit sidebar navigation instead of scroll spy syncing.
+}
+
+function scrollToWorkspaceSettingsSection(
+  _sectionId: WorkspaceSettingsSectionId,
+  behavior: ScrollBehavior = 'smooth',
+): void {
+  if (!import.meta.client || activeTabId.value !== 'settings')
+    return
+
+  const container = workspaceMainBodyRef.value
+  if (!container)
+    return
+
+  container.scrollTo({
+    top: 0,
+    behavior,
+  })
+}
+
+function activateWorkspaceSettingsSection(
+  sectionId: WorkspaceSettingsSectionId,
+  options: { behavior?: ScrollBehavior } = {},
+): void {
+  const nextSection = findWorkspaceSettingsSection(sectionId)
+  if (!nextSection)
+    return
+
+  settingsActiveSectionId.value = nextSection.id
+  settingsPrimaryGroup.value = nextSection.groupId
+
+  void nextTick(() => {
+    scrollToWorkspaceSettingsSection(nextSection.id, options.behavior || 'smooth')
+    syncWorkspaceSettingsSectionFromScroll()
+  })
+}
+
+function onWorkspaceMainBodyScroll(): void {
+  // Settings panels switch via navbar selection, so scroll no longer drives active state.
+}
+
+function normalizeWorkspaceTabSpacingSliderIndex(value: WorkspaceTabSpacingPreset | null | undefined): number {
+  const matchedIndex = WORKSPACE_TAB_SPACING_PRESET_ORDER.findIndex(item => item === value)
+  return matchedIndex >= 0 ? matchedIndex : Math.max(0, WORKSPACE_TAB_SPACING_PRESET_ORDER.indexOf('relaxed'))
+}
+
+function normalizeWorkspaceFontSizeSliderIndex(value: WorkspaceFontSizePreset | null | undefined): number {
+  const matchedIndex = WORKSPACE_FONT_SIZE_PRESET_ORDER.findIndex(item => item === value)
+  return matchedIndex >= 0 ? matchedIndex : Math.max(0, WORKSPACE_FONT_SIZE_PRESET_ORDER.indexOf('lg'))
+}
+
+function applyWorkspaceDisplayPreferenceDrafts(snapshot: WorkspaceDisplayPreferenceSnapshot): void {
+  userWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(snapshot.workspaceOverride?.fontSizePreset)
+  userWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(snapshot.workspaceOverride?.tabSpacingPreset)
+  teamWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(snapshot.teamDefault?.fontSizePreset)
+  teamWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(snapshot.teamDefault?.tabSpacingPreset)
+}
+
+const workspaceDisplayRecommendedFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
+  if (props.workspaceDisplayPreferences.userDefault?.fontSizePreset)
+    return props.workspaceDisplayPreferences.userDefault.fontSizePreset
+  if (props.workspaceType === 'team' && props.workspaceDisplayPreferences.teamDefault?.fontSizePreset)
+    return props.workspaceDisplayPreferences.teamDefault.fontSizePreset
+  return 'lg'
 })
+
+const workspaceDisplayRecommendedTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
+  if (props.workspaceDisplayPreferences.userDefault?.tabSpacingPreset)
+    return props.workspaceDisplayPreferences.userDefault.tabSpacingPreset
+  if (props.workspaceType === 'team' && props.workspaceDisplayPreferences.teamDefault?.tabSpacingPreset)
+    return props.workspaceDisplayPreferences.teamDefault.tabSpacingPreset
+  return 'relaxed'
+})
+
+const workspaceDisplayRecommendedTabSpacingLabel = computed(() => {
+  return resolveWorkspaceTabSpacingPresetLabel(workspaceDisplayRecommendedTabSpacingPreset.value)
+})
+
+const userWorkspaceDisplayPreviewFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
+  return userWorkspaceDisplayFontSizeDraft.value || workspaceDisplayRecommendedFontSizePreset.value
+})
+
+const userWorkspaceDisplayPreviewTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
+  return userWorkspaceDisplayTabSpacingDraft.value || workspaceDisplayRecommendedTabSpacingPreset.value
+})
+
+const userWorkspaceDisplayPreviewTabSpacingLabel = computed(() => {
+  return resolveWorkspaceTabSpacingPresetLabel(userWorkspaceDisplayPreviewTabSpacingPreset.value)
+})
+
+const userWorkspaceDisplaySliderValue = computed(() => {
+  return normalizeWorkspaceFontSizeSliderIndex(userWorkspaceDisplayPreviewFontSizePreset.value)
+})
+
+const userWorkspaceDisplaySliderProgress = computed(() => {
+  return resolveWorkspaceDisplaySliderProgress(userWorkspaceDisplaySliderValue.value, WORKSPACE_FONT_SIZE_PRESET_ORDER.length)
+})
+
+const userWorkspaceDisplayTabSpacingSliderValue = computed(() => {
+  return normalizeWorkspaceTabSpacingSliderIndex(userWorkspaceDisplayPreviewTabSpacingPreset.value)
+})
+
+const userWorkspaceDisplayTabSpacingSliderProgress = computed(() => {
+  return resolveWorkspaceDisplaySliderProgress(userWorkspaceDisplayTabSpacingSliderValue.value, WORKSPACE_TAB_SPACING_PRESET_ORDER.length)
+})
+
+const teamWorkspaceDisplayTabSpacingSliderValue = computed(() => {
+  return normalizeWorkspaceTabSpacingSliderIndex(teamWorkspaceDisplayTabSpacingDraft.value || undefined)
+})
+
+const teamWorkspaceDisplayTabSpacingSliderProgress = computed(() => {
+  return resolveWorkspaceDisplaySliderProgress(teamWorkspaceDisplayTabSpacingSliderValue.value, WORKSPACE_TAB_SPACING_PRESET_ORDER.length)
+})
+
+const userWorkspaceDisplaySourceSummary = computed(() => {
+  return `${resolveWorkspaceDisplayPreferenceSourceLabel(props.workspaceDisplayPreferences.sources.fontSizePreset)} / ${resolveWorkspaceDisplayPreferenceSourceLabel(props.workspaceDisplayPreferences.sources.tabSpacingPreset)}`
+})
+
+const workspaceDisplayEffectiveSummary = computed(() => {
+  return `${resolveWorkspaceFontSizePresetLabel(props.workspaceDisplayPreferences.effective.fontSizePreset)} / ${resolveWorkspaceTabSpacingPresetLabel(props.workspaceDisplayPreferences.effective.tabSpacingPreset)}`
+})
+
+const userWorkspaceDisplayChanged = computed(() => {
+  return userWorkspaceDisplayFontSizeDraft.value !== normalizeWorkspaceFontSizeDraft(props.workspaceDisplayPreferences.workspaceOverride?.fontSizePreset)
+    || userWorkspaceDisplayTabSpacingDraft.value !== normalizeWorkspaceTabSpacingDraft(props.workspaceDisplayPreferences.workspaceOverride?.tabSpacingPreset)
+})
+
+const teamWorkspaceDisplayChanged = computed(() => {
+  return teamWorkspaceDisplayFontSizeDraft.value !== normalizeWorkspaceFontSizeDraft(props.workspaceDisplayPreferences.teamDefault?.fontSizePreset)
+    || teamWorkspaceDisplayTabSpacingDraft.value !== normalizeWorkspaceTabSpacingDraft(props.workspaceDisplayPreferences.teamDefault?.tabSpacingPreset)
+})
+
+function updateUserWorkspaceDisplayTabSpacingDraft(value: string | number): void {
+  const index = Math.max(0, Math.min(WORKSPACE_TAB_SPACING_PRESET_ORDER.length - 1, Number(value)))
+  userWorkspaceDisplayTabSpacingDraft.value = WORKSPACE_TAB_SPACING_PRESET_ORDER[index] || 'relaxed'
+}
+
+function resolveWorkspaceDisplaySliderProgress(value: number, total: number): string {
+  const maxIndex = Math.max(1, total - 1)
+  const normalizedValue = Number.isFinite(value) ? Math.min(maxIndex, Math.max(0, value)) : 0
+  return `${(normalizedValue / maxIndex) * 100}%`
+}
+
+function updateUserWorkspaceDisplayFontSizeDraft(value: string | number): void {
+  const index = Math.max(0, Math.min(WORKSPACE_FONT_SIZE_PRESET_ORDER.length - 1, Number(value)))
+  userWorkspaceDisplayFontSizeDraft.value = WORKSPACE_FONT_SIZE_PRESET_ORDER[index] || 'lg'
+}
+
+function updateTeamWorkspaceDisplayTabSpacingDraft(value: string | number): void {
+  const index = Math.max(0, Math.min(WORKSPACE_TAB_SPACING_PRESET_ORDER.length - 1, Number(value)))
+  teamWorkspaceDisplayTabSpacingDraft.value = WORKSPACE_TAB_SPACING_PRESET_ORDER[index] || 'relaxed'
+}
+
+function resolveWorkspaceDisplaySliderStopLeft(index: number, total: number): string {
+  const lastIndex = Math.max(0, total - 1)
+  if (index <= 0)
+    return '4px'
+  if (index >= lastIndex)
+    return 'calc(100% - 4px)'
+  return `${(index / lastIndex) * 100}%`
+}
+
+function resolveWorkspaceDisplaySliderGridStyle(total: number): Record<string, string> {
+  return {
+    gridTemplateColumns: `repeat(${Math.max(1, total)}, minmax(0, 1fr))`,
+  }
+}
+
+function restoreRecommendedWorkspaceDisplay(): void {
+  userWorkspaceDisplayFontSizeDraft.value = workspaceDisplayRecommendedFontSizePreset.value
+  userWorkspaceDisplayTabSpacingDraft.value = workspaceDisplayRecommendedTabSpacingPreset.value
+}
+
+function saveWorkspaceDisplayUserOverride(): void {
+  emit('saveWorkspaceDisplayUserOverride', {
+    fontSizePreset: userWorkspaceDisplayFontSizeDraft.value || null,
+    tabSpacingPreset: userWorkspaceDisplayTabSpacingDraft.value || null,
+  })
+}
+
+function saveWorkspaceDisplayTeamDefault(): void {
+  emit('saveWorkspaceDisplayTeamDefault', {
+    fontSizePreset: teamWorkspaceDisplayFontSizeDraft.value || null,
+    tabSpacingPreset: teamWorkspaceDisplayTabSpacingDraft.value || null,
+  })
+}
 
 function createResourceTabId(resourceId: string): WorkspaceResourceTabId {
   return `resource:${resourceId}` as WorkspaceResourceTabId
+}
+
+function createMeetingTabId(meetingId: string): WorkspaceMeetingTabId {
+  return `meeting:${meetingId}` as WorkspaceMeetingTabId
+}
+
+function resolveMeetingIdFromTabId(tabId: string): string {
+  return tabId.startsWith('meeting:') ? tabId.slice('meeting:'.length) : ''
+}
+
+function isMeetingCreateTabId(tabId: string): tabId is WorkspaceMeetingCreateTabId {
+  return tabId.startsWith('meeting-create:')
+    && (tabId === 'meeting-create:audio' || tabId === 'meeting-create:video')
+}
+
+function resolveMeetingCreateModeFromTabId(tabId: string): ProjectMeetingMode | '' {
+  if (tabId === 'meeting-create:audio')
+    return 'audio'
+  if (tabId === 'meeting-create:video')
+    return 'video'
+  return ''
+}
+
+function resolveMeetingTitleById(meetingId: string): string {
+  const normalizedMeetingId = String(meetingId || '').trim()
+  if (!normalizedMeetingId)
+    return '会议详情'
+
+  if (props.activeMeeting?.id === normalizedMeetingId)
+    return String(props.activeMeeting.title || '').trim() || '会议详情'
+
+  return props.meetings.find(item => item.id === normalizedMeetingId)?.title || '会议详情'
+}
+
+function buildMeetingTab(meetingId: string): WorkspaceMainTab | null {
+  const normalizedMeetingId = String(meetingId || '').trim()
+  if (!normalizedMeetingId)
+    return null
+
+  const meeting = props.meetings.find(item => item.id === normalizedMeetingId)
+  return {
+    id: createMeetingTabId(normalizedMeetingId),
+    kind: 'meeting',
+    title: resolveMeetingTitleById(normalizedMeetingId),
+    icon: meeting?.mode === 'audio' ? 'call' : 'videocam',
+    closeable: true,
+    meetingId: normalizedMeetingId,
+    meetingMode: meeting?.mode === 'audio' ? 'audio' : 'video',
+  }
+}
+
+function buildMeetingCreateTab(mode: ProjectMeetingMode): WorkspaceMainTab {
+  return {
+    id: `meeting-create:${mode}` as WorkspaceMeetingCreateTabId,
+    kind: 'meeting_create',
+    title: mode === 'audio' ? '新建语音会议' : '新建视频会议',
+    icon: mode === 'audio' ? 'call' : 'videocam',
+    closeable: true,
+    meetingMode: mode,
+  }
+}
+
+function resolveTabFromId(tabId: WorkspaceMainTabId): WorkspaceMainTab | null {
+  const normalizedTabId = String(tabId || '').trim() as WorkspaceMainTabId
+  if (!normalizedTabId)
+    return null
+
+  const fixedTab = fixedTabs.find(tab => tab.id === normalizedTabId)
+  if (fixedTab)
+    return fixedTab
+
+  if (normalizedTabId.startsWith('resource:')) {
+    const resourceId = normalizedTabId.slice('resource:'.length)
+    const resource = props.selectedResources.find(item => item.id === resourceId) || null
+    return buildResourceTab(
+      resourceId,
+      resource?.title || '',
+      resolvePreviewModeFromResource(resource),
+      resolveCollabPurposeFromResource(resource),
+      resource,
+    )
+  }
+
+  if (normalizedTabId.startsWith('meeting:'))
+    return buildMeetingTab(resolveMeetingIdFromTabId(normalizedTabId))
+
+  if (isMeetingCreateTabId(normalizedTabId))
+    return buildMeetingCreateTab(resolveMeetingCreateModeFromTabId(normalizedTabId) || 'video')
+
+  return null
 }
 
 function resolvePreviewModeFromResource(resource: Resource | null | undefined): WorkspacePreviewMode {
@@ -493,14 +1275,7 @@ function resolvePreviewModeFromResource(resource: Resource | null | undefined): 
 }
 
 function resolveCollabPurposeFromResource(resource: Resource | null | undefined): CollabPurpose | '' {
-  const normalized = String(resource?.collabPurpose || '').trim().toLowerCase()
-  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
-    return normalized
-  if (resource?.resourceKind === 'markdown')
-    return 'notes'
-  if (resource?.resourceKind === 'draw')
-    return 'freeform'
-  return ''
+  return resolveCollabPurpose(resource)
 }
 
 function normalizePreviewModeValue(value: unknown): WorkspacePreviewMode {
@@ -515,30 +1290,32 @@ function resolveResourceTabTitle(mode: WorkspacePreviewMode, title: string, purp
   if (normalizedTitle)
     return normalizedTitle
   if (mode === 'markdown')
-    return '协作文档'
-  if (mode === 'draw' && purpose === 'workflow')
-    return '流程画布'
+    return resolveCollabResourceDisplayLabel('notes', 'markdown')
   if (mode === 'draw')
-    return '自由画布'
+    return resolveCollabResourceDisplayLabel(purpose, 'draw')
   return '资料预览'
 }
 
-function resolveResourceTabIcon(mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = ''): string {
+function resolveResourceTabIcon(mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = '', resource?: Resource | null): string {
+  if (mode === 'binary' && isDeviceArrangementResource(resource))
+    return 'devices'
   if (mode === 'markdown')
     return 'edit_note'
   if (mode === 'draw' && purpose === 'workflow')
     return 'flowsheet'
+  if (mode === 'draw' && purpose === 'design')
+    return 'palette'
   if (mode === 'draw')
     return 'draw'
   return 'description'
 }
 
-function buildResourceTab(resourceId: string, title: string, mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = ''): WorkspaceMainTab {
+function buildResourceTab(resourceId: string, title: string, mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = '', resource?: Resource | null): WorkspaceMainTab {
   return {
     id: createResourceTabId(resourceId),
     kind: 'resource',
     title: resolveResourceTabTitle(mode, title, purpose),
-    icon: resolveResourceTabIcon(mode, purpose),
+    icon: resolveResourceTabIcon(mode, purpose, resource),
     closeable: true,
     resourceId,
     previewMode: mode,
@@ -555,6 +1332,7 @@ function previewTabFromProps(): WorkspaceMainTab | null {
     props.previewResourceTitle,
     normalizePreviewModeValue(props.previewMode),
     resolveCollabPurposeFromResource(previewResource),
+    previewResource,
   )
 }
 
@@ -568,12 +1346,49 @@ const activeResourceTab = computed(() => {
   return activeTab.value
 })
 
+const activeResource = computed(() => {
+  const resourceId = String(activeResourceTab.value?.resourceId || '').trim()
+  if (!resourceId)
+    return null
+  return props.selectedResources.find(resource => resource.id === resourceId) || null
+})
+
 const hasFlowResource = computed(() => Boolean(String(props.flowResourceId || '').trim()))
 const flowPanelTitle = computed(() => String(props.flowResourceTitle || '').trim() || '流程画布')
+const activeDesignResourceId = computed(() => {
+  return activeResourceTab.value?.previewMode === 'draw' && resolveCollabPurpose(activeResource.value) === 'design'
+    ? String(activeResourceTab.value.resourceId || '').trim()
+    : ''
+})
+const isActiveDesignResource = computed(() => Boolean(activeDesignResourceId.value))
+const activeDesignPanelTitle = computed(() => String(activeResourceTab.value?.title || '').trim() || '设计稿')
+const activeDeviceArrangementResourceId = computed(() => {
+  return activeResourceTab.value?.previewMode === 'binary' && isDeviceArrangementResource(activeResource.value)
+    ? String(activeResourceTab.value.resourceId || '').trim()
+    : ''
+})
+const isActiveDeviceArrangementResource = computed(() => Boolean(activeDeviceArrangementResourceId.value))
+const deviceArrangementSaveState = ref({ dirty: false, saving: false, blocked: false })
+type BreadcrumbSaveTone = 'blocked' | 'dirty' | 'saved' | 'saving'
+const breadcrumbSaveState = computed(() => {
+  if (!isActiveDeviceArrangementResource.value)
+    return null
+  if (deviceArrangementSaveState.value.blocked)
+    return { label: '已占用', tone: 'blocked' as BreadcrumbSaveTone }
+  if (deviceArrangementSaveState.value.saving)
+    return { label: '保存中', tone: 'saving' as BreadcrumbSaveTone }
+  if (deviceArrangementSaveState.value.dirty)
+    return { label: '未保存', tone: 'dirty' as BreadcrumbSaveTone }
+  return { label: '已保存', tone: 'saved' as BreadcrumbSaveTone }
+})
 
 const breadcrumbItems = computed(() => {
   if (activeResourceTab.value) {
     const title = activeResourceTab.value.title
+    if (activeResourceTab.value.previewMode === 'markdown')
+      return ['项目资料', title]
+    if (activeResourceTab.value.previewMode === 'draw')
+      return [resolveCollabResourceLabel(activeResource.value), title]
     if (props.selectedContest?.name)
       return ['竞赛分析', props.selectedContest.name, title]
     return ['竞赛分析', title]
@@ -587,19 +1402,22 @@ const breadcrumbItems = computed(() => {
     return base
   }
 
+  if (activeTabId.value === 'meeting')
+    return ['竞赛分析', '项目会议']
+
+  if (activeTabId.value.startsWith('meeting:')) {
+    return ['竞赛分析', '项目会议', resolveMeetingTitleById(resolveMeetingIdFromTabId(activeTabId.value))]
+  }
+
+  if (isMeetingCreateTabId(activeTabId.value)) {
+    return ['竞赛分析', '项目会议', resolveMeetingCreateModeFromTabId(activeTabId.value) === 'audio' ? '新建语音会议' : '新建视频会议']
+  }
+
   if (activeTabId.value === 'members')
     return ['竞赛分析', '项目协作']
 
-  if (activeTabId.value === 'flow') {
-    if (props.selectedContest?.name) {
-      return [
-        '竞赛分析',
-        props.selectedContest.name,
-        '流程画布',
-      ]
-    }
+  if (activeTabId.value === 'flow')
     return ['竞赛分析', '流程画布']
-  }
 
   if (activeTabId.value === 'dashboard') {
     if (props.selectedContest?.name) {
@@ -614,6 +1432,132 @@ const breadcrumbItems = computed(() => {
 
   return ['WinLoop']
 })
+
+interface WorkspaceTabContextSnapshot {
+  tab: WorkspaceMainTab
+  leftIds: WorkspaceMainTabId[]
+  rightIds: WorkspaceMainTabId[]
+}
+
+interface WorkspacePanelCommandResult {
+  handled: boolean
+  reason?: string
+}
+
+function buildTabContextSnapshot(tabId: WorkspaceMainTabId): WorkspaceTabContextSnapshot | null {
+  const normalizedTabId = String(tabId || '').trim() as WorkspaceMainTabId
+  if (!normalizedTabId)
+    return null
+
+  const index = openTabs.value.findIndex(tab => tab.id === normalizedTabId)
+  if (index < 0)
+    return null
+
+  const tab = openTabs.value[index]
+  if (!tab)
+    return null
+
+  return {
+    tab,
+    leftIds: openTabs.value.slice(0, index).map(item => item.id),
+    rightIds: openTabs.value.slice(index + 1).map(item => item.id),
+  }
+}
+
+function buildTabContextMenuItems(snapshot: WorkspaceTabContextSnapshot): ContextMenuItem[] {
+  return [
+    {
+      key: 'closeSelf',
+      label: '关闭标签页',
+      icon: 'close',
+      disabled: !snapshot.tab.closeable,
+    },
+    {
+      key: 'closeLeft',
+      label: '关闭左侧标签页',
+      icon: 'keyboard_double_arrow_left',
+      disabled: snapshot.leftIds.length === 0,
+    },
+    {
+      key: 'closeRight',
+      label: '关闭右侧标签页',
+      icon: 'keyboard_double_arrow_right',
+      disabled: snapshot.rightIds.length === 0,
+    },
+    {
+      key: 'closeOthers',
+      label: '关闭其他标签页',
+      icon: 'tab_close_right',
+      disabled: openTabs.value.length <= 1,
+    },
+    {
+      key: 'closeAll',
+      label: '关闭全部标签页',
+      icon: 'tab_close',
+      tone: 'danger',
+      separatorBefore: true,
+      disabled: openTabs.value.length === 0,
+    },
+  ]
+}
+
+function requestTabContextMenu(payload: {
+  tabId: string
+  anchorPoint?: { x: number, y: number }
+  anchorEl?: HTMLElement | null
+  restoreFocusEl?: HTMLElement | null
+}): void {
+  const normalizedTabId = String(payload.tabId || '').trim() as WorkspaceMainTabId
+  if (!normalizedTabId)
+    return
+
+  const snapshot = buildTabContextSnapshot(normalizedTabId)
+  if (!snapshot)
+    return
+
+  openTabContextMenu(normalizedTabId, {
+    position: payload.anchorPoint || null,
+  })
+
+  emit('requestContextMenu', {
+    source: 'workspace-tab',
+    items: buildTabContextMenuItems(snapshot),
+    anchorPoint: payload.anchorPoint || null,
+    anchorEl: payload.anchorEl || null,
+    restoreFocusEl: payload.restoreFocusEl || null,
+    onSelect: (key) => {
+      try {
+        switch (key) {
+          case 'closeSelf':
+            if (snapshot.tab.closeable)
+              closeTab(snapshot.tab.id)
+            return
+          case 'closeLeft':
+            if (snapshot.leftIds.length > 0)
+              closeTabsToLeft()
+            return
+          case 'closeRight':
+            if (snapshot.rightIds.length > 0)
+              closeTabsToRight()
+            return
+          case 'closeOthers':
+            if (openTabs.value.length > 1)
+              closeOtherTabs()
+            return
+          case 'closeAll':
+            if (openTabs.value.length > 0)
+              closeAllTabs()
+        }
+      }
+      finally {
+        closeTabContextMenu()
+      }
+    },
+    onClose: () => {
+      closeTabContextMenu()
+    },
+  })
+}
 
 const linkedContestEntries = computed<LinkedContestEntry[]>(() => {
   const dedupe = new Set<string>()
@@ -651,154 +1595,13 @@ const linkedContestEntries = computed<LinkedContestEntry[]>(() => {
   return result
 })
 
-function findFixedTab(tabId: WorkspaceFixedTabId): WorkspaceMainTab | undefined {
-  return fixedTabs.find(tab => tab.id === tabId)
-}
-
-function ensureFixedTabOpen(tabId: WorkspaceFixedTabId, activate = true) {
-  const existed = openTabs.value.some(tab => tab.id === tabId)
-  if (!existed) {
-    const target = findFixedTab(tabId)
-    if (target)
-      openTabs.value = [...openTabs.value, target]
-  }
-
-  if (activate)
-    activeTabId.value = tabId
-}
-
-function ensurePreviewTabOpen(activate = true): WorkspaceMainTab | null {
-  const previewTab = previewTabFromProps()
-  if (!previewTab)
-    return null
-
-  const existingIndex = openTabs.value.findIndex(tab => tab.id === previewTab.id)
-  if (existingIndex < 0) {
-    openTabs.value = [...openTabs.value, previewTab]
-  }
-  else {
-    const nextTabs = [...openTabs.value]
-    nextTabs.splice(existingIndex, 1, {
-      ...nextTabs[existingIndex],
-      ...previewTab,
-    })
-    openTabs.value = nextTabs
-  }
-
-  if (activate)
-    activeTabId.value = previewTab.id
-
-  return previewTab
-}
-
-function closeTabContextMenu(): void {
-  tabContextMenuVisible.value = false
-  tabContextMenuTabId.value = ''
-}
-
 function emitActivatePreviewResource(resourceId: string): void {
   const normalizedResourceId = String(resourceId || '').trim()
   if (!normalizedResourceId)
     return
   emit('activatePreviewResource', normalizedResourceId)
 }
-
-function activateTab(tabId: WorkspaceMainTabId) {
-  closeTabContextMenu()
-  activeTabId.value = tabId
-  const target = openTabs.value.find(tab => tab.id === tabId)
-  if (target?.kind === 'resource' && target.resourceId)
-    emitActivatePreviewResource(target.resourceId)
-}
-
-function resolveFallbackTab(closingSet: Set<WorkspaceMainTabId>, closingTabId: WorkspaceMainTabId): WorkspaceMainTab | null {
-  const currentIndex = openTabs.value.findIndex(tab => tab.id === closingTabId)
-  if (currentIndex < 0)
-    return null
-
-  for (let index = currentIndex - 1; index >= 0; index -= 1) {
-    const candidate = openTabs.value[index]
-    if (candidate && !closingSet.has(candidate.id))
-      return candidate
-  }
-
-  for (let index = currentIndex + 1; index < openTabs.value.length; index += 1) {
-    const candidate = openTabs.value[index]
-    if (candidate && !closingSet.has(candidate.id))
-      return candidate
-  }
-
-  return null
-}
-
-function closeTabsByIds(
-  tabIds: WorkspaceMainTabId[],
-  options: { emitClosePreview?: boolean, emitActivate?: boolean } = {},
-) {
-  const existingTabIds = new Set(openTabs.value.map(tab => tab.id))
-  const closingIds = [...new Set(tabIds)].filter(tabId => existingTabIds.has(tabId))
-  if (closingIds.length === 0)
-    return
-
-  closeTabContextMenu()
-
-  const closingSet = new Set<WorkspaceMainTabId>(closingIds)
-  const currentActiveTabId = activeTabId.value
-  const activeTabBeforeClose = currentActiveTabId
-    ? openTabs.value.find(tab => tab.id === currentActiveTabId) || null
-    : null
-  const activeTabWillClose = Boolean(currentActiveTabId && closingSet.has(currentActiveTabId))
-  const fallbackTab = activeTabWillClose && currentActiveTabId
-    ? resolveFallbackTab(closingSet, currentActiveTabId)
-    : null
-  const currentPreviewResourceId = String(props.previewResourceId || '').trim()
-  const currentPreviewTabId = currentPreviewResourceId
-    ? createResourceTabId(currentPreviewResourceId)
-    : null
-  const hiddenPreviewTabWillClose = Boolean(
-    currentPreviewTabId
-    && closingSet.has(currentPreviewTabId)
-    && activeTabBeforeClose?.id !== currentPreviewTabId,
-  )
-
-  openTabs.value = openTabs.value.filter(tab => !closingSet.has(tab.id))
-
-  if (hiddenPreviewTabWillClose && options.emitClosePreview !== false && currentPreviewResourceId)
-    emit('closePreviewResource', currentPreviewResourceId)
-
-  if (!activeTabWillClose)
-    return
-
-  activeTabId.value = fallbackTab?.id || ''
-
-  if (fallbackTab?.kind === 'resource' && fallbackTab.resourceId) {
-    if (options.emitActivate !== false)
-      emitActivatePreviewResource(fallbackTab.resourceId)
-    return
-  }
-
-  if (activeTabBeforeClose?.kind === 'resource' && activeTabBeforeClose.resourceId && options.emitClosePreview !== false)
-    emit('closePreviewResource', activeTabBeforeClose.resourceId)
-}
-
-function closeTab(tabId: WorkspaceMainTabId) {
-  closeTabsByIds([tabId], {
-    emitClosePreview: true,
-    emitActivate: true,
-  })
-}
-
-function closeResourceTabByResourceId(
-  resourceId: string,
-  options: { emitClosePreview?: boolean, emitActivate?: boolean } = {},
-): void {
-  const normalizedResourceId = String(resourceId || '').trim()
-  if (!normalizedResourceId)
-    return
-  closeTabsByIds([createResourceTabId(normalizedResourceId)], options)
-}
-
-function updateOpenResourceTabMetadata(): void {
+function updateOpenTabMetadata(): void {
   const previewTab = previewTabFromProps()
   const resourceMap = new Map(
     props.selectedResources.map(resource => [resource.id, resource] as const),
@@ -808,6 +1611,23 @@ function updateOpenResourceTabMetadata(): void {
   let changed = false
 
   for (const tab of openTabs.value) {
+    if (tab.kind === 'meeting' && tab.meetingId) {
+      const nextMeetingTab = buildMeetingTab(tab.meetingId)
+      const meetingTabChanged = Boolean(
+        nextMeetingTab
+        && (
+          tab.title !== nextMeetingTab.title
+          || tab.icon !== nextMeetingTab.icon
+          || tab.meetingMode !== nextMeetingTab.meetingMode
+        ),
+      )
+      if (meetingTabChanged && nextMeetingTab) {
+        nextTabs.push(nextMeetingTab)
+        changed = true
+        continue
+      }
+    }
+
     if (tab.kind !== 'resource' || !tab.resourceId) {
       nextTabs.push(tab)
       continue
@@ -859,139 +1679,6 @@ function updateOpenResourceTabMetadata(): void {
 
   if (changed)
     openTabs.value = nextTabs
-}
-
-function openTabContextMenu(tabId: WorkspaceMainTabId, event: MouseEvent): void {
-  event.preventDefault()
-  tabContextMenuTabId.value = tabId
-  tabContextMenuPosition.x = event.clientX
-  tabContextMenuPosition.y = event.clientY
-  tabContextMenuVisible.value = true
-}
-
-const tabContextMenuTab = computed(() => {
-  return openTabs.value.find(tab => tab.id === tabContextMenuTabId.value) || null
-})
-
-const tabContextMenuIndex = computed(() => {
-  if (!tabContextMenuTabId.value)
-    return -1
-  return openTabs.value.findIndex(tab => tab.id === tabContextMenuTabId.value)
-})
-
-const tabContextMenuLeftIds = computed<WorkspaceMainTabId[]>(() => {
-  const index = tabContextMenuIndex.value
-  if (index <= 0)
-    return []
-  return openTabs.value.slice(0, index).map(tab => tab.id)
-})
-
-const tabContextMenuRightIds = computed<WorkspaceMainTabId[]>(() => {
-  const index = tabContextMenuIndex.value
-  if (index < 0)
-    return []
-  return openTabs.value.slice(index + 1).map(tab => tab.id)
-})
-
-function closeTabsToLeft(): void {
-  if (tabContextMenuLeftIds.value.length === 0)
-    return
-  closeTabsByIds(tabContextMenuLeftIds.value, {
-    emitClosePreview: true,
-    emitActivate: true,
-  })
-}
-
-function closeTabsToRight(): void {
-  if (tabContextMenuRightIds.value.length === 0)
-    return
-  closeTabsByIds(tabContextMenuRightIds.value, {
-    emitClosePreview: true,
-    emitActivate: true,
-  })
-}
-
-function closeOtherTabs(): void {
-  const currentTab = tabContextMenuTab.value
-  if (!currentTab)
-    return
-  closeTabsByIds(
-    openTabs.value
-      .filter(tab => tab.id !== currentTab.id)
-      .map(tab => tab.id),
-    {
-      emitClosePreview: true,
-      emitActivate: true,
-    },
-  )
-}
-
-function closeAllTabs(): void {
-  closeTabsByIds(openTabs.value.map(tab => tab.id), {
-    emitClosePreview: true,
-    emitActivate: true,
-  })
-}
-
-function handleGlobalPointerDown(event: PointerEvent): void {
-  if (!tabContextMenuVisible.value)
-    return
-  const target = event.target as HTMLElement | null
-  if (target?.closest('.workspace-tab-context-menu'))
-    return
-  closeTabContextMenu()
-}
-
-function handleGlobalEscape(event: KeyboardEvent): void {
-  if (event.key === 'Escape')
-    closeTabContextMenu()
-}
-
-function moveTab(fromId: WorkspaceMainTabId, toId: WorkspaceMainTabId) {
-  if (fromId === toId)
-    return
-
-  const nextTabs = [...openTabs.value]
-  const fromIndex = nextTabs.findIndex(tab => tab.id === fromId)
-  const toIndex = nextTabs.findIndex(tab => tab.id === toId)
-  if (fromIndex < 0 || toIndex < 0)
-    return
-
-  const [moved] = nextTabs.splice(fromIndex, 1)
-  if (!moved)
-    return
-
-  nextTabs.splice(toIndex, 0, moved)
-  openTabs.value = nextTabs
-}
-
-function onTabDragStart(tabId: WorkspaceMainTabId) {
-  draggingTabId.value = tabId
-  dragOverTabId.value = ''
-}
-
-function onTabDragOver(tabId: WorkspaceMainTabId, event: DragEvent) {
-  if (!draggingTabId.value || draggingTabId.value === tabId)
-    return
-  event.preventDefault()
-  dragOverTabId.value = tabId
-}
-
-function onTabDrop(tabId: WorkspaceMainTabId, event: DragEvent) {
-  event.preventDefault()
-  const fromId = draggingTabId.value
-  if (!fromId || fromId === tabId) {
-    dragOverTabId.value = ''
-    return
-  }
-
-  moveTab(fromId, tabId)
-  dragOverTabId.value = ''
-}
-
-function onTabDragEnd() {
-  draggingTabId.value = ''
-  dragOverTabId.value = ''
 }
 
 function contestTracksByContestId(contestId: string): Track[] {
@@ -1214,42 +1901,6 @@ function submitProjectForContest(contestId: string, trackId: string) {
   })
 }
 
-function previewStatusLabel(status: ResourcePreviewStatus | ''): string {
-  if (status === 'queued')
-    return '排队中'
-  if (status === 'converting')
-    return '转换中'
-  if (status === 'finalizing')
-    return '收尾处理中'
-  if (status === 'succeeded')
-    return '已完成'
-  if (status === 'failed')
-    return '转换失败'
-  return '等待中'
-}
-
-function formatEtaSeconds(seconds: number): string {
-  const safe = Math.max(0, Math.round(Number(seconds || 0)))
-  if (safe <= 0)
-    return '即将完成'
-  if (safe < 60)
-    return `约 ${safe} 秒`
-  const minutes = Math.ceil(safe / 60)
-  if (minutes < 60)
-    return `约 ${minutes} 分钟`
-  const hours = Math.ceil(minutes / 60)
-  return `约 ${hours} 小时`
-}
-
-function previewErrorMessage(rawMessage: string): string {
-  const normalized = String(rawMessage || '').trim()
-  if (!normalized)
-    return ''
-  if (normalized.startsWith('ONLYOFFICE_CONVERT_'))
-    return buildOnlyOfficeUserFacingErrorMessage(normalized)
-  return normalized
-}
-
 const normalizedPreviewMode = computed<WorkspacePreviewMode>(() => {
   return normalizePreviewModeValue(props.previewMode)
 })
@@ -1258,11 +1909,205 @@ const activePreviewMode = computed<WorkspacePreviewMode>(() => {
   return activeResourceTab.value?.previewMode || normalizedPreviewMode.value
 })
 
+const isMarkdownPreviewActive = computed(() => {
+  return Boolean(activeResourceTab.value && activePreviewMode.value === 'markdown')
+})
+
 const collabConnectionText = computed(() => {
   const customText = String(props.collabStatusText || '').trim()
   if (customText)
     return customText
   return props.collabConnected ? '实时连接中' : '离线编辑（待重连）'
+})
+
+const workspaceMemberMap = computed(() => {
+  const map = new Map<string, ProjectMemberSummary>()
+  for (const member of props.workspaceMembers) {
+    const userId = String(member.userId || '').trim()
+    if (!userId)
+      continue
+    map.set(userId, member)
+  }
+  return map
+})
+
+const markdownLocalSelectionStatus = ref<{
+  line: number
+  column: number
+  selectionLength: number
+  selection: WorkspaceCollabSelectionSummary | null
+}>({
+  line: 1,
+  column: 1,
+  selectionLength: 0,
+  selection: null,
+})
+
+const markdownRemoteSelectionStates = ref<WorkspaceCollabAwarenessSelectionState[]>([])
+
+const collabCurrentUser = computed(() => {
+  const userId = String(props.currentUserId || '').trim()
+  const userName = String(props.currentUserName || '').trim()
+  if (!userId || !userName)
+    return null
+
+  return {
+    id: userId,
+    name: userName,
+    color: resolveWorkspaceCollabPresenceColor(userId),
+  }
+})
+
+const markdownRemoteSelectionMap = computed(() => {
+  const map = new Map<number, WorkspaceCollabSelectionSummary | null>()
+  for (const item of markdownRemoteSelectionStates.value) {
+    if (!Number.isInteger(Number(item.awarenessClientId)))
+      continue
+    map.set(Math.trunc(Number(item.awarenessClientId)), item.selection)
+  }
+  return map
+})
+
+const collabPresenceUsers = computed<WorkspaceCollabPresenceUser[]>(() => {
+  const merged = new Map<string, WorkspaceCollabPresenceUser & {
+    selectionActivityRank: number
+    selectionUpdatedAtMs: number
+  }>()
+  const currentUserId = String(props.currentUserId || '').trim()
+  for (const member of props.collabPresenceMembers) {
+    const userId = String(member.userId || '').trim()
+    const username = String(member.username || '').trim()
+    if (!userId || !username)
+      continue
+
+    const activityState = normalizeWorkspaceCollabPresenceActivityState(member.activityState)
+    const existing = merged.get(userId)
+    const projectMember = workspaceMemberMap.value.get(userId)
+    const updatedAt = String(member.updatedAt || '').trim()
+
+    if (!existing) {
+      merged.set(userId, {
+        userId,
+        username,
+        avatarUrl: projectMember?.avatarUrl || null,
+        role: projectMember?.role || '',
+        colorToken: resolveWorkspaceCollabPresenceColor(userId),
+        activityState,
+        updatedAt,
+        peerCount: 1,
+        isCurrentUser: userId === currentUserId,
+        selection: isMarkdownPreviewActive.value && userId === currentUserId ? markdownLocalSelectionStatus.value.selection : null,
+        selectionActivityRank: isMarkdownPreviewActive.value && userId === currentUserId && markdownLocalSelectionStatus.value.selection ? 1 : -1,
+        selectionUpdatedAtMs: Number.isFinite(Date.parse(updatedAt || '')) ? Date.parse(updatedAt || '') : -1,
+      })
+      if (isMarkdownPreviewActive.value && userId !== currentUserId && Number.isInteger(Number(member.awarenessClientId))) {
+        const remoteSelection = markdownRemoteSelectionMap.value.get(Math.trunc(Number(member.awarenessClientId)))
+        if (remoteSelection) {
+          const created = merged.get(userId)
+          if (created) {
+            created.selection = remoteSelection
+            created.selectionActivityRank = activityState === 'active' ? 1 : 0
+            created.selectionUpdatedAtMs = Number.isFinite(Date.parse(updatedAt || '')) ? Date.parse(updatedAt || '') : -1
+          }
+        }
+      }
+      continue
+    }
+
+    existing.peerCount += 1
+    existing.activityState = existing.activityState === 'active' || activityState === 'active'
+      ? 'active'
+      : 'background'
+    if (!existing.avatarUrl && projectMember?.avatarUrl)
+      existing.avatarUrl = projectMember.avatarUrl
+    if (!existing.role && projectMember?.role)
+      existing.role = projectMember.role
+
+    const nextUpdatedAtMs = Date.parse(updatedAt || '')
+    const currentUpdatedAtMs = Date.parse(existing.updatedAt || '')
+    if (Number.isFinite(nextUpdatedAtMs) && (!Number.isFinite(currentUpdatedAtMs) || nextUpdatedAtMs > currentUpdatedAtMs))
+      existing.updatedAt = updatedAt
+
+    const candidateSelection = !isMarkdownPreviewActive.value
+      ? null
+      : userId === currentUserId
+        ? markdownLocalSelectionStatus.value.selection
+        : (Number.isInteger(Number(member.awarenessClientId))
+            ? markdownRemoteSelectionMap.value.get(Math.trunc(Number(member.awarenessClientId))) || null
+            : null)
+    const candidateRank = activityState === 'active' ? 1 : 0
+    if (
+      candidateSelection
+      && (
+        existing.selectionActivityRank < candidateRank
+        || (existing.selectionActivityRank === candidateRank && (!Number.isFinite(existing.selectionUpdatedAtMs) || nextUpdatedAtMs > existing.selectionUpdatedAtMs))
+      )
+    ) {
+      existing.selection = candidateSelection
+      existing.selectionActivityRank = candidateRank
+      existing.selectionUpdatedAtMs = Number.isFinite(nextUpdatedAtMs) ? nextUpdatedAtMs : existing.selectionUpdatedAtMs
+    }
+  }
+
+  return [...merged.values()].sort((left, right) => {
+    if (left.activityState !== right.activityState)
+      return left.activityState === 'active' ? -1 : 1
+
+    const rightUpdatedAt = Date.parse(String(right.updatedAt || ''))
+    const leftUpdatedAt = Date.parse(String(left.updatedAt || ''))
+    if (Number.isFinite(rightUpdatedAt) && Number.isFinite(leftUpdatedAt) && rightUpdatedAt !== leftUpdatedAt)
+      return rightUpdatedAt - leftUpdatedAt
+
+    return left.username.localeCompare(right.username, 'zh-CN')
+  })
+})
+
+const showBreadcrumbPresence = computed(() => {
+  if (collabPresenceUsers.value.length === 0)
+    return false
+  if (activeTabId.value === 'flow')
+    return true
+  return Boolean(activeResourceTab.value && (activePreviewMode.value === 'markdown' || activePreviewMode.value === 'draw'))
+})
+
+const collabPresenceCursors = computed<WorkspaceCollabCursorUser[]>(() => {
+  const merged = new Map<string, WorkspaceCollabCursorUser & { updatedAtMs: number }>()
+  const currentUserId = String(props.currentUserId || '').trim()
+
+  for (const member of props.collabPresenceMembers) {
+    const userId = String(member.userId || '').trim()
+    if (!userId || userId === currentUserId)
+      continue
+    if (normalizeWorkspaceCollabPresenceActivityState(member.activityState) !== 'active')
+      continue
+
+    const cursorX = Number(member.cursorX)
+    const cursorY = Number(member.cursorY)
+    if (!Number.isFinite(cursorX) || !Number.isFinite(cursorY))
+      continue
+
+    const user = collabPresenceUsers.value.find(item => item.userId === userId)
+    if (!user)
+      continue
+
+    const updatedAtMs = Date.parse(String(member.updatedAt || ''))
+    const existing = merged.get(userId)
+    if (existing && Number.isFinite(existing.updatedAtMs) && Number.isFinite(updatedAtMs) && existing.updatedAtMs >= updatedAtMs)
+      continue
+
+    merged.set(userId, {
+      userId,
+      username: user.username,
+      colorToken: user.colorToken,
+      cursorX,
+      cursorY,
+      updatedAtMs,
+    })
+  }
+
+  return [...merged.values()]
+    .map(({ updatedAtMs: _updatedAtMs, ...cursor }) => cursor)
+    .sort((left, right) => left.username.localeCompare(right.username, 'zh-CN'))
 })
 
 const canSubmitWorkspaceInvitation = computed(() => {
@@ -1325,6 +2170,7 @@ const canSubmitWorkspaceSeatLimit = computed(() => {
 function openWorkspaceInviteModal(): void {
   if (!props.workspaceCanManageMembers)
     return
+  emit('prepareWorkspaceInvitation')
   workspaceInviteModalVisible.value = true
 }
 
@@ -1356,60 +2202,133 @@ function onCollabDrawModelUpdate(value: string): void {
   emit('update:collabDrawValue', value)
 }
 
-function workspaceTypeLabel(value: WorkspaceType | ''): string {
-  if (value === 'personal')
-    return '个人项目台'
-  if (value === 'team')
-    return 'Team 项目台'
-  return '项目台'
+function onDeviceArrangementSaveStateChange(payload: { dirty: boolean, saving: boolean, blocked?: boolean }): void {
+  deviceArrangementSaveState.value = {
+    dirty: Boolean(payload.dirty),
+    saving: Boolean(payload.saving),
+    blocked: Boolean(payload.blocked),
+  }
 }
 
-function workspaceRoleLabel(role: ProjectMemberRole): string {
-  if (role === 'owner')
-    return '所有者'
-  if (role === 'manager')
-    return '管理者'
-  if (role === 'editor')
-    return '编辑者'
-  return '查看者'
+function onCollabCursorUpdate(value: { cursorX?: number, cursorY?: number }): void {
+  emit('updateCollabCursor', value)
 }
+
+function onMarkdownSelectionChange(value: {
+  line: number
+  column: number
+  selectionLength: number
+  anchorLine: number
+  anchorColumn: number
+  headLine: number
+  headColumn: number
+  isCollapsed: boolean
+  selectedText?: string
+  selectedTextPreview: string
+}): void {
+  const selection: WorkspaceCollabSelectionSummary = {
+    anchorLine: value.anchorLine,
+    anchorColumn: value.anchorColumn,
+    headLine: value.headLine,
+    headColumn: value.headColumn,
+    isCollapsed: value.isCollapsed,
+    selectionLength: value.selectionLength,
+    selectedText: value.selectedText,
+    selectedTextPreview: value.selectedTextPreview,
+  }
+
+  markdownLocalSelectionStatus.value = {
+    line: Math.max(1, Math.trunc(Number(value.line) || 1)),
+    column: Math.max(1, Math.trunc(Number(value.column) || 1)),
+    selectionLength: Math.max(0, Math.trunc(Number(value.selectionLength) || 0)),
+    selection,
+  }
+
+  emit('updateCollabSelectionStatus', {
+    line: markdownLocalSelectionStatus.value.line,
+    column: markdownLocalSelectionStatus.value.column,
+    selectionLength: markdownLocalSelectionStatus.value.selectionLength,
+    selection,
+  })
+}
+
+function onMarkdownRemotePresenceChange(value: WorkspaceCollabAwarenessSelectionState[]): void {
+  markdownRemoteSelectionStates.value = Array.isArray(value) ? value : []
+}
+
+function saveCurrentPanel(): WorkspacePanelCommandResult {
+  if (activeTabId.value !== 'settings')
+    return { handled: false, reason: '当前面板没有可保存内容。' }
+
+  if (settingsActiveSectionId.value === 'displayPreferences') {
+    if (props.workspaceDisplayPreferencesSavingScope === 'user')
+      return { handled: false, reason: '当前面板正在保存中。' }
+    if (!userWorkspaceDisplayChanged.value)
+      return { handled: false, reason: '当前面板没有待保存内容。' }
+    saveWorkspaceDisplayUserOverride()
+    return { handled: true }
+  }
+
+  if (settingsActiveSectionId.value === 'teamDefault') {
+    if (!props.workspaceDisplayPreferences.canManageTeamDefault)
+      return { handled: false, reason: '当前账号无权保存团队默认显示偏好。' }
+    if (props.workspaceDisplayPreferencesSavingScope === 'team')
+      return { handled: false, reason: '当前面板正在保存中。' }
+    if (!teamWorkspaceDisplayChanged.value)
+      return { handled: false, reason: '当前面板没有待保存内容。' }
+
+    saveWorkspaceDisplayTeamDefault()
+    return { handled: true }
+  }
+
+  emit('saveProjectSettings')
+  return { handled: true }
+}
+
+function canCloseCurrentTab(): boolean {
+  return Boolean(activeTab.value?.closeable && activeTab.value?.id)
+}
+
+function closeCurrentTab(): WorkspacePanelCommandResult {
+  const currentTab = activeTab.value
+  if (!currentTab?.id)
+    return { handled: false, reason: '当前没有可关闭的标签。' }
+  if (!currentTab.closeable)
+    return { handled: false, reason: '当前标签不可关闭。' }
+
+  closeTab(currentTab.id)
+  return { handled: true }
+}
+
+defineExpose({
+  applyMarkdownDocumentDraft(payload: AiWorkspaceDocumentDraft) {
+    return resourcePreviewTabRef.value?.applyDocumentDraft(payload) || false
+  },
+  applyMarkdownDocumentAssistResult(payload: { action: AiWorkspaceDocumentAction, text: string }) {
+    return resourcePreviewTabRef.value?.applyDocumentAssistResult(payload) || false
+  },
+  openActiveSearch() {
+    return resourcePreviewTabRef.value?.openSearch() || false
+  },
+  scrollToMarkdownCommentThread(threadId: string) {
+    resourcePreviewTabRef.value?.scrollToCommentThread(threadId)
+  },
+  scrollToMarkdownHeadingAnchor(anchorId: string) {
+    return resourcePreviewTabRef.value?.scrollToHeadingAnchor(anchorId) || false
+  },
+  locateDesignOutlineItem(node: WorkspaceOutlineNode) {
+    return designPanelRef.value?.locateOutlineItem(node) || false
+  },
+  locateWorkflowOutlineItem(node: WorkspaceOutlineNode) {
+    return flowTabRef.value?.locateOutlineItem(node) || false
+  },
+  saveCurrentPanel,
+  canCloseCurrentTab,
+  closeCurrentTab,
+})
 
 function workspaceMemberRoleSummary(member: ProjectMemberSummary): string {
   return workspaceRoleLabel(workspaceMemberPrimaryRole(member))
-}
-
-function workspaceInvitationStatus(invitation: ProjectInvitationSummary): 'pending' | 'expired' | 'accepted' {
-  if (String(invitation.acceptedAt || '').trim())
-    return 'accepted'
-  if (invitation.isExpired)
-    return 'expired'
-  return 'pending'
-}
-
-function workspaceInvitationStatusLabel(invitation: ProjectInvitationSummary): string {
-  const status = workspaceInvitationStatus(invitation)
-  if (status === 'accepted')
-    return '已接受'
-  if (status === 'expired')
-    return '已过期'
-  return '待接受'
-}
-
-function workspaceInvitationStatusBadgeClass(invitation: ProjectInvitationSummary): string {
-  const status = workspaceInvitationStatus(invitation)
-  if (status === 'accepted')
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (status === 'expired')
-    return 'border-rose-200 bg-rose-50 text-rose-600'
-  return 'border-blue-200 bg-blue-50 text-blue-700'
-}
-
-function workspaceInvitationScopeLabel(invitation: ProjectInvitationSummary): string {
-  const projectTitle = String(invitation.projectTitle || '').trim()
-  const roleLabel = workspaceRoleLabel(invitation.projectRole || 'viewer')
-  if (projectTitle)
-    return `加入项目：${projectTitle} · 项目角色：${roleLabel}`
-  return `项目角色：${roleLabel}`
 }
 
 function revokeWorkspaceInvitation(invitationId: string): void {
@@ -1460,52 +2379,6 @@ function removeWorkspaceMember(member: ProjectMemberSummary): void {
   emit('removeWorkspaceMember', userId)
 }
 
-function formatDateTime(value: string): string {
-  const normalized = String(value || '').trim()
-  if (!normalized)
-    return '-'
-
-  const date = new Date(normalized)
-  if (!Number.isFinite(date.getTime()))
-    return normalized
-
-  return date.toLocaleString('zh-CN', { hour12: false })
-}
-
-function shareVisibilityLabel(value: string): string {
-  if (value === 'workspace')
-    return '组织内成员可见'
-  return '公开可见'
-}
-
-function getShareStatus(share: ProjectResourceShare): 'active' | 'expired' | 'revoked' {
-  if (String(share.revokedAt || '').trim())
-    return 'revoked'
-
-  const expiresAtMs = new Date(String(share.expiresAt || '')).getTime()
-  if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now())
-    return 'expired'
-  return 'active'
-}
-
-function shareStatusLabel(share: ProjectResourceShare): string {
-  const status = getShareStatus(share)
-  if (status === 'revoked')
-    return '已失效'
-  if (status === 'expired')
-    return '已过期'
-  return '生效中'
-}
-
-function shareStatusBadgeClass(share: ProjectResourceShare): string {
-  const status = getShareStatus(share)
-  if (status === 'revoked')
-    return 'text-rose-600 border-rose-200 bg-rose-50'
-  if (status === 'expired')
-    return 'text-amber-700 border-amber-200 bg-amber-50'
-  return 'text-emerald-700 border-emerald-200 bg-emerald-50'
-}
-
 watch(projectSettingsAddContestCandidates, () => {
   if (!projectSettingsAddContestModalVisible.value)
     return
@@ -1524,10 +2397,50 @@ watch(() => props.workspaceInvitationLink, (next, previous) => {
   workspaceInviteForm.inviteeUsername = ''
 })
 
+watch(() => props.workspaceDisplayPreferences, (snapshot) => {
+  applyWorkspaceDisplayPreferenceDrafts(snapshot)
+  if (activeTabId.value === 'settings')
+    void nextTick(() => syncWorkspaceSettingsSectionFromScroll())
+}, { deep: true, immediate: true })
+
+watch(visibleWorkspaceSettingsSections, (sections) => {
+  if (!sections.length)
+    return
+
+  if (!sections.some(item => item.id === settingsActiveSectionId.value)) {
+    const fallbackSectionId = resolveWorkspaceSettingsDefaultSection(settingsPrimaryGroup.value)
+    settingsActiveSectionId.value = fallbackSectionId
+    settingsPrimaryGroup.value = findWorkspaceSettingsSection(fallbackSectionId)?.groupId || 'workspace'
+  }
+
+  if (activeTabId.value === 'settings')
+    void nextTick(() => syncWorkspaceSettingsSectionFromScroll())
+}, { immediate: true })
+
+watch(() => activeTabId.value, (next) => {
+  if (next !== 'settings')
+    return
+  void nextTick(() => syncWorkspaceSettingsSectionFromScroll())
+})
+
 watch(() => props.openSettingsSignal, (next, previous) => {
   if (next === previous)
     return
   ensureFixedTabOpen('settings', true)
+  activateWorkspaceSettingsSection('projectOverview', { behavior: 'auto' })
+})
+
+watch(() => props.openLoopyDataSignal, (next, previous) => {
+  if (next === previous)
+    return
+  ensureFixedTabOpen('loopy_data', true)
+})
+
+watch(() => props.openDisplayPreferencesSignal, (next, previous) => {
+  if (next === previous)
+    return
+  ensureFixedTabOpen('settings', true)
+  activateWorkspaceSettingsSection('displayPreferences', { behavior: 'auto' })
 })
 
 watch(() => props.openMemberManagementSignal, (next, previous) => {
@@ -1564,1501 +2477,1035 @@ watch(
     () => props.previewMode,
   ],
   () => {
-    updateOpenResourceTabMetadata()
+    updateOpenTabMetadata()
   },
 )
 
 watch(() => props.selectedResources, () => {
-  updateOpenResourceTabMetadata()
+  updateOpenTabMetadata()
 }, { deep: true })
 
-onMounted(() => {
-  document.addEventListener('pointerdown', handleGlobalPointerDown)
-  document.addEventListener('keydown', handleGlobalEscape)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', handleGlobalPointerDown)
-  document.removeEventListener('keydown', handleGlobalEscape)
-})
+watch(
+  [
+    () => props.meetings,
+    () => props.activeMeeting?.id,
+    () => props.activeMeeting?.title,
+    () => props.activeMeeting?.mode,
+  ],
+  () => {
+    updateOpenTabMetadata()
+  },
+  { deep: true },
+)
 
 watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
   if (next === previous)
     return
   workspaceSeatModalVisible.value = false
 })
-
-watch(activeTabId, (next) => {
-  emit('update:activeTabId', next)
-}, { immediate: true })
 </script>
 
 <template>
-  <section class="bg-slate-50 flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
-    <div class="border-b border-slate-200 bg-white flex shrink-0 h-10 items-center relative">
-      <template v-if="openTabs.length > 0">
-        <div
-          v-for="tab in openTabs"
-          :key="tab.id"
-          class="px-2 border-r border-slate-200 flex gap-1 h-full min-w-[170px] items-center"
-          :class="[
-            tab.id === activeTabId ? 'bg-slate-50' : 'bg-white',
-            dragOverTabId === tab.id ? 'ring-1 ring-inset ring-blue-300' : '',
-          ]"
-          draggable="true"
-          @dragstart="onTabDragStart(tab.id)"
-          @dragover="onTabDragOver(tab.id, $event)"
-          @drop="onTabDrop(tab.id, $event)"
-          @dragend="onTabDragEnd"
-          @contextmenu.prevent="openTabContextMenu(tab.id, $event)"
-        >
-          <button
-            class="text-xs text-left flex flex-1 gap-2 h-full min-w-0 items-center"
-            :class="tab.id === activeTabId ? 'text-slate-800 font-medium' : 'text-slate-500 hover:text-slate-700'"
-            type="button"
-            @click="activateTab(tab.id)"
-          >
-            <span class="material-symbols-outlined text-sm" :class="tab.id === activeTabId ? 'text-blue-500' : 'text-slate-400'">{{ tab.icon }}</span>
-            <span class="truncate">{{ tab.title }}</span>
-          </button>
-
-          <button
-            v-if="tab.closeable"
-            class="text-slate-400 p-1 rounded hover:text-slate-600 hover:bg-slate-100"
-            type="button"
-            @click.stop="closeTab(tab.id)"
-          >
-            <span class="material-symbols-outlined text-[14px]">close</span>
-          </button>
-        </div>
-      </template>
-
-      <div v-else class="px-3 flex w-full items-center justify-between">
-        <span class="text-[11px] text-slate-500 font-medium">WinLoop</span>
-        <button
-          class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white hover:bg-slate-50"
-          type="button"
-          @click="ensureFixedTabOpen('dashboard', true)"
-        >
-          打开仪表盘
-        </button>
-      </div>
-
-      <div
-        v-if="tabContextMenuVisible"
-        class="workspace-tab-context-menu"
-        :style="{
-          left: `${tabContextMenuPosition.x}px`,
-          top: `${tabContextMenuPosition.y}px`,
-        }"
-      >
-        <button
-          v-if="tabContextMenuTab?.closeable"
-          class="workspace-tab-context-menu__item"
-          type="button"
-          @click="closeTab(tabContextMenuTab.id)"
-        >
-          关闭当前
-        </button>
-        <button
-          class="workspace-tab-context-menu__item"
-          type="button"
-          :disabled="tabContextMenuLeftIds.length === 0"
-          @click="closeTabsToLeft"
-        >
-          关闭左侧所有
-        </button>
-        <button
-          class="workspace-tab-context-menu__item"
-          type="button"
-          :disabled="tabContextMenuRightIds.length === 0"
-          @click="closeTabsToRight"
-        >
-          关闭右侧所有
-        </button>
-        <button
-          class="workspace-tab-context-menu__item"
-          type="button"
-          :disabled="openTabs.length <= 1"
-          @click="closeOtherTabs"
-        >
-          关闭其他
-        </button>
-        <button
-          class="workspace-tab-context-menu__item workspace-tab-context-menu__item--danger"
-          type="button"
-          :disabled="openTabs.length === 0"
-          @click="closeAllTabs"
-        >
-          关闭所有
-        </button>
-      </div>
-    </div>
-
-    <div class="text-[11px] text-slate-400 px-4 py-2 border-b border-slate-200 bg-white flex gap-2 items-center">
-      <template v-for="(item, index) in breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
-        <span :class="index === breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
-          {{ item }}
-        </span>
-        <span v-if="index < breadcrumbItems.length - 1" class="material-symbols-outlined text-[12px]">chevron_right</span>
-      </template>
+  <section class="workspace-main-panel bg-slate-50 flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
+    <div
+      v-if="hasOpenTabs"
+      class="workspace-main-tab-strip-shell border-b border-slate-200 bg-white flex shrink-0 min-w-0 w-full items-center relative"
+      :style="workspaceMainTabLayoutStyle"
+    >
+      <WorkspaceMainPanelChrome
+        class="flex-1 min-w-0"
+        :open-tabs="openTabs"
+        :active-tab-id="activeTabId"
+        :drag-over-tab-id="dragOverTabId"
+        :tab-context-menu-visible="tabContextMenuVisible"
+        :tab-context-menu-position="tabContextMenuPosition"
+        :context-tab-id="tabContextMenuTab?.id || ''"
+        :can-close-context-tab="Boolean(tabContextMenuTab?.closeable && tabContextMenuTab?.id)"
+        :can-close-tabs-to-left="tabContextMenuLeftIds.length > 0"
+        :can-close-tabs-to-right="tabContextMenuRightIds.length > 0"
+        :can-close-other-tabs="openTabs.length > 1"
+        :can-close-all-tabs="openTabs.length > 0"
+        :breadcrumb-items="breadcrumbItems"
+        :breadcrumb-save-state="breadcrumbSaveState"
+        :collab-presence-users="showBreadcrumbPresence ? collabPresenceUsers : []"
+        @activate-tab="activateTab($event as WorkspaceMainTabId)"
+        @close-tab="closeTab($event as WorkspaceMainTabId)"
+        @open-tab-context-menu="requestTabContextMenu($event)"
+        @close-tab-context-menu="closeTabContextMenu"
+        @close-tabs-to-left="closeTabsToLeft"
+        @close-tabs-to-right="closeTabsToRight"
+        @close-other-tabs="closeOtherTabs"
+        @close-all-tabs="closeAllTabs"
+        @drag-start="onTabDragStart($event as WorkspaceMainTabId)"
+        @drag-over="onTabDragOver($event.tabId as WorkspaceMainTabId, $event.event)"
+        @drop="onTabDrop($event.tabId as WorkspaceMainTabId, $event.event)"
+        @drag-end="onTabDragEnd"
+        @open-dashboard="ensureFixedTabOpen('dashboard', true)"
+      />
     </div>
 
     <div
+      ref="workspaceMainBodyRef"
       class="flex-1 h-0 min-h-0"
-      :class="activeResourceTab ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden p-4 md:p-6'"
+      :class="activeResourceTab || activeTabId === 'flow' ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden p-4 md:p-6'"
+      @scroll="onWorkspaceMainBodyScroll"
     >
-      <div v-if="activeTabId === 'dashboard'" class="mx-auto max-w-5xl space-y-4">
-        <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
-          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex gap-3 items-center">
-            <span class="material-symbols-outlined text-xl text-blue-600">space_dashboard</span>
-            <div>
-              <h2 class="text-sm font-bold">
-                WinLoop 仪表盘
-              </h2>
-              <div class="text-[11px] text-slate-500 mt-0.5">
-                以“竞赛锁定 → 指标对标 → 关联比赛提交 → 终审”为主线推进项目落地。
-              </div>
-            </div>
-          </div>
+      <WorkspaceDashboardTab
+        v-if="activeTabId === 'dashboard'"
+        :selected-contest="selectedContest"
+        :selected-track="selectedTrack"
+        :selected-track-id="selectedTrackId"
+        :selected-contest-id="selectedContestId"
+        :mapping-rows="mappingRows"
+        :mapping-loading="mappingLoading"
+        :mapping-refreshing="mappingRefreshing"
+        :keyword-cloud="keywordCloud"
+        :trend-bars="trendBars"
+        :linked-contest-entries="linkedContestEntries"
+        :selected-resources="selectedResources"
+        :material-coverage="Math.min(selectedResources.length * 20, 100)"
+        :form-state="formState"
+        :form-submitting="formSubmitting"
+        :workspace-preparing="workspacePreparing"
+        :topic-board-fetching="topicBoardFetching"
+        :tone-meta="toneMeta"
+        @update-selected-track-id="emit('update:selectedTrackId', $event)"
+        @use-binding-as-current-contest="useBindingAsCurrentContest($event.contestId, $event.trackId)"
+        @update-form-field="updateFormField($event.field, $event.value)"
+        @submit-project-for-contest="submitProjectForContest($event.contestId, $event.trackId)"
+      />
 
-          <ol class="divide-slate-200 divide-y">
-            <li
-              v-for="(step, index) in dashboardGuide"
-              :key="step.id"
-              class="p-4 flex gap-3 items-start"
-            >
-              <span
-                class="text-[11px] font-bold rounded-full flex h-5 w-5 items-center justify-center"
-                :class="step.done ? 'text-emerald-700 bg-emerald-50' : 'text-blue-600 bg-blue-50'"
-              >
-                {{ index + 1 }}
-              </span>
-              <div>
-                <div class="text-xs text-slate-800 font-semibold">
-                  {{ step.title }}
-                </div>
-                <p class="text-[11px] mt-1" :class="step.done ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ step.done ? step.doneText : step.todoText }}
+      <WorkspaceMeetingOverviewPanel
+        v-else-if="activeTabId === 'meeting'"
+        :meetings="props.meetings"
+        :loading="props.meetingLoading"
+        :refreshing="props.meetingRefreshing"
+        @refresh-meetings="emit('refreshMeetings')"
+        @open-meeting="emit('selectMeeting', $event)"
+        @open-resource="emit('openMeetingResource', $event)"
+      />
+
+      <WorkspaceMeetingCreatePanel
+        v-else-if="activeTabId === 'meeting-create:audio' || activeTabId === 'meeting-create:video'"
+        :mode="activeTabId === 'meeting-create:audio' ? 'audio' : 'video'"
+        :project-members="props.workspaceMembers"
+        :current-user-id="props.currentUserId"
+        :workspace-type="props.workspaceType"
+        :meeting-plan-tier="props.meetingPlanTier"
+        :runtime-health="props.meetingRuntimeHealth"
+        :mutating="props.meetingMutating"
+        @quick-create="emit('quickCreateMeeting', $event)"
+        @submit-create="emit('submitMeetingCreate', $event)"
+        @open-meeting-overview="ensureFixedTabOpen('meeting')"
+      />
+
+      <WorkspaceMeetingPanel
+        v-else-if="activeTabId.startsWith('meeting:')"
+        :active-meeting="props.activeMeeting"
+        :utterances="props.meetingUtterances"
+        :live-captions="props.meetingLiveCaptions"
+        :detail-loading="props.meetingDetailLoading"
+        :refreshing="props.meetingDetailRefreshing"
+        :mutating="props.meetingMutating"
+        :join-url="props.meetingJoinUrl"
+        :join-token="props.meetingJoinToken"
+        :join-expires-at="props.meetingJoinExpiresAt"
+        :rtc-server-url="props.meetingRtcServerUrl"
+        :guest-share="props.activeMeetingGuestShare"
+        :guest-share-loading="props.meetingGuestShareLoading"
+        :current-user-id="props.currentUserId"
+        :workspace-type="props.workspaceType"
+        :meeting-plan-tier="props.meetingPlanTier"
+        :defense-realtime-state="props.defenseRealtimeState"
+        :defense-realtime-options="props.defenseRealtimeOptions"
+        :defense-realtime-logs="props.defenseRealtimeLogs"
+        @join-meeting="emit('joinMeeting', $event)"
+        @start-meeting="emit('startMeeting', $event)"
+        @end-meeting="emit('endMeeting', $event)"
+        @open-resource="emit('openMeetingResource', $event)"
+        @create-guest-share="emit('createMeetingGuestShare', $event)"
+        @regenerate-guest-share="emit('regenerateMeetingGuestShare', $event)"
+        @revoke-guest-share="emit('revokeMeetingGuestShare', $event)"
+        @start-defense-realtime-sidecar="emit('startDefenseRealtimeSidecar')"
+        @update-defense-realtime-provider="emit('updateDefenseRealtimeProvider', $event)"
+        @update-defense-realtime-media-mode="emit('updateDefenseRealtimeMediaMode', $event)"
+        @toggle-defense-realtime-audio="emit('toggleDefenseRealtimeAudio', $event)"
+        @toggle-defense-realtime-video="emit('toggleDefenseRealtimeVideo', $event)"
+        @interrupt-defense-realtime="emit('interruptDefenseRealtime')"
+        @reconnect-defense-realtime="emit('reconnectDefenseRealtime')"
+      />
+
+      <WorkspaceFlowTab
+        v-else-if="activeTabId === 'flow'"
+        ref="flowTabRef"
+        :project-id="props.activeProjectId"
+        :has-flow-resource="hasFlowResource"
+        :flow-panel-title="flowPanelTitle"
+        :flow-resource-id="props.flowResourceId"
+        :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
+        :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
+        :collab-revision="collabRevision"
+        :collab-connected="collabConnected"
+        :collab-connection-text="collabConnectionText"
+        :collab-presence-users="collabPresenceUsers"
+        :collab-presence-cursors="collabPresenceCursors"
+        :collab-draw-value="collabDrawValue"
+        :collab-draw-error="collabDrawError"
+        @update-collab-draw-value="onCollabDrawModelUpdate"
+        @request-workflow-canvas-rebuild="emit('requestWorkflowCanvasRebuild')"
+        @update-collab-cursor="onCollabCursorUpdate"
+      />
+
+      <WorkspaceMembersTab
+        v-else-if="activeTabId === 'members'"
+        :workspace-name="workspaceName"
+        :workspace-type="workspaceType"
+        :workspace-members="workspaceMembers"
+        :workspace-invitations="workspaceInvitations"
+        :workspace-member-management-loading="workspaceMemberManagementLoading"
+        :workspace-can-manage-members="workspaceCanManageMembers"
+        :workspace-can-edit-members="workspaceCanEditMembers"
+        :workspace-member-role-updating-user-id="workspaceMemberRoleUpdatingUserId"
+        :workspace-member-removing-user-id="workspaceMemberRemovingUserId"
+        :workspace-invitation-revoking-id="workspaceInvitationRevokingId"
+        :workspace-can-manage-billing-seats="workspaceCanManageBillingSeats"
+        :workspace-seat-used="workspaceSeatUsed"
+        :workspace-seat-limit="workspaceSeatLimit"
+        :workspace-supports-seat-add="workspaceSupportsSeatAdd"
+        :workspace-invitation-submitting="workspaceInvitationSubmitting"
+        :workspace-member-role-draft-map="workspaceMemberRoleDraftMap"
+        :project-role-options="PROJECT_ROLE_OPTIONS"
+        :workspace-type-label="workspaceTypeLabel"
+        :workspace-member-role-summary="workspaceMemberRoleSummary"
+        :workspace-invitation-status-label="workspaceInvitationStatusLabel"
+        :workspace-invitation-status-badge-class="workspaceInvitationStatusBadgeClass"
+        :workspace-invitation-scope-label="workspaceInvitationScopeLabel"
+        :workspace-role-label="workspaceRoleLabel"
+        :can-remove-workspace-member="canRemoveWorkspaceMember"
+        :format-date-time="formatDateTime"
+        @open-workspace-invite-modal="openWorkspaceInviteModal"
+        @reload-workspace-member-management="emit('reloadWorkspaceMemberManagement')"
+        @open-workspace-seat-modal="openWorkspaceSeatModal"
+        @update-workspace-member-role-draft="workspaceMemberRoleDraftMap[$event.userId] = toPatchableWorkspaceRole($event.role)"
+        @submit-workspace-member-role="submitWorkspaceMemberRole"
+        @remove-workspace-member="removeWorkspaceMember"
+        @revoke-workspace-invitation="revokeWorkspaceInvitation"
+      />
+
+      <WorkspaceLoopyDataTab
+        v-else-if="activeTabId === 'loopy_data'"
+        :active-project="activeProject"
+        :active-project-id="props.activeProjectId"
+        :selected-resources="props.selectedResources"
+        :dashboard="props.projectKnowledgeDashboard"
+        :loading="props.projectKnowledgeLoading"
+        :error="props.projectKnowledgeError"
+        :reindexing-target="props.projectKnowledgeReindexingTarget"
+        :retrying-source-id="props.projectKnowledgeRetryingSourceId"
+        @reload="emit('reloadProjectKnowledge')"
+        @reindex-project-knowledge="emit('reindexProjectKnowledge', $event)"
+        @reindex-project-knowledge-source="emit('reindexProjectKnowledgeSource', $event)"
+      />
+
+      <section
+        v-else-if="activeTabId === 'settings'"
+        class="w-full"
+      >
+        <div class="workspace-settings-shell">
+          <aside class="workspace-settings-sidebar">
+            <div class="workspace-settings-sidebar__inner">
+              <div class="space-y-1">
+                <p class="text-[11px] text-slate-400 tracking-[0.16em] font-semibold uppercase">
+                  Settings
                 </p>
-              </div>
-            </li>
-          </ol>
-        </div>
-
-        <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
-          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div class="flex gap-3 items-center">
-              <span class="material-symbols-outlined text-xl text-blue-600">account_tree</span>
-              <div>
-                <h2 class="text-sm font-bold">
-                  核心指标对标
+                <h2 class="text-lg text-slate-900 font-semibold">
+                  项目设置
                 </h2>
-                <div class="text-[11px] text-slate-500 mt-0.5">
-                  {{ selectedTrack?.summary || '请选择竞赛与赛道，开始对标分析。' }}
-                </div>
-              </div>
-            </div>
-            <div class="flex gap-2 items-center">
-              <select
-                class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 min-w-46 focus:border-blue-500"
-                :value="selectedTrackId"
-                @change="emit('update:selectedTrackId', ($event.target as HTMLSelectElement).value)"
-              >
-                <option value="" disabled>
-                  选择赛道
-                </option>
-                <option v-for="track in selectedContest?.tracks || []" :key="track.id" :value="track.id">
-                  {{ track.name }}
-                </option>
-              </select>
-            </div>
-          </div>
-
-          <div class="overflow-x-auto">
-            <table class="text-xs text-left min-w-180 w-full border-collapse">
-              <thead>
-                <tr class="text-slate-500 bg-slate-50/60">
-                  <th class="font-semibold px-4 py-2 border-b border-slate-200">
-                    要求指标 (竞赛要求)
-                  </th>
-                  <th class="font-semibold px-4 py-2 text-center border-b border-slate-200">
-                    关联度
-                  </th>
-                  <th class="font-semibold px-4 py-2 border-b border-slate-200">
-                    对应项目能力点
-                  </th>
-                  <th class="font-semibold px-4 py-2 border-b border-slate-200">
-                    佐证材料状态
-                  </th>
-                </tr>
-              </thead>
-              <tbody class="divide-slate-200 divide-y">
-                <tr
-                  v-for="row in mappingRows"
-                  :key="row.id"
-                  class="transition-colors hover:bg-blue-50/40"
-                >
-                  <td class="px-4 py-3.5">
-                    <div class="text-slate-900 font-medium">
-                      {{ row.metric }}
-                    </div>
-                    <div class="text-[10px] text-slate-400 mt-1">
-                      {{ row.hint }}
-                    </div>
-                  </td>
-                  <td class="px-4 py-3.5 text-center">
-                    <span class="rounded-full bg-slate-100 h-1.5 w-20 inline-block overflow-hidden">
-                      <span
-                        class="h-full block"
-                        :class="toneMeta[row.tone].barClass"
-                        :style="{ width: `${row.score}%` }"
-                      />
-                    </span>
-                  </td>
-                  <td class="px-4 py-3.5">
-                    <div class="text-slate-700">
-                      {{ row.ability }}
-                    </div>
-                    <div class="text-[10px] text-blue-600 font-medium mt-1">
-                      <span v-for="tag in row.tags" :key="`${row.id}-${tag}`" class="mr-2">{{ tag }}</span>
-                    </div>
-                  </td>
-                  <td class="px-4 py-3.5">
-                    <span
-                      class="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      :class="toneMeta[row.tone].badgeClass"
-                    >
-                      {{ toneMeta[row.tone].label }}
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="gap-4 grid grid-cols-1 md:grid-cols-2">
-          <div class="p-4 border border-slate-200 rounded-lg bg-white shadow-sm">
-            <div class="mb-4 flex gap-2 items-center">
-              <span class="material-symbols-outlined text-sm text-blue-500">hub</span>
-              <span class="text-xs text-slate-500 tracking-wider font-bold uppercase">核心词云图</span>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <span
-                v-for="word in keywordCloud"
-                :key="word.label"
-                class="text-[10px] px-2 py-1 rounded"
-                :class="word.active ? 'bg-blue-50 text-blue-600 font-bold' : 'bg-slate-50 text-slate-600'"
-              >
-                {{ word.label }} ({{ word.count }})
-              </span>
-            </div>
-          </div>
-
-          <div class="p-4 border border-slate-200 rounded-lg bg-white shadow-sm">
-            <div class="mb-4 flex gap-2 items-center">
-              <span class="material-symbols-outlined text-sm text-green-500">show_chart</span>
-              <span class="text-xs text-slate-500 tracking-wider font-bold uppercase">竞争力评估趋势</span>
-            </div>
-            <div class="flex gap-1.5 h-16 items-end">
-              <div
-                v-for="(height, index) in trendBars"
-                :key="`trend-${index}`"
-                class="rounded-t flex-1 transition-all"
-                :class="index === trendBars.length - 1 ? 'bg-blue-500 animate-pulse' : 'bg-blue-200'"
-                :style="{ height: `${height}%` }"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
-          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex gap-3 items-center">
-            <span class="material-symbols-outlined text-xl text-indigo-600">checklist</span>
-            <div>
-              <h2 class="text-sm font-bold">
-                关联比赛提交区
-              </h2>
-              <div class="text-[11px] text-slate-500 mt-0.5">
-                规则详情与提交表单按比赛内聚，右侧只保留智能辅助。
-              </div>
-            </div>
-          </div>
-
-          <div class="p-4 space-y-4">
-            <article
-              v-for="entry in linkedContestEntries"
-              :key="entry.contest.id"
-              class="border border-slate-200 rounded-lg bg-white"
-            >
-              <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/70 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div class="text-xs text-slate-800 font-semibold">
-                    {{ entry.contest.name }}
-                  </div>
-                  <div class="text-[11px] text-slate-500 mt-0.5">
-                    {{ entry.track?.name || '未匹配赛道' }} · {{ entry.contest.registrationWindow || '报名窗口待补充' }}
-                  </div>
-                </div>
-                <button
-                  class="text-[11px] font-semibold px-2.5 py-1 border rounded transition-colors"
-                  :class="entry.contest.id === selectedContestId ? 'text-blue-700 border-blue-200 bg-blue-50' : 'text-slate-600 border-slate-200 bg-white hover:bg-slate-50'"
-                  type="button"
-                  @click="useBindingAsCurrentContest(entry.contest.id, entry.track?.id || '')"
-                >
-                  {{ entry.contest.id === selectedContestId ? '当前比赛' : '设为当前比赛' }}
-                </button>
-              </div>
-
-              <div class="p-4 space-y-3">
-                <div class="gap-3 grid grid-cols-1 md:grid-cols-2">
-                  <div class="p-3 border border-slate-200 rounded bg-slate-50">
-                    <div class="text-[11px] text-slate-700 font-semibold">
-                      规则详情
-                    </div>
-                    <p class="text-[11px] text-slate-600 mt-1">
-                      参赛要求：{{ entry.contest.participantRequirements || '暂无明确描述' }}
-                    </p>
-                    <p class="text-[11px] text-slate-600 mt-1">
-                      组队规则：{{ entry.contest.teamRule || '暂无明确描述' }}
-                    </p>
-                    <p class="text-[11px] text-slate-500 mt-1">
-                      报名窗口：{{ entry.contest.registrationWindow || '—' }}
-                    </p>
-                    <p class="text-[11px] text-slate-500 mt-1">
-                      提交截止：{{ entry.contest.submissionDeadline || '—' }}
-                    </p>
-                  </div>
-                  <div class="p-3 border border-slate-200 rounded bg-slate-50">
-                    <div class="text-[11px] text-slate-700 font-semibold">
-                      资料齐备度
-                    </div>
-                    <div class="mt-2 rounded-full bg-slate-100 h-2 overflow-hidden">
-                      <span
-                        class="bg-blue-500 h-full block"
-                        :style="{ width: `${materialCoverage}%` }"
-                      />
-                    </div>
-                    <p class="text-[11px] text-slate-500 mt-2">
-                      当前进度：{{ materialCoverage }}%
-                    </p>
-                    <p class="text-[11px] text-slate-500 mt-1">
-                      已关联资料：{{ selectedResources.length }} 份
-                    </p>
-                  </div>
-                </div>
-
-                <div class="gap-3 grid grid-cols-1 md:grid-cols-2">
-                  <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                    <span class="block">项目标题</span>
-                    <input
-                      :value="formState.title"
-                      class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                      placeholder="输入项目标题"
-                      @input="updateFormField('title', ($event.target as HTMLInputElement).value)"
-                    >
-                  </label>
-
-                  <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                    <span class="block">问题陈述</span>
-                    <textarea
-                      :value="formState.problemStatement"
-                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                      @input="updateFormField('problemStatement', ($event.target as HTMLTextAreaElement).value)"
-                    />
-                  </label>
-
-                  <label class="text-xs text-slate-600 block space-y-1">
-                    <span class="block">创新点（每行一条）</span>
-                    <textarea
-                      :value="formState.innovationPointsText"
-                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[90px] w-full focus:border-blue-500"
-                      @input="updateFormField('innovationPointsText', ($event.target as HTMLTextAreaElement).value)"
-                    />
-                  </label>
-
-                  <label class="text-xs text-slate-600 block space-y-1">
-                    <span class="block">技术路线（每行一条）</span>
-                    <textarea
-                      :value="formState.techRouteStepsText"
-                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[90px] w-full focus:border-blue-500"
-                      @input="updateFormField('techRouteStepsText', ($event.target as HTMLTextAreaElement).value)"
-                    />
-                  </label>
-
-                  <label class="text-xs text-slate-600 block space-y-1">
-                    <span class="block">评分映射（每行一条）</span>
-                    <textarea
-                      :value="formState.scoringMappingText"
-                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[90px] w-full focus:border-blue-500"
-                      @input="updateFormField('scoringMappingText', ($event.target as HTMLTextAreaElement).value)"
-                    />
-                  </label>
-
-                  <label class="text-xs text-slate-600 block space-y-1">
-                    <span class="block">风险项（每行一条）</span>
-                    <textarea
-                      :value="formState.risksText"
-                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[90px] w-full focus:border-blue-500"
-                      @input="updateFormField('risksText', ($event.target as HTMLTextAreaElement).value)"
-                    />
-                  </label>
-
-                  <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                    <span class="block">交付物（每行一条）</span>
-                    <textarea
-                      :value="formState.deliverablesText"
-                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[90px] w-full focus:border-blue-500"
-                      @input="updateFormField('deliverablesText', ($event.target as HTMLTextAreaElement).value)"
-                    />
-                  </label>
-
-                  <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                    <span class="block">摘要</span>
-                    <textarea
-                      :value="formState.summary"
-                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                      @input="updateFormField('summary', ($event.target as HTMLTextAreaElement).value)"
-                    />
-                  </label>
-                </div>
-
-                <button
-                  class="text-xs text-white font-semibold rounded bg-blue-600 h-9 w-full hover:bg-blue-500 disabled:opacity-60"
-                  :disabled="!entry.track?.id || formSubmitting"
-                  @click="submitProjectForContest(entry.contest.id, entry.track?.id || '')"
-                >
-                  {{ formSubmitting ? '提交中...' : `提交到 ${entry.contest.name}` }}
-                </button>
-              </div>
-            </article>
-
-            <div v-if="linkedContestEntries.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
-              暂无关联比赛，请先在左侧选择比赛，或在“项目设置”中添加竞赛绑定。
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-else-if="activeTabId === 'flow'" class="h-full min-h-0 w-full">
-        <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
-          <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
-            <div class="text-xs text-slate-600">
-              {{ flowPanelTitle }}
-              <span class="text-slate-400 ml-2">rev {{ hasFlowResource ? Math.max(0, Number(collabRevision || 0)) : 0 }}</span>
-            </div>
-            <div
-              class="text-[11px]"
-              :class="hasFlowResource ? (collabConnected ? 'text-emerald-600' : 'text-amber-600') : 'text-slate-400'"
-            >
-              {{ hasFlowResource ? collabConnectionText : '待初始化' }}
-            </div>
-          </div>
-
-          <div v-if="hasFlowResource" class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
-            <div class="flex flex-col h-full">
-              <WorkspaceTldrawCanvas
-                :key="props.flowResourceId || 'flow-canvas'"
-                class="h-full min-h-0 w-full"
-                :model-value="collabDrawValue"
-                :persistence-key="`workspace-flow-${props.flowResourceId || 'default'}`"
-                :readonly="false"
-                @update:model-value="onCollabDrawModelUpdate"
-              />
-              <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
-                {{ collabDrawError }}
-              </p>
-            </div>
-            <CollabPresencePanel :members="collabPresenceMembers" />
-          </div>
-
-          <div v-else class="px-6 bg-slate-50 flex flex-1 items-center justify-center">
-            <div class="px-6 py-8 text-center border border-slate-300 rounded-xl border-dashed bg-white max-w-md">
-              <span class="material-symbols-outlined text-3xl text-blue-600">flowsheet</span>
-              <h3 class="text-sm text-slate-800 font-semibold mt-3">
-                暂未初始化流程画布
-              </h3>
-              <p class="text-[12px] text-slate-500 leading-6 mt-2">
-                从左侧“流程”入口进入时，系统会自动为当前项目创建并打开唯一的主流程画布。
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-else-if="activeTabId === 'members'" class="mx-auto max-w-5xl space-y-4">
-        <section class="p-4 border border-slate-200 rounded-lg bg-white" data-testid="project-collab-panel">
-          <div class="mb-3 flex flex-wrap gap-3 items-start justify-between">
-            <div class="flex gap-3 items-center">
-              <span class="material-symbols-outlined text-xl text-blue-600">group</span>
-              <div>
-                <h3 class="text-xs text-slate-700 font-semibold">
-                  项目协作管理
-                </h3>
-                <p class="text-[11px] text-slate-500 mt-0.5">
-                  所属 Team：{{ workspaceName || '当前 Team' }} · {{ workspaceTypeLabel(workspaceType) }}
+                <p class="text-xs text-slate-500 leading-5">
+                  左侧导航切换设置项，右侧只展示当前选中的面板。
                 </p>
               </div>
-            </div>
 
-            <div class="flex flex-wrap gap-2 items-center">
-              <button
-                data-testid="project-collab-open-invite-button"
-                class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                type="button"
-                :disabled="!workspaceCanManageMembers || workspaceInvitationSubmitting"
-                @click="openWorkspaceInviteModal"
+              <section
+                v-for="group in workspaceSettingsGroups"
+                v-show="workspaceSettingsSectionsByGroup[group.id].length > 0"
+                :key="group.id"
+                :data-testid="WORKSPACE_SETTINGS_GROUP_TEST_IDS[group.id]"
+                class="space-y-2"
               >
-                {{ workspaceInvitationSubmitting ? '生成中...' : '生成邀请链接' }}
-              </button>
-              <button
-                class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                type="button"
-                :disabled="workspaceMemberManagementLoading"
-                @click="emit('reloadWorkspaceMemberManagement')"
-              >
-                刷新
-              </button>
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <article class="p-3 border border-slate-200 rounded bg-slate-50/60">
-              <p class="text-[11px] text-slate-600 font-semibold">
-                项目席位概览
-              </p>
-              <p class="text-sm text-slate-800 font-bold mt-1">
-                {{ normalizedWorkspaceSeatUsed }} / {{ normalizedWorkspaceSeatLimit ?? '--' }}
-              </p>
-              <p class="text-[11px] text-slate-500 mt-1">
-                {{ workspaceSeatSummaryText }}
-              </p>
-
-              <div class="mt-2 flex flex-wrap gap-2 items-center">
-                <button
-                  v-if="workspaceCanAddSeat"
-                  class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700"
-                  type="button"
-                  @click="openWorkspaceSeatModal"
-                >
-                  调整项目席位
-                </button>
-                <span
-                  v-else
-                  class="text-[11px] text-slate-600 px-2.5 py-1 border border-slate-200 rounded bg-slate-100"
-                >
-                  仅具备项目管理权限的成员可调整席位
-                </span>
-              </div>
-            </article>
-          </div>
-
-          <div v-if="workspaceMemberManagementLoading" class="text-xs text-slate-500 px-3 py-2 border border-slate-200 rounded bg-slate-50">
-            正在加载项目协作成员...
-          </div>
-
-          <template v-else>
-            <div class="gap-3 grid grid-cols-1 xl:grid-cols-[1.2fr,1fr]">
-              <section class="border border-slate-200 rounded bg-slate-50/40">
-                <div class="text-[11px] text-slate-600 font-semibold px-3 py-2 border-b border-slate-200 bg-white">
-                  项目成员（{{ workspaceMembers.length }}）
-                </div>
-
-                <div v-if="workspaceMembers.length === 0" class="text-[11px] text-slate-500 px-3 py-3">
-                  当前项目暂无成员记录。
-                </div>
-
-                <div v-else class="divide-slate-200 divide-y" data-testid="project-member-list">
-                  <article
-                    v-for="member in workspaceMembers"
-                    :key="member.userId"
-                    data-testid="project-member-item"
-                    :data-user-id="member.userId"
-                    :data-username="member.username"
-                    class="px-3 py-2.5"
+                <p class="text-[11px] text-slate-400 tracking-[0.16em] font-semibold uppercase">
+                  {{ group.label }}
+                </p>
+                <div class="space-y-1">
+                  <button
+                    v-for="item in workspaceSettingsSectionsByGroup[group.id]"
+                    :key="item.id"
+                    :data-testid="item.legacyTabId ? WORKSPACE_SETTINGS_SECONDARY_TAB_TEST_IDS[item.legacyTabId] : item.testId"
+                    class="workspace-settings-sidebar__item"
+                    :class="settingsActiveSectionId === item.id ? 'workspace-settings-sidebar__item--active' : ''"
+                    type="button"
+                    @click="activateWorkspaceSettingsSection(item.id, { behavior: 'auto' })"
                   >
-                    <div class="flex flex-wrap gap-2 items-center justify-between">
-                      <p class="text-xs text-slate-800 font-semibold">
-                        {{ member.username }}
-                      </p>
-                      <p class="text-[11px] text-slate-500">
-                        加入于 {{ formatDateTime(member.createdAt) }}
-                      </p>
-                    </div>
-                    <p class="text-[11px] text-slate-600 mt-1" data-testid="project-member-role-summary">
-                      {{ workspaceMemberRoleSummary(member) }}
-                    </p>
-                    <p v-if="member.addedByUsername" class="text-[11px] text-slate-500 mt-1">
-                      添加人：{{ member.addedByUsername }}
-                    </p>
-                    <div
-                      v-if="canEditWorkspaceMembers && workspaceMemberPrimaryRole(member) !== 'owner'"
-                      class="mt-2 flex flex-wrap gap-2 items-center"
-                    >
-                      <select
-                        v-model="workspaceMemberRoleDraftMap[member.userId]"
-                        data-testid="project-member-role-select"
-                        class="text-[11px] px-2 outline-none border border-slate-200 rounded bg-white h-7 focus:border-blue-500"
-                      >
-                        <option
-                          v-for="role in PROJECT_ROLE_OPTIONS"
-                          :key="`member-role-option-${member.userId}-${role}`"
-                          :value="role"
-                        >
-                          {{ workspaceRoleLabel(role) }}
-                        </option>
-                      </select>
-                      <button
-                        data-testid="project-member-role-update-button"
-                        class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                        type="button"
-                        :disabled="workspaceMemberRoleUpdatingUserId === member.userId || workspaceMemberRemovingUserId === member.userId"
-                        @click="submitWorkspaceMemberRole(member)"
-                      >
-                        {{ workspaceMemberRoleUpdatingUserId === member.userId ? '更新中...' : '更新项目角色' }}
-                      </button>
-                    </div>
-                    <div
-                      v-if="canRemoveWorkspaceMember(member)"
-                      class="mt-2 flex flex-wrap gap-2 items-center"
-                    >
-                      <button
-                        data-testid="project-member-remove-button"
-                        class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                        type="button"
-                        :disabled="workspaceMemberRoleUpdatingUserId === member.userId || workspaceMemberRemovingUserId === member.userId"
-                        @click="removeWorkspaceMember(member)"
-                      >
-                        {{ workspaceMemberRemovingUserId === member.userId ? '移除中...' : '移出项目' }}
-                      </button>
-                    </div>
-                  </article>
+                    <span class="workspace-settings-sidebar__item-indicator" />
+                    <span class="min-w-0 truncate">{{ item.label }}</span>
+                  </button>
                 </div>
               </section>
+            </div>
+          </aside>
 
-              <section>
-                <div class="border border-slate-200 rounded bg-white">
-                  <div class="text-[11px] text-slate-600 font-semibold px-3 py-2 border-b border-slate-200 bg-slate-50">
-                    待处理邀请（{{ workspaceInvitations.length }}）
+          <div class="min-w-0 space-y-4">
+            <section class="border border-slate-200 rounded-2xl bg-white overflow-hidden lg:hidden">
+              <div class="px-4 py-4 border-b border-slate-200 bg-slate-50/80">
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    v-for="group in workspaceSettingsGroups"
+                    :key="`workspace-settings-mobile-group-${group.id}`"
+                    class="text-xs font-semibold px-3 py-1.5 border rounded-full transition-colors"
+                    :class="settingsPrimaryGroup === group.id
+                      ? 'border-blue-200 bg-blue-50 text-blue-700'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+                    type="button"
+                    @click="activateWorkspaceSettingsSection(resolveWorkspaceSettingsDefaultSection(group.id), { behavior: 'auto' })"
+                  >
+                    {{ group.label }}
+                  </button>
+                </div>
+                <div class="pt-3 flex flex-wrap gap-2">
+                  <button
+                    v-for="item in workspaceSettingsSectionsByGroup[settingsPrimaryGroup]"
+                    :key="`workspace-settings-mobile-item-${item.id}`"
+                    class="text-xs font-semibold px-3 py-1.5 border rounded-full transition-colors"
+                    :class="settingsActiveSectionId === item.id
+                      ? 'border-blue-200 bg-blue-50 text-blue-700'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+                    type="button"
+                    @click="activateWorkspaceSettingsSection(item.id, { behavior: 'auto' })"
+                  >
+                    {{ item.label }}
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="border border-slate-200 rounded-2xl bg-white overflow-hidden">
+              <div class="px-5 py-4 border-b border-slate-200 bg-slate-50/80">
+                <p class="text-[10px] text-slate-400 tracking-[0.16em] font-semibold uppercase">
+                  {{ activeWorkspaceSettingsGroup?.label || 'Workspace' }}
+                </p>
+                <div class="mt-1 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h2 class="text-sm text-slate-900 font-semibold">
+                      {{ activeWorkspaceSettingsSection?.label || '设置' }}
+                    </h2>
+                    <p class="text-xs text-slate-500 leading-5 mt-1">
+                      {{ activeWorkspaceSettingsSection?.description || '管理项目配置与当前工作区显示偏好。' }}
+                    </p>
                   </div>
-
-                  <div v-if="workspaceInvitations.length === 0" class="text-[11px] text-slate-500 px-3 py-3">
-                    暂无待处理邀请。
+                  <div class="text-xs text-slate-500">
+                    {{ activeWorkspaceSettingsGroup?.description || '设置中心' }}
                   </div>
+                </div>
+              </div>
+            </section>
 
-                  <div v-else class="divide-slate-200 divide-y" data-testid="project-invitation-list">
-                    <article
-                      v-for="invitation in workspaceInvitations"
-                      :key="invitation.id"
-                      data-testid="project-invitation-item"
-                      :data-invitation-id="invitation.id"
-                      class="px-3 py-2.5"
-                    >
-                      <div class="flex flex-wrap gap-2 items-center justify-between">
-                        <p class="text-xs text-slate-800 font-semibold">
-                          {{ invitation.inviteeUsername || '通用邀请（未绑定用户）' }}
-                        </p>
-                        <span
-                          class="text-[10px] font-semibold px-2 py-0.5 border rounded-full"
-                          :class="workspaceInvitationStatusBadgeClass(invitation)"
+            <section
+              v-show="isDisplayPreferencesSectionActive"
+              id="workspace-settings-section-display-preferences"
+              data-testid="user-settings-display-preferences-tab"
+              class="border border-slate-200 rounded-2xl bg-white overflow-hidden"
+              @focusin.capture="settingsPrimaryGroup = 'personal'; settingsActiveSectionId = 'displayPreferences'"
+              @pointerdown.capture="settingsPrimaryGroup = 'personal'; settingsActiveSectionId = 'displayPreferences'"
+            >
+              <div class="px-5 py-4 border-b border-slate-200 bg-slate-50/80">
+                <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h3 class="text-sm text-slate-900 font-semibold">
+                      我的显示偏好
+                    </h3>
+                    <p class="text-xs text-slate-500 leading-5 mt-1">
+                      保存后仅影响当前工作区，不会覆盖团队默认。
+                    </p>
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    当前生效：{{ workspaceDisplayEffectiveSummary }}
+                  </div>
+                </div>
+              </div>
+
+              <div class="px-5 py-5 space-y-4" data-testid="user-settings-display-preferences-panel">
+                <div v-if="props.workspaceDisplayPreferencesError" class="text-xs text-rose-600 px-4 py-3 border border-rose-200 rounded-2xl bg-rose-50">
+                  {{ props.workspaceDisplayPreferencesError }}
+                </div>
+
+                <div v-if="props.workspaceDisplayPreferencesLoading" class="text-xs text-slate-500 px-4 py-3 border border-slate-200 rounded-2xl bg-slate-50">
+                  正在加载显示偏好...
+                </div>
+
+                <template v-else>
+                  <section class="p-4 border border-slate-200 rounded-2xl bg-slate-50/70 space-y-4">
+                    <div>
+                      <h4 class="text-sm text-slate-900 font-semibold">
+                        外观设置
+                      </h4>
+                      <p class="text-[11px] text-slate-500 mt-1">
+                        当前生效：{{ workspaceDisplayEffectiveSummary }}
+                      </p>
+                    </div>
+
+                    <div class="space-y-3">
+                      <div class="text-xs text-slate-600 flex items-center justify-between">
+                        <span>字体大小</span>
+                      </div>
+
+                      <div class="workspace-display-slider-shell">
+                        <div class="workspace-display-slider-track" aria-hidden="true">
+                          <div
+                            class="workspace-display-slider-track__fill"
+                            :style="{ width: userWorkspaceDisplaySliderProgress }"
+                          />
+                          <span
+                            v-for="(option, index) in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                            :key="`workspace-display-user-track-stop-${option.value}`"
+                            class="workspace-display-slider-track__stop"
+                            :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
+                              ? 'workspace-display-slider-track__stop--active'
+                              : ''"
+                            :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length) }"
+                          />
+                        </div>
+                        <input
+                          data-testid="workspace-display-user-font-size-select"
+                          class="workspace-display-slider"
+                          type="range"
+                          min="0"
+                          :max="Math.max(0, WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length - 1)"
+                          step="1"
+                          :value="userWorkspaceDisplaySliderValue"
+                          @input="updateUserWorkspaceDisplayFontSizeDraft(($event.target as HTMLInputElement).value)"
                         >
-                          {{ workspaceInvitationStatusLabel(invitation) }}
+                      </div>
+
+                      <div class="gap-2 grid" :style="resolveWorkspaceDisplaySliderGridStyle(WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length)">
+                        <span
+                          v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                          :key="`workspace-display-user-label-${option.value}`"
+                          class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
+                          :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
+                            ? 'text-blue-700'
+                            : 'text-slate-500'"
+                        >
+                          <span>{{ option.label }}</span>
+                          <span
+                            v-if="option.value === workspaceDisplayRecommendedFontSizePreset"
+                            class="workspace-display-slider-label__tag-wrap"
+                          >
+                            <span
+                              data-testid="workspace-display-recommended-tag"
+                              class="workspace-display-slider-label__tag"
+                              tabindex="0"
+                            >
+                              推荐
+                            </span>
+                            <span class="workspace-display-slider-label__tooltip">
+                              {{ recommendedWorkspaceDisplayTagText }}
+                            </span>
+                          </span>
                         </span>
                       </div>
-                      <p class="text-[11px] text-slate-600 mt-1">
-                        {{ workspaceRoleLabel(invitation.projectRole || 'viewer') }} · 发起人 {{ invitation.invitedByUsername }}
-                      </p>
-                      <p class="text-[11px] text-slate-500 mt-1">
-                        {{ workspaceInvitationScopeLabel(invitation) }}
-                      </p>
-                      <p class="text-[11px] text-slate-500 mt-1">
-                        过期时间：{{ formatDateTime(invitation.expiresAt) }}
-                      </p>
+
+                      <span class="text-[11px] text-slate-500 block">
+                        当前来源：{{ userWorkspaceDisplaySourceSummary }}
+                      </span>
+                    </div>
+
+                    <div class="space-y-3">
+                      <div class="text-xs text-slate-600 flex items-center justify-between">
+                        <span>标签边距</span>
+                        <span class="text-[11px] text-slate-400">当前预览：{{ userWorkspaceDisplayPreviewTabSpacingLabel }}</span>
+                      </div>
+
+                      <div class="workspace-display-slider-shell">
+                        <div class="workspace-display-slider-track" aria-hidden="true">
+                          <div
+                            class="workspace-display-slider-track__fill"
+                            :style="{ width: userWorkspaceDisplayTabSpacingSliderProgress }"
+                          />
+                          <span
+                            v-for="(option, index) in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                            :key="`workspace-display-user-tab-spacing-track-stop-${option.value}`"
+                            class="workspace-display-slider-track__stop"
+                            :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
+                              ? 'workspace-display-slider-track__stop--active'
+                              : ''"
+                            :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length) }"
+                          />
+                        </div>
+                        <input
+                          data-testid="workspace-display-user-tab-spacing-select"
+                          class="workspace-display-slider"
+                          type="range"
+                          min="0"
+                          :max="Math.max(0, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length - 1)"
+                          step="1"
+                          :value="userWorkspaceDisplayTabSpacingSliderValue"
+                          @input="updateUserWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
+                        >
+                      </div>
+
+                      <div class="gap-2 grid" :style="resolveWorkspaceDisplaySliderGridStyle(WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length)">
+                        <span
+                          v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                          :key="`workspace-display-user-tab-spacing-label-${option.value}`"
+                          class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
+                          :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
+                            ? 'text-blue-700'
+                            : 'text-slate-500'"
+                        >
+                          <span>{{ option.label }}</span>
+                          <span
+                            v-if="option.value === workspaceDisplayRecommendedTabSpacingPreset"
+                            class="workspace-display-slider-label__tag-wrap"
+                          >
+                            <span class="workspace-display-slider-label__tag" tabindex="0">
+                              推荐
+                            </span>
+                            <span class="workspace-display-slider-label__tooltip">
+                              {{ recommendedWorkspaceDisplayTagText }}
+                            </span>
+                          </span>
+                        </span>
+                      </div>
+
+                      <span class="text-[11px] text-slate-500 block">
+                        较小档位会逐步压缩顶部标签页的横向边距和最小宽度，并同步压缩左侧资源列表密度；默认档对应当前标准密度。推荐：{{ workspaceDisplayRecommendedTabSpacingLabel }}。
+                      </span>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2 justify-end">
                       <button
-                        v-if="workspaceCanManageMembers && workspaceInvitationStatus(invitation) === 'pending'"
-                        class="text-[11px] text-rose-600 font-semibold mt-2 px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        class="text-[11px] font-semibold px-3 py-1.5 border border-slate-200 rounded-full bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                         type="button"
-                        :disabled="workspaceInvitationRevokingId === invitation.id"
-                        @click="revokeWorkspaceInvitation(invitation.id)"
+                        :disabled="props.workspaceDisplayPreferencesSavingScope === 'user'"
+                        @click="restoreRecommendedWorkspaceDisplay"
                       >
-                        {{ workspaceInvitationRevokingId === invitation.id ? '撤销中...' : '撤销邀请' }}
+                        还原为工作区推荐设置
                       </button>
-                    </article>
-                  </div>
-                </div>
-              </section>
-            </div>
-          </template>
-        </section>
-      </div>
-
-      <div v-else-if="activeTabId === 'settings'" class="mx-auto max-w-5xl space-y-4">
-        <section class="border border-slate-200 rounded-lg bg-white overflow-hidden">
-          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div class="flex gap-3 items-center">
-              <span class="material-symbols-outlined text-xl text-blue-600">settings</span>
-              <div>
-                <h2 class="text-sm font-bold">
-                  项目通用设置
-                </h2>
-                <div class="text-[11px] text-slate-500 mt-0.5">
-                  项目通用信息
-                </div>
+                      <button
+                        class="text-[11px] text-white font-semibold px-3 py-1.5 rounded-full bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        type="button"
+                        :disabled="props.workspaceDisplayPreferencesSavingScope === 'user' || !userWorkspaceDisplayChanged"
+                        @click="saveWorkspaceDisplayUserOverride"
+                      >
+                        {{ props.workspaceDisplayPreferencesSavingScope === 'user' ? '保存中...' : '保存个人设置' }}
+                      </button>
+                    </div>
+                  </section>
+                </template>
               </div>
+            </section>
+
+            <div v-show="Boolean(activeWorkspaceProjectSectionId)" class="space-y-4">
+              <WorkspaceProjectSettingsTab
+                :active-project="activeProject"
+                :active-project-id="props.activeProjectId"
+                :active-settings-section-id="activeWorkspaceProjectSectionId"
+                :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
+                :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
+                :contests="projectSettingsContestOptions"
+                :project-settings-loading="projectSettingsLoading"
+                :project-settings-save-state="projectSettingsSaveState"
+                :project-settings-common="projectSettingsCommon"
+                :project-settings-bindings="projectSettingsBindings"
+                :project-settings-current-contest-id="projectSettingsCurrentContestId"
+                :project-settings-adaptation="projectSettingsAdaptation"
+                :project-settings-has-current-contest="projectSettingsHasCurrentContest"
+                :project-resource-shares="projectResourceShares"
+                :project-resource-shares-loading="projectResourceSharesLoading"
+                :project-settings-save-label="projectSettingsSaveLabel"
+                :project-settings-save-badge-class="projectSettingsSaveBadgeClass"
+                :project-settings-contest-name="projectSettingsContestName"
+                :contest-tracks-by-contest-id="contestTracksByContestId"
+                :share-visibility-label="shareVisibilityLabel"
+                :share-status-label="shareStatusLabel"
+                :share-status-badge-class="shareStatusBadgeClass"
+                :get-share-status="getShareStatus"
+                :format-date-time="formatDateTime"
+                @emit-project-settings-common="emitProjectSettingsCommon"
+                @update-project-settings-common-field="updateProjectSettingsCommonField($event.field, $event.value)"
+                @save-project-settings="emit('saveProjectSettings')"
+                @add-project-settings-binding="onAddProjectSettingsBinding"
+                @update-project-settings-binding-contest="updateProjectSettingsBindingContest($event.index, $event.contestId)"
+                @update-project-settings-binding-track="updateProjectSettingsBindingTrack($event.index, $event.trackId)"
+                @use-binding-as-current-contest="useBindingAsCurrentContest($event.contestId, $event.trackId)"
+                @remove-project-settings-binding="removeProjectSettingsBinding"
+                @update-project-settings-adaptation-field="updateProjectSettingsAdaptationField($event.field, $event.value)"
+                @copy-project-resource-share="emit('copyProjectResourceShare', $event)"
+                @revoke-project-resource-share="emit('revokeProjectResourceShare', $event)"
+              />
             </div>
 
-            <div class="flex gap-2 items-center">
-              <span
-                class="text-[11px] font-medium px-2 py-1 border rounded"
-                :class="projectSettingsSaveBadgeClass"
-              >
-                {{ projectSettingsSaveLabel }}
-              </span>
-              <button
-                class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                type="button"
-                :disabled="!hasActiveProject || projectSettingsLoading"
-                @click="emit('saveProjectSettings')"
-              >
-                立即保存
-              </button>
-            </div>
-          </div>
-
-          <div class="p-4">
-            <div v-if="projectSettingsLoading" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
-              正在加载项目设置...
-            </div>
-
-            <div v-else-if="!hasActiveProject" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
-              当前 Team 暂无可编辑项目，请先创建或切换到目标项目。
-            </div>
-
-            <div v-else class="space-y-3">
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">项目标题</span>
-                <input
-                  :value="projectSettingsCommon.title"
-                  class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                  placeholder="输入项目标题"
-                  @input="updateProjectSettingsCommonField('title', ($event.target as HTMLInputElement).value)"
-                >
-              </label>
-
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">项目介绍（摘要）</span>
-                <textarea
-                  :value="projectSettingsCommon.summary"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                  placeholder="输入项目介绍"
-                  @input="updateProjectSettingsCommonField('summary', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-
-              <div class="gap-3 grid grid-cols-1 md:grid-cols-2">
-                <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                  <span class="block">问题陈述</span>
-                  <textarea
-                    :value="projectSettingsCommon.problemStatement"
-                    class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('problemStatement', ($event.target as HTMLTextAreaElement).value)"
-                  />
-                </label>
-
-                <label class="text-xs text-slate-600 block space-y-1">
-                  <span class="block">创新点（每行一条）</span>
-                  <textarea
-                    :value="projectSettingsCommon.innovationPointsText"
-                    class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('innovationPointsText', ($event.target as HTMLTextAreaElement).value)"
-                  />
-                </label>
-                <label class="text-xs text-slate-600 block space-y-1">
-                  <span class="block">技术路线（每行一条）</span>
-                  <textarea
-                    :value="projectSettingsCommon.techRouteStepsText"
-                    class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('techRouteStepsText', ($event.target as HTMLTextAreaElement).value)"
-                  />
-                </label>
-                <label class="text-xs text-slate-600 block space-y-1">
-                  <span class="block">评分映射（每行一条）</span>
-                  <textarea
-                    :value="projectSettingsCommon.scoringMappingText"
-                    class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('scoringMappingText', ($event.target as HTMLTextAreaElement).value)"
-                  />
-                </label>
-                <label class="text-xs text-slate-600 block space-y-1">
-                  <span class="block">风险项（每行一条）</span>
-                  <textarea
-                    :value="projectSettingsCommon.risksText"
-                    class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('risksText', ($event.target as HTMLTextAreaElement).value)"
-                  />
-                </label>
-                <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                  <span class="block">交付物（每行一条）</span>
-                  <textarea
-                    :value="projectSettingsCommon.deliverablesText"
-                    class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('deliverablesText', ($event.target as HTMLTextAreaElement).value)"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <template v-if="!projectSettingsLoading && hasActiveProject">
-          <section class="p-4 border border-slate-200 rounded-lg bg-white">
-            <div class="mb-3 flex gap-2 items-center justify-between">
-              <h3 class="text-xs text-slate-700 font-semibold">
-                竞赛与赛道绑定
-              </h3>
-              <button
-                class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                type="button"
-                @click="onAddProjectSettingsBinding"
-              >
-                添加竞赛
-              </button>
-            </div>
-
-            <div class="space-y-2">
-              <div
-                v-for="(binding, index) in projectSettingsBindings"
-                :key="`binding-${binding.contestId}-${index}`"
-                class="gap-2 grid grid-cols-1 items-center md:grid-cols-[1fr,1fr,auto,auto]"
-              >
-                <select
-                  :value="binding.contestId"
-                  class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                  @change="updateProjectSettingsBindingContest(index, ($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="" disabled>
-                    选择竞赛
-                  </option>
-                  <option v-for="contest in projectSettingsContestOptions" :key="contest.id" :value="contest.id">
-                    {{ contest.name }}
-                  </option>
-                </select>
-
-                <select
-                  :value="binding.trackId"
-                  class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                  @change="updateProjectSettingsBindingTrack(index, ($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="" disabled>
-                    选择赛道
-                  </option>
-                  <option v-for="track in contestTracksByContestId(binding.contestId)" :key="track.id" :value="track.id">
-                    {{ track.name }}
-                  </option>
-                </select>
-
-                <button
-                  class="text-[11px] font-semibold px-2.5 py-1 border rounded transition-colors"
-                  :class="binding.contestId === projectSettingsCurrentContestId ? 'text-blue-700 border-blue-200 bg-blue-50' : 'text-slate-600 border-slate-200 bg-white hover:bg-slate-50'"
-                  type="button"
-                  @click="useBindingAsCurrentContest(binding.contestId, binding.trackId)"
-                >
-                  {{ binding.contestId === projectSettingsCurrentContestId ? '当前竞赛' : '设为当前' }}
-                </button>
-
-                <button
-                  class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                  type="button"
-                  :disabled="projectSettingsBindings.length <= 1"
-                  @click="removeProjectSettingsBinding(index)"
-                >
-                  删除
-                </button>
-              </div>
-
-              <p v-if="projectSettingsBindings.length === 0" class="text-[11px] text-slate-500">
-                {{ projectSettingsContestOptions.length > 0 ? '暂无竞赛绑定，请先添加至少一个竞赛并指定赛道。' : '暂无可用竞赛，点击“添加竞赛”可在弹窗中刷新并绑定。' }}
-              </p>
-            </div>
-          </section>
-
-          <section v-if="projectSettingsHasCurrentContest" class="p-4 border border-slate-200 rounded-lg bg-white">
-            <h3 class="text-xs text-slate-700 font-semibold mb-3">
-              当前竞赛适配稿
-              <span class="text-slate-400 font-normal ml-1">
-                {{ projectSettingsContestName || projectSettingsCurrentContestId }}
-              </span>
-            </h3>
-            <div class="gap-3 grid grid-cols-1 md:grid-cols-2">
-              <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                <span class="block">问题陈述</span>
-                <textarea
-                  :value="projectSettingsAdaptation.problemStatement"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('problemStatement', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">创新点（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.innovationPointsText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('innovationPointsText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">技术路线（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.techRouteStepsText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('techRouteStepsText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">评分映射（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.scoringMappingText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('scoringMappingText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">风险项（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.risksText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('risksText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                <span class="block">交付物（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.deliverablesText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('deliverablesText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                <span class="block">摘要</span>
-                <textarea
-                  :value="projectSettingsAdaptation.summary"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('summary', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-            </div>
-          </section>
-
-          <section class="p-4 border border-slate-200 rounded-lg bg-white">
-            <div class="mb-3 flex items-center justify-between">
-              <h3 class="text-xs text-slate-700 font-semibold">
-                分享链接管理
-              </h3>
-              <span class="text-[11px] text-slate-500">
-                共 {{ projectResourceShares.length }} 条
-              </span>
-            </div>
-
-            <div v-if="projectResourceSharesLoading" class="text-xs text-slate-500 px-3 py-2 border border-slate-200 rounded bg-slate-50">
-              正在加载分享链接...
-            </div>
-
-            <div v-else-if="projectResourceShares.length === 0" class="text-xs text-slate-500 px-3 py-2 border border-slate-200 rounded bg-slate-50">
-              暂无分享链接，可在左侧文件菜单点击“分享链接”创建。
-            </div>
-
-            <div v-else class="space-y-2">
-              <article
-                v-for="share in projectResourceShares"
-                :key="share.id"
-                class="px-3 py-2 border border-slate-200 rounded"
-              >
-                <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div class="min-w-0">
-                    <p class="text-xs text-slate-700 font-semibold truncate">
-                      {{ share.resourceTitle || share.resourceId }}
-                    </p>
-                    <p class="text-[11px] text-slate-500 mt-1 break-all">
-                      {{ share.shareUrl }}
-                    </p>
-                    <p class="text-[11px] text-slate-500 mt-1">
-                      {{ shareVisibilityLabel(share.visibility) }} · {{ share.duration }} · 到期 {{ formatDateTime(share.expiresAt) }}
+            <section
+              v-show="isTeamDefaultSectionActive && props.workspaceDisplayPreferences.canManageTeamDefault"
+              id="workspace-settings-section-team-default"
+              data-testid="workspace-settings-section-team-default"
+              class="border border-slate-200 rounded-2xl bg-white overflow-hidden"
+              @focusin.capture="settingsPrimaryGroup = 'workspace'; settingsActiveSectionId = 'teamDefault'"
+              @pointerdown.capture="settingsPrimaryGroup = 'workspace'; settingsActiveSectionId = 'teamDefault'"
+            >
+              <div class="px-5 py-4 border-b border-slate-200 bg-slate-50/80">
+                <div class="flex gap-3">
+                  <span class="material-symbols-outlined text-xl text-slate-700 mt-0.5">groups</span>
+                  <div>
+                    <h3 class="text-sm text-slate-900 font-semibold">
+                      团队默认显示偏好
+                    </h3>
+                    <p class="text-xs text-slate-500 leading-5 mt-1">
+                      新成员首次进入当前工作区时，将优先继承这里的默认设置。
                     </p>
                   </div>
-                  <div class="flex gap-2 items-center">
-                    <span
-                      class="text-[10px] font-semibold px-2 py-0.5 border rounded-full"
-                      :class="shareStatusBadgeClass(share)"
-                    >
-                      {{ shareStatusLabel(share) }}
-                    </span>
-                    <button
-                      class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50"
-                      type="button"
-                      @click="emit('copyProjectResourceShare', share.id)"
-                    >
-                      复制链接
-                    </button>
-                    <button
-                      class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      type="button"
-                      :disabled="getShareStatus(share) === 'revoked'"
-                      @click="emit('revokeProjectResourceShare', share.id)"
-                    >
-                      失效
-                    </button>
+                </div>
+              </div>
+
+              <div class="px-5 py-5 space-y-4">
+                <div class="gap-4 grid md:grid-cols-2">
+                  <label class="text-xs text-slate-600 block space-y-1.5">
+                    <span class="text-slate-700 font-semibold">默认字号</span>
+                    <UiSelect
+                      :model-value="teamWorkspaceDisplayFontSizeDraft"
+                      :options="workspaceDisplayFontSizeSelectOptions"
+                      aria-label="团队默认字号"
+                      class="w-full"
+                      @change="value => teamWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(String(value))"
+                    />
+                  </label>
+
+                  <label class="text-xs text-slate-600 block space-y-1.5">
+                    <span class="text-slate-700 font-semibold">默认标签边距</span>
+                    <UiSelect
+                      :model-value="teamWorkspaceDisplayTabSpacingDraft"
+                      :options="workspaceDisplayTabSpacingSelectOptions"
+                      aria-label="团队默认标签边距"
+                      class="w-full"
+                      @change="value => teamWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(String(value))"
+                    />
+                  </label>
+                </div>
+
+                <div class="space-y-2">
+                  <div class="rounded-full bg-slate-200 h-2 overflow-hidden">
+                    <div class="rounded-full bg-blue-500 h-full transition-all" :style="{ width: teamWorkspaceDisplayTabSpacingSliderProgress }" />
                   </div>
+                  <input
+                    :value="teamWorkspaceDisplayTabSpacingSliderValue"
+                    class="w-full"
+                    :max="Math.max(0, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length - 1)"
+                    min="0"
+                    step="1"
+                    type="range"
+                    @input="updateTeamWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
+                  >
                 </div>
-              </article>
-            </div>
-          </section>
-        </template>
-      </div>
 
-      <div v-else-if="activeResourceTab" class="h-full min-h-0 w-full">
-        <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
-          <div class="bg-slate-50 flex-1 min-h-0">
-            <template v-if="activePreviewMode === 'markdown'">
-              <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
-                <div class="text-xs text-slate-600">
-                  {{ activeResourceTab.title }}
-                  <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
-                </div>
-                <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ collabConnectionText }}
+                <div class="flex justify-end">
+                  <button
+                    class="text-xs text-white font-semibold px-3.5 py-2 rounded-full bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                    type="button"
+                    :disabled="props.workspaceDisplayPreferencesLoading || props.workspaceDisplayPreferencesSavingScope === 'team' || !teamWorkspaceDisplayChanged"
+                    @click="saveWorkspaceDisplayTeamDefault"
+                  >
+                    保存团队默认
+                  </button>
                 </div>
               </div>
-              <div class="grid grid-cols-1 h-full xl:grid-cols-[minmax(0,1fr),220px]">
-                <div class="border-b border-slate-200 bg-white min-h-0 xl:border-b-0 xl:border-r">
-                  <RichTextEditor
-                    :doc="collabMarkdownDoc"
-                    :editable="true"
-                    placeholder="输入正文或标题，协作文档会实时同步"
-                    :heading-levels="[1, 2, 3]"
-                  />
-                </div>
-                <CollabPresencePanel :members="collabPresenceMembers" />
-              </div>
-            </template>
-
-            <template v-else-if="activePreviewMode === 'draw'">
-              <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
-                <div class="text-xs text-slate-600">
-                  {{ activeResourceTab.title }}
-                  <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
-                </div>
-                <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ collabConnectionText }}
-                </div>
-              </div>
-              <div class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
-                <div class="flex flex-col h-full">
-                  <WorkspaceTldrawCanvas
-                    :key="props.previewResourceId || activeResourceTab.id"
-                    class="h-full min-h-0 w-full"
-                    :model-value="collabDrawValue"
-                    :persistence-key="`workspace-collab-${props.previewResourceId || activeResourceTab.id}`"
-                    :readonly="false"
-                    @update:model-value="onCollabDrawModelUpdate"
-                  />
-                  <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
-                    {{ collabDrawError }}
-                  </p>
-                </div>
-                <CollabPresencePanel :members="collabPresenceMembers" />
-              </div>
-            </template>
-
-            <template v-else>
-              <div v-if="previewStatusLoading && !previewStatus" class="text-sm text-slate-500 flex h-full items-center justify-center">
-                正在获取预览状态...
-              </div>
-
-              <template v-else-if="previewStatus?.status === 'succeeded'">
-                <iframe
-                  class="border-0 bg-white h-full w-full"
-                  :src="previewPdfUrl"
-                  title="资料预览"
-                />
-              </template>
-
-              <div v-else class="px-6 flex flex-col h-full items-center justify-center">
-                <p class="text-base text-slate-700 font-semibold">
-                  {{ previewStatus ? previewStatusLabel(previewStatus.status) : '等待预览状态' }}
-                </p>
-                <p v-if="previewStatus && previewStatus.status !== 'failed'" class="text-sm text-slate-500 mt-2">
-                  预计剩余：{{ formatEtaSeconds(previewStatus.etaSeconds) }}
-                  <template v-if="previewStatus.queuePosition > 0">
-                    （当前队列位置：{{ previewStatus.queuePosition }}）
-                  </template>
-                </p>
-                <p v-if="previewStatus?.error" class="text-xs text-rose-600 mt-2 text-center max-w-2xl">
-                  {{ previewErrorMessage(previewStatus.error) }}
-                </p>
-                <button
-                  v-if="previewStatus?.status === 'failed'"
-                  class="text-xs text-rose-700 font-semibold mt-4 px-3 py-1.5 border border-rose-200 rounded bg-rose-50 transition-colors hover:bg-rose-100"
-                  type="button"
-                  @click="emit('reconvertPreview')"
-                >
-                  重新转换
-                </button>
-
-                <div class="mt-5 rounded-full bg-slate-200 h-2 max-w-xl w-full overflow-hidden">
-                  <div
-                    class="rounded-full h-full transition-all duration-300 ease-out from-blue-600 to-cyan-500 bg-gradient-to-r"
-                    :style="{ width: `${Math.max(0, Math.min(100, Number(previewStatus?.progressPercent || 0)))}%` }"
-                  />
-                </div>
-              </div>
-            </template>
+            </section>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div v-else class="mx-auto max-w-5xl space-y-4">
-        <div class="p-6 text-center border border-slate-200 rounded-lg bg-white shadow-sm">
-          <div class="text-sm text-slate-700 font-semibold">
-            WinLoop
-          </div>
-          <div class="text-xs text-slate-500 mt-2">
-            当前没有打开的标签页，可点击上方“打开仪表盘”继续。
-          </div>
-        </div>
-      </div>
+      <WorkspaceDesignPanel
+        v-else-if="isActiveDesignResource"
+        ref="designPanelRef"
+        class="h-full min-h-0 w-full"
+        :design-resource-id="activeDesignResourceId"
+        :bound-resource-id="props.collabResourceId"
+        :project-id="props.activeProjectId"
+        :workspace-id="props.activeProject?.teamId || props.activeProject?.workspaceId || ''"
+        :current-user-id="props.currentUserId"
+        :is-platform-admin-user="props.isPlatformAdminUser"
+        :design-panel-title="activeDesignPanelTitle"
+        :has-design-resource="isActiveDesignResource"
+        :collab-revision="collabRevision"
+        :collab-connected="collabConnected"
+        :collab-connection-text="collabConnectionText"
+        :collab-presence-cursors="collabPresenceCursors"
+        :model-value="props.collabDrawValue"
+        :collab-draw-error="collabDrawError"
+        :design-editor-engine="activeResource?.editorEngine || ''"
+        :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
+        :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
+        @update:model-value="onCollabDrawModelUpdate"
+        @update-collab-cursor="onCollabCursorUpdate"
+        @activate-resource="emitActivatePreviewResource($event)"
+        @open-resource="emit('openResource', $event)"
+        @create-device-arrangement="emit('createDeviceArrangement', $event)"
+      />
+
+      <WorkspaceDeviceArrangementPanel
+        v-else-if="isActiveDeviceArrangementResource"
+        class="h-full min-h-0 w-full"
+        :project-id="props.activeProjectId"
+        :resource-id="activeDeviceArrangementResourceId"
+        :resource-title="activeResource?.title || '设备排布'"
+        @save-state-change="onDeviceArrangementSaveStateChange"
+      />
+
+      <WorkspaceResourcePreviewTab
+        v-else-if="activeResourceTab"
+        ref="resourcePreviewTabRef"
+        :active-resource-tab="activeResourceTab"
+        :active-preview-mode="activePreviewMode"
+        :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
+        :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
+        :preview-resource-id="props.previewResourceId"
+        :project-id="props.activeProjectId"
+        :preview-status="previewStatus"
+        :preview-status-loading="previewStatusLoading"
+        :preview-pdf-url="previewPdfUrl"
+        :collab-preview-loading="props.collabPreviewLoading"
+        :collab-preview-error="props.collabPreviewError"
+        :current-user-id="props.currentUserId"
+        :current-user-name="props.currentUserName"
+        :current-user-avatar-url="props.currentUserAvatarUrl"
+        :collab-revision="collabRevision"
+        :collab-connected="collabConnected"
+        :collab-connection-text="collabConnectionText"
+        :collab-markdown-doc="collabMarkdownDoc"
+        :collab-markdown-awareness="collabMarkdownAwareness"
+        :collab-current-user="collabCurrentUser"
+        :collab-presence-users="collabPresenceUsers"
+        :collab-presence-cursors="collabPresenceCursors"
+        :inline-completion-enabled="props.inlineCompletionEnabled"
+        :inline-completion-request-handler="props.inlineCompletionRequestHandler"
+        :inline-completion-accept-handler="props.inlineCompletionAcceptHandler"
+        :image-upload-handler="markdownImageUploadHandler"
+        :comment-threads="commentThreads"
+        :active-comment-thread-id="activeCommentThreadId"
+        :comment-draft-anchor="activePreviewMode === 'markdown' ? props.commentDraftAnchor : null"
+        :comment-loading="activePreviewMode === 'markdown' ? props.commentLoading : false"
+        :comment-mutating="activePreviewMode === 'markdown' ? props.commentMutating : false"
+        :collab-draw-value="collabDrawValue"
+        :collab-draw-error="collabDrawError"
+        :preview-status-label="previewStatusLabel"
+        :format-eta-seconds="formatEtaSeconds"
+        :preview-error-message="previewErrorMessage"
+        @reconvert-preview="emit('reconvertPreview')"
+        @update-collab-draw-value="onCollabDrawModelUpdate"
+        @update-collab-cursor="onCollabCursorUpdate"
+        @markdown-selection-change="onMarkdownSelectionChange"
+        @markdown-remote-presence-change="onMarkdownRemotePresenceChange"
+        @markdown-primary-heading-change="emit('markdownPrimaryHeadingChange', $event)"
+        @markdown-outline-change="emit('markdownOutlineChange', $event)"
+        @markdown-create-comment-from-selection="emit('markdownCreateCommentFromSelection', $event)"
+        @markdown-create-comment-from-image="emit('markdownCreateCommentFromImage', $event)"
+        @markdown-open-comment-thread="emit('markdownOpenCommentThread', $event)"
+        @markdown-request-image-action="emit('markdownRequestImageAction', $event)"
+        @markdown-cancel-comment-draft="emit('markdownCancelCommentDraft')"
+        @markdown-reply-comment-thread="emit('markdownReplyCommentThread', $event)"
+        @markdown-resolve-comment-thread="emit('markdownResolveCommentThread', $event)"
+        @markdown-reopen-comment-thread="emit('markdownReopenCommentThread', $event)"
+        @markdown-create-comment-thread="emit('markdownCreateCommentThread', $event)"
+      />
+
+      <WorkspaceMainPanelEmptyState v-else />
     </div>
 
-    <a-modal
-      v-model:visible="workspaceInviteModalVisible"
-      title="邀请协作者"
-      data-testid="project-invite-modal"
-      width="560px"
-      :footer="false"
-      :esc-to-close="true"
-      :mask-closable="true"
-    >
-      <div class="space-y-3">
-        <div class="text-[11px] text-slate-500 p-2 border border-slate-200 rounded bg-slate-50">
-          <p class="m-0">
-            接受邀请后会先加入当前空间，再加入当前项目。
-          </p>
-          <p class="m-0 mt-1">
-            {{ workspaceInviteProjectLabel }}
-          </p>
-        </div>
+    <WorkspaceInviteModal
+      :visible="workspaceInviteModalVisible"
+      :workspace-can-manage-members="workspaceCanManageMembers"
+      :workspace-invitation-submitting="workspaceInvitationSubmitting"
+      :workspace-invite-project-label="workspaceInviteProjectLabel"
+      :workspace-invitation-link="workspaceInvitationLink"
+      :workspace-invitation-error="workspaceInvitationError"
+      :workspace-invite-unavailable-message="workspaceInviteUnavailableMessage"
+      :can-submit-workspace-invitation="canSubmitWorkspaceInvitation"
+      :invitee-username="workspaceInviteForm.inviteeUsername"
+      :invite-role="workspaceInviteForm.role"
+      :invite-expires-in-days="workspaceInviteForm.expiresInDays"
+      :workspace-invite-role-options="workspaceInviteRoleOptions"
+      :workspace-role-label="workspaceRoleLabel"
+      @close="closeWorkspaceInviteModal"
+      @copy-link="emit('copyWorkspaceInvitationLink')"
+      @submit-invitation="submitWorkspaceInvitation"
+      @update-invitee-username="workspaceInviteForm.inviteeUsername = $event"
+      @update-invite-role="workspaceInviteForm.role = $event"
+      @update-invite-expires-in-days="workspaceInviteForm.expiresInDays = $event"
+    />
 
-        <template v-if="workspaceCanManageMembers">
-          <label class="text-[11px] text-slate-600 block space-y-1">
-            <span class="block">邀请用户名（可选）</span>
-            <input
-              v-model="workspaceInviteForm.inviteeUsername"
-              data-testid="project-invite-username-input"
-              class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-              placeholder="留空时生成通用邀请"
-            >
-          </label>
+    <WorkspaceSeatModal
+      :visible="workspaceSeatModalVisible"
+      :normalized-workspace-seat-used="normalizedWorkspaceSeatUsed"
+      :normalized-workspace-seat-limit="normalizedWorkspaceSeatLimit"
+      :workspace-seat-summary-text="workspaceSeatSummaryText"
+      :workspace-seat-limit-draft="workspaceSeatLimitDraft"
+      :workspace-seat-draft-too-small="workspaceSeatDraftTooSmall"
+      :workspace-seat-draft-too-large="workspaceSeatDraftTooLarge"
+      :workspace-seat-limit-error="workspaceSeatLimitError"
+      :workspace-seat-limit-save-loading="workspaceSeatLimitSaveLoading"
+      :can-submit-workspace-seat-limit="canSubmitWorkspaceSeatLimit"
+      @close="closeWorkspaceSeatModal"
+      @submit-seat-limit="submitWorkspaceSeatLimit"
+      @update-workspace-seat-limit-draft="workspaceSeatLimitDraft = $event"
+    />
 
-          <div class="gap-2 grid grid-cols-2">
-            <label class="text-[11px] text-slate-600 block space-y-1">
-              <span class="block">项目角色</span>
-              <select
-                v-model="workspaceInviteForm.role"
-                data-testid="project-invite-role-select"
-                class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-              >
-                <option
-                  v-for="role in workspaceInviteRoleOptions"
-                  :key="`workspace-role-option-${role}`"
-                  :value="role"
-                >
-                  {{ workspaceRoleLabel(role) }}
-                </option>
-              </select>
-            </label>
-
-            <label class="text-[11px] text-slate-600 block space-y-1">
-              <span class="block">有效期</span>
-              <select
-                v-model.number="workspaceInviteForm.expiresInDays"
-                data-testid="project-invite-expiry-select"
-                class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-              >
-                <option :value="1">
-                  1 天
-                </option>
-                <option :value="3">
-                  3 天
-                </option>
-                <option :value="7">
-                  7 天
-                </option>
-                <option :value="14">
-                  14 天
-                </option>
-                <option :value="30">
-                  30 天
-                </option>
-              </select>
-            </label>
-          </div>
-
-          <div v-if="workspaceInvitationLink" class="text-[11px] text-slate-600 px-2.5 py-2 border border-slate-200 rounded bg-slate-50">
-            <p class="text-slate-700 font-semibold">
-              最新邀请链接
-            </p>
-            <p class="mt-1 break-all" data-testid="project-invite-link">
-              {{ workspaceInvitationLink }}
-            </p>
-            <button
-              data-testid="project-invite-copy-link-button"
-              class="text-[11px] font-semibold mt-2 px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50"
-              type="button"
-              @click="emit('copyWorkspaceInvitationLink')"
-            >
-              复制邀请链接
-            </button>
-          </div>
-
-          <div class="flex gap-2 justify-end">
-            <a-button size="small" @click="closeWorkspaceInviteModal">
-              关闭
-            </a-button>
-            <a-button
-              size="small"
-              type="primary"
-              data-testid="project-invite-submit-button"
-              :loading="workspaceInvitationSubmitting"
-              :disabled="!canSubmitWorkspaceInvitation"
-              @click="submitWorkspaceInvitation"
-            >
-              生成邀请链接
-            </a-button>
-          </div>
-        </template>
-
-        <template v-else>
-          <p class="text-[11px] text-amber-700 px-2.5 py-2 border border-amber-200 rounded bg-amber-50">
-            {{ workspaceInviteUnavailableMessage }}
-          </p>
-          <div class="flex justify-end">
-            <a-button size="small" @click="closeWorkspaceInviteModal">
-              关闭
-            </a-button>
-          </div>
-        </template>
-      </div>
-    </a-modal>
-
-    <a-modal
-      v-model:visible="workspaceSeatModalVisible"
-      title="调整项目席位"
-      width="560px"
-      :footer="false"
-    >
-      <div class="text-[11px] space-y-3">
-        <div class="p-2 border border-slate-200 rounded bg-slate-50">
-          <p class="text-[11px] text-slate-800 font-semibold m-0">
-            当前项目席位
-          </p>
-          <p class="text-[12px] text-slate-700 m-0 mt-1">
-            {{ normalizedWorkspaceSeatUsed }} / {{ normalizedWorkspaceSeatLimit ?? '--' }}
-          </p>
-          <p class="text-[11px] text-slate-500 m-0 mt-1">
-            {{ workspaceSeatSummaryText }}
-          </p>
-        </div>
-
-        <label class="text-[11px] text-slate-600 block space-y-1">
-          <span class="block">目标席位上限</span>
-          <a-input-number
-            v-model="workspaceSeatLimitDraft"
-            :min="1"
-            :max="15"
-            :step="1"
-            :precision="0"
-            size="small"
-            class="w-full"
-            placeholder="输入新的项目席位上限"
-          />
-        </label>
-
-        <p v-if="workspaceSeatDraftTooSmall" class="text-amber-700 p-2 border border-amber-200 rounded bg-amber-50">
-          项目席位上限不能小于当前已使用席位（{{ normalizedWorkspaceSeatUsed }}）。
-        </p>
-
-        <p v-if="workspaceSeatDraftTooLarge" class="text-amber-700 p-2 border border-amber-200 rounded bg-amber-50">
-          每个项目最多支持 15 个协作席位。
-        </p>
-
-        <p v-if="workspaceSeatLimitError" class="text-rose-600 p-2 border border-rose-200 rounded bg-rose-50">
-          {{ workspaceSeatLimitError }}
-        </p>
-
-        <div class="flex gap-2 justify-end">
-          <a-button size="small" @click="closeWorkspaceSeatModal">
-            取消
-          </a-button>
-          <a-button
-            size="small"
-            type="primary"
-            :loading="workspaceSeatLimitSaveLoading"
-            :disabled="!canSubmitWorkspaceSeatLimit"
-            @click="submitWorkspaceSeatLimit"
-          >
-            保存席位
-          </a-button>
-        </div>
-      </div>
-    </a-modal>
-
-    <a-modal
-      v-model:visible="projectSettingsAddContestModalVisible"
-      title="添加竞赛绑定"
-      width="520px"
-      :footer="false"
-      :esc-to-close="true"
-      :mask-closable="true"
-    >
-      <div class="space-y-3">
-        <p class="text-xs text-slate-500">
-          先选择竞赛和赛道，再确认添加到当前项目绑定列表。
-        </p>
-
-        <template v-if="projectSettingsContestOptions.length === 0">
-          <a-alert type="warning">
-            当前暂无可用竞赛，请先刷新竞赛列表。
-          </a-alert>
-          <div class="flex gap-2 justify-end">
-            <a-button
-              size="small"
-              @click="projectSettingsAddContestModalVisible = false"
-            >
-              关闭
-            </a-button>
-            <a-button
-              size="small"
-              type="outline"
-              @click="openContestCatalogPage"
-            >
-              查看竞赛列表
-            </a-button>
-            <a-button
-              size="small"
-              type="primary"
-              @click="requestProjectSettingsContestReload"
-            >
-              刷新竞赛列表
-            </a-button>
-          </div>
-        </template>
-
-        <template v-else-if="projectSettingsAddContestCandidates.length === 0">
-          <a-alert type="info">
-            当前可用竞赛都已完成绑定，无需重复添加。
-          </a-alert>
-          <div class="flex justify-end">
-            <a-button
-              size="small"
-              @click="projectSettingsAddContestModalVisible = false"
-            >
-              知道了
-            </a-button>
-          </div>
-        </template>
-
-        <template v-else>
-          <label class="text-xs text-slate-600 block">
-            <span class="mb-1 block">竞赛</span>
-            <a-select
-              v-model="projectSettingsAddContestModalContestId"
-              class="w-full"
-              size="small"
-              placeholder="请选择竞赛"
-            >
-              <a-option v-for="contest in projectSettingsAddContestCandidates" :key="contest.id" :value="contest.id">
-                {{ contest.name }}
-              </a-option>
-            </a-select>
-          </label>
-
-          <label class="text-xs text-slate-600 block">
-            <span class="mb-1 block">赛道</span>
-            <a-select
-              v-model="projectSettingsAddContestModalTrackId"
-              class="w-full"
-              size="small"
-              placeholder="请选择赛道"
-            >
-              <a-option v-for="track in projectSettingsAddContestModalTrackOptions" :key="track.id" :value="track.id">
-                {{ track.name }}
-              </a-option>
-            </a-select>
-          </label>
-
-          <div class="flex gap-2 justify-end">
-            <a-button
-              size="small"
-              @click="projectSettingsAddContestModalVisible = false"
-            >
-              取消
-            </a-button>
-            <a-button
-              size="small"
-              type="primary"
-              :disabled="!projectSettingsAddContestModalContestId || !projectSettingsAddContestModalTrackId"
-              @click="confirmProjectSettingsAddContestModal"
-            >
-              确认添加
-            </a-button>
-          </div>
-        </template>
-      </div>
-    </a-modal>
+    <WorkspaceAddContestBindingModal
+      :visible="projectSettingsAddContestModalVisible"
+      :project-settings-contest-options="projectSettingsContestOptions"
+      :project-settings-add-contest-candidates="projectSettingsAddContestCandidates"
+      :project-settings-add-contest-modal-track-options="projectSettingsAddContestModalTrackOptions"
+      :project-settings-add-contest-modal-contest-id="projectSettingsAddContestModalContestId"
+      :project-settings-add-contest-modal-track-id="projectSettingsAddContestModalTrackId"
+      @close="projectSettingsAddContestModalVisible = false"
+      @open-contest-catalog-page="openContestCatalogPage"
+      @request-project-settings-contest-reload="requestProjectSettingsContestReload"
+      @update-project-settings-add-contest-modal-contest-id="projectSettingsAddContestModalContestId = $event"
+      @update-project-settings-add-contest-modal-track-id="projectSettingsAddContestModalTrackId = $event"
+      @confirm-project-settings-add-contest-modal="confirmProjectSettingsAddContestModal"
+    />
   </section>
 </template>
 
 <style scoped>
-.workspace-tab-context-menu {
-  position: fixed;
-  z-index: 40;
-  min-width: 168px;
-  overflow: hidden;
-  border: 1px solid #d9e1ef;
-  border-radius: 10px;
-  background: #ffffff;
-  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+.workspace-display-slider-shell {
+  position: relative;
+  height: 22px;
+  padding: 0 10px;
+  box-sizing: border-box;
 }
 
-.workspace-tab-context-menu__item {
+.workspace-display-slider-track {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  left: 10px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--wl-radius-pill);
+  background: var(--wl-border);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.workspace-display-slider-track__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--wl-primary-500);
+}
+
+.workspace-display-slider-track__stop {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--wl-radius-pill);
+  background: rgb(255 255 255 / 0.82);
+  transform: translate(-50%, -50%);
+}
+
+.workspace-display-slider-track__stop--active {
+  width: 8px;
+  height: 8px;
+  background: var(--wl-surface);
+}
+
+.workspace-display-slider {
+  appearance: none;
+  position: relative;
+  z-index: 2;
+  display: block;
   width: 100%;
-  padding: 9px 12px;
-  border: 0;
+  height: 22px;
+  margin: 0;
   background: transparent;
-  color: #334155;
-  font-size: 12px;
+  cursor: pointer;
+}
+
+.workspace-display-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+  border: 2px solid var(--wl-primary-500);
+  border-radius: var(--wl-radius-pill);
+  background: var(--wl-surface);
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 0.92);
+}
+
+.workspace-display-slider::-webkit-slider-runnable-track {
+  height: 22px;
+  background: transparent;
+}
+
+.workspace-display-slider::-moz-range-track {
+  height: 22px;
+  background: transparent;
+}
+
+.workspace-display-slider::-moz-range-progress {
+  height: 22px;
+  background: transparent;
+}
+
+.workspace-display-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--wl-primary-500);
+  border-radius: var(--wl-radius-pill);
+  background: var(--wl-surface);
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 0.92);
+}
+
+.workspace-display-slider-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.workspace-display-slider-label__tag-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.workspace-display-slider-label__tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  height: 18px;
+  border: 1px solid var(--wl-primary-100);
+  border-radius: var(--wl-radius-pill);
+  background: var(--wl-primary-050);
+  color: var(--wl-primary-500);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.workspace-display-slider-label__tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 6;
+  padding: 6px 8px;
+  border-radius: var(--wl-radius-sm);
+  background: rgb(15 23 42 / 0.92);
+  color: var(--wl-surface);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(4px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workspace-display-slider-label__tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: rgb(15 23 42 / 0.92);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.workspace-display-slider-label__tag-wrap:hover .workspace-display-slider-label__tooltip,
+.workspace-display-slider-label__tag-wrap:focus-within .workspace-display-slider-label__tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.workspace-settings-shell {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-settings-sidebar {
+  display: none;
+}
+
+.workspace-settings-sidebar__inner {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.workspace-settings-sidebar__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.625rem 0.875rem;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: rgb(71 85 105);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
   text-align: left;
   transition:
-    background-color 0.2s ease,
-    color 0.2s ease;
+    background-color 0.16s ease,
+    color 0.16s ease;
 }
 
-.workspace-tab-context-menu__item:hover:enabled {
-  background: #f8fafc;
-  color: #0f172a;
+.workspace-settings-sidebar__item:hover {
+  background: rgb(248 250 252);
+  color: rgb(15 23 42);
 }
 
-.workspace-tab-context-menu__item:disabled {
-  color: #94a3b8;
-  cursor: not-allowed;
+.workspace-settings-sidebar__item-indicator {
+  display: inline-flex;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 0.16s ease;
 }
 
-.workspace-tab-context-menu__item--danger {
-  color: #dc2626;
+.workspace-settings-sidebar__item--active {
+  background: rgb(239 246 255);
+  color: rgb(37 99 235);
 }
 
-.workspace-tab-context-menu__item--danger:hover:enabled {
-  background: #fff1f2;
-  color: #b91c1c;
+.workspace-settings-sidebar__item--active .workspace-settings-sidebar__item-indicator {
+  background: rgb(37 99 235);
+}
+
+@media (min-width: 1024px) {
+  .workspace-settings-shell {
+    align-items: start;
+    grid-template-columns: 232px minmax(0, 1fr);
+  }
+
+  .workspace-settings-sidebar {
+    display: block;
+    position: sticky;
+    top: 0;
+    align-self: start;
+  }
 }
 </style>

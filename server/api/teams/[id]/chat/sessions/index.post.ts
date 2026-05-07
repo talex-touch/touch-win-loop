@@ -19,9 +19,13 @@ interface CreateChatSessionBody {
 
 function parseMode(value: unknown): WorkspaceAiMode | null {
   const text = String(value || '').trim()
-  if (text === 'dialog_ask' || text === 'auto_optimize' || text === 'issue_discovery' || text === 'defense')
+  if (text === 'dialog_ask' || text === 'loopy_page' || text === 'auto_optimize' || text === 'issue_discovery' || text === 'defense' || text === 'document_assist' || text === 'contextual_agent')
     return text
   return null
+}
+
+function isWorkspaceOnlyMode(mode: WorkspaceAiMode | null): boolean {
+  return mode === 'dialog_ask' || mode === 'loopy_page'
 }
 
 export default defineEventHandler(async (event) => {
@@ -33,9 +37,9 @@ export default defineEventHandler(async (event) => {
   const projectId = String(body?.projectId || '').trim()
   const mode = parseMode(body?.mode)
 
-  if (!workspaceId || !projectId || !mode) {
+  if (!workspaceId || !mode || (!isWorkspaceOnlyMode(mode) && !projectId)) {
     setResponseStatus(event, 400)
-    return fail('teamId、projectId、mode 不能为空。', {
+    return fail('teamId、mode 不能为空，且非只读模式必须传 projectId。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

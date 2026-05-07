@@ -9,12 +9,22 @@ import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 
 const topicProposalItemSchema = z.object({
+  id: z.string().optional(),
   title: z.string().min(4),
   reason: z.string().min(10),
   innovationPoints: z.array(z.string()).min(2).max(5),
   techRouteSteps: z.array(z.string()).min(3).max(6),
   scoringMapping: z.array(z.string()).min(2).max(6),
   risks: z.array(z.string()).min(2).max(6),
+  estimatedWorkload: z.string().min(6).default('中等工作量，建议先做 MVP 验证。'),
+  recommendedTrackId: z.string().default(''),
+  recommendedTrackName: z.string().default(''),
+  contestFitScore: z.number().min(0).max(100).default(72),
+  contestFitReasons: z.array(z.string()).min(2).max(4).default([
+    '题目方向与竞赛评分维度保持一致。',
+    '具备形成原型验证与答辩证据链的基础。',
+  ]),
+  requiredSkills: z.array(z.string()).max(8).default([]),
   references: z.array(z.string()).default([]),
 })
 
@@ -44,12 +54,34 @@ function toConversation(messages: AiTopicProposalRequest['messages']): string {
 
 function normalizeTopicItem(item: z.infer<typeof topicProposalItemSchema>): TopicProposalItem {
   return {
+    id: item.id || '',
     title: item.title,
     reason: item.reason,
     innovationPoints: item.innovationPoints,
     techRouteSteps: item.techRouteSteps,
     scoringMapping: item.scoringMapping,
     risks: item.risks,
+    estimatedWorkload: item.estimatedWorkload,
+    recommendedTrackId: item.recommendedTrackId,
+    recommendedTrackName: item.recommendedTrackName,
+    contestFitScore: item.contestFitScore,
+    contestFitReasons: item.contestFitReasons,
+    similarAwards: [],
+    trendSignals: [],
+    requiredSkills: item.requiredSkills,
+    teamMatchScore: 0,
+    teamGapNotes: [],
+    evidenceRefs: [],
+    decisionStatus: 'candidate',
+    compareScores: {
+      contestFit: 0,
+      noveltySimilarity: 0,
+      evidenceReadiness: 0,
+      trendHeat: 0,
+      teamMatch: 0,
+      workloadFeasibility: 0,
+    },
+    totalScore: 0,
     references: item.references,
   }
 }
@@ -69,6 +101,10 @@ export async function runTopicProposalChain(input: TopicProposalChainInput): Pro
   const systemPromptParts = [
     '你是大学生竞赛选题教练。请输出结构化 JSON，给出可落地、可答辩的候选命题。',
     '优先利用站内资料，再结合外网资料，避免泛泛而谈。',
+    '每个候选题都要补充：创新点、技术路线、评分映射、风险、预估工作量、推荐赛道、竞赛适配理由、所需技能。',
+    '避免与往届获奖题高度重复，优先给出可验证、可交付、可答辩的方向。',
+    '如果站内上下文里提供了方括号资料标签，assistantReply 和 proposals.references 必须优先保留这些标签，不要编造新的引用。',
+    '如果站内上下文明确提示“索引未完成，结果可能不完整”，assistantReply 开头先保留这句提醒。',
     injectedPrompt ? `[附加提示词]\n${injectedPrompt}` : '',
   ].filter(Boolean)
 
@@ -78,6 +114,11 @@ export async function runTopicProposalChain(input: TopicProposalChainInput): Pro
       '竞赛：{contestName}',
       '赛道：{trackName}',
       '专业：{major}',
+      '所属领域：{discipline}',
+      '题目类型：{topicType}',
+      '期望难度：{expectedDifficulty}',
+      '关键词：{keywords}',
+      '团队技能标签：{teamSkillTags}',
       '候选命题数：{topK}',
       '历史对话：',
       '{conversation}',
@@ -92,6 +133,11 @@ export async function runTopicProposalChain(input: TopicProposalChainInput): Pro
     contestName: input.contestName || '未选择',
     trackName: input.trackName || '未选择',
     major: input.request.context.major || '未提供',
+    discipline: input.request.context.discipline || '未提供',
+    topicType: input.request.context.topicType || '未提供',
+    expectedDifficulty: input.request.context.expectedDifficulty || '未提供',
+    keywords: (input.request.context.keywords || []).join('、') || '未提供',
+    teamSkillTags: (input.request.context.teamSkillTags || []).join('、') || '未提供',
     topK,
     conversation: toConversation(input.request.messages),
     localContext,
@@ -114,6 +160,9 @@ export async function runTopicProposalChain(input: TopicProposalChainInput): Pro
   return {
     assistantReply: parsed.assistantReply,
     proposals,
+    compareMatrix: [],
+    boardSummary: '',
+    teamSkillProfile: input.request.context.teamSkillTags || [],
     references: [],
     missingFields: [...missingFields],
   }

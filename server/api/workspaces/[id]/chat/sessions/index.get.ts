@@ -1,5 +1,3 @@
-import { teamFirstApiRemoved } from '~~/server/utils/team-first'
+import { teamFirstDeprecatedHandler } from '~~/server/utils/team-first'
 
-export default defineEventHandler((event) => {
-  return teamFirstApiRemoved(event)
-})
+export default teamFirstDeprecatedHandler

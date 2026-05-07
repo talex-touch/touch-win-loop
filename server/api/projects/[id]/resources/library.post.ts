@@ -11,6 +11,11 @@ import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
 interface AddLibraryResourceBody {
   resourceId?: string
+  parentResourceId?: string | null
+}
+
+function normalizeString(value: unknown): string {
+  return String(value || '').trim()
 }
 
 export default defineEventHandler(async (event) => {
@@ -46,6 +51,7 @@ export default defineEventHandler(async (event) => {
         projectId,
         resourceId,
         actorUserId: user.id,
+        parentResourceId: normalizeString(body.parentResourceId) || undefined,
       })
 
       return {
@@ -115,6 +121,17 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40464)
+    }
+
+    if (error instanceof Error && error.message === 'RESOURCE_PARENT_NOT_FOUND') {
+      setResponseStatus(event, 400)
+      return fail('目标父节点不存在，或不在当前项目内。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40064)
     }
 
     throw error

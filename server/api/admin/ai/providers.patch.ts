@@ -1,3 +1,8 @@
+import type { PlatformAiProviderCapability, PlatformAiProviderType, PlatformAiProviderVoiceConfig } from '~~/server/utils/platform-ai-channels'
+import type {
+  PlatformAiClientType,
+  ProjectKnowledgeEmbeddingApiStyle,
+} from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { aggregatePlatformAiProviderUsage } from '~~/server/services/admin-ai/provider-usage'
 import { fail, ok } from '~~/server/utils/api'
@@ -5,12 +10,20 @@ import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL } from '~~/server/utils/platform-ai-base-url'
 import {
   buildPlatformAiChannelsJson,
   buildPlatformAiRegistryJson,
   getPlatformAiChannelDefinitions,
+
+  resolvePlatformAiModelCatalogJson,
+  resolvePlatformAiModelPricingJson,
   resolvePlatformAiRegistry,
 } from '~~/server/utils/platform-ai-channels'
+import {
+  normalizePlatformAiClientType,
+  normalizeProjectKnowledgeEmbeddingApiStyle,
+} from '~~/server/utils/platform-ai-client'
 import {
   applyPlatformAiRuntimeOverrides,
   getPlatformAiOverrideState,
@@ -23,36 +36,30 @@ import { hasConfigMasterKey } from '~~/server/utils/secure-config'
 
 type SecretMode = 'keep' | 'replace' | 'clear'
 
+interface ProviderDraftBody {
+  id?: string
+  name?: string
+  type?: PlatformAiProviderType
+  capability?: PlatformAiProviderCapability
+  provider?: string
+  clientType?: PlatformAiClientType
+  baseURL?: string
+  timeoutMs?: number
+  maxRetries?: number
+  enabled?: boolean
+  apiKey?: string
+  apiKeyMode?: SecretMode
+  embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+  embeddingDimensions?: number
+  voice?: Partial<PlatformAiProviderVoiceConfig>
+  models?: unknown[]
+}
+
 interface ProvidersPatchBody {
-  ai?: {
-    provider?: string
-    baseURL?: string
-    model?: string
-    embeddingModel?: string
-    modelCatalogJson?: string
-    modelPricingJson?: string
-    providers?: unknown
-    channels?: unknown
-    temperature?: number
-    topP?: number
-    maxTokens?: number
-    presencePenalty?: number
-    frequencyPenalty?: number
-    timeoutMs?: number
-    maxRetries?: number
-    apiKey?: string
-    apiKeyMode?: SecretMode
-  }
-  docAi?: {
-    provider?: string
-    baseURL?: string
-    model?: string
-    modelPricingJson?: string
-    timeoutMs?: number
-    maxRetries?: number
-    apiKey?: string
-    apiKeyMode?: SecretMode
-  }
+  providers?: ProviderDraftBody[]
+  scenes?: {
+    items?: unknown[]
+  } | unknown[]
   adminAi?: {
     enabled?: boolean
     webTimeoutMs?: number
@@ -78,6 +85,18 @@ function ensureSection<T extends object>(value: T | undefined): T {
   return (value || {}) as T
 }
 
+function toText(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function normalizeSceneItems(raw: ProvidersPatchBody['scenes']): unknown[] {
+  if (Array.isArray(raw))
+    return raw
+  if (raw && typeof raw === 'object' && Array.isArray((raw as { items?: unknown[] }).items))
+    return (raw as { items?: unknown[] }).items || []
+  return []
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
@@ -89,119 +108,135 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权修改 AI 配置。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40390)
   }
 
-  const aiBody = body?.ai && typeof body.ai === 'object' ? body.ai as Record<string, unknown> : null
-  const docAiBody = body?.docAi && typeof body.docAi === 'object' ? body.docAi as Record<string, unknown> : null
-  const adminAiBody = body?.adminAi && typeof body.adminAi === 'object' ? body.adminAi as Record<string, unknown> : null
+  const hasProvidersUpdate = Array.isArray(body.providers)
+  const scenesItems = normalizeSceneItems(body.scenes)
+  const hasScenesUpdate = scenesItems.length > 0 || Boolean(body.scenes)
+  const adminAiBody = body.adminAi && typeof body.adminAi === 'object' ? body.adminAi as Record<string, unknown> : null
   const masterKeyReady = hasConfigMasterKey(event)
-  const requireSecretReplace = (
-    toMode(aiBody?.apiKeyMode) === 'replace'
-    || toMode(docAiBody?.apiKeyMode) === 'replace'
-    || toMode(adminAiBody?.tavilyApiKeyMode) === 'replace'
-  )
-  if (requireSecretReplace && !masterKeyReady) {
-    setResponseStatus(event, 400)
-    return fail('缺少 WINLOOP_CONFIG_MASTER_KEY，无法替换密钥字段。', {
-      startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 40066)
-  }
+  const ignoredProviderApiKeyIds: string[] = []
 
   const nextOverrides = await withTransaction(event, async (db) => {
     const existing = normalizePlatformAiRuntimeOverrides(await readPlatformAiRuntimeOverrides(db))
     const next = normalizePlatformAiRuntimeOverrides(existing)
+    const currentRuntime = applyPlatformAiRuntimeOverrides(runtime, existing)
+    const currentRegistry = resolvePlatformAiRegistry(currentRuntime)
+    const currentProvidersById = new Map(currentRegistry.providers.map(item => [item.id, item]))
 
-    if (aiBody) {
-      const ai = ensureSection(next.ai)
-      if (hasOwn(aiBody, 'provider'))
-        ai.provider = String(aiBody.provider || '').trim()
-      if (hasOwn(aiBody, 'baseURL'))
-        ai.baseURL = String(aiBody.baseURL || '').trim()
-      if (hasOwn(aiBody, 'model'))
-        ai.model = String(aiBody.model || '').trim()
-      if (hasOwn(aiBody, 'embeddingModel'))
-        ai.embeddingModel = String(aiBody.embeddingModel || '').trim()
-      if (hasOwn(aiBody, 'modelCatalogJson'))
-        ai.modelCatalogJson = String(aiBody.modelCatalogJson || '')
-      if (hasOwn(aiBody, 'modelPricingJson'))
-        ai.modelPricingJson = String(aiBody.modelPricingJson || '')
-      if (hasOwn(aiBody, 'providers')) {
-        ai.providersJson = buildPlatformAiRegistryJson({
-          ...runtime,
-          ai: {
-            ...runtime.ai,
-            ...ai,
-          },
-        }, aiBody.providers)
+    const providerDrafts = hasProvidersUpdate ? body.providers || [] : currentRegistry.providers
+    const providerSeeds = providerDrafts.map((rawProvider, index) => {
+      const source = rawProvider && typeof rawProvider === 'object'
+        ? rawProvider as ProviderDraftBody
+        : {} as ProviderDraftBody
+      const currentProvider = currentProvidersById.get(toText(source.id)) || null
+      const providerId = toText(source.id) || currentProvider?.id || `provider_${index + 1}`
+      const providedApiKey = normalizePlatformAiApiKey(source.apiKey)
+      const apiKeyMode = providedApiKey ? 'replace' : toMode(source.apiKeyMode)
+      let apiKey = currentProvider?.apiKey || ''
+      if (apiKeyMode === 'replace') {
+        if (masterKeyReady)
+          apiKey = providedApiKey
+        else
+          ignoredProviderApiKeyIds.push(providerId)
       }
-      if (hasOwn(aiBody, 'channels')) {
-        const providersRuntime = {
-          ...runtime,
-          ai: {
-            ...runtime.ai,
-            ...ai,
-            providersJson: ai.providersJson || runtime.ai.providersJson,
-          },
-        }
-        const providers = resolvePlatformAiRegistry(providersRuntime).providers
-        ai.channelsJson = buildPlatformAiChannelsJson(providersRuntime, aiBody.channels, providers)
+      else if (apiKeyMode === 'clear') {
+        apiKey = ''
       }
-      if (hasOwn(aiBody, 'temperature'))
-        ai.temperature = Number(aiBody.temperature)
-      if (hasOwn(aiBody, 'topP'))
-        ai.topP = Number(aiBody.topP)
-      if (hasOwn(aiBody, 'maxTokens'))
-        ai.maxTokens = Number(aiBody.maxTokens)
-      if (hasOwn(aiBody, 'presencePenalty'))
-        ai.presencePenalty = Number(aiBody.presencePenalty)
-      if (hasOwn(aiBody, 'frequencyPenalty'))
-        ai.frequencyPenalty = Number(aiBody.frequencyPenalty)
-      if (hasOwn(aiBody, 'timeoutMs'))
-        ai.timeoutMs = Number(aiBody.timeoutMs)
-      if (hasOwn(aiBody, 'maxRetries'))
-        ai.maxRetries = Number(aiBody.maxRetries)
 
-      const apiKeyMode = toMode(aiBody.apiKeyMode)
-      if (apiKeyMode === 'replace')
-        ai.apiKey = String(aiBody.apiKey || '')
-      if (apiKeyMode === 'clear')
-        ai.apiKey = ''
+      return {
+        id: providerId,
+        name: toText(source.name) || currentProvider?.name || '',
+        type: source.type || currentProvider?.type || 'openai-compatible',
+        capability: source.capability || currentProvider?.capability || 'llm',
+        provider: toText(source.provider) || currentProvider?.provider || '',
+        clientType: hasOwn(source as Record<string, unknown>, 'clientType')
+          ? normalizePlatformAiClientType(source.clientType, currentRuntime.ai.clientType)
+          : (currentProvider?.clientType || currentRuntime.ai.clientType),
+        baseURL: hasOwn(source as Record<string, unknown>, 'baseURL')
+          ? normalizePlatformAiBaseURL(source.baseURL, toText(source.provider) || currentProvider?.provider || '')
+          : (currentProvider?.baseURL || currentRuntime.ai.baseURL),
+        enabled: hasOwn(source as Record<string, unknown>, 'enabled')
+          ? Boolean(source.enabled)
+          : (currentProvider?.enabled ?? true),
+        timeoutMs: hasOwn(source as Record<string, unknown>, 'timeoutMs')
+          ? Number(source.timeoutMs || currentRuntime.ai.timeoutMs)
+          : (currentProvider?.timeoutMs || currentRuntime.ai.timeoutMs),
+        maxRetries: hasOwn(source as Record<string, unknown>, 'maxRetries')
+          ? Number(source.maxRetries || currentRuntime.ai.maxRetries)
+          : (currentProvider?.maxRetries || currentRuntime.ai.maxRetries),
+        apiKey,
+        fetchedAt: currentProvider?.fetchedAt || '',
+        embeddingApiStyle: hasOwn(source as Record<string, unknown>, 'embeddingApiStyle')
+          ? normalizeProjectKnowledgeEmbeddingApiStyle(source.embeddingApiStyle, currentRuntime.ai.embeddingApiStyle)
+          : (currentProvider?.embeddingApiStyle || currentRuntime.ai.embeddingApiStyle),
+        embeddingDimensions: hasOwn(source as Record<string, unknown>, 'embeddingDimensions')
+          ? Number(source.embeddingDimensions || currentRuntime.ai.embeddingDimensions)
+          : (currentProvider?.embeddingDimensions || currentRuntime.ai.embeddingDimensions),
+        voice: hasOwn(source as Record<string, unknown>, 'voice')
+          ? source.voice
+          : currentProvider?.voice,
+        models: Array.isArray(source.models)
+          ? source.models
+          : (currentProvider?.models || []),
+      }
+    })
 
-      next.ai = ai
+    const ai = ensureSection(next.ai)
+
+    ai.providersJson = buildPlatformAiRegistryJson(currentRuntime, {
+      providers: providerSeeds,
+    })
+
+    const providerPreviewRuntime = {
+      ...currentRuntime,
+      ai: {
+        ...currentRuntime.ai,
+        providersJson: ai.providersJson,
+      },
+    }
+    const providerPreviewRegistry = resolvePlatformAiRegistry(providerPreviewRuntime)
+
+    const nextSceneItems = hasScenesUpdate ? scenesItems : currentRegistry.channels
+    ai.channelsJson = buildPlatformAiChannelsJson(
+      providerPreviewRuntime,
+      nextSceneItems,
+      providerPreviewRegistry.providers,
+    )
+
+    const finalPreviewRuntime = {
+      ...providerPreviewRuntime,
+      ai: {
+        ...providerPreviewRuntime.ai,
+        channelsJson: ai.channelsJson,
+      },
+    }
+    delete ai.provider
+    delete ai.baseURL
+    delete ai.apiKey
+    delete ai.model
+    delete ai.embeddingModel
+    delete ai.embeddingApiStyle
+    delete ai.embeddingDimensions
+    delete ai.visionModel
+
+    const runtimeForCatalog = {
+      ...finalPreviewRuntime,
+      ai: {
+        ...finalPreviewRuntime.ai,
+        providersJson: ai.providersJson,
+        channelsJson: ai.channelsJson,
+      },
     }
 
-    if (docAiBody) {
-      const docAi = ensureSection(next.docAi)
-      if (hasOwn(docAiBody, 'provider'))
-        docAi.provider = String(docAiBody.provider || '').trim()
-      if (hasOwn(docAiBody, 'baseURL'))
-        docAi.baseURL = String(docAiBody.baseURL || '').trim()
-      if (hasOwn(docAiBody, 'model'))
-        docAi.model = String(docAiBody.model || '').trim()
-      if (hasOwn(docAiBody, 'modelPricingJson'))
-        docAi.modelPricingJson = String(docAiBody.modelPricingJson || '')
-      if (hasOwn(docAiBody, 'timeoutMs'))
-        docAi.timeoutMs = Number(docAiBody.timeoutMs)
-      if (hasOwn(docAiBody, 'maxRetries'))
-        docAi.maxRetries = Number(docAiBody.maxRetries)
+    ai.modelCatalogJson = resolvePlatformAiModelCatalogJson(runtimeForCatalog)
+    ai.modelPricingJson = resolvePlatformAiModelPricingJson(runtimeForCatalog)
 
-      const apiKeyMode = toMode(docAiBody.apiKeyMode)
-      if (apiKeyMode === 'replace')
-        docAi.apiKey = String(docAiBody.apiKey || '')
-      if (apiKeyMode === 'clear')
-        docAi.apiKey = ''
-
-      next.docAi = docAi
-    }
+    next.ai = ai
+    delete next.docAi
 
     if (adminAiBody) {
       const adminAi = ensureSection(next.adminAi)
@@ -215,7 +250,7 @@ export default defineEventHandler(async (event) => {
         adminAi.maxPageChars = Number(adminAiBody.maxPageChars)
 
       const tavilyApiKeyMode = toMode(adminAiBody.tavilyApiKeyMode)
-      if (tavilyApiKeyMode === 'replace')
+      if (tavilyApiKeyMode === 'replace' && masterKeyReady)
         adminAi.tavilyApiKey = String(adminAiBody.tavilyApiKey || '')
       if (tavilyApiKeyMode === 'clear')
         adminAi.tavilyApiKey = ''
@@ -232,11 +267,10 @@ export default defineEventHandler(async (event) => {
       actorUserId: user.id,
       action: 'write.admin.ai.providers',
       payload: {
-        hasAiUpdate: Boolean(aiBody),
-        hasDocAiUpdate: Boolean(docAiBody),
+        providerCount: providerSeeds.length,
+        sceneCount: nextSceneItems.length,
+        ignoredProviderApiKeyIds,
         hasAdminAiUpdate: Boolean(adminAiBody),
-        hasProviderRegistryUpdate: Boolean(aiBody && hasOwn(aiBody, 'providers')),
-        hasChannelConfigUpdate: Boolean(aiBody && hasOwn(aiBody, 'channels')),
       },
     })
     return normalized
@@ -246,32 +280,28 @@ export default defineEventHandler(async (event) => {
   const registry = resolvePlatformAiRegistry(effectiveRuntime)
   const providerStats = await withClient(event, db => aggregatePlatformAiProviderUsage(db, registry.providers))
   const payload = {
-    llm: {
-      provider: effectiveRuntime.ai.provider,
-      baseURL: effectiveRuntime.ai.baseURL,
-      model: effectiveRuntime.ai.model,
-      embeddingModel: effectiveRuntime.ai.embeddingModel,
-      modelCatalogJson: effectiveRuntime.ai.modelCatalogJson,
-      modelPricingJson: effectiveRuntime.ai.modelPricingJson,
-      providersJson: effectiveRuntime.ai.providersJson,
-      channelsJson: effectiveRuntime.ai.channelsJson,
-      temperature: effectiveRuntime.ai.temperature,
-      topP: effectiveRuntime.ai.topP,
-      maxTokens: effectiveRuntime.ai.maxTokens,
-      presencePenalty: effectiveRuntime.ai.presencePenalty,
-      frequencyPenalty: effectiveRuntime.ai.frequencyPenalty,
-      timeoutMs: effectiveRuntime.ai.timeoutMs,
-      maxRetries: effectiveRuntime.ai.maxRetries,
-      apiKeyConfigured: Boolean(effectiveRuntime.ai.apiKey),
-    },
-    docAi: {
-      provider: effectiveRuntime.docAi.provider,
-      baseURL: effectiveRuntime.docAi.baseURL,
-      model: effectiveRuntime.docAi.model,
-      modelPricingJson: effectiveRuntime.docAi.modelPricingJson,
-      timeoutMs: effectiveRuntime.docAi.timeoutMs,
-      maxRetries: effectiveRuntime.docAi.maxRetries,
-      apiKeyConfigured: Boolean(effectiveRuntime.docAi.apiKey),
+    providers: registry.providers.map(provider => ({
+      id: provider.id,
+      name: provider.name,
+      type: provider.type,
+      capability: provider.capability,
+      adapter: provider.adapter,
+      provider: provider.provider,
+      clientType: provider.clientType,
+      baseURL: provider.baseURL,
+      enabled: provider.enabled,
+      timeoutMs: provider.timeoutMs,
+      maxRetries: provider.maxRetries,
+      fetchedAt: provider.fetchedAt,
+      apiKeyConfigured: Boolean(String(provider.apiKey || '').trim()),
+      embeddingApiStyle: provider.embeddingApiStyle || effectiveRuntime.ai.embeddingApiStyle,
+      embeddingDimensions: provider.embeddingDimensions || effectiveRuntime.ai.embeddingDimensions,
+      voice: provider.voice,
+      models: provider.models,
+    })),
+    scenes: {
+      items: registry.channels,
+      definitions: getPlatformAiChannelDefinitions(),
     },
     adminAi: {
       enabled: effectiveRuntime.adminAi.enabled,
@@ -280,30 +310,20 @@ export default defineEventHandler(async (event) => {
       maxWebResults: effectiveRuntime.adminAi.maxWebResults,
       maxPageChars: effectiveRuntime.adminAi.maxPageChars,
     },
-    registry: {
-      providers: registry.providers.map(item => ({
-        id: item.id,
-        name: item.name,
-        adapter: item.adapter,
-        provider: item.provider,
-        baseURL: item.baseURL,
-        enabled: item.enabled,
-        timeoutMs: item.timeoutMs,
-        maxRetries: item.maxRetries,
-        apiKeyConfigured: Boolean(item.apiKey),
-        models: item.models,
-      })),
-      providerStats,
-      channels: registry.channels,
-      channelDefinitions: getPlatformAiChannelDefinitions(),
+    config: {
+      masterKeyReady,
+    },
+    warnings: {
+      ignoredProviderApiKeyIds,
+    },
+    stats: {
+      providerUsage: providerStats,
     },
     overrideState: getPlatformAiOverrideState(nextOverrides),
   }
 
   return ok(payload, {
     startedAt,
-    provider: effectiveRuntime.ai.provider,
-    model: effectiveRuntime.ai.model,
     fallbackUsed: false,
     attempts: 1,
   })

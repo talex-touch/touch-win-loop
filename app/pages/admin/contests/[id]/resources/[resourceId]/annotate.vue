@@ -19,32 +19,7 @@ GlobalWorkerOptions.workerSrc = pdfWorkerSrc
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const route = useRoute()
-
-const contestId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.id
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const resourceId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.resourceId
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const isEmbedMode = computed(() => {
-  const value = route.query.embed
-  if (Array.isArray(value))
-    return value[0] === '1'
-  return value === '1'
-})
-
-function withEmbed(path: string): string | { path: string, query: { embed: string } } {
-  if (isEmbedMode.value)
-    return { path, query: { embed: '1' } }
-  return path
-}
+const { contestId, resourceId, withEmbed } = useAdminContestRoute()
 
 function createId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
@@ -304,13 +279,13 @@ async function loadAll() {
   errorText.value = ''
   successText.value = ''
   try {
-    const docResponse = await $fetch<ApiResponse<(ResourceDocument & {
+    const docResponse = await unsafeFetch<ApiResponse<(ResourceDocument & {
       latestTask: ResourceDocumentTask | null
       previewUrl: string
     })>>(endpoint(`/admin/contests/${contestId.value}/resources/${resourceId.value}/document`))
     documentInfo.value = docResponse.data
 
-    const analysisResponse = await $fetch<ApiResponse<{
+    const analysisResponse = await unsafeFetch<ApiResponse<{
       analysisJson: DocumentAnalysis | null
       annotationJson: DocumentAnalysis | null
       parseStatus: string
@@ -356,7 +331,7 @@ function startPollingIfNeeded() {
     try {
       if (!documentInfo.value)
         return
-      const response = await $fetch<ApiResponse<{
+      const response = await unsafeFetch<ApiResponse<{
         analysisJson: DocumentAnalysis | null
         annotationJson: DocumentAnalysis | null
         parseStatus: string
@@ -390,7 +365,7 @@ async function saveAnnotation() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/documents/${documentInfo.value.id}/analysis`), {
+    await unsafeFetch(endpoint(`/admin/documents/${documentInfo.value.id}/analysis`), {
       method: 'PATCH',
       body: {
         annotationJson: editableAnalysis.value,

@@ -6,6 +6,7 @@ import { createAdminResource } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
 
 interface CreateResourceBody {
   category?: ResourceCategory
@@ -73,23 +74,46 @@ export default defineEventHandler(async (event) => {
     }, 400811)
   }
 
-  const resource = await withTransaction(event, async (db) => {
-    return createAdminResource(db, {
-      actorUserId: user.id,
-      contestId,
-      category: body.category!,
-      title: body.title!,
-      year: Number(body?.year || new Date().getFullYear()),
-      url: body?.url,
-      accessLevel: body?.accessLevel,
-      sourceType: body?.sourceType,
-      summary: body?.summary,
-      content: body?.content,
-      metadata: body?.metadata,
-      copyrightNote: body?.copyrightNote,
-      status: body?.status,
+  let resource
+  try {
+    resource = await withTransaction(event, async (db) => {
+      const created = await createAdminResource(db, {
+        actorUserId: user.id,
+        contestId,
+        category: body.category!,
+        title: body.title!,
+        year: Number(body?.year || new Date().getFullYear()),
+        url: body?.url,
+        accessLevel: body?.accessLevel,
+        sourceType: body?.sourceType,
+        summary: body?.summary,
+        content: body?.content,
+        metadata: body?.metadata,
+        copyrightNote: body?.copyrightNote,
+        status: body?.status,
+      })
+      await enqueueResourceGovernanceTask(db, {
+        contestId,
+        resourceId: created.id,
+        taskType: 'profile_analyze',
+        actorUserId: user.id,
+      })
+      return created
     })
-  })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'CONTEST_RELEASE_WORKFLOW_REQUIRED') {
+      setResponseStatus(event, 409)
+      return fail('当前赛事已接入版本流，请通过“审核/版本”生成新版本后再发布。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40980)
+    }
+    throw error
+  }
 
   return ok(resource, {
     startedAt,
