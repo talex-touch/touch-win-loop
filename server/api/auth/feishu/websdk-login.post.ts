@@ -6,6 +6,7 @@ import { readRuntimeSettings } from '~~/server/utils/env'
 
 interface WebSdkLoginBody {
   code?: string
+  redirectTarget?: string
 }
 
 export default defineEventHandler(async (event) => {
@@ -26,7 +27,29 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const loginResult = await loginByFeishuOAuthCode(event, code)
+    const loginResult = await loginByFeishuOAuthCode(event, code, {
+      redirectTarget: body?.redirectTarget,
+    })
+    if ('needsOnboarding' in loginResult) {
+      return ok<AuthLoginResult>({
+        user: null as never,
+        session: null as never,
+        teams: [],
+        workspaces: [],
+        onboarding: {
+          needCreateTeam: false,
+          needsProfileSetup: true,
+          pendingProvider: 'feishu',
+        },
+      }, {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      })
+    }
+
     return ok<AuthLoginResult>(loginResult, {
       startedAt,
       provider: runtime.ai.provider,

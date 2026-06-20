@@ -2,6 +2,7 @@ import type { H3Event } from 'h3'
 import type { AuthSession, AuthUser } from '~~/shared/types/domain'
 import process from 'node:process'
 import { createError, deleteCookie, getCookie, setCookie } from 'h3'
+import { ADMIN_USER_MAGIC_LINK_TOKEN_PREFIX } from '~~/server/utils/admin-user-store'
 import { withClient } from '~~/server/utils/db'
 import { extendSessionExpiresAtById, findAuthBySessionTokenHash } from '~~/server/utils/platform-store'
 import { hashToken } from '~~/server/utils/security'
@@ -97,6 +98,8 @@ export function readSessionToken(event: H3Event): string {
 export async function getAuthFromEvent(event: H3Event): Promise<{ user: AuthUser, session: AuthSession } | null> {
   const accessToken = String(getCookie(event, ACCESS_COOKIE_NAME) || '').trim()
   const refreshToken = readRefreshToken(event)
+  if (accessToken.startsWith(ADMIN_USER_MAGIC_LINK_TOKEN_PREFIX) || refreshToken.startsWith(ADMIN_USER_MAGIC_LINK_TOKEN_PREFIX))
+    return null
   if (!accessToken && !refreshToken)
     return null
 

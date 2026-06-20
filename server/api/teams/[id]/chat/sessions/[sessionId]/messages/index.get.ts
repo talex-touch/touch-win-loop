@@ -1,7 +1,8 @@
-import type { WorkspaceAiMode } from '~~/shared/types/domain'
+import type { AiChatSessionContextSnapshot, AiChatSessionRunState, WorkspaceAiMode } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { getAiChatSessionContext } from '~~/server/utils/chat-session-context-store'
 import { getAiChatSessionById, listAiChatMessagesBySession } from '~~/server/utils/chat-store'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
@@ -10,9 +11,13 @@ import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-stor
 
 function parseMode(value: unknown): WorkspaceAiMode | null {
   const text = String(value || '').trim()
-  if (text === 'dialog_ask' || text === 'auto_optimize' || text === 'issue_discovery' || text === 'defense')
+  if (text === 'dialog_ask' || text === 'loopy_page' || text === 'auto_optimize' || text === 'issue_discovery' || text === 'defense' || text === 'document_assist' || text === 'contextual_agent')
     return text
   return null
+}
+
+function isWorkspaceOnlyMode(mode: WorkspaceAiMode | null): boolean {
+  return mode === 'dialog_ask' || mode === 'loopy_page'
 }
 
 export default defineEventHandler(async (event) => {
@@ -26,9 +31,9 @@ export default defineEventHandler(async (event) => {
   const mode = parseMode(query.mode)
   const limit = Number(query.limit || 200)
 
-  if (!workspaceId || !sessionId || !projectId || !mode) {
+  if (!workspaceId || !sessionId || !mode || (!isWorkspaceOnlyMode(mode) && !projectId)) {
     setResponseStatus(event, 400)
-    return fail('teamId、sessionId、projectId、mode 不能为空。', {
+    return fail('teamId、sessionId、mode 不能为空，且非只读模式必须传 projectId。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -61,9 +66,19 @@ export default defineEventHandler(async (event) => {
       limit,
     })
 
+    const contextRecord = await getAiChatSessionContext(db, {
+      workspaceId,
+      sessionId,
+    })
+
     return {
       session,
       messages,
+      contextSnapshot: (contextRecord?.contextSnapshot || null) as AiChatSessionContextSnapshot | null,
+      runState: (contextRecord?.runState || {
+        status: 'idle',
+        resumeAvailable: false,
+      }) as AiChatSessionRunState,
     }
   }).catch((error) => {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
@@ -100,6 +115,8 @@ export default defineEventHandler(async (event) => {
   return ok({
     session: toTeamChatSessionResponse(payload.session),
     messages: payload.messages.map(toTeamChatMessageResponse),
+    contextSnapshot: payload.contextSnapshot,
+    runState: payload.runState,
   }, {
     startedAt,
     provider: runtime.ai.provider,

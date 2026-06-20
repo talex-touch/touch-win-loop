@@ -32,6 +32,8 @@ function normalizeCommonDraft(value: unknown): ProjectSettingsDraftCommon {
   return {
     title: normalizePlainText(source.title),
     summary: normalizePlainText(source.summary),
+    icon: normalizePlainText(source.icon),
+    accentColor: normalizePlainText(source.accentColor),
     problemStatement: normalizePlainText(source.problemStatement),
     innovationPointsText: normalizePlainText(source.innovationPointsText),
     techRouteStepsText: normalizePlainText(source.techRouteStepsText),
@@ -223,6 +225,17 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40975)
+    }
+
+    if (error instanceof Error && error.message === 'DEVICE_ID_REQUIRED') {
+      setResponseStatus(event, 400)
+      return fail('缺少 deviceId。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40085)
     }
 
     throw error

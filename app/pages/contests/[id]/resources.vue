@@ -5,7 +5,18 @@ import type {
   Resource,
   ResourceAvailability,
   ResourceCategory,
+  ResourceRelation,
+  ResourceSearchSort,
 } from '~~/shared/types/domain'
+import {
+  collectResourceTags,
+  resolveResourceRelationTypeLabel,
+  resourceAvailabilityLabelMap,
+  resourceAvailabilityOptions,
+  resourceCategoryOptions,
+  resourceSortOptions,
+  useResourceKnowledgeSessionId,
+} from '~~/app/composables/resource-knowledge'
 
 definePageMeta({
   layout: 'dashboard',
@@ -15,35 +26,61 @@ const runtime = useRuntimeConfig()
 const { endpoint, resolveApiUrl } = useApiEndpoint(runtime)
 const route = useRoute()
 
-const categoryOptions: Array<{ value: ResourceCategory, label: string }> = [
-  { value: 'basic_info', label: '基本信息' },
-  { value: 'timeline', label: '时间轴' },
-  { value: 'tracks', label: '赛道设置' },
-  { value: 'scoring', label: '评分标准' },
-  { value: 'past_questions', label: '往届真题' },
-  { value: 'awarded_works', label: '获奖作品' },
-  { value: 'templates', label: '论文/作品模板' },
-  { value: 'faq', label: 'FAQ' },
-  { value: 'judge_guidelines', label: '评委细则' },
-  { value: 'track_details', label: '赛道详解' },
-  { value: 'ai_prompts', label: 'AI 提示词' },
-  { value: 'submission_examples', label: '材料示例' },
-  { value: 'policy_notice', label: '政策通知' },
-  { value: 'compliance', label: '合规与版权' },
-]
-
-const availabilityOptions: Array<{ value: ResourceAvailability | '', label: string }> = [
-  { value: '', label: '全部可访问性' },
-  { value: 'public', label: '公开' },
-  { value: 'login_required', label: '需登录' },
-  { value: 'unavailable', label: '不可用' },
-]
-
 const contestId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>
   const value = params.id
   return Array.isArray(value) ? (value[0] || '') : (value || '')
 })
+
+const sessionId = useResourceKnowledgeSessionId()
+
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    query?: Record<string, string | number | undefined>
+    body?: unknown
+    headers?: Record<string, string> | undefined
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const url = new URL(path, 'http://localhost')
+  for (const [key, value] of Object.entries(options.query || {})) {
+    if (value === undefined || value === '')
+      continue
+    url.searchParams.set(key, String(value))
+  }
+
+  const headers = new Headers(options.headers)
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(`${url.pathname}${url.search}`, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
 
 const loading = ref(false)
 const loadingDetail = ref(false)
@@ -55,6 +92,14 @@ const resources = ref<Resource[]>([])
 const category = ref<ResourceCategory | ''>('')
 const year = ref('')
 const availability = ref<ResourceAvailability | ''>('')
+const queryText = ref('')
+const selectedTag = ref('')
+const sort = ref<ResourceSearchSort>('relevance')
+const minQuality = ref('')
+
+function resolveRelationTypeLabel(type: ResourceRelation['relationType'] | undefined): string {
+  return resolveResourceRelationTypeLabel(type)
+}
 
 const years = computed(() => {
   const set = new Set<number>()
@@ -65,14 +110,24 @@ const years = computed(() => {
   return Array.from(set).sort((a, b) => b - a)
 })
 
+const tagOptions = computed(() => collectResourceTags(resources.value))
+const tagFilterOptions = computed(() => [
+  { label: '全部标签', value: '' },
+  ...tagOptions.value.map(tag => ({ label: tag, value: tag })),
+])
+const yearFilterOptions = computed(() => [
+  { label: '全部年份', value: '' },
+  ...years.value.map(value => ({ label: String(value), value: String(value) })),
+])
+
 async function loadDetail() {
   if (!contestId.value)
     return
   loadingDetail.value = true
   try {
-    const response = await $fetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${contestId.value}`))
-    contestName.value = response.data.contest.name
-    resourceStats.value = response.data.resourceStats
+    const data = await requestApi<ContestDetailPayload>(endpoint(`/contests/${contestId.value}`), {}, '资源详情加载失败。')
+    contestName.value = data.contest.name
+    resourceStats.value = data.resourceStats
   }
   finally {
     loadingDetail.value = false
@@ -85,33 +140,83 @@ async function loadResources() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/contests/${contestId.value}/resources`), {
-      query: {
-        category: category.value,
-        year: year.value,
-        availability: availability.value,
+    resources.value = await requestApi<Resource[]>(
+      endpoint(`/contests/${contestId.value}/resources`),
+      {
+        query: {
+          category: category.value,
+          year: year.value,
+          availability: availability.value,
+          q: queryText.value,
+          tags: selectedTag.value,
+          sort: sort.value,
+          minQuality: minQuality.value,
+        },
+        headers: sessionId.value
+          ? {
+              'x-resource-session-id': sessionId.value,
+            }
+          : undefined,
       },
-    })
-    resources.value = response.data
+      '资源加载失败，请稍后重试。',
+    )
   }
   catch (error: any) {
     resources.value = []
-    errorText.value = String(error?.data?.message || '资料加载失败，请稍后重试。')
+    errorText.value = String(error?.data?.message || '资源加载失败，请稍后重试。')
   }
   finally {
     loading.value = false
   }
 }
 
+async function openResource(item: Resource) {
+  const popup = import.meta.client
+    ? window.open('about:blank', '_blank', 'noopener')
+    : null
+  try {
+    const data = await requestApi<{ resourceId: string, targetUrl: string }>(
+      endpoint(`/contests/${contestId.value}/resources/${item.id}/click`),
+      {
+        method: 'POST',
+        body: {
+          query: queryText.value,
+          filters: {
+            category: category.value,
+            year: year.value,
+            availability: availability.value,
+            tag: selectedTag.value,
+            sort: sort.value,
+            minQuality: minQuality.value,
+          },
+          resultCount: resources.value.length,
+        },
+        headers: sessionId.value
+          ? {
+              'x-resource-session-id': sessionId.value,
+            }
+          : undefined,
+      },
+      '资源访问记录失败。',
+    )
+    const targetUrl = resolveApiUrl(data.targetUrl)
+    if (popup)
+      popup.location.href = targetUrl
+    else
+      window.open(targetUrl, '_blank', 'noopener')
+  }
+  catch {
+    const fallbackUrl = resolveApiUrl(item.sourceLink)
+    if (popup)
+      popup.location.href = fallbackUrl
+    else
+      window.open(fallbackUrl, '_blank', 'noopener')
+  }
+}
+
 async function selectCategory(target: ResourceCategory) {
   category.value = category.value === target ? '' : target
   await loadResources()
-}
-
-const availabilityLabelMap: Record<ResourceAvailability, string> = {
-  public: '公开',
-  login_required: '需登录',
-  unavailable: '不可用',
 }
 
 useHead(() => {
@@ -128,13 +233,13 @@ onMounted(async () => {
 
 <template>
   <div class="mx-auto p-4 max-w-6xl space-y-4">
-    <div class="p-4 border border-slate-200 rounded-lg bg-white flex flex-wrap gap-2 items-center justify-between">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white flex flex-wrap gap-2 items-center justify-between">
       <div>
         <h1 class="text-lg text-slate-900 font-semibold">
           资料中心
         </h1>
-        <p class="text-xs text-slate-500">
-          {{ contestName || '竞赛资料' }} · 固定 14 类入口，支持按年份和可访问性筛选。
+        <p class="text-xs text-slate-500 mt-1">
+          {{ contestName || '当前竞赛' }} 的知识库资料已接入 AI 标签、质量评分、价值热度与相关推荐。
         </p>
       </div>
       <div class="flex gap-2 items-center">
@@ -142,10 +247,10 @@ onMounted(async () => {
           返回详情
         </NuxtLink>
         <NuxtLink class="dense-btn" to="/resources">
-          全部资料
+          查看全站资料
         </NuxtLink>
       </div>
-    </div>
+    </section>
 
     <section class="p-4 border border-slate-200 rounded-lg bg-white">
       <div v-if="loadingDetail" class="gap-2 grid md:grid-cols-4">
@@ -157,11 +262,11 @@ onMounted(async () => {
       </div>
       <div v-else class="gap-2 grid md:grid-cols-4">
         <button
-          v-for="item in categoryOptions"
+          v-for="item in resourceCategoryOptions.filter(option => option.value)"
           :key="item.value"
           class="text-sm px-3 py-2 text-left border rounded transition"
           :class="category === item.value ? 'border-slate-800 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-400'"
-          @click="selectCategory(item.value)"
+          @click="selectCategory(item.value as ResourceCategory)"
         >
           <div class="font-medium">
             {{ item.label }}
@@ -174,37 +279,42 @@ onMounted(async () => {
     </section>
 
     <section class="p-4 border border-slate-200 rounded-lg bg-white">
-      <div class="gap-2 grid md:grid-cols-4">
-        <select v-model="category" class="dense-input">
-          <option value="">
-            全部分类
-          </option>
-          <option v-for="item in categoryOptions" :key="item.value" :value="item.value">
-            {{ item.label }}
-          </option>
-        </select>
-        <select v-model="year" class="dense-input">
-          <option value="">
-            全部年份
-          </option>
-          <option v-for="value in years" :key="value" :value="String(value)">
-            {{ value }}
-          </option>
-        </select>
-        <select v-model="availability" class="dense-input">
-          <option v-for="item in availabilityOptions" :key="item.label" :value="item.value">
-            {{ item.label }}
-          </option>
-        </select>
-        <button class="dense-btn" @click="loadResources">
-          应用筛选
-        </button>
+      <div class="gap-2 grid md:grid-cols-6">
+        <input v-model="queryText" class="dense-input md:col-span-2" placeholder="搜索资料标题、摘要、AI 标签">
+        <UiSelect v-model="category" :options="resourceCategoryOptions" placeholder="全部分类" aria-label="资料分类" />
+        <UiSelect v-model="selectedTag" :options="tagFilterOptions" placeholder="全部标签" aria-label="标签" />
+        <UiSelect v-model="sort" :options="resourceSortOptions" placeholder="综合相关" aria-label="排序" />
+        <input v-model="minQuality" class="dense-input" type="number" min="0" max="100" placeholder="最低质量分">
+      </div>
+      <div class="mt-2 gap-2 grid md:grid-cols-4">
+        <UiSelect v-model="year" :options="yearFilterOptions" placeholder="全部年份" aria-label="年份" />
+        <UiSelect v-model="availability" :options="resourceAvailabilityOptions" placeholder="全部可访问性" aria-label="可访问性" />
+        <div class="flex gap-2 md:col-span-2">
+          <button class="dense-btn" @click="loadResources">
+            应用筛选
+          </button>
+          <button
+            class="dense-btn"
+            @click="
+              category = '';
+              year = '';
+              availability = '';
+              queryText = '';
+              selectedTag = '';
+              sort = 'relevance';
+              minQuality = '';
+              loadResources();
+            "
+          >
+            重置
+          </button>
+        </div>
       </div>
     </section>
 
-    <div v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
-    </div>
+    </section>
 
     <section class="p-4 border border-slate-200 rounded-lg bg-white">
       <div v-if="loading" class="space-y-3">
@@ -231,7 +341,7 @@ onMounted(async () => {
         <article
           v-for="item in resources"
           :key="item.id"
-          class="p-3 border border-slate-200 rounded"
+          class="p-4 border border-slate-200 rounded-lg"
         >
           <div class="flex flex-wrap gap-2 items-start justify-between">
             <div>
@@ -239,19 +349,42 @@ onMounted(async () => {
                 {{ item.title }}
               </h2>
               <p class="text-xs text-slate-600 mt-1">
-                {{ item.year }} · {{ item.category || '未分类' }} · {{ availabilityLabelMap[item.availability] || item.availability }}
+                {{ item.year }} ｜ {{ resourceAvailabilityLabelMap[item.availability] || item.availability }} ｜ 质量 {{ item.aiProfile?.qualityScore || 0 }} ｜ 价值 {{ item.aiProfile?.valueScore || 0 }} ｜ 热度 {{ item.aiProfile?.hotScore || 0 }}
               </p>
             </div>
-            <a v-if="item.sourceLink" :href="resolveApiUrl(item.sourceLink)" target="_blank" class="text-xs text-blue-600 underline">
-              打开来源
-            </a>
+            <button class="dense-btn" @click="openResource(item)">
+              打开资料
+            </button>
           </div>
-          <p class="text-xs text-slate-700 mt-2">
+
+          <p class="text-xs text-slate-700 mt-3">
             {{ item.content || item.summary || '暂无摘要。' }}
           </p>
-          <p class="text-xs text-slate-500 mt-1">
-            版权说明：{{ item.copyrightNote || '待补充' }}
-          </p>
+
+          <div class="mt-3 flex flex-wrap gap-2">
+            <span
+              v-for="tag in item.aiProfile?.aiTags || []"
+              :key="`${item.id}-${tag}`"
+              class="text-[11px] text-blue-700 px-2 py-1 rounded bg-blue-50"
+            >
+              {{ tag }}
+            </span>
+          </div>
+
+          <div v-if="item.aiProfile?.relatedResources?.length" class="mt-3 pt-3 border-t border-slate-100">
+            <p class="text-[11px] text-slate-500">
+              相关推荐
+            </p>
+            <div class="mt-2 flex flex-wrap gap-2">
+              <span
+                v-for="relation in item.aiProfile.relatedResources"
+                :key="relation.id"
+                class="text-[11px] text-emerald-700 px-2 py-1 rounded bg-emerald-50"
+              >
+                {{ relation.targetTitle }} ｜ {{ resolveRelationTypeLabel(relation.relationType) }} ｜ 匹配度 {{ relation.weight }}
+              </span>
+            </div>
+          </div>
         </article>
       </div>
     </section>

@@ -1,4 +1,6 @@
-import type { PlatformAiProviderAdapter } from '~~/server/utils/platform-ai-channels'
+import type { PlatformAiModelCapability, PlatformAiProviderAdapter } from '~~/server/utils/platform-ai-channels'
+import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolveDashScopeNativeBaseURL, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
+import { inferPlatformAiModelCapabilities } from '~~/server/utils/platform-ai-channels'
 
 export type ProviderModelScope = 'llm' | 'docAi' | 'provider'
 
@@ -8,6 +10,9 @@ export interface ProviderModelItem {
   model: string
   label: string
   mode: ProviderModelScope
+  capabilities: PlatformAiModelCapability[]
+  sourceEndpoint?: string
+  rawText?: string
   inputPricePer1M: number | null
   outputPricePer1M: number | null
   currency: string
@@ -39,6 +44,8 @@ interface PricingTableItem {
   outputPricePer1M: number | null
   currency: string
 }
+
+const defaultModelPricingText = '默认价格：输入 USD 0.0000/1M · 输出 USD 0.0000/1M（Provider 未返回报价）'
 
 function toNonEmptyString(value: unknown): string {
   return String(value || '').trim()
@@ -82,7 +89,7 @@ function formatPricingText(
   currency: string,
 ): string {
   if (inputPricePer1M === null && outputPricePer1M === null)
-    return '价格未返回'
+    return defaultModelPricingText
 
   if (inputPricePer1M !== null && outputPricePer1M !== null)
     return `输入 ${formatPriceValue(inputPricePer1M, currency)} · 输出 ${formatPriceValue(outputPricePer1M, currency)}`
@@ -189,41 +196,42 @@ function resolvePricingFromTable(
   }
 }
 
-function resolveDefaultBaseURL(provider: string): string {
-  const normalized = provider.toLowerCase()
-  if (normalized.includes('openrouter'))
-    return 'https://openrouter.ai/api/v1'
-  return 'https://api.openai.com/v1'
-}
-
-function normalizeBaseURL(baseURL: string, provider: string): string {
-  const trimmed = toNonEmptyString(baseURL) || resolveDefaultBaseURL(provider)
-  let normalized = trimmed.replace(/\/+$/, '')
-
-  normalized = normalized.replace(/\/chat\/completions$/i, '')
-  normalized = normalized.replace(/\/completions$/i, '')
-  normalized = normalized.replace(/\/v1\/chat\/completions$/i, '/v1')
-  normalized = normalized.replace(/\/v1\/completions$/i, '/v1')
-
-  return normalized
-}
-
 function appendPath(baseURL: string, path: string): string {
   return `${baseURL.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`
+}
+
+const DASH_SCOPE_MULTIMODAL_EMBEDDING_PATH = '/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding'
+
+function isDashScopeProvider(provider: string, baseURL = ''): boolean {
+  const text = `${provider} ${baseURL}`.toLowerCase()
+  return text.includes('dashscope') || text.includes('bailian') || text.includes('qwen') || text.includes('aliyuncs.com')
+}
+
+export function resolveDashScopeMultimodalEmbeddingEndpoint(baseURL: string, provider: string): string {
+  if (!isDashScopeProvider(provider, baseURL))
+    return ''
+  const nativeBase = resolveDashScopeNativeBaseURL(baseURL, provider)
+  return nativeBase ? appendPath(nativeBase, DASH_SCOPE_MULTIMODAL_EMBEDDING_PATH) : ''
 }
 
 function resolveModelsEndpoints(
   baseURL: string,
   provider: string,
 ): string[] {
-  const normalizedBase = normalizeBaseURL(baseURL, provider)
+  const normalizedProvider = toNonEmptyString(provider).toLowerCase()
+  if (!normalizedProvider)
+    throw new Error('共享上游 provider 未配置，无法拉取模型列表。')
+
+  const normalizedBase = normalizePlatformAiBaseURL(baseURL, normalizedProvider)
+  if (!normalizedBase)
+    throw new Error('共享上游 baseURL 未配置，无法拉取模型列表。')
+
+  const requestBase = resolvePlatformAiRequestBaseURL(normalizedBase, normalizedProvider)
   const candidates: string[] = []
 
-  if (/\/models$/i.test(normalizedBase))
-    candidates.push(normalizedBase)
-
-  candidates.push(appendPath(normalizedBase, 'models'))
-  candidates.push(appendPath(normalizedBase, 'v1/models'))
+  candidates.push(appendPath(requestBase, 'models'))
+  if (!(normalizedProvider === 'newapi' || normalizedProvider.includes('newapi')))
+    candidates.push(appendPath(normalizedBase, 'models'))
 
   const unique: string[] = []
   for (const item of candidates) {
@@ -231,6 +239,42 @@ function resolveModelsEndpoints(
       unique.push(item)
   }
   return unique
+}
+
+function buildSuggestedProviderModels(input: {
+  scope: ProviderModelScope
+  provider: string
+  baseURL: string
+}): ProviderModelItem[] {
+  if (!isDashScopeProvider(input.provider, input.baseURL))
+    return []
+
+  const endpoint = resolveDashScopeMultimodalEmbeddingEndpoint(input.baseURL, input.provider)
+  if (!endpoint)
+    return []
+
+  const model = 'tongyi-embedding-vision-plus'
+  const label = 'Tongyi Embedding Vision Plus'
+  return [{
+    id: `${input.provider}:${model}`,
+    provider: input.provider,
+    model,
+    label,
+    mode: input.scope,
+    capabilities: ['embedding'],
+    sourceEndpoint: endpoint,
+    rawText: JSON.stringify({
+      id: model,
+      name: label,
+      source: 'dashscope-native-suggested',
+      endpoint,
+    }),
+    inputPricePer1M: null,
+    outputPricePer1M: null,
+    currency: 'USD',
+    pricingSource: 'none',
+    pricingText: defaultModelPricingText,
+  }]
 }
 
 function readPricingNumber(record: Record<string, unknown>, keys: string[]): number | null {
@@ -288,6 +332,40 @@ function toModelRecord(raw: unknown): Record<string, unknown> | null {
   return raw as Record<string, unknown>
 }
 
+function isErrorEnvelope(record: Record<string, unknown>): boolean {
+  const metaKeys = [
+    'success',
+    'message',
+    'msg',
+    'error',
+    'code',
+    'type',
+    'status',
+    'request_id',
+    'requestId',
+  ]
+  const hasMetaKey = metaKeys.some(key => key in record)
+  if (!hasMetaKey)
+    return false
+
+  const hasModelContainer = [
+    record.data,
+    record.models,
+    record.items,
+    record.result,
+    record.payload,
+    record.model_ids,
+    record.modelIds,
+    record.available_models,
+  ].some((value) => {
+    if (Array.isArray(value))
+      return value.length > 0
+    return Boolean(toModelRecord(value))
+  })
+
+  return !hasModelContainer
+}
+
 function maybeModelRecord(raw: unknown): Record<string, unknown> | null {
   if (typeof raw === 'string') {
     const model = toNonEmptyString(raw)
@@ -322,6 +400,17 @@ function extractModelItemsFromMap(payload: unknown): Record<string, unknown>[] {
     const modelKey = toNonEmptyString(key)
     if (!modelKey)
       continue
+
+    if (Array.isArray(value)) {
+      const nestedRecords = value
+        .map(item => maybeModelRecord(item))
+        .filter((item): item is Record<string, unknown> => Boolean(item))
+
+      if (nestedRecords.length > 0) {
+        records.push(...nestedRecords)
+        continue
+      }
+    }
 
     if (typeof value === 'string') {
       const label = toNonEmptyString(value)
@@ -377,6 +466,8 @@ function extractModelItems(payload: unknown, depth = 0): Record<string, unknown>
   const objectPayload = toModelRecord(payload)
   if (!objectPayload)
     return []
+  if (isErrorEnvelope(objectPayload))
+    return []
 
   const direct = maybeModelRecord(objectPayload)
   if (direct)
@@ -420,8 +511,21 @@ function resolveModelLabel(record: Record<string, unknown>, model: string): stri
     || model
 }
 
+function buildModelRawText(record: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(record)
+  }
+  catch {
+    return ''
+  }
+}
+
 function shouldTryNextEndpoint(status: number): boolean {
   return status === 404 || status === 405 || status === 406 || status === 501
+}
+
+function readResponseContentType(response: Response): string {
+  return response.headers?.get?.('content-type') || ''
 }
 
 async function fetchModelsPayload(input: {
@@ -436,6 +540,12 @@ async function fetchModelsPayload(input: {
     const timer = setTimeout(() => controller.abort(), input.timeoutMs)
 
     try {
+      console.warn('[admin-ai][provider-models] requesting endpoint', {
+        endpoint,
+        timeoutMs: input.timeoutMs,
+        apiKeyPresent: Boolean(input.apiKey),
+        apiKeyLength: String(input.apiKey || '').length,
+      })
       const response = await fetch(endpoint, {
         method: 'GET',
         headers: {
@@ -447,6 +557,13 @@ async function fetchModelsPayload(input: {
 
       if (!response.ok) {
         const bodyText = await response.text().catch(() => '')
+        console.warn('[admin-ai][provider-models] endpoint failed', {
+          endpoint,
+          status: response.status,
+          statusText: response.statusText,
+          contentType: readResponseContentType(response),
+          bodyPreview: bodyText.slice(0, 200),
+        })
         errors.push(`${endpoint} -> ${response.status} ${response.statusText}${bodyText ? ` (${bodyText.slice(0, 80)})` : ''}`)
         if (shouldTryNextEndpoint(response.status))
           continue
@@ -454,6 +571,33 @@ async function fetchModelsPayload(input: {
       }
 
       const payload = await response.json().catch(() => null)
+      if (payload === null) {
+        console.warn('[admin-ai][provider-models] endpoint returned non-json payload', {
+          endpoint,
+          status: response.status,
+          contentType: readResponseContentType(response),
+        })
+        errors.push(`${endpoint} -> 200 OK（返回内容不是合法 JSON）`)
+        continue
+      }
+
+      const records = extractModelItems(payload)
+      if (records.length === 0) {
+        const payloadKeys = toModelRecord(payload) ? Object.keys(payload as Record<string, unknown>).slice(0, 6).join(', ') : ''
+        console.warn('[admin-ai][provider-models] endpoint returned unsupported payload', {
+          endpoint,
+          status: response.status,
+          contentType: readResponseContentType(response),
+          payloadKeys,
+        })
+        errors.push(`${endpoint} -> 200 OK（未解析到模型${payloadKeys ? `，顶层字段：${payloadKeys}` : ''}）`)
+        continue
+      }
+
+      console.warn('[admin-ai][provider-models] endpoint succeeded', {
+        endpoint,
+        modelCount: records.length,
+      })
       return {
         payload,
         endpoint,
@@ -461,6 +605,10 @@ async function fetchModelsPayload(input: {
     }
     catch (error: any) {
       const message = String(error?.message || 'unknown error')
+      console.warn('[admin-ai][provider-models] request threw error', {
+        endpoint,
+        message,
+      })
       errors.push(`${endpoint} -> ${message}`)
       continue
     }
@@ -473,16 +621,19 @@ async function fetchModelsPayload(input: {
 }
 
 export async function discoverProviderModels(input: DiscoverProviderModelsInput): Promise<ProviderModelItem[]> {
-  const apiKey = toNonEmptyString(input.apiKey)
+  const apiKey = normalizePlatformAiApiKey(input.apiKey)
   if (!apiKey)
     throw new Error('API Key 未配置，无法拉取模型列表。')
 
-  const provider = toNonEmptyString(input.provider) || 'openai-compatible'
+  const provider = toNonEmptyString(input.provider)
+  if (!provider)
+    throw new Error('共享上游 provider 未配置，无法拉取模型列表。')
+
   const pricingTable = parsePricingTable(String(input.modelPricingJson || ''), provider)
   const timeoutMs = Math.max(3000, Math.min(60000, Number(input.timeoutMs || 12000)))
   const endpoints = resolveModelsEndpoints(input.baseURL, provider)
 
-  const { payload } = await fetchModelsPayload({
+  const { payload, endpoint } = await fetchModelsPayload({
     endpoints,
     apiKey,
     timeoutMs,
@@ -498,6 +649,8 @@ export async function discoverProviderModels(input: DiscoverProviderModelsInput)
     if (!model)
       continue
 
+    const label = resolveModelLabel(record, model)
+    const rawText = buildModelRawText(record)
     const remotePricing = readRemotePricing(record)
     const tablePricing = resolvePricingFromTable(pricingTable, provider, model)
     const inputPricePer1M = remotePricing?.inputPricePer1M ?? tablePricing?.inputPricePer1M ?? null
@@ -508,8 +661,16 @@ export async function discoverProviderModels(input: DiscoverProviderModelsInput)
       id: `${provider}:${model}`,
       provider,
       model,
-      label: resolveModelLabel(record, model),
+      label,
       mode: input.scope,
+      capabilities: inferPlatformAiModelCapabilities({
+        model,
+        label,
+        provider,
+        rawText,
+      }),
+      sourceEndpoint: endpoint,
+      rawText,
       inputPricePer1M,
       outputPricePer1M,
       currency,
@@ -518,6 +679,15 @@ export async function discoverProviderModels(input: DiscoverProviderModelsInput)
     }
 
     deduped.set(model, item)
+  }
+
+  for (const item of buildSuggestedProviderModels({
+    scope: input.scope,
+    provider,
+    baseURL: input.baseURL,
+  })) {
+    if (!deduped.has(item.model))
+      deduped.set(item.model, item)
   }
 
   return Array.from(deduped.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))

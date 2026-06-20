@@ -14,8 +14,6 @@ import { checkPlatformPermission } from '~~/server/utils/platform-access'
 interface StartupNotifyTestBody {
   chatId?: string
   remark?: string
-  fallbackVersion?: string
-  fallbackCommitSha?: string
 }
 
 function toText(raw: unknown): string {
@@ -67,8 +65,6 @@ export default defineEventHandler(async (event) => {
   const { version, commitSha } = resolveFeishuStartupBuildInfo({
     runtimeVersion: runtime.build.version,
     runtimeCommitSha: runtime.build.commitSha,
-    fallbackVersion: toText(body.fallbackVersion) || toText(config.startupFallbackVersion),
-    fallbackCommitSha: toText(body.fallbackCommitSha) || toText(config.startupFallbackCommitSha),
   })
   if (!version || !commitSha) {
     setResponseStatus(event, 400)

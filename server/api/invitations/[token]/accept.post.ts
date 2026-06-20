@@ -27,7 +27,17 @@ export default defineEventHandler(async (event) => {
 
   try {
     const invitation = await withTransaction(event, async (db) => {
-      return teamAcceptInvitation(db, hashToken(token), user)
+      const acceptedInvitation = await teamAcceptInvitation(db, hashToken(token), user)
+      if (acceptedInvitation) {
+        const { emitInvitationAcceptedNotifications } = await import('~~/server/utils/notification-store')
+        await emitInvitationAcceptedNotifications(db, {
+          actorUser: user,
+          invitationId: acceptedInvitation.id,
+          workspaceId: String(acceptedInvitation.workspaceId || acceptedInvitation.teamId || '').trim(),
+          projectId: String(acceptedInvitation.projectId || '').trim() || null,
+        })
+      }
+      return acceptedInvitation
     })
 
     if (!invitation) {

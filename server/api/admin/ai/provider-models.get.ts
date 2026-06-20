@@ -1,6 +1,4 @@
-import type { ProviderModelScope } from '~~/server/services/admin-ai/provider-models'
-import type { PlatformAiProviderAdapter } from '~~/server/utils/platform-ai-channels'
-import { getQuery, setResponseStatus } from 'h3'
+import { setResponseStatus } from 'h3'
 import { discoverProviderModels } from '~~/server/services/admin-ai/provider-models'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -9,17 +7,6 @@ import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
-
-function resolveScope(raw: unknown): ProviderModelScope {
-  return String(raw || '').trim() === 'docAi' ? 'docAi' : 'llm'
-}
-
-function resolveAdapter(value: unknown): PlatformAiProviderAdapter {
-  const normalized = String(value || '').trim().toLowerCase()
-  if (normalized === 'response')
-    return 'response'
-  return 'openai-compatible'
-}
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -32,73 +19,60 @@ export default defineEventHandler(async (event) => {
     return fail('当前用户无权查看模型目录配置。', {
       startedAt,
       provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40396)
   }
 
+  const registry = resolvePlatformAiRegistry(runtime)
   const query = getQuery(event)
   const providerId = String(query.providerId || '').trim()
-  const scope = resolveScope(query.scope)
-  const registry = resolvePlatformAiRegistry(runtime)
-  const providerFromRegistry = providerId
-    ? registry.providers.find(item => item.id === providerId)
-    : null
-  const useRegistryProvider = Boolean(providerFromRegistry)
-  const mode: ProviderModelScope = useRegistryProvider ? 'provider' : scope
-  const providerConfig = useRegistryProvider
-    ? {
-        provider: providerFromRegistry!.provider,
-        baseURL: providerFromRegistry!.baseURL,
-        apiKey: providerFromRegistry!.apiKey || runtime.ai.apiKey,
-        model: providerFromRegistry!.models[0]?.model || runtime.ai.model,
-        modelPricingJson: '',
-        timeoutMs: providerFromRegistry!.timeoutMs,
-        maxRetries: providerFromRegistry!.maxRetries,
-        adapter: providerFromRegistry!.adapter,
-      }
-    : (scope === 'docAi'
-        ? {
-            ...runtime.docAi,
-            adapter: resolveAdapter(runtime.docAi.provider),
-          }
-        : {
-            ...runtime.ai,
-            adapter: resolveAdapter(runtime.ai.provider),
-          })
-
-  if (providerId && !providerFromRegistry) {
-    setResponseStatus(event, 404)
-    return fail(`Provider(${providerId}) 不存在。`, {
+  const provider = (providerId ? registry.providers.find(item => item.id === providerId) : null)
+    || registry.providers.find(item => item.capability !== 'search' && item.capability !== 'voice' && item.capability !== 'realtime')
+    || null
+  if (!provider) {
+    setResponseStatus(event, 400)
+    return fail('尚未配置可拉取模型池的 Provider。', {
       startedAt,
       provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 40496)
-  }
-
-  if (!String(providerConfig.apiKey || '').trim()) {
-    setResponseStatus(event, 400)
-    return fail(`${scope === 'docAi' ? 'DocAI' : useRegistryProvider ? 'Provider' : 'LLM'} API Key 未配置，无法自动拉取模型。`, {
-      startedAt,
-      provider: providerConfig.provider,
-      model: providerConfig.model,
+      model: '',
       fallbackUsed: false,
       attempts: 1,
     }, 40096)
   }
 
+  if (provider.capability === 'search' || provider.capability === 'voice' || provider.capability === 'realtime') {
+    setResponseStatus(event, 400)
+    return fail('当前 Provider 不支持模型池拉取。', {
+      startedAt,
+      provider: provider.provider,
+      model: provider.models[0]?.model || '',
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40098)
+  }
+
+  if (!String(provider.apiKey || '').trim()) {
+    setResponseStatus(event, 400)
+    return fail('Provider API Key 未配置，无法自动拉取模型。', {
+      startedAt,
+      provider: provider.provider,
+      model: provider.models[0]?.model || '',
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40097)
+  }
+
   try {
     const items = await discoverProviderModels({
-      scope: mode,
-      provider: providerConfig.provider,
-      baseURL: providerConfig.baseURL,
-      apiKey: providerConfig.apiKey,
-      modelPricingJson: providerConfig.modelPricingJson,
-      timeoutMs: providerConfig.timeoutMs,
-      adapter: providerConfig.adapter,
+      scope: 'provider',
+      provider: provider.provider,
+      baseURL: provider.baseURL,
+      apiKey: provider.apiKey,
+      modelPricingJson: '',
+      timeoutMs: provider.timeoutMs,
+      adapter: provider.adapter,
     })
 
     await withTransaction(event, async (db) => {
@@ -106,27 +80,23 @@ export default defineEventHandler(async (event) => {
         actorUserId: user.id,
         action: 'read.admin.ai.provider_models',
         payload: {
-          scope,
-          mode,
-          providerId: providerId || null,
-          provider: providerConfig.provider,
+          provider: provider.provider,
           count: items.length,
         },
       })
     })
 
     return ok({
-      scope,
-      mode,
-      providerId: providerId || '',
-      provider: providerConfig.provider,
-      baseURL: providerConfig.baseURL,
+      providerId: provider.id,
+      providerName: provider.name,
+      provider: provider.provider,
+      baseURL: provider.baseURL,
       fetchedAt: new Date().toISOString(),
       items,
     }, {
       startedAt,
-      provider: providerConfig.provider,
-      model: providerConfig.model,
+      provider: provider.provider,
+      model: provider.models[0]?.model || '',
       fallbackUsed: false,
       attempts: 1,
     })
@@ -135,8 +105,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 502)
     return fail(String(error?.message || '模型列表拉取失败，请检查 provider/baseURL/apiKey。'), {
       startedAt,
-      provider: providerConfig.provider,
-      model: providerConfig.model,
+      provider: provider.provider,
+      model: provider.models[0]?.model || '',
       fallbackUsed: false,
       attempts: 1,
     }, 50296)

@@ -8,13 +8,16 @@ import type {
   Track,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
-import { createDeepAgent } from 'deepagents'
 import { tool } from 'langchain'
 import { z } from 'zod'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
+import {
+  buildDeepAgentThreadBinding,
+  createPersistedDeepAgent,
+} from '~~/server/services/ai/deepagent-factory'
 import { createChatModel } from '~~/server/services/ai/llm-client'
-import { getContestDetail, getContestPublishCheck, getPublishedRubricByTrack, previewContestImportCsv } from '~~/server/utils/contest-store'
-import { listContestSyncRuns, listContestSyncSources } from '~~/server/utils/contest-sync-store'
+import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
+import { getContestDetail, getContestPublishCheck, getPublishedRubricByTrack } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { runWithRetry } from '~~/server/utils/retry'
@@ -64,16 +67,6 @@ function createArtifact(input: {
     module: input.module,
     payload: input.payload,
   }
-}
-
-function resolveTaskType(taskType: AdminAgentTaskType, message: string): AdminAgentTaskType {
-  if (taskType !== 'general')
-    return taskType
-
-  const text = message.toLowerCase()
-  if (text.includes('导入') || text.includes('同步') || text.includes('csv'))
-    return 'import_sync_analysis'
-  return 'publish_assistant'
 }
 
 function resolveTrack(contest: Contest, trackId?: string): Track | null {
@@ -222,7 +215,6 @@ function buildPublishFixArtifact(input: {
   const fixMap: Record<string, { module: AdminAgentArtifact['module'], action: string }> = {
     CONTEST_NAME_REQUIRED: { module: 'overview', action: '补全赛事名称。' },
     CONTEST_LEVEL_REQUIRED: { module: 'overview', action: '补全赛事级别。' },
-    CONTEST_ORGANIZER_REQUIRED: { module: 'overview', action: '补全主办方。' },
     CONTEST_OFFICIAL_URL_REQUIRED: { module: 'overview', action: '补全官网链接。' },
     CONTEST_SUMMARY_REQUIRED: { module: 'overview', action: '补全赛事简介。' },
     CONTEST_PARTICIPANT_REQUIREMENTS_REQUIRED: { module: 'overview', action: '补全参赛对象/限制。' },
@@ -231,7 +223,7 @@ function buildPublishFixArtifact(input: {
     CONTEST_TRACKS_REQUIRED: { module: 'tracks', action: '新增至少 1 个赛道。' },
     CONTEST_TIMELINES_REQUIRED: { module: 'timelines', action: '新增至少 1 条时间节点。' },
     CONTEST_RUBRICS_REQUIRED: { module: 'rubrics', action: '新增至少 1 条评分规则。' },
-    CONTEST_DUPLICATED: { module: 'overview', action: '核对名称+主办方+官网去重键。' },
+    CONTEST_DUPLICATED: { module: 'overview', action: '核对唯一编号绑定。' },
   }
 
   const blockerFixes = input.blockers.map((item) => {
@@ -324,7 +316,7 @@ async function buildAssistantReplyWithDeepAgent(input: {
 }): Promise<{ text: string, fallbackUsed: boolean, attempts: number }> {
   const fallback = summarizeArtifacts(input.resolvedTaskType, input.artifacts, Boolean(input.runtime.adminAi.tavilyApiKey))
 
-  const onlyFallback = input.runtime.ai.provider === 'mock' || !input.runtime.ai.apiKey
+  const onlyFallback = !isAiRuntimeConfigured(input.runtime.ai)
   if (onlyFallback)
     return { text: fallback, fallbackUsed: true, attempts: 1 }
 
@@ -387,8 +379,16 @@ async function buildAssistantReplyWithDeepAgent(input: {
 
   const runOnce = async () => {
     await input.hooks.onProgress?.('调用 DeepAgent 生成总结中...')
-
-    const agent = createDeepAgent({
+    const binding = buildDeepAgentThreadBinding({
+      workspaceId: input.request.workspaceId,
+      projectId: input.request.contestId,
+      mode: `admin_${input.resolvedTaskType}`,
+      sessionId: toText(input.request.sessionId) || `contest:${input.request.contestId}`,
+      scope: 'admin',
+    })
+    const persisted = createPersistedDeepAgent({
+      runtime: input.runtime as unknown as EffectiveRuntime,
+      binding,
       model: createChatModel(input.runtime.ai),
       tools: [getArtifactContext, webSearch, fetchWebPage],
       systemPrompt: [
@@ -406,12 +406,13 @@ async function buildAssistantReplyWithDeepAgent(input: {
         },
         {
           name: 'ops-agent',
-          description: '擅长运营治理、导入同步分析与配置诊断。',
-          systemPrompt: '聚焦导入质量、同步状态、风险识别与可执行修复步骤。',
+          description: '擅长运营治理、配置诊断与后台问题排查。',
+          systemPrompt: '聚焦配置状态、风险识别、问题定位与可执行修复步骤。',
           tools: [getArtifactContext, webSearch, fetchWebPage],
         },
       ],
     })
+    const agent = persisted.agent
 
     const prompt = [
       `任务类型：${input.resolvedTaskType}`,
@@ -427,7 +428,7 @@ async function buildAssistantReplyWithDeepAgent(input: {
 
     const response = await agent.invoke({
       messages: [{ role: 'user', content: prompt }],
-    })
+    }, persisted.config)
 
     const assistantText = extractAssistantText(response)
     return assistantText || fallback
@@ -459,7 +460,7 @@ export async function executeAdminAgent(
 
   await hooks.onProgress?.('加载赛事上下文...')
 
-  const [detail, publishCheck, syncSources, syncRuns] = await withClient(event, async (db) => {
+  const [detail, publishCheck] = await withClient(event, async (db) => {
     const contestDetail = await getContestDetail(db, {
       contestId: request.contestId,
       includeInternal: true,
@@ -469,19 +470,14 @@ export async function executeAdminAgent(
       contestId: request.contestId,
     })
 
-    const sources = await listContestSyncSources(db)
-    const runs = await listContestSyncRuns(db, {
-      limit: 20,
-    })
-
-    return [contestDetail, check, sources, runs] as const
+    return [contestDetail, check] as const
   })
 
   if (!detail || !publishCheck)
     throw new Error('CONTEST_NOT_FOUND')
 
   const contest = detail.contest
-  const resolvedTaskType = resolveTaskType(request.taskType, request.message)
+  const resolvedTaskType = request.taskType
   const track = resolveTrack(contest, request.context?.trackId)
 
   const artifacts: AdminAgentArtifact[] = [
@@ -506,43 +502,6 @@ export async function executeAdminAgent(
     artifacts.push(buildPublishFixArtifact({
       blockers: publishCheck.blockers,
       warnings: publishCheck.warnings,
-    }))
-  }
-
-  if (resolvedTaskType === 'import_sync_analysis') {
-    await hooks.onProgress?.('分析导入与同步状态...')
-
-    let previewSummary: Record<string, unknown> = {
-      enabled: false,
-    }
-
-    const csvText = toText(request.context?.csvText)
-    if (csvText) {
-      const preview = await withClient(event, async (db) => {
-        return previewContestImportCsv(db, { csvText })
-      })
-
-      previewSummary = {
-        enabled: true,
-        total: preview.total,
-        validCount: preview.validCount,
-        invalidCount: preview.invalidCount,
-        sampleErrors: preview.rows
-          .filter(row => row.errors.length > 0)
-          .slice(0, 5)
-          .map(row => ({ rowNumber: row.rowNumber, errors: row.errors })),
-      }
-    }
-
-    artifacts.push(createArtifact({
-      type: 'import_sync',
-      title: '导入/同步分析',
-      summary: `同步源 ${syncSources.length} 个，最近运行 ${syncRuns.length} 条。`,
-      payload: {
-        csvPreview: previewSummary,
-        syncSources,
-        syncRuns,
-      },
     }))
   }
 

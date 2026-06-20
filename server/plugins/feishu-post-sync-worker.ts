@@ -1,3 +1,4 @@
+import type { FeishuBitableSyncItemEntityType } from '~~/shared/types/domain'
 import {
   batchUpdateFeishuBitableRecords,
   getFeishuTenantAccessToken,
@@ -6,6 +7,7 @@ import {
   analyzeFeishuEntity,
   createFeishuEmbedding,
 } from '~~/server/services/feishu/post-sync-ai'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import {
@@ -17,6 +19,7 @@ import {
   upsertFeishuSearchIndexDoc,
   upsertFeishuVectorChunk,
 } from '~~/server/utils/feishu-integration-store'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const FEISHU_POST_SYNC_WORKER_KEY = Symbol.for('winloop.feishu.post-sync-worker.runtime.v1')
 
@@ -123,7 +126,7 @@ async function handleEmbeddingUpsert(
     id: string
     syncItemId: string | null
     runId: string | null
-    scope: 'contest' | 'track' | 'resource'
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     externalId: string
     sourceHash: string
@@ -194,7 +197,7 @@ async function handleSearchIndexRefresh(
     id: string
     syncItemId: string | null
     runId: string | null
-    scope: 'contest' | 'track' | 'resource'
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     externalId: string
     sourceHash: string
@@ -234,7 +237,7 @@ async function handleEntityAnalysis(
     id: string
     syncItemId: string | null
     runId: string | null
-    scope: 'contest' | 'track' | 'resource'
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     externalId: string
     sourceHash: string
@@ -379,6 +382,10 @@ async function processSingleTask(): Promise<boolean> {
         },
       })
     })
+    captureServerException(error, {
+      module: 'feishu-post-sync-worker',
+      taskId: task.id,
+    })
   }
 
   return true
@@ -405,6 +412,9 @@ async function runTick(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const runtimeState = getWorkerRuntimeState()
   if (runtimeState.booted)
     return
@@ -415,11 +425,17 @@ export default defineNitroPlugin((nitroApp) => {
 
   void runTick().catch((error) => {
     console.error('[feishu-post-sync-worker] bootstrap failed:', toErrorMessage(error))
+    captureServerException(error, {
+      module: 'feishu-post-sync-worker',
+    })
   })
 
   runtimeState.timer = setInterval(() => {
     void runTick().catch((error) => {
       console.error('[feishu-post-sync-worker] tick failed:', toErrorMessage(error))
+      captureServerException(error, {
+        module: 'feishu-post-sync-worker',
+      })
     })
   }, intervalMs)
   runtimeState.timer.unref?.()

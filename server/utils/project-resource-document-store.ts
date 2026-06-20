@@ -1,4 +1,5 @@
 import type { Queryable } from '~~/server/utils/db'
+import type { DocumentAnalysis } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
 
@@ -144,6 +145,27 @@ function normalizeRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+function normalizeDocumentAnalysis(value: unknown): DocumentAnalysis | null {
+  const source = normalizeRecord(value)
+  const pages = Array.isArray(source.pages) ? source.pages : []
+  if (pages.length === 0)
+    return null
+  return {
+    version: normalizeString(source.version) || 'v1',
+    source: normalizeString(source.source) || 'unknown',
+    pages: pages.map((pageItem, index) => {
+      const page = normalizeRecord(pageItem)
+      return {
+        page: Math.max(1, toNumber(page.page, index + 1)),
+        width: Math.max(0, toNumber(page.width, 1)),
+        height: Math.max(0, toNumber(page.height, 1)),
+        blocks: Array.isArray(page.blocks) ? page.blocks as DocumentAnalysis['pages'][number]['blocks'] : [],
+        fields: Array.isArray(page.fields) ? page.fields as DocumentAnalysis['pages'][number]['fields'] : [],
+      }
+    }),
+  }
+}
+
 function toNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value)
   if (Number.isFinite(parsed))
@@ -162,6 +184,30 @@ function isPdfByNameOrMime(fileName: string, mimeType: string): boolean {
   if (normalizedName.endsWith('.pdf'))
     return true
   return normalizeString(mimeType).toLowerCase().includes('pdf')
+}
+
+const IMAGE_PREVIEW_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.bmp',
+  '.webp',
+  '.svg',
+  '.avif',
+  '.heic',
+  '.heif',
+])
+
+function isImageByNameOrMime(fileName: string, mimeType: string): boolean {
+  const normalizedMime = normalizeString(mimeType).toLowerCase()
+  if (normalizedMime.startsWith('image/'))
+    return true
+
+  const normalizedName = normalizeString(fileName).toLowerCase()
+  const dotIndex = normalizedName.lastIndexOf('.')
+  const extension = dotIndex >= 0 ? normalizedName.slice(dotIndex) : ''
+  return IMAGE_PREVIEW_EXTENSIONS.has(extension)
 }
 
 const ONLYOFFICE_EXTENSIONS = new Set([
@@ -190,7 +236,7 @@ export function isOnlyOfficeConvertible(fileName: string, mimeType: string): boo
 }
 
 function mapDocument(row: ProjectResourceDocumentRow): ProjectResourceDocument {
-  return {
+  const document: ProjectResourceDocument = {
     id: row.id,
     projectId: row.project_id,
     projectResourceId: row.project_resource_id,
@@ -224,6 +270,27 @@ function mapDocument(row: ProjectResourceDocumentRow): ProjectResourceDocument {
     totalAttemptDurationMs: Math.max(0, toNumber(row.total_attempt_duration_ms, 0)),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+
+  if (!isImageByNameOrMime(document.sourceFileName || document.fileName, document.sourceMimeType || document.mimeType))
+    return document
+
+  return {
+    ...document,
+    previewObjectKey: normalizeString(document.previewObjectKey) || normalizeString(document.sourceObjectKey) || normalizeString(document.objectKey),
+    previewStorageProvider: normalizeString(document.previewStorageProvider || document.sourceStorageProvider || document.storageProvider) || 'local',
+    previewFileName: normalizeString(document.previewFileName || document.sourceFileName || document.fileName) || 'image',
+    previewMimeType: normalizeString(document.previewMimeType).startsWith('image/')
+      ? normalizeString(document.previewMimeType)
+      : (normalizeString(document.sourceMimeType || document.mimeType) || 'application/octet-stream'),
+    previewFileSize: document.previewFileSize > 0
+      ? document.previewFileSize
+      : Math.max(0, document.sourceFileSize || document.fileSize),
+    previewStatus: 'succeeded',
+    previewStage: 'succeeded',
+    previewProgressPercent: 100,
+    previewEtaSeconds: 0,
+    previewError: '',
   }
 }
 
@@ -268,24 +335,29 @@ export async function createProjectPreviewDocumentWithTask(
   const sourceStorageProvider = normalizeString(input.sourceStorageProvider) || 'local'
 
   const isPdf = isPdfByNameOrMime(sourceFileName, sourceMimeType)
+  const isImage = isImageByNameOrMime(sourceFileName, sourceMimeType)
   const canConvert = isOnlyOfficeConvertible(sourceFileName, sourceMimeType)
 
-  const previewStatus: ProjectPreviewStatus = isPdf
+  const previewStatus: ProjectPreviewStatus = isPdf || isImage
     ? 'succeeded'
     : canConvert
       ? 'queued'
       : 'failed'
   const previewStage: ProjectPreviewStage = previewStatus
   const previewProgressPercent = previewStatus === 'succeeded' || previewStatus === 'failed' ? 100 : 0
-  const previewError = canConvert || isPdf ? '' : 'UNSUPPORTED_CONVERSION_TYPE'
+  const previewError = canConvert || isPdf || isImage ? '' : 'UNSUPPORTED_CONVERSION_TYPE'
 
-  const previewObjectKey = isPdf ? sourceObjectKey : ''
-  const previewStorageProvider = isPdf ? sourceStorageProvider : sourceStorageProvider
-  const previewFileName = isPdf ? sourceFileName : ''
-  const previewMimeType = isPdf ? 'application/pdf' : 'application/pdf'
-  const previewFileSize = isPdf ? sourceFileSize : 0
+  const previewObjectKey = isPdf || isImage ? sourceObjectKey : ''
+  const previewStorageProvider = isPdf || isImage ? sourceStorageProvider : sourceStorageProvider
+  const previewFileName = isPdf || isImage ? sourceFileName : ''
+  const previewMimeType = isPdf
+    ? 'application/pdf'
+    : isImage
+      ? sourceMimeType
+      : 'application/pdf'
+  const previewFileSize = isPdf || isImage ? sourceFileSize : 0
 
-  await db.query(
+  const upserted = await db.query<{ id: string }>(
     `INSERT INTO project_resource_documents (
       id,
       project_id,
@@ -329,7 +401,42 @@ export async function createProjectPreviewDocumentWithTask(
       $10, $11, $12, $13, $14, $15,
       $16, $17, $18, 0, $19, $20, $21, $22, $23, 0, $24,
       $25, NULL, $26, '', '', '{}'::JSONB, '{}'::JSONB, $27, $27, $28, $28
-    )`,
+    )
+    ON CONFLICT (project_resource_id)
+    DO UPDATE SET
+      object_key = EXCLUDED.object_key,
+      source_object_key = EXCLUDED.source_object_key,
+      preview_object_key = EXCLUDED.preview_object_key,
+      storage_provider = EXCLUDED.storage_provider,
+      source_storage_provider = EXCLUDED.source_storage_provider,
+      preview_storage_provider = EXCLUDED.preview_storage_provider,
+      file_name = EXCLUDED.file_name,
+      source_file_name = EXCLUDED.source_file_name,
+      preview_file_name = EXCLUDED.preview_file_name,
+      mime_type = EXCLUDED.mime_type,
+      source_mime_type = EXCLUDED.source_mime_type,
+      preview_mime_type = EXCLUDED.preview_mime_type,
+      file_size = EXCLUDED.file_size,
+      source_file_size = EXCLUDED.source_file_size,
+      preview_file_size = EXCLUDED.preview_file_size,
+      page_count = 0,
+      parse_status = EXCLUDED.parse_status,
+      parse_error = EXCLUDED.parse_error,
+      preview_status = EXCLUDED.preview_status,
+      preview_stage = EXCLUDED.preview_stage,
+      preview_progress_percent = EXCLUDED.preview_progress_percent,
+      preview_eta_seconds = EXCLUDED.preview_eta_seconds,
+      preview_error = EXCLUDED.preview_error,
+      queued_at = EXCLUDED.queued_at,
+      started_at = NULL,
+      finished_at = EXCLUDED.finished_at,
+      parser_provider = '',
+      parser_model = '',
+      analysis_json = '{}'::JSONB,
+      annotation_json = '{}'::JSONB,
+      updated_by_user_id = EXCLUDED.updated_by_user_id,
+      updated_at = EXCLUDED.updated_at
+    RETURNING id`,
     [
       documentId,
       input.projectId,
@@ -361,6 +468,7 @@ export async function createProjectPreviewDocumentWithTask(
       now,
     ],
   )
+  const persistedDocumentId = normalizeString(upserted.rows[0]?.id) || documentId
 
   let task: ProjectResourceDocumentTask | null = null
   if (previewStatus === 'queued') {
@@ -386,12 +494,12 @@ export async function createProjectPreviewDocumentWithTask(
       ) VALUES (
         $1, $2, 'convert_preview_pdf', 'onlyoffice', 'queued', 0, 'queued', 0, '', '{}'::JSONB, NULL, NULL, $3, $3, $4, $4
       )`,
-      [taskId, documentId, input.actorUserId, now],
+      [taskId, persistedDocumentId, input.actorUserId, now],
     )
     task = await getProjectDocumentTaskById(db, { taskId })
   }
 
-  const document = await getProjectResourceDocumentById(db, { documentId })
+  const document = await getProjectResourceDocumentById(db, { documentId: persistedDocumentId })
   if (!document)
     throw new Error('PROJECT_RESOURCE_DOCUMENT_CREATE_FAILED')
 
@@ -493,6 +601,90 @@ export async function getProjectResourceDocumentByResourceId(
   )
 
   return result.rows[0] ? mapDocument(result.rows[0]) : null
+}
+
+export async function getProjectResourceDocumentAnalysisByResourceId(
+  db: Queryable,
+  input: { projectId: string, resourceId: string },
+): Promise<{ document: ProjectResourceDocument, analysis: DocumentAnalysis | null } | null> {
+  const result = await db.query<ProjectResourceDocumentRow & { analysis_json: unknown }>(
+    `SELECT
+      id,
+      project_id,
+      project_resource_id,
+      object_key,
+      source_object_key,
+      preview_object_key,
+      storage_provider,
+      source_storage_provider,
+      preview_storage_provider,
+      file_name,
+      source_file_name,
+      preview_file_name,
+      mime_type,
+      source_mime_type,
+      preview_mime_type,
+      file_size::TEXT,
+      source_file_size::TEXT,
+      preview_file_size::TEXT,
+      page_count,
+      parse_status,
+      parse_error,
+      preview_status,
+      preview_stage,
+      preview_progress_percent,
+      preview_eta_seconds,
+      preview_error,
+      queued_at::TEXT,
+      started_at::TEXT,
+      finished_at::TEXT,
+      last_attempt_duration_ms,
+      total_attempt_duration_ms,
+      created_at::TEXT,
+      updated_at::TEXT,
+      analysis_json
+     FROM project_resource_documents
+     WHERE project_id = $1
+       AND project_resource_id = $2
+     LIMIT 1`,
+    [input.projectId, input.resourceId],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    return null
+
+  return {
+    document: mapDocument(row),
+    analysis: normalizeDocumentAnalysis(row.analysis_json),
+  }
+}
+
+export async function updateProjectResourceDocumentAnalysis(
+  db: Queryable,
+  input: {
+    documentId: string
+    analysis: DocumentAnalysis
+    pageCount: number
+    actorUserId: string
+  },
+): Promise<void> {
+  await db.query(
+    `UPDATE project_resource_documents
+     SET analysis_json = $2::JSONB,
+         page_count = $3,
+         parse_status = 'succeeded',
+         parse_error = '',
+         updated_by_user_id = $4,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      input.documentId,
+      JSON.stringify(input.analysis),
+      Math.max(0, Math.trunc(Number(input.pageCount || input.analysis.pages.length || 0))),
+      input.actorUserId,
+    ],
+  )
 }
 
 export async function getProjectDocumentTaskById(
@@ -889,7 +1081,7 @@ export async function enqueueProjectDocumentReconvert(
   if (!document)
     throw new Error('DOCUMENT_NOT_FOUND')
 
-  if (isPdfByNameOrMime(document.sourceFileName, document.sourceMimeType)) {
+  if (isPdfByNameOrMime(document.sourceFileName, document.sourceMimeType) || isImageByNameOrMime(document.sourceFileName, document.sourceMimeType)) {
     await setProjectDocumentPreviewState(db, {
       documentId: document.id,
       status: 'succeeded',

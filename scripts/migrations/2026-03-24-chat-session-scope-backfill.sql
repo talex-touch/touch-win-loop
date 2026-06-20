@@ -132,32 +132,35 @@ CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_workspace_project_mode_updated
 
 COMMIT;
 
--- Validation summary
-SELECT
-  COUNT(*) AS total_sessions,
-  COUNT(*) FILTER (WHERE project_id = '') AS unbound_sessions,
-  COUNT(*) FILTER (WHERE project_id <> '') AS scoped_sessions
-FROM ai_chat_sessions;
-
-WITH audit_candidates AS (
-  SELECT
-    NULLIF(payload ->> 'sessionId', '') AS session_id,
-    NULLIF(payload ->> 'projectId', '') AS project_id
-  FROM contest_audit_logs
-  WHERE action IN (
-    'ai.invoke.workspace_agent',
-    'ai.invoke.defense',
-    'ai.invoke.project_chat',
-    'ai.invoke.topic_proposal'
+-- Validation
+DO $$
+DECLARE
+  conflicting_sessions INTEGER;
+BEGIN
+  WITH audit_candidates AS (
+    SELECT
+      NULLIF(payload ->> 'sessionId', '') AS session_id,
+      NULLIF(payload ->> 'projectId', '') AS project_id
+    FROM contest_audit_logs
+    WHERE action IN (
+      'ai.invoke.workspace_agent',
+      'ai.invoke.defense',
+      'ai.invoke.project_chat',
+      'ai.invoke.topic_proposal'
+    )
   )
-)
-SELECT
-  COUNT(*) AS conflicting_sessions
-FROM (
-  SELECT session_id
-  FROM audit_candidates
-  WHERE session_id IS NOT NULL
-    AND project_id IS NOT NULL
-  GROUP BY session_id
-  HAVING COUNT(DISTINCT project_id) > 1
-) c;
+  SELECT COUNT(*)
+  INTO conflicting_sessions
+  FROM (
+    SELECT session_id
+    FROM audit_candidates
+    WHERE session_id IS NOT NULL
+      AND project_id IS NOT NULL
+    GROUP BY session_id
+    HAVING COUNT(DISTINCT project_id) > 1
+  ) c;
+
+  IF conflicting_sessions > 0 THEN
+    RAISE EXCEPTION 'Chat session scope backfill validation failed: % conflicting sessions remain.', conflicting_sessions;
+  END IF;
+END $$;

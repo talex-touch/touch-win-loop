@@ -1,26 +1,22 @@
 import type { AuthLoginResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
+import { buildAuthLoginResult } from '~~/server/services/auth/login-session'
 import { fail, ok } from '~~/server/utils/api'
 import {
   clearSessionCookie,
-  resolveSessionExpiresAt,
   sanitizePassword,
   sanitizeUsername,
   setSessionCookie,
 } from '~~/server/utils/auth'
-import { resolvePlatformAccess } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import {
   countUsers,
-  createSession,
   createUserWithPersonalWorkspace,
-  ensureBootstrapPlatformSuperAdmin,
   findUserByUsername,
   getUserPasswordHashByUsername,
 } from '~~/server/utils/platform-store'
-import { createSessionToken, hashPassword, hashToken, verifyPassword } from '~~/server/utils/security'
-import { teamListUserWorkspaces } from '~~/server/utils/team-workspace-store'
+import { hashPassword, verifyPassword } from '~~/server/utils/security'
 
 interface LoginBody {
   username?: string
@@ -29,7 +25,7 @@ interface LoginBody {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const { runtime } = await readEffectivePlatformRuntimeSettings(event)
   const body = await readBody<LoginBody>(event)
   const username = sanitizeUsername(body?.username || '')
   const password = sanitizePassword(body?.password || '')
@@ -61,6 +57,9 @@ export default defineEventHandler(async (event) => {
       let user = await findUserByUsername(db, username)
 
       if (!user) {
+        if (!runtime.auth.registrationEnabled)
+          throw new Error('AUTH_REGISTRATION_DISABLED')
+
         const totalUsers = await countUsers(db)
         user = await createUserWithPersonalWorkspace(db, {
           username,
@@ -76,43 +75,7 @@ export default defineEventHandler(async (event) => {
         }
       }
 
-      const promotedAsBootstrapAdmin = await ensureBootstrapPlatformSuperAdmin(db, user.id)
-      if (promotedAsBootstrapAdmin) {
-        user = {
-          ...user,
-          isPlatformAdmin: true,
-        }
-      }
-
-      if (user.isDisabled)
-        throw new Error('USER_DISABLED')
-
-      const sessionToken = createSessionToken()
-      const session = await createSession(db, {
-        userId: user.id,
-        tokenHash: hashToken(sessionToken),
-        expiresAt: resolveSessionExpiresAt(),
-      })
-
-      const workspaces = await teamListUserWorkspaces(db, user.id)
-      const teams = workspaces.map(item => ({ team: item.workspace, quota: item.quota }))
-      const teamCount = workspaces.filter(item => item.workspace.type === 'team').length
-      const platformAccess = await resolvePlatformAccess(db, user)
-
-      return {
-        user: {
-          ...user,
-          platformRoles: platformAccess.roles,
-          platformPermissions: platformAccess.permissions,
-        },
-        session,
-        teams,
-        workspaces,
-        onboarding: {
-          needCreateTeam: teamCount === 0,
-        },
-        sessionToken,
-      }
+      return buildAuthLoginResult(db, user)
     })
 
     setSessionCookie(event, result.sessionToken, result.session.expiresAt)
@@ -153,6 +116,17 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40311)
+    }
+
+    if (error instanceof Error && error.message === 'AUTH_REGISTRATION_DISABLED') {
+      setResponseStatus(event, 403)
+      return fail('平台暂未开放注册，请联系管理员开通账号或开启注册。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40312)
     }
 
     throw error

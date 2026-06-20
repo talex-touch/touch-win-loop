@@ -1,0 +1,58 @@
+services:
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - yes
+    ports:
+      - ${REDIS_PORT:-6379}:6379
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  livekit:
+    image: ${LIVEKIT_IMAGE:-livekit/livekit-server:latest}
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    command:
+      - --config
+      - /etc/livekit/livekit.yaml
+    ports:
+      - ${LIVEKIT_HTTP_PORT:-7880}:7880/tcp
+      - ${LIVEKIT_TCP_PORT:-7881}:7881/tcp
+      - ${LIVEKIT_RTC_UDP_PORT_RANGE:-50000-50100}:${LIVEKIT_RTC_UDP_PORT_RANGE:-50000-50100}/udp
+    volumes:
+      - ./livekit.yaml:/etc/livekit/livekit.yaml:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+  egress:
+    image: ${LIVEKIT_EGRESS_IMAGE:-livekit/egress:latest}
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    environment:
+      EGRESS_CONFIG_FILE: /etc/livekit/egress.yaml
+    volumes:
+      - ./egress.yaml:/etc/livekit/egress.yaml:ro
+      - /private/tmp/winloop-meeting-egress:/tmp/winloop-meeting-egress
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    cap_add:
+      - SYS_ADMIN
+    ports:
+      - ${LIVEKIT_EGRESS_HEALTH_PORT:-8089}:8089/tcp

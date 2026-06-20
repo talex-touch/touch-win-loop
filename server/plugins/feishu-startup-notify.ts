@@ -3,9 +3,11 @@ import {
   resolveFeishuStartupBuildInfo,
   sendFeishuStartupNotifyMessage,
 } from '~~/server/services/feishu/startup-notify'
+import { shouldSkipBackgroundWorkers } from '~~/server/utils/background-workers'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readFeishuIntegrationConfig } from '~~/server/utils/feishu-integration-store'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const FEISHU_STARTUP_NOTIFY_RUNTIME_KEY = Symbol.for('winloop.feishu.startup-notify.runtime.v1')
 
@@ -61,8 +63,6 @@ async function runStartupNotify(): Promise<void> {
     const { version, commitSha } = resolveFeishuStartupBuildInfo({
       runtimeVersion: runtime.build.version,
       runtimeCommitSha: runtime.build.commitSha,
-      fallbackVersion: config.startupFallbackVersion,
-      fallbackCommitSha: config.startupFallbackCommitSha,
     })
     if (!version || !commitSha) {
       console.warn('[feishu-startup-notify] version or commit sha is empty, skip.', {
@@ -84,6 +84,9 @@ async function runStartupNotify(): Promise<void> {
   }
   catch (error) {
     console.error('[feishu-startup-notify] startup notification failed:', toErrorMessage(error))
+    captureServerException(error, {
+      module: 'feishu-startup-notify',
+    })
   }
   finally {
     runtimeState.notifying = false
@@ -91,6 +94,9 @@ async function runStartupNotify(): Promise<void> {
 }
 
 export default defineNitroPlugin((nitroApp) => {
+  if (shouldSkipBackgroundWorkers())
+    return
+
   const runtimeState = getStartupNotifyRuntimeState()
   if (runtimeState.booted)
     return

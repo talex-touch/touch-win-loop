@@ -43,7 +43,19 @@ export default defineEventHandler(async (event) => {
     syncItemId,
     actorUserId: user.id,
     draft: body,
+  }).catch((error) => {
+    setResponseStatus(event, 400)
+    return fail(error instanceof Error ? error.message : '预检失败。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40167)
   })
+
+  if ('code' in summary)
+    return summary
 
   return ok<FeishuBitableSyncItemPreviewResult>(summary, {
     startedAt,

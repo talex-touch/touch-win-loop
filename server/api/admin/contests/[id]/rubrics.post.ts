@@ -75,6 +75,16 @@ export default defineEventHandler(async (event) => {
     })
   }
   catch (error) {
+    if (error instanceof Error && error.message === 'CONTEST_RELEASE_WORKFLOW_REQUIRED') {
+      setResponseStatus(event, 409)
+      return fail('当前赛事已接入版本流，请通过“审核/版本”生成新版本后再发布。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 409751)
+    }
     if (error instanceof Error && error.message.startsWith('RUBRIC_')) {
       setResponseStatus(event, 400)
       return fail(`rubric 配置不合法：${error.message}`, {

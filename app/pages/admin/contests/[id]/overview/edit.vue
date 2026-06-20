@@ -15,6 +15,54 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+interface ContestDraftSaveResult {
+  scopeId: string
+  unchanged: boolean
+  version?: {
+    id: string
+    versionNumber: number
+  } | null
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 function splitCsv(value: string): string[] {
   return value
     .split(/[\n,，、;]/g)
@@ -138,13 +186,13 @@ async function loadData() {
   loading.value = true
   errorText.value = ''
   try {
-    const [detailRes, disciplineRes] = await Promise.all([
-      $fetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${contestId.value}`)),
-      $fetch<ApiResponse<DisciplineDictionaryItem[]>>(endpoint('/admin/dictionaries/disciplines')),
+    const [detailData, disciplineData] = await Promise.all([
+      requestApi<ContestDetailPayload>(endpoint(`/admin/contests/${contestId.value}`), {}, '基础信息加载失败。'),
+      requestApi<DisciplineDictionaryItem[]>(endpoint('/admin/dictionaries/disciplines'), {}, '基础信息加载失败。'),
     ])
 
-    const contest = detailRes.data.contest
-    disciplineOptions.value = disciplineRes.data
+    const contest = detailData.contest
+    disciplineOptions.value = disciplineData
 
     form.name = contest.name || ''
     form.level = contest.level
@@ -175,27 +223,34 @@ async function save() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}`), {
-      method: 'PATCH',
-      body: {
-        name: form.name.trim(),
-        level: form.level,
-        organizer: form.organizer.trim(),
-        coOrganizer: form.coOrganizer.trim(),
-        officialUrl: form.officialUrl.trim(),
-        summary: form.summary.trim(),
-        participantRequirements: form.participantRequirements.trim(),
-        teamRule: form.teamRule.trim(),
-        currentSeason: form.currentSeason.trim(),
-        disciplines: form.disciplines,
-        aliases: splitCsv(form.aliasesCsv),
-        keywords: splitCsv(form.keywordsCsv),
-        recommendedFor: splitCsv(form.recommendedForCsv),
-        hotScore: Number(form.hotScore || 0),
-        visibility: form.visibility,
+    const result = await requestApi<ContestDraftSaveResult>(
+      endpoint(`/admin/contests/${contestId.value}`),
+      {
+        method: 'PATCH',
+        body: {
+          sourceModule: 'overview',
+          name: form.name.trim(),
+          level: form.level,
+          organizer: form.organizer.trim(),
+          coOrganizer: form.coOrganizer.trim(),
+          officialUrl: form.officialUrl.trim(),
+          summary: form.summary.trim(),
+          participantRequirements: form.participantRequirements.trim(),
+          teamRule: form.teamRule.trim(),
+          currentSeason: form.currentSeason.trim(),
+          disciplines: form.disciplines,
+          aliases: splitCsv(form.aliasesCsv),
+          keywords: splitCsv(form.keywordsCsv),
+          recommendedFor: splitCsv(form.recommendedForCsv),
+          hotScore: Number(form.hotScore || 0),
+          visibility: form.visibility,
+        },
       },
-    })
-    successText.value = '基础信息已保存。'
+      '基础信息保存失败。',
+    )
+    successText.value = result.unchanged
+      ? '本次保存无内容变化，未生成新版本。'
+      : `已生成待审核版本 V${result.version?.versionNumber || '-'}，需完成双人审核并发布后前台才会更新。`
   }
   catch (error: any) {
     errorText.value = String(error?.data?.message || '保存失败。')
@@ -219,10 +274,13 @@ onMounted(loadData)
           <p class="text-xs text-slate-500 mt-1">
             赛事 ID：{{ contestId }}
           </p>
+          <p class="text-xs text-amber-600 mt-2">
+            保存不会直接改动前台，系统会生成新的待审核版本，需经两位不同审核人通过并发布后才可见。
+          </p>
         </div>
         <div class="flex gap-2 items-center">
           <a-button type="primary" size="small" :loading="saving" @click="save">
-            保存
+            生成待审核版本
           </a-button>
         </div>
       </div>
@@ -240,7 +298,7 @@ onMounted(loadData)
           检测到 AI 草稿：{{ moduleDraft.title || '基础信息草稿' }}
         </p>
         <p class="mt-1">
-          更新时间：{{ draftUpdatedAt }}。应用后不会自动写库，需要手动点击“保存”。
+          更新时间：{{ draftUpdatedAt }}。应用后不会自动写库，需要手动点击“生成待审核版本”。
         </p>
         <div class="mt-2 flex gap-2 items-center">
           <a-button size="mini" type="outline" @click="applyAiDraft">

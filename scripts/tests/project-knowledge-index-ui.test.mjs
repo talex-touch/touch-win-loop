@@ -1,0 +1,129 @@
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { describe, it } from 'vitest'
+
+const RESOURCE_MANAGER_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceResourceManagerPanel.vue')
+const PROJECT_SETTINGS_TAB_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceProjectSettingsTab.vue')
+const WORKSPACE_MAIN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanel.vue')
+const WORKSPACE_LOOPY_DATA_TAB_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLoopyDataTab.vue')
+const WORKSPACE_LOOPY_DATA_OVERVIEW_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLoopyDataOverviewView.vue')
+const WORKSPACE_LOOPY_DATA_HEALTH_VIEW_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLoopyDataHealthView.vue')
+const WORKSPACE_LOOPY_DATA_RELATIONS_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLoopyDataRelationsView.client.vue')
+const WORKSPACE_LOOPY_DATA_SEMANTIC_SPACE_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLoopyDataSemanticSpace.client.vue')
+const LEFT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftSidebar.vue')
+const PROJECT_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
+const LOOPY_DATA_CENTER_UTILS_FILE = resolve(process.cwd(), 'app/utils/loopy-data-center.ts')
+const LOOPY_DATA_MOCKUP_FILE = resolve(process.cwd(), 'app/utils/loopy-data-mockup.ts')
+const WORKSPACE_PROJECT_KNOWLEDGE_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceProjectKnowledge.ts')
+const PROJECT_KNOWLEDGE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-knowledge-store.ts')
+
+describe('project knowledge index ui', () => {
+  it('资源属性弹窗展示知识索引状态与重新索引入口', async () => {
+    const source = await readFile(RESOURCE_MANAGER_FILE, 'utf8')
+
+    assert.match(source, /title="资源属性"/, 'WorkspaceResourceManagerPanel 未将弹窗标题改为资源属性')
+    assert.match(source, /知识索引/, 'WorkspaceResourceManagerPanel 缺少知识索引区块')
+    assert.match(source, /重新索引/, 'WorkspaceResourceManagerPanel 缺少重新索引入口')
+    assert.match(source, /activeProjectId\?: string/, 'WorkspaceResourceManagerPanel 缺少 activeProjectId 入参')
+    assert.match(source, /projectKnowledgeDashboard\?: ProjectKnowledgeIndexDashboard \| null/, 'WorkspaceResourceManagerPanel 缺少项目级 Loopy dashboard 入参')
+    assert.match(source, /resourceKnowledgeTrustNotice/, '资源属性弹窗未展示索引可信度提示')
+    assert.match(source, /fallbackOnly/, '资源属性弹窗未消费 fallback-only embedding 信号')
+    assert.match(source, /realEmbeddingReady/, '资源属性弹窗未消费真实 embedding 就绪信号')
+    assert.match(source, /历史 Fallback embedding/, '资源索引标题未把 fallback-only ready 标记为历史残留')
+    assert.doesNotMatch(source, /降级可用/, '资源索引标题不应把历史 fallback embedding 包装成降级可用')
+    assert.match(source, /!visualNode \|\| !visualNode\.realEmbeddingReady/, '资源索引标题未把缺项目级 visual node 视为可信度信号不足')
+    assert.match(source, /项目级 Loopy dashboard 暂未返回对应的 embedding 可信度信号/, '资源可信度提示未覆盖缺项目级 visual node 的 ready 状态')
+    assert.match(source, /真实 embedding 就绪信号不足/, '资源索引标题未避免把缺真实 embedding ready 包装成正式检索可用')
+    assert.match(source, /status === 'ready' && \(!visualNode \|\| !visualNode\.realEmbeddingReady\)/, '资源可信度提示样式未把缺真实 embedding ready 视为告警态')
+    assert.match(source, /项目级索引仍部分降级/, '资源索引标题未避免把 partial ready 包装成完全健康')
+    assert.match(source, /workspace-resource-knowledge-trust-notice/, '资源属性弹窗缺少稳定的索引可信度提示锚点')
+  })
+
+  it('知识索引从项目设置迁移到独立 Loopy 数据工作台，并保留 activeProjectId 透传', async () => {
+    const [settingsSource, mainPanelSource, loopyDataSource, loopyOverviewSource, loopyHealthSource, relationsSource, semanticSpaceSource, loopyDataUtilsSource, loopyMockupSource, projectKnowledgeComposableSource, resourceManagerSource, sidebarSource, pageSource, storeSource] = await Promise.all([
+      readFile(PROJECT_SETTINGS_TAB_FILE, 'utf8'),
+      readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8'),
+      readFile(WORKSPACE_LOOPY_DATA_TAB_FILE, 'utf8'),
+      readFile(WORKSPACE_LOOPY_DATA_OVERVIEW_FILE, 'utf8'),
+      readFile(WORKSPACE_LOOPY_DATA_HEALTH_VIEW_FILE, 'utf8'),
+      readFile(WORKSPACE_LOOPY_DATA_RELATIONS_FILE, 'utf8'),
+      readFile(WORKSPACE_LOOPY_DATA_SEMANTIC_SPACE_FILE, 'utf8'),
+      readFile(LOOPY_DATA_CENTER_UTILS_FILE, 'utf8'),
+      readFile(LOOPY_DATA_MOCKUP_FILE, 'utf8'),
+      readFile(WORKSPACE_PROJECT_KNOWLEDGE_COMPOSABLE_FILE, 'utf8'),
+      readFile(RESOURCE_MANAGER_FILE, 'utf8'),
+      readFile(LEFT_SIDEBAR_FILE, 'utf8'),
+      readFile(PROJECT_PAGE_FILE, 'utf8'),
+      readFile(PROJECT_KNOWLEDGE_STORE_FILE, 'utf8'),
+    ])
+
+    assert.doesNotMatch(settingsSource, /知识索引/, 'WorkspaceProjectSettingsTab 仍残留知识索引区块')
+    assert.doesNotMatch(settingsSource, /workspace-settings-section-knowledge-index/, 'WorkspaceProjectSettingsTab 仍残留知识索引 section 锚点')
+    assert.match(mainPanelSource, /id: 'loopy_data'/, 'WorkspaceMainPanel 未注册 Loopy 数据固定 Tab')
+    assert.match(mainPanelSource, /v-else-if="activeTabId === 'loopy_data'"/, 'WorkspaceMainPanel 未渲染 Loopy 数据主面板')
+    assert.match(loopyDataSource, /workspace-project-knowledge-index/, 'WorkspaceLoopyDataTab 缺少稳定测试锚点')
+    assert.match(loopyDataSource, /WorkspaceLoopyDataOverviewView/, 'WorkspaceLoopyDataTab 未挂载数据中心主视图')
+    assert.match(loopyDataSource, /主视图/, 'WorkspaceLoopyDataTab 缺少主视图入口')
+    assert.match(loopyDataSource, /索引健康/, 'WorkspaceLoopyDataTab 缺少索引健康子视图入口')
+    assert.match(loopyDataSource, /关系探索/, 'WorkspaceLoopyDataTab 缺少关系探索子视图入口')
+    assert.match(loopyDataSource, /语义空间/, 'WorkspaceLoopyDataTab 缺少语义空间子视图入口')
+    assert.match(loopyDataUtilsSource, /Embeddings 接入点/, 'Loopy 数据契约缺少 embeddings 接入点区块')
+    assert.match(loopyMockupSource, /export function createLoopyMockDashboard/, 'Loopy 数据缺少 mockup dashboard 构造函数')
+    assert.match(loopyMockupSource, /export function mergeLoopyMockResources/, 'Loopy 数据缺少项目资源 mockup 合并函数')
+    assert.match(loopyMockupSource, /export function isLoopyMockResource/, 'Loopy 数据缺少 mockup 资源识别函数')
+    assert.match(loopyMockupSource, /loopy-data-showcase-mockup/, 'Loopy 数据 mockup 资源缺少稳定来源标记')
+    assert.match(loopyMockupSource, /dashscope-bailian/, 'Loopy 数据 mockup 未按 DashScope 百炼 runtime 展示')
+    assert.match(loopyMockupSource, /bailian-native/, 'Loopy 数据 mockup 未使用百炼原生 embedding client 标记')
+    assert.match(projectKnowledgeComposableSource, /shouldUseLoopyMockDashboard/, '项目 Loopy dashboard 未在真实索引无效时接入 mockup 数据')
+    assert.match(projectKnowledgeComposableSource, /createLoopyMockDashboard/, '项目 Loopy dashboard 请求失败时未兜底 mockup 数据')
+    assert.match(pageSource, /mergeLoopyMockResources/, '项目资源管理器未同步合并 Loopy mockup 资源')
+    assert.match(resourceManagerSource, /findLoopyMockSourceStatus/, '资源属性弹窗未复用 Loopy mockup 资源索引状态')
+    assert.match(resourceManagerSource, /isLoopyMockResource/, '资源管理器未避免 mockup 资源打开不存在的协作接口')
+    assert.match(loopyOverviewSource, /接入点/, 'WorkspaceLoopyDataOverviewView 缺少 embeddings 接入点展示')
+    assert.match(loopyOverviewSource, /契约/, 'WorkspaceLoopyDataOverviewView 缺少数据契约入口')
+    assert.match(loopyDataUtilsSource, /状态态约定/, 'Loopy 数据契约缺少状态约定区块')
+    assert.match(loopyOverviewSource, /运行建议/, 'WorkspaceLoopyDataOverviewView 缺少运行建议区块')
+    assert.doesNotMatch(loopyOverviewSource, /loopy-hero-placeholder\.svg/, 'WorkspaceLoopyDataOverviewView 仍依赖 placeholder 主视觉')
+    assert.match(loopyOverviewSource, /var\(--wl-wb-shell-padding/, 'WorkspaceLoopyDataOverviewView 未消费工作台全局 token')
+    assert.match(loopyDataSource, /WorkspaceLoopyDataHealthView/, 'WorkspaceLoopyDataTab 未挂载健康视图')
+    assert.match(loopyDataSource, /WorkspaceLoopyDataRelationsView/, 'WorkspaceLoopyDataTab 未挂载关系视图')
+    assert.match(loopyDataSource, /WorkspaceLoopyDataSemanticSpace/, 'WorkspaceLoopyDataTab 未挂载语义空间视图')
+    assert.match(loopyDataUtilsSource, /export interface LoopyEmbeddingEntryContract/, '数据中心缺少 embeddings 接入点契约定义')
+    assert.match(loopyDataUtilsSource, /export interface LoopySourceCardContract/, '数据中心缺少 source 卡片契约定义')
+    assert.match(loopyDataUtilsSource, /export interface LoopyRelationNodeContract/, '数据中心缺少关系节点契约定义')
+    assert.match(loopyDataUtilsSource, /export function buildLoopyOverviewContract/, '数据中心缺少主视图字段映射函数')
+    assert.match(loopyDataUtilsSource, /需重建/, 'Loopy 数据中心通用健康标签未把 fallback_only 标记为需重建')
+    assert.doesNotMatch(loopyDataUtilsSource, /降级可用/, 'Loopy 数据中心通用健康标签不应把 fallback_only 标记为降级可用')
+    assert.match(loopyHealthSource, /完整状态表/, 'WorkspaceLoopyDataHealthView 缺少完整状态表')
+    assert.match(loopyHealthSource, /失败项/, 'WorkspaceLoopyDataHealthView 缺少失败项列表')
+    assert.match(loopyHealthSource, /需重建/, 'WorkspaceLoopyDataHealthView 未把 fallback_only 标记为需重建')
+    assert.doesNotMatch(loopyHealthSource, /降级可用/, 'WorkspaceLoopyDataHealthView 不应再把 fallback_only 标记为降级可用')
+    assert.match(relationsSource, /VueFlow/, 'WorkspaceLoopyDataRelationsView 未使用 Vue Flow 第三方图谱框架')
+    assert.match(relationsSource, /径向图谱/, 'WorkspaceLoopyDataRelationsView 缺少高级径向图谱交互说明')
+    assert.match(relationsSource, /createSimulatedRelationsPayload/, 'WorkspaceLoopyDataRelationsView 缺少无真实关系数据时的模拟图谱')
+    assert.match(relationsSource, /MiniMap/, 'WorkspaceLoopyDataRelationsView 缺少小地图交互')
+    assert.match(semanticSpaceSource, /3D Embedding 语义空间/, 'WorkspaceLoopyDataSemanticSpace 未渲染 3D 新标题')
+    assert.doesNotMatch(semanticSpaceSource, /deterministic fallback/, 'WorkspaceLoopyDataSemanticSpace 不应再展示已删除的 deterministic fallback 语义')
+    assert.match(semanticSpaceSource, /import\('three'\)/, 'WorkspaceLoopyDataSemanticSpace 未通过 Three.js 渲染 3D 语义空间')
+    assert.match(semanticSpaceSource, /OrbitControls/, 'WorkspaceLoopyDataSemanticSpace 缺少 OrbitControls 轨道交互')
+    assert.match(semanticSpaceSource, /buildSimulatedLayoutPayload/, 'WorkspaceLoopyDataSemanticSpace 缺少无真实数据时的模拟语义空间')
+    assert.match(semanticSpaceSource, /loopy-data-local-simulation/, 'WorkspaceLoopyDataSemanticSpace 未标记本地模拟语义空间来源')
+    assert.match(semanticSpaceSource, /await ensureThreeScene\(\)/, 'WorkspaceLoopyDataSemanticSpace 未在 payload 渲染后补偿初始化 Three.js 场景')
+    assert.match(semanticSpaceSource, /Raycaster/, 'WorkspaceLoopyDataSemanticSpace 缺少 3D 节点拾取交互')
+    assert.match(semanticSpaceSource, /pointermove/, 'WorkspaceLoopyDataSemanticSpace 缺少自然悬停拾取交互')
+    assert.match(semanticSpaceSource, /聚类数/, 'WorkspaceLoopyDataSemanticSpace 缺少聚类数指标卡')
+    assert.match(semanticSpaceSource, /平均相似度/, 'WorkspaceLoopyDataSemanticSpace 缺少平均相似度指标卡')
+    assert.match(semanticSpaceSource, /最大相似度/, 'WorkspaceLoopyDataSemanticSpace 缺少最大相似度指标卡')
+    assert.match(semanticSpaceSource, /layoutType: 'chunk_space'/, 'WorkspaceLoopyDataSemanticSpace 未固定请求 chunk_space 布局')
+    assert.match(semanticSpaceSource, /level: 'chunk'/, 'WorkspaceLoopyDataSemanticSpace 未固定请求 chunk 级别')
+    assert.match(loopyDataSource, /WorkspaceLoopyDataRelationsView/, 'Loopy 数据工作台缺少关系探索视图')
+    assert.match(loopyDataSource, /WorkspaceLoopyDataSemanticSpace/, 'Loopy 数据工作台缺少 3D 语义空间视图')
+    assert.match(sidebarSource, /activeProjectId\?: string/, 'WorkspaceLeftSidebar 缺少 activeProjectId 入参')
+    assert.match(sidebarSource, /projectKnowledgeDashboard\?: ProjectKnowledgeIndexDashboard \| null/, 'WorkspaceLeftSidebar 未接收项目级 Loopy dashboard')
+    assert.match(pageSource, /:active-project-id="activeProjectId"/, '项目工作区未向子组件透传 activeProjectId')
+    assert.match(pageSource, /<WorkspaceLeftSidebar[\s\S]*:project-knowledge-dashboard="projectKnowledgeDashboard"/, '项目工作区未向左侧资源管理器透传 Loopy dashboard')
+    assert.match(storeSource, /历史 fallback embedding/, '项目知识 store 未把 fallback_only 说明为历史残留')
+    assert.doesNotMatch(storeSource, /deterministic fallback embedding|降级可用/, '项目知识 store 不应再把历史 fallback embedding 说明为 deterministic 或降级可用')
+  })
+})

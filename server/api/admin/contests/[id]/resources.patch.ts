@@ -6,6 +6,7 @@ import { patchAdminResource } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
 
 interface PatchResourceBody {
   resourceId?: string
@@ -70,7 +71,7 @@ export default defineEventHandler(async (event) => {
   let resource
   try {
     resource = await withTransaction(event, async (db) => {
-      return patchAdminResource(db, {
+      const patched = await patchAdminResource(db, {
         actorUserId: user.id,
         contestId,
         resourceId: body.resourceId!,
@@ -88,9 +89,28 @@ export default defineEventHandler(async (event) => {
           status: body?.status,
         },
       })
+      if (patched) {
+        await enqueueResourceGovernanceTask(db, {
+          contestId,
+          resourceId: patched.id,
+          taskType: 'profile_analyze',
+          actorUserId: user.id,
+        })
+      }
+      return patched
     })
   }
   catch (error) {
+    if (error instanceof Error && error.message === 'CONTEST_RELEASE_WORKFLOW_REQUIRED') {
+      setResponseStatus(event, 409)
+      return fail('当前赛事已接入版本流，请通过“审核/版本”生成新版本后再发布。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 409821)
+    }
     if (error instanceof Error && error.message === 'FEISHU_SOURCE_OF_TRUTH_CONFLICT') {
       setResponseStatus(event, 409)
       return fail('当前资料由飞书多维主库托管，请在飞书侧修改后同步。', {

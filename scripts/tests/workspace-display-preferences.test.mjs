@@ -1,0 +1,211 @@
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { it } from 'vitest'
+
+const DOMAIN_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
+const DOMAIN_LEGACY_FILE = resolve(process.cwd(), 'shared/types/domain-legacy.ts')
+const WORKSPACE_TYPES_FILE = resolve(process.cwd(), 'shared/types/workspace.ts')
+const DB_SCHEMA_FILE = resolve(process.cwd(), 'server/database/bootstrap/schema.ts')
+const STORE_FILE = resolve(process.cwd(), 'server/utils/workspace-display-preference-store.ts')
+const USER_GET_API_FILE = resolve(process.cwd(), 'server/api/user/workspace-display-preferences.get.ts')
+const USER_PATCH_API_FILE = resolve(process.cwd(), 'server/api/user/workspace-display-preferences.patch.ts')
+const WORKSPACE_GET_API_FILE = resolve(process.cwd(), 'server/api/teams/[id]/workspace-display-preferences.get.ts')
+const WORKSPACE_USER_PATCH_API_FILE = resolve(process.cwd(), 'server/api/teams/[id]/workspace-display-preferences/user.patch.ts')
+const WORKSPACE_DEFAULT_PATCH_API_FILE = resolve(process.cwd(), 'server/api/teams/[id]/workspace-display-preferences/default.patch.ts')
+const PROJECT_WORKSPACE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
+const WORKSPACE_MAIN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanel.vue')
+const WORKSPACE_LEFT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftSidebar.vue')
+const WORKSPACE_LEFT_SIDEBAR_STYLE_FILE = resolve(process.cwd(), 'app/assets/styles/workspace-left-sidebar.css')
+const USER_SETTINGS_DIALOG_FILE = resolve(process.cwd(), 'app/components/UserSettingsDialog.vue')
+const APP_FILE = resolve(process.cwd(), 'app/app.vue')
+const COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceDisplayPreferences.ts')
+
+it('工作区显示偏好共享类型、存储表与后端优先级链已落地', async () => {
+  const [domainSource, domainLegacySource, workspaceTypesSource, dbSchemaSource, storeSource] = await Promise.all([
+    readFile(DOMAIN_FILE, 'utf8'),
+    readFile(DOMAIN_LEGACY_FILE, 'utf8'),
+    readFile(WORKSPACE_TYPES_FILE, 'utf8'),
+    readFile(DB_SCHEMA_FILE, 'utf8'),
+    readFile(STORE_FILE, 'utf8'),
+  ])
+
+  assert.match(domainSource, /export \* from '\.\/workspace'/, 'shared/types/domain.ts 未继续转发 workspace 类型出口')
+  assert.match(workspaceTypesSource, /WorkspaceDisplayPreferenceSnapshot,[\s\S]*WorkspaceDisplayPreferenceSource,[\s\S]*WorkspaceDisplayPreferenceSources,[\s\S]*WorkspaceFontSizePreset,[\s\S]*WorkspaceTabSpacingPreset,[\s\S]*from '\.\/domain-legacy'/, 'workspace 类型聚合未继续转发显示偏好相关共享类型')
+  assert.match(domainLegacySource, /export type WorkspaceFontSizePreset = 'xs' \| 'sm' \| 'md' \| 'lg' \| 'xl'/, '缺少字体大小五档预设类型')
+  assert.match(domainLegacySource, /export type WorkspaceTabSpacingPreset = 'ultra_compact' \| 'compact' \| 'default' \| 'relaxed' \| 'spacious'/, '缺少标签边距五档预设类型')
+  assert.match(domainLegacySource, /export type WorkspaceDisplayPreferenceSource = 'workspace_override' \| 'user_default' \| 'team_default' \| 'system_default'/, '缺少显示偏好来源类型')
+  assert.match(domainLegacySource, /tabSpacingPreset\?: WorkspaceTabSpacingPreset \| null/, '显示偏好缺少标签边距字段')
+  assert.match(domainLegacySource, /leftSidebarWidth\?: number \| null/, '显示偏好缺少左栏宽度字段')
+  assert.match(domainLegacySource, /rightSidebarWidth\?: number \| null/, '显示偏好缺少右栏宽度字段')
+  assert.match(domainLegacySource, /tabSpacingPreset: WorkspaceDisplayPreferenceSource/, '显示偏好来源缺少标签边距来源字段')
+  assert.match(domainLegacySource, /leftSidebarWidth: WorkspaceDisplayPreferenceSource/, '显示偏好来源缺少左栏宽度来源字段')
+  assert.match(domainLegacySource, /rightSidebarWidth: WorkspaceDisplayPreferenceSource/, '显示偏好来源缺少右栏宽度来源字段')
+  assert.match(domainLegacySource, /export interface WorkspaceDisplayPreferenceSnapshot \{[\s\S]*userDefault: WorkspaceDisplayPreferences \| null[\s\S]*teamDefault: WorkspaceDisplayPreferences \| null[\s\S]*workspaceOverride: WorkspaceDisplayPreferences \| null[\s\S]*effective: WorkspaceDisplayPreferences[\s\S]*sources: WorkspaceDisplayPreferenceSources[\s\S]*canManageTeamDefault: boolean[\s\S]*\}/, '缺少工作区显示偏好快照结构')
+
+  assert.match(dbSchemaSource, /CREATE TABLE IF NOT EXISTS user_workspace_display_defaults \(/, '缺少个人全局默认表')
+  assert.match(dbSchemaSource, /CREATE TABLE IF NOT EXISTS workspace_display_defaults \(/, '缺少团队默认表')
+  assert.match(dbSchemaSource, /CREATE TABLE IF NOT EXISTS user_workspace_display_overrides \(/, '缺少工作区个人覆盖表')
+  assert.match(dbSchemaSource, /preferences JSONB NOT NULL/, '显示偏好表未统一使用 JSONB 存储')
+  assert.match(dbSchemaSource, /idx_user_workspace_display_overrides_workspace_user/, '缺少工作区个人覆盖索引')
+
+  assert.match(storeSource, /function resolveEffectiveWorkspaceDisplayPreferences\(/, '后端未提供统一解析函数')
+  assert.match(storeSource, /function resolveWorkspaceDisplayPreferenceValue<.*WorkspaceFontSizePreset \| WorkspaceTabSpacingPreset \| number>/, '后端未抽出显示偏好字段解析逻辑')
+  assert.match(storeSource, /if \(input\.workspaceOverride\) \{[\s\S]*source: 'workspace_override'/, '显示偏好优先级未优先使用工作区个人覆盖')
+  assert.match(storeSource, /workspaceOverride: input\.workspaceOverride\?\.fontSizePreset/, '字号解析未透传工作区个人覆盖字段')
+  assert.match(storeSource, /workspaceOverride: input\.workspaceOverride\?\.tabSpacingPreset/, '标签边距解析未透传工作区个人覆盖字段')
+  assert.match(storeSource, /workspaceOverride: input\.workspaceOverride\?\.leftSidebarWidth/, '左栏宽度解析未透传工作区个人覆盖字段')
+  assert.match(storeSource, /workspaceOverride: input\.workspaceOverride\?\.rightSidebarWidth/, '右栏宽度解析未透传工作区个人覆盖字段')
+  assert.match(storeSource, /sources: \{[\s\S]*fontSizePreset: fontSizePreset\.source,[\s\S]*tabSpacingPreset: tabSpacingPreset\.source,[\s\S]*leftSidebarWidth: leftSidebarWidth\.source,[\s\S]*rightSidebarWidth: rightSidebarWidth\.source,[\s\S]*\}/, '显示偏好来源快照未包含字号、间距与左右栏宽度来源字段')
+  assert.match(storeSource, /fontSizePreset: 'lg',[\s\S]*tabSpacingPreset: 'relaxed',[\s\S]*leftSidebarWidth: DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,[\s\S]*rightSidebarWidth: DEFAULT_WORKSPACE_RIGHT_SIDEBAR_WIDTH/, '系统默认缺少字号、间距与左右栏宽度字段')
+  assert.match(storeSource, /if \(context\.workspace\.type !== 'team'\)\s+throw new Error\('TEAM_WORKSPACE_DISPLAY_DEFAULT_UNSUPPORTED'\)/, 'personal workspace 未拒绝团队默认写入')
+  assert.match(storeSource, /const userDefault = await loadUserWorkspaceDisplayDefaultsRow\(db, user\.id\)\s+const rawTeamDefault = await loadWorkspaceDisplayDefaultsRow\(db, workspaceId\)\s+const workspaceOverride = await loadUserWorkspaceDisplayOverrideRow\(db, user\.id, workspaceId\)/, '工作区显示偏好快照仍在单连接上下文里并发查询')
+  assert.match(storeSource, /DELETE FROM user_workspace_display_defaults/, '个人全局默认未支持清空')
+  assert.match(storeSource, /DELETE FROM workspace_display_defaults/, '团队默认未支持清空')
+  assert.match(storeSource, /DELETE FROM user_workspace_display_overrides/, '工作区个人覆盖未支持清空')
+})
+
+it('工作区显示偏好接口与前端 composable 已接入', async () => {
+  const [
+    userGetApiSource,
+    userPatchApiSource,
+    workspaceGetApiSource,
+    workspaceUserPatchApiSource,
+    workspaceDefaultPatchApiSource,
+    composableSource,
+  ] = await Promise.all([
+    readFile(USER_GET_API_FILE, 'utf8'),
+    readFile(USER_PATCH_API_FILE, 'utf8'),
+    readFile(WORKSPACE_GET_API_FILE, 'utf8'),
+    readFile(WORKSPACE_USER_PATCH_API_FILE, 'utf8'),
+    readFile(WORKSPACE_DEFAULT_PATCH_API_FILE, 'utf8'),
+    readFile(COMPOSABLE_FILE, 'utf8'),
+  ])
+
+  assert.match(userGetApiSource, /getUserWorkspaceDisplayDefaults/, '缺少个人全局默认 GET 接口实现')
+  assert.match(userPatchApiSource, /patchUserWorkspaceDisplayDefaults/, '缺少个人全局默认 PATCH 接口实现')
+  assert.match(workspaceGetApiSource, /getWorkspaceDisplayPreferenceSnapshot/, '缺少工作区偏好快照 GET 接口实现')
+  assert.match(workspaceUserPatchApiSource, /patchUserWorkspaceDisplayOverride/, '缺少工作区个人覆盖 PATCH 接口实现')
+  assert.match(workspaceDefaultPatchApiSource, /patchWorkspaceDisplayDefault/, '缺少团队默认 PATCH 接口实现')
+  assert.match(workspaceDefaultPatchApiSource, /TEAM_WORKSPACE_DISPLAY_DEFAULT_UNSUPPORTED/, '团队默认接口未处理 personal workspace 拒绝逻辑')
+  assert.match(userPatchApiSource, /leftSidebarWidth\?: number \| null/, '个人全局默认 PATCH 接口未接收左栏宽度字段')
+  assert.match(userPatchApiSource, /rightSidebarWidth\?: number \| null/, '个人全局默认 PATCH 接口未接收右栏宽度字段')
+  assert.match(workspaceUserPatchApiSource, /leftSidebarWidth\?: number \| null/, '工作区个人覆盖 PATCH 接口未接收左栏宽度字段')
+  assert.match(workspaceDefaultPatchApiSource, /rightSidebarWidth\?: number \| null/, '团队默认 PATCH 接口未接收右栏宽度字段')
+
+  assert.match(composableSource, /WORKSPACE_FONT_SIZE_PRESET_OPTIONS/, '前端 composable 缺少字体大小选项')
+  assert.match(composableSource, /WORKSPACE_TAB_SPACING_PRESET_OPTIONS/, '前端 composable 缺少标签边距选项')
+  assert.match(composableSource, /极效/, '前端 composable 缺少极效档位文案')
+  assert.match(composableSource, /紧凑/, '前端 composable 缺少紧凑档位文案')
+  assert.match(composableSource, /优雅/, '前端 composable 缺少优雅档位文案')
+  assert.match(composableSource, /放开/, '前端 composable 缺少放开档位文案')
+  assert.match(composableSource, /舒展/, '前端 composable 缺少舒展档位文案')
+  assert.match(composableSource, /leftSidebarWidth\?: number \| null/, '前端 composable 的 patch payload 未暴露左栏宽度字段')
+  assert.match(composableSource, /rightSidebarWidth\?: number \| null/, '前端 composable 的 patch payload 未暴露右栏宽度字段')
+  assert.match(composableSource, /normalizeWorkspaceTabSpacingDraft/, '前端 composable 缺少标签边距草稿归一化')
+  assert.match(composableSource, /leftSidebarWidth: DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH/, '前端 composable 缺少左栏宽度系统默认值')
+  assert.match(composableSource, /rightSidebarWidth: DEFAULT_WORKSPACE_RIGHT_SIDEBAR_WIDTH/, '前端 composable 缺少右栏宽度系统默认值')
+  assert.match(composableSource, /endpoint\('\/user\/workspace-display-preferences'\)/, '前端 composable 未接入个人全局默认接口')
+  assert.match(composableSource, /endpoint\(`\/teams\/\$\{workspaceId\}\/workspace-display-preferences`\)/, '前端 composable 未接入工作区偏好快照接口')
+  assert.match(composableSource, /endpoint\(`\/teams\/\$\{workspaceId\}\/workspace-display-preferences\/user`\)/, '前端 composable 未接入工作区个人覆盖接口')
+  assert.match(composableSource, /endpoint\(`\/teams\/\$\{workspaceId\}\/workspace-display-preferences\/default`\)/, '前端 composable 未接入团队默认接口')
+})
+
+it('个人设置弹窗与项目工作区 Settings 已出现显示偏好入口', async () => {
+  const [dialogSource, panelSource] = await Promise.all([
+    readFile(USER_SETTINGS_DIALOG_FILE, 'utf8'),
+    readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8'),
+  ])
+
+  assert.match(dialogSource, /type UserSettingsTabId = 'profile' \| 'displayPreferences'/, '个人设置弹窗未新增显示偏好 tab id')
+  assert.match(dialogSource, /label: '显示偏好'/, '个人设置弹窗未新增显示偏好导航项')
+  assert.match(dialogSource, /user-settings-display-preferences-tab/, '个人设置弹窗缺少显示偏好稳定测试标识')
+  assert.match(dialogSource, /data-testid="user-settings-display-preferences-panel"/, '个人设置弹窗缺少显示偏好面板稳定测试标识')
+  assert.match(dialogSource, /data-testid="user-settings-display-font-size-select"/, '个人设置弹窗缺少字体大小选择器测试标识')
+  assert.match(dialogSource, /data-testid="user-settings-display-tab-spacing-select"/, '个人设置弹窗缺少标签边距选择器测试标识')
+  assert.match(dialogSource, /系统默认固定为 默认字号 \/ 默认间距/, '个人设置弹窗未展示系统默认说明')
+  assert.match(dialogSource, /saveUserWorkspaceDisplayPreferences/, '个人设置弹窗未接入个人全局默认保存逻辑')
+
+  assert.match(panelSource, /type WorkspaceSettingsGroupId = 'workspace' \| 'personal'/, '项目工作区 Settings 未切换为 Workspace \/ Personal 双分组')
+  assert.match(panelSource, /type WorkspaceSettingsSectionId =[\s\S]*'displayPreferences'/, '项目工作区 Settings 缺少设置 section id 定义')
+  assert.match(panelSource, /label: 'Workspace'/, '项目工作区 Settings 缺少 Workspace 分组')
+  assert.match(panelSource, /label: 'Personal'/, '项目工作区 Settings 缺少 Personal 分组')
+  assert.match(panelSource, /workspace-settings-group-workspace/, '项目工作区 Settings 缺少 Workspace 分组测试标识')
+  assert.match(panelSource, /workspace-settings-group-personal/, '项目工作区 Settings 缺少 Personal 分组测试标识')
+  assert.match(panelSource, /workspace-settings-tab-myDisplay/, '项目工作区 Settings 缺少显示偏好入口测试标识')
+  assert.match(panelSource, /workspace-settings-tab-teamDefault/, '项目工作区 Settings 缺少团队默认入口测试标识')
+  assert.match(panelSource, /workspace-settings-section-display-preferences/, '项目工作区 Settings 缺少 Personal 显示偏好 section 锚点')
+  assert.match(panelSource, /workspace-settings-section-team-default/, '项目工作区 Settings 缺少 Workspace 团队默认 section 锚点')
+  assert.match(panelSource, /data-testid="workspace-display-user-font-size-select"/, '项目工作区“我的显示”缺少字体大小选择器')
+  assert.match(panelSource, /data-testid="workspace-display-user-tab-spacing-select"/, '项目工作区“我的显示”缺少标签边距选择器')
+  assert.match(panelSource, /userWorkspaceDisplaySliderProgress/, '项目工作区“个人设置”未将字体大小恢复为 slider 预览')
+  assert.match(panelSource, /updateUserWorkspaceDisplayFontSizeDraft/, '项目工作区“个人设置”缺少字体大小 slider 更新逻辑')
+  assert.match(panelSource, /userWorkspaceDisplayTabSpacingSliderProgress/, '项目工作区“个人设置”未将标签边距改成 slider 预览')
+  assert.match(panelSource, /updateUserWorkspaceDisplayTabSpacingDraft/, '项目工作区“个人设置”缺少标签边距 slider 更新逻辑')
+  assert.match(panelSource, /activateWorkspaceSettingsSection\('displayPreferences', \{ behavior: 'auto' \}\)/, '项目工作区 Settings 未将显示偏好 signal 指向 Personal section')
+  assert.match(panelSource, /class="workspace-settings-shell"/, '项目工作区 Settings 缺少设置页双栏骨架')
+  assert.match(panelSource, /class="workspace-settings-sidebar"/, '项目工作区 Settings 左侧缺少 navbar 容器')
+  assert.match(panelSource, /workspace-settings-sidebar__item--active/, '项目工作区 Settings 左侧 navbar 缺少当前项高亮态')
+  assert.match(panelSource, /workspace-settings-sidebar__item-indicator/, '项目工作区 Settings 左侧 navbar 缺少激活指示条')
+  assert.match(panelSource, /@media \(min-width: 1024px\) \{[\s\S]*\.workspace-settings-shell \{[\s\S]*grid-template-columns: 232px minmax\(0, 1fr\)/, '项目工作区 Settings 未在桌面端切换为左 navbar + 右内容布局')
+  assert.match(panelSource, /v-show="Boolean\(activeWorkspaceProjectSectionId\)"/, '项目工作区 Settings 右侧未切成单面板模式')
+  assert.doesNotMatch(panelSource, /selectWorkspaceSettingsGroup\(/, '项目工作区 Settings 不应保留旧的分组切换函数')
+  assert.match(panelSource, /workspaceSettingsSectionsByGroup/, '项目工作区 Settings 未按分组组织 section 导航')
+  assert.match(panelSource, /workspace-display-slider-shell/, '项目工作区“个人设置”未恢复横向 slider 样式壳层')
+  assert.match(panelSource, /resolveWorkspaceDisplaySliderStopLeft/, '项目工作区“个人设置”缺少 slider stop 定位逻辑')
+  assert.match(panelSource, /data-testid="workspace-display-recommended-tag"/, '项目工作区“个人设置”未展示推荐 tag')
+  assert.match(panelSource, /workspace-display-slider-label__tooltip/, '项目工作区“个人设置”未渲染推荐 tooltip')
+  assert.match(panelSource, /研发工作台推荐/, '项目工作区“个人设置”未提供推荐 tooltip 文案')
+  assert.match(panelSource, /较小档位会逐步压缩顶部标签页的横向边距和最小宽度/, '项目工作区“个人设置”缺少标签边距说明')
+  assert.match(panelSource, /还原为工作区推荐设置/, '项目工作区“个人设置”未提供恢复推荐设置入口')
+  assert.match(panelSource, /saveWorkspaceDisplayUserOverride/, '项目工作区“我的显示”未接保存事件')
+  assert.match(panelSource, /保存个人设置/, '项目工作区“个人设置”未更新保存按钮文案')
+})
+
+it('项目工作区根节点已绑定生效字号，且样式仅在工作区作用域内覆盖', async () => {
+  const [workspaceSource, appSource, panelSource, sidebarSource, sidebarStyleSource] = await Promise.all([
+    readFile(PROJECT_WORKSPACE_FILE, 'utf8'),
+    readFile(APP_FILE, 'utf8'),
+    readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8'),
+    readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8'),
+    readFile(WORKSPACE_LEFT_SIDEBAR_STYLE_FILE, 'utf8'),
+  ])
+
+  assert.match(workspaceSource, /class="workspace-shell wl-workspace-font-scope/, '项目工作区根节点未挂载工作区字体作用域 class')
+  assert.match(workspaceSource, /:data-workspace-font-size="workspaceEffectiveFontSizePreset"/, '项目工作区根节点未绑定当前生效字号标识')
+  assert.match(workspaceSource, /const workspaceEffectiveTabSpacingPreset = computed<WorkspaceTabSpacingPreset>\(\(\) => \{[\s\S]*tabSpacingPreset/, '项目工作区未抽出生效标签边距状态')
+  assert.match(workspaceSource, /:tab-spacing-preset="workspaceEffectiveTabSpacingPreset"/, '项目工作区未向左栏透传生效标签边距')
+  assert.match(workspaceSource, /:workspace-display-preferences="workspaceDisplayPreferenceSnapshot"/, '项目工作区未透传显示偏好快照到主面板')
+  assert.match(workspaceSource, /:workspace-display-preferences-loading="workspaceDisplayPreferenceLoading"/, '项目工作区未透传显示偏好加载状态')
+  assert.match(workspaceSource, /@save-workspace-display-user-override="saveWorkspaceDisplayUserOverride"/, '项目工作区未接“我的显示”保存事件')
+  assert.match(workspaceSource, /@save-workspace-display-team-default="saveWorkspaceDisplayTeamDefault"/, '项目工作区未接“团队默认”保存事件')
+  assert.match(workspaceSource, /tabSpacingPreset: payload\.tabSpacingPreset/, '项目工作区未透传标签边距保存字段')
+  assert.match(workspaceSource, /leftSidebarWidth: payload\.leftSidebarWidth/, '项目工作区未透传左栏宽度保存字段')
+  assert.match(workspaceSource, /rightSidebarWidth: payload\.rightSidebarWidth/, '项目工作区未透传右栏宽度保存字段')
+  assert.match(workspaceSource, /patchUserWorkspaceDisplayDefaultsByApi/, '项目工作区未接入个人全局显示偏好写入能力')
+  assert.match(workspaceSource, /scheduleWorkspaceDisplayWidthUserSync/, '项目工作区未在页面层编排左右栏宽度个人同步')
+  assert.match(workspaceSource, /loadWorkspaceDisplayPreferenceSnapshot\(\)/, '项目工作区未在初始化时拉取显示偏好快照')
+  assert.match(sidebarSource, /workspace-left-dock--ultra-compact/, '左栏未消费极小标签边距档位')
+  assert.match(sidebarSource, /workspace-left-dock--compact/, '左栏未消费紧凑标签边距档位')
+  assert.match(sidebarSource, /workspace-left-dock--default/, '左栏未消费默认标签边距档位')
+  assert.match(sidebarSource, /workspace-left-dock--relaxed/, '左栏未消费宽松标签边距档位')
+  assert.match(sidebarSource, /workspace-left-dock--spacious/, '左栏未消费偏大标签边距档位')
+
+  assert.match(appSource, /\.wl-workspace-font-scope \{[\s\S]*--wl-ws-font-scale: 1/, '全局样式缺少工作区字体作用域变量')
+  assert.match(appSource, /\.wl-workspace-font-scope\[data-workspace-font-size='xl'\]/, '全局样式缺少字号档位映射')
+  assert.match(appSource, /\.wl-workspace-font-scope :is\(\.text-\\\[11px\\\], \.text-xs\):not\(\.material-symbols-outlined\)/, '全局样式未覆盖项目工作区常见字号 utility')
+  assert.match(appSource, /\.wl-workspace-font-scope \.workspace-tree-item__label/, '全局样式未覆盖左侧栏字号')
+  assert.match(appSource, /\.wl-workspace-font-scope \.workspace-upload-tray__title/, '全局样式未覆盖状态栏字号')
+  assert.match(appSource, /\.wl-workspace-font-scope \.meeting-btn/, '全局样式未覆盖会议面板字号')
+  assert.doesNotMatch(appSource, /(^|[^-])\.text-xs \{/, '全局样式不应无作用域重写全站字号 utility')
+  assert.match(panelSource, /workspaceMainTabLayoutStyle/, '项目主面板未根据显示偏好计算标签边距样式')
+  assert.match(panelSource, /workspace-main-tab-min-width/, '项目主面板未为标签边距预设提供最小宽度变量')
+  assert.match(panelSource, /workspace-main-tab-trigger-gap/, '项目主面板未恢复标签触发区间距变量')
+  assert.match(panelSource, /workspace-main-tab-close-padding/, '项目主面板未恢复标签关闭按钮间距变量')
+  assert.match(panelSource, /workspace-main-breadcrumb-padding-x/, '项目主面板未恢复 breadcrumb 横向间距变量')
+  assert.match(panelSource, /workspace-main-breadcrumb-padding-y/, '项目主面板未恢复 breadcrumb 纵向间距变量')
+  assert.match(sidebarStyleSource, /\.workspace-left-dock--ultra-compact \{[\s\S]*--workspace-left-tree-row-min-height:[\s\S]*--workspace-left-upload-row-min-height:/, '极小档未同步压缩左栏树和上传列表密度')
+  assert.match(sidebarStyleSource, /\.workspace-left-dock--compact \{[\s\S]*--workspace-left-tree-row-min-height:[\s\S]*--workspace-left-upload-row-min-height:/, '紧凑档未同步压缩左栏树和上传列表密度')
+  assert.match(sidebarStyleSource, /\.workspace-left-dock--relaxed \{[\s\S]*--workspace-left-tree-indent-step:[\s\S]*--workspace-left-library-action-height:/, '宽松档未同步放大左栏树和资料库密度')
+  assert.match(sidebarStyleSource, /\.workspace-left-dock--spacious \{[\s\S]*--workspace-left-tree-indent-step:[\s\S]*--workspace-left-library-action-height:/, '偏大档未同步放大左栏树和资料库密度')
+})

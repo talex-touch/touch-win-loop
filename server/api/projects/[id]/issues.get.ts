@@ -51,17 +51,15 @@ export default defineEventHandler(async (event) => {
     if (!project)
       throw new Error('PROJECT_NOT_FOUND')
 
-    const [reports, issues] = await Promise.all([
-      listProjectIssueReportsByProject(db, {
-        projectId,
-        limit: reportLimit,
-      }),
-      listProjectIssuesByProject(db, {
-        projectId,
-        statuses,
-        limit: issueLimit,
-      }),
-    ])
+    const reports = await listProjectIssueReportsByProject(db, {
+      projectId,
+      limit: reportLimit,
+    })
+    const issues = await listProjectIssuesByProject(db, {
+      projectId,
+      statuses,
+      limit: issueLimit,
+    })
 
     return {
       reports,

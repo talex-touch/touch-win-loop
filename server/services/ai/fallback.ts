@@ -174,13 +174,25 @@ function toFallbackTopicItem(input: {
   index: number
   query: string
   major: string
+  discipline: string
+  topicType: string
+  expectedDifficulty: string
+  keywords: string[]
+  teamSkillTags: string[]
+  recommendedTrackId: string
+  recommendedTrackName: string
 }): TopicProposalItem {
   const suffix = input.index + 1
   const query = input.query || '智能化赛题'
-  const major = input.major || '跨专业'
+  const expertiseHint = [input.major, input.discipline].filter(Boolean).join(' / ') || '跨专业'
+  const keywordHint = input.keywords.length > 0 ? `，并围绕${input.keywords.slice(0, 3).join('、')}展开` : ''
+  const requiredSkills = input.teamSkillTags.length > 0
+    ? input.teamSkillTags.slice(0, 4)
+    : ['需求拆解', '原型实现', '数据分析']
   return {
+    id: `fallback-topic-${suffix}`,
     title: `${query} 方向命题方案 ${suffix}`,
-    reason: `结合${major}能力模型与竞赛评分维度，方案 ${suffix} 更容易形成可验证成果。`,
+    reason: `结合${expertiseHint}能力模型与竞赛评分维度${keywordHint}，方案 ${suffix} 更容易形成可验证成果。`,
     innovationPoints: [
       '围绕真实业务痛点设计可量化指标。',
       '通过低成本原型快速验证核心假设。',
@@ -202,11 +214,40 @@ function toFallbackTopicItem(input: {
       '功能范围膨胀导致答辩准备时间不足',
       '指标定义不清导致评委质疑可行性',
     ],
+    estimatedWorkload: input.expectedDifficulty
+      ? `按${input.expectedDifficulty}难度估计，建议 4-6 周完成 MVP、验证与答辩材料。`
+      : '建议 4-6 周完成 MVP、验证与答辩材料。',
+    recommendedTrackId: input.recommendedTrackId,
+    recommendedTrackName: input.recommendedTrackName,
+    contestFitScore: 72,
+    contestFitReasons: [
+      '题目方向与竞赛常见评分维度一致，便于组织答辩材料。',
+      '可通过原型 + 指标验证形成清晰的证据链。',
+    ],
+    similarAwards: [],
+    trendSignals: [],
+    requiredSkills,
+    teamMatchScore: 0,
+    teamGapNotes: [],
+    evidenceRefs: [],
+    decisionStatus: 'candidate',
+    compareScores: {
+      contestFit: 0,
+      noveltySimilarity: 0,
+      evidenceReadiness: 0,
+      trendHeat: 0,
+      teamMatch: 0,
+      workloadFeasibility: 0,
+    },
+    totalScore: 0,
     references: [],
   }
 }
 
 export function runTopicProposalFallback(request: AiTopicProposalRequest): AiTopicProposalResult {
+  const track = request.context.contestId && request.context.trackId
+    ? findTrackById(request.context.contestId, request.context.trackId)
+    : undefined
   const latestUserMessage = [...request.messages]
     .reverse()
     .find(message => message.role === 'user')
@@ -219,6 +260,13 @@ export function runTopicProposalFallback(request: AiTopicProposalRequest): AiTop
       index,
       query: latestUserMessage,
       major: request.context.major || '',
+      discipline: request.context.discipline || '',
+      topicType: request.context.topicType || '',
+      expectedDifficulty: request.context.expectedDifficulty || '',
+      keywords: request.context.keywords || [],
+      teamSkillTags: request.context.teamSkillTags || [],
+      recommendedTrackId: request.context.trackId || '',
+      recommendedTrackName: track?.name || '',
     })
   })
 
@@ -233,6 +281,9 @@ export function runTopicProposalFallback(request: AiTopicProposalRequest): AiTop
   return {
     assistantReply: `已生成 ${proposals.length} 个候选命题，可继续追问细化技术路线与答辩策略。`,
     proposals,
+    compareMatrix: [],
+    boardSummary: '',
+    teamSkillProfile: request.context.teamSkillTags || [],
     references: [],
     missingFields,
     webSearchEnabled: false,
@@ -245,28 +296,38 @@ export function runDefenseFallback(request: AiDefenseRequest): AiDefenseResult {
     .find(message => message.role === 'user')
     ?.content
     ?.trim() || '请基于当前方案进行模拟答辩。'
+  const stage = request.stageHint || 'opening'
 
   const rounds: AiDefenseResult['rounds'] = [
     {
-      judge: 'technical',
+      judge: '技术评委',
+      judgeType: 'technical',
+      personaId: 'builtin-technical',
       question: '请说明核心技术路线与基线方案相比的优势。',
       score: 78,
       comment: '技术方向明确，但实验对比指标需要再量化。',
       followUp: '如果关键依赖失败，是否有可替代实现路径？',
+      evidenceRefs: [],
     },
     {
-      judge: 'business',
+      judge: '业务评委',
+      judgeType: 'business',
+      personaId: 'builtin-business',
       question: '该方案在真实场景的落地路径和价值闭环是什么？',
       score: 74,
       comment: '场景描述清晰，但商业收益测算较粗。',
       followUp: '你如何证明方案在 3 个月内可被试点采用？',
+      evidenceRefs: [],
     },
     {
-      judge: 'expression',
+      judge: '表达评委',
+      judgeType: 'expression',
+      personaId: 'builtin-expression',
       question: '请用 90 秒说明项目结论、证据与风险。',
       score: 80,
       comment: '表达结构较完整，建议减少术语堆叠。',
       followUp: '如果评委质疑创新性，你的第一反驳点是什么？',
+      evidenceRefs: [],
     },
   ]
 
@@ -304,5 +365,11 @@ export function runDefenseFallback(request: AiDefenseRequest): AiDefenseResult {
     rounds,
     scorecard,
     missingFields,
+    stage,
+    nextStage: stage === 'opening' ? 'qa' : stage === 'qa' ? 'rebuttal' : 'closing',
+    turnIndex: 1,
+    evidenceRefs: [],
+    summaryStatus: 'queued',
+    selectedPersonaIds: ['builtin-technical', 'builtin-business', 'builtin-expression'],
   }
 }

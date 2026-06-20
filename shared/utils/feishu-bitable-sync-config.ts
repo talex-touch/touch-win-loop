@@ -1,24 +1,58 @@
 import type {
+  FeishuBitableAutoSyncConfig,
   FeishuBitableSyncItemEntityType,
   FeishuBitableWritebackConfig,
 } from '../types/domain'
+import { PERSONA_SLOT_FIELD_KEYS } from './feishu-persona-sync'
 
 export interface FeishuDefaultSyncItemConfig {
   mapping: Record<string, unknown>
   options: Record<string, unknown>
   writeback: FeishuBitableWritebackConfig
+  autoSync: FeishuBitableAutoSyncConfig
+}
+
+export interface FeishuRequiredSyncItemFieldGroup {
+  keys: string[]
+  label: string
+  mode: 'all' | 'any'
 }
 
 const ENTITY_TYPE_SOURCE_HINTS: Record<FeishuBitableSyncItemEntityType, string[]> = {
   contest: ['竞赛', '赛事', 'contest', 'match'],
   track: ['赛道', '方向', 'track'],
+  track_timeline: ['赛道时间线', '赛道节点', '赛道日程', 'tracktimeline', 'track_timeline'],
   resource: ['资料', '资源', '素材', '文档', 'resource', 'material'],
+  policy: ['政策', '会议', '大会', 'policy', 'notice'],
+  persona: ['人设', '评委', '答辩', 'persona', 'judge'],
+  faq: ['faq', '常见问题', '常见疑问', '问答', 'q&a'],
 }
 
 const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, string[]> = {
   contest: ['externalId', 'name', 'officialUrl'],
   track: ['externalId', 'contestExternalId', 'name'],
-  resource: ['externalId', 'contestExternalId', 'title', 'url'],
+  track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
+  resource: ['externalId', 'contestExternalId', 'title', 'attachment'],
+  policy: ['externalId', 'meetingName'],
+  persona: ['externalId', 'contestExternalId', 'object'],
+  faq: ['externalId', 'contestExternalId', 'question'],
+}
+
+const REQUIRED_MAPPING_FIELD_GROUPS: Record<FeishuBitableSyncItemEntityType, FeishuRequiredSyncItemFieldGroup[]> = {
+  contest: REQUIRED_MAPPING_FIELD_KEYS.contest.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  track: REQUIRED_MAPPING_FIELD_KEYS.track.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  track_timeline: REQUIRED_MAPPING_FIELD_KEYS.track_timeline.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  resource: REQUIRED_MAPPING_FIELD_KEYS.resource.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  policy: REQUIRED_MAPPING_FIELD_KEYS.policy.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  faq: REQUIRED_MAPPING_FIELD_KEYS.faq.map(key => ({ keys: [key], label: key, mode: 'all' })),
+  persona: [
+    ...REQUIRED_MAPPING_FIELD_KEYS.persona.map(key => ({ keys: [key], label: key, mode: 'all' as const })),
+    {
+      keys: [...PERSONA_SLOT_FIELD_KEYS],
+      label: 'persona1~5 任一槽位',
+      mode: 'any',
+    },
+  ],
 }
 
 function buildDefaultWriteback(): FeishuBitableWritebackConfig {
@@ -41,6 +75,22 @@ function buildDefaultWriteback(): FeishuBitableWritebackConfig {
   }
 }
 
+function buildDefaultAutoSync(): FeishuBitableAutoSyncConfig {
+  return {
+    enabled: false,
+    recordStatusField: '记录状态',
+    syncStatusField: '同步信息',
+    completedValues: ['已完成'],
+    pendingValues: ['未同步'],
+    syncedValues: ['已同步'],
+    resetRecordStatusValue: '撰写中',
+    resetSyncStatusValue: '未同步',
+    useMappedFieldsAsWatched: true,
+    watchedFieldNames: [],
+    ignoredFieldNames: [],
+  }
+}
+
 export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEntityType): FeishuDefaultSyncItemConfig {
   if (entityType === 'contest') {
     return {
@@ -48,17 +98,18 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
         externalIdField: '',
         fieldMap: {
           name: '',
-          officialUrl: '',
-          summary: '',
           level: '',
           disciplines: '',
+          officialUrl: '',
+          summary: '',
           keywords: '',
-          registrationWindow: '',
-          submissionDeadline: '',
+          timelineText: '',
+          recommendedFor: '',
         },
       },
       options: {},
       writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
     }
   }
 
@@ -69,9 +120,135 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
         contestExternalIdField: '',
         fieldMap: {
           name: '',
+          coverImageUrl: '',
+          location: '',
+          organizer: '',
+          undertaker: '',
           summary: '',
+          participantRequirements: '',
+          teamRule: '',
+          timelineText: '',
           suitableMajors: '',
+          awardRatio: '',
+          evidenceRequirements: '',
+          scoringPoints: '',
+          deductionItems: '',
           deliverableTypes: '',
+        },
+      },
+      options: {
+        contestId: '',
+      },
+      writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
+    }
+  }
+
+  if (entityType === 'track_timeline') {
+    return {
+      mapping: {
+        externalIdField: '',
+        contestExternalIdField: '',
+        trackExternalIdField: '',
+        fieldMap: {
+          year: '',
+          nodeType: '',
+          startAt: '',
+          endAt: '',
+          note: '',
+          sourceLink: '',
+        },
+      },
+      options: {},
+      writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
+    }
+  }
+
+  if (entityType === 'resource') {
+    return {
+      mapping: {
+        externalIdField: '',
+        contestExternalIdField: '',
+        trackExternalIdField: '',
+        fieldMap: {
+          title: '',
+          category: '',
+          attachment: '',
+          attachmentSummary: '',
+          year: '',
+        },
+      },
+      options: {
+        contestId: '',
+        defaultVisibility: 'internal',
+        defaultStatus: 'active',
+        defaultResourceCategory: 'basic_info',
+        defaultResourceAccessLevel: 'public',
+      },
+      writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
+    }
+  }
+
+  if (entityType === 'policy') {
+    return {
+      mapping: {
+        externalIdField: '',
+        fieldMap: {
+          meetingName: '',
+          summary: '',
+          conferenceDate: '',
+          importance: '',
+          officialMaterial: '',
+          officialMaterialLink: '',
+          wechatMaterial: '',
+          wechatMaterialLink: '',
+          weiboMaterial: '',
+          weiboMaterialLink: '',
+          douyinMaterial: '',
+          douyinMaterialLink: '',
+          xiaohongshuMaterial: '',
+          xiaohongshuMaterialLink: '',
+        },
+      },
+      options: {},
+      writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
+    }
+  }
+
+  if (entityType === 'persona') {
+    return {
+      mapping: {
+        externalIdField: '',
+        contestExternalIdField: '',
+        fieldMap: {
+          object: '',
+          persona1: '',
+          persona2: '',
+          persona3: '',
+          persona4: '',
+          persona5: '',
+        },
+      },
+      options: {},
+      writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
+    }
+  }
+
+  if (entityType === 'faq') {
+    return {
+      mapping: {
+        externalIdField: '',
+        contestExternalIdField: '',
+        trackExternalIdField: '',
+        fieldMap: {
+          year: '',
+          question: '',
+          answer: '',
+          sourceLink: '',
           sortOrder: '',
         },
       },
@@ -79,33 +256,18 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
         contestId: '',
       },
       writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
     }
   }
 
   return {
     mapping: {
       externalIdField: '',
-      contestExternalIdField: '',
-      trackExternalIdField: '',
-      fieldMap: {
-        title: '',
-        name: '',
-        summary: '',
-        content: '',
-        category: '',
-        url: '',
-        sourceType: '',
-        year: '',
-      },
+      fieldMap: {},
     },
-    options: {
-      contestId: '',
-      defaultVisibility: 'internal',
-      defaultStatus: 'active',
-      defaultResourceCategory: 'basic_info',
-      defaultResourceAccessLevel: 'public',
-    },
+    options: {},
     writeback: buildDefaultWriteback(),
+    autoSync: buildDefaultAutoSync(),
   }
 }
 
@@ -121,6 +283,29 @@ export function listRequiredSyncItemFieldKeys(entityType: FeishuBitableSyncItemE
   return [...(REQUIRED_MAPPING_FIELD_KEYS[entityType] || [])]
 }
 
+export function listDefaultSyncItemTargetFieldKeys(entityType: FeishuBitableSyncItemEntityType): string[] {
+  const mapping = buildDefaultSyncItemConfig(entityType).mapping as Record<string, unknown>
+  const fieldMap = mapping.fieldMap && typeof mapping.fieldMap === 'object' && !Array.isArray(mapping.fieldMap)
+    ? mapping.fieldMap as Record<string, unknown>
+    : {}
+  const keys = [
+    mapping.externalIdField !== undefined ? 'externalId' : '',
+    mapping.contestExternalIdField !== undefined ? 'contestExternalId' : '',
+    mapping.trackExternalIdField !== undefined ? 'trackExternalId' : '',
+    ...Object.keys(fieldMap),
+  ].filter(Boolean)
+  return [...new Set(keys)]
+}
+
+export function listRequiredSyncItemFieldGroups(entityType: FeishuBitableSyncItemEntityType): FeishuRequiredSyncItemFieldGroup[] {
+  return (REQUIRED_MAPPING_FIELD_GROUPS[entityType] || [])
+    .map(group => ({
+      keys: [...group.keys],
+      label: group.label,
+      mode: group.mode,
+    }))
+}
+
 export function suggestSyncItemEntityType(input: {
   tableName?: string
   viewName?: string
@@ -134,8 +319,8 @@ export function suggestSyncItemEntityType(input: {
   if (!sourceText)
     return null
 
-  for (const entityType of ['track', 'resource', 'contest'] as const) {
-    const hints = ENTITY_TYPE_SOURCE_HINTS[entityType]
+  for (const entityType of ['persona', 'faq', 'track_timeline', 'track', 'policy', 'resource', 'contest'] as const) {
+    const hints = ENTITY_TYPE_SOURCE_HINTS[entityType] || []
     if (hints.some(hint => sourceText.includes(normalizeSourceHintText(hint))))
       return entityType
   }
@@ -154,7 +339,15 @@ export function buildSuggestedSyncItemName(
     ? '竞赛同步'
     : entityType === 'track'
       ? '赛道同步'
-      : '资料同步'
+      : entityType === 'track_timeline'
+        ? '赛道时间线同步'
+        : entityType === 'policy'
+          ? '政策同步'
+          : entityType === 'persona'
+            ? '人设同步'
+            : entityType === 'faq'
+              ? 'FAQ 同步'
+              : '资料同步'
 
   if (normalizedTableName && normalizedViewName)
     return `${normalizedTableName} / ${normalizedViewName} · ${entityLabel}`

@@ -1,15 +1,31 @@
+import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import type {
+  AiCanvasAssistSourceFormat,
+  AiCanvasAssistTemplate,
+  AiWorkspaceDocumentAction,
   AiWorkspaceRequest,
   AiWorkspaceResult,
   AiWorkspaceStreamEvent,
   AiWorkspaceStreamEventType,
+  ChatMessage,
+  CollabPurpose,
+  WorkflowArchitectureView,
+  WorkflowDraftAction,
+  WorkflowLayoutPreset,
+  WorkflowStylePreset,
+  WorkspaceAiActionSource,
+  WorkspaceAiInteractionIntent,
   WorkspaceAiMode,
+  WorkspaceContextualAssistantKey,
 } from '~~/shared/types/domain'
 import { createEventStream, setResponseStatus } from 'h3'
-import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
+import { buildProjectKnowledgeLocalContext } from '~~/server/services/ai/project-knowledge-context'
+import { loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { executeWorkspaceAi } from '~~/server/services/ai/workspace-orchestrator'
+import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { upsertAiChatSessionContext } from '~~/server/utils/chat-session-context-store'
 import {
   appendAiChatMessage,
   createAiChatSession,
@@ -19,30 +35,81 @@ import {
 import { getContestDetail, recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { getProjectSettingsSnapshot } from '~~/server/utils/platform-store'
 import {
   createAiProjectChangeRequests,
   createProjectIssueReportWithIssues,
 } from '~~/server/utils/project-ai-store'
+import { getVisibleProjectCompetitionLoop } from '~~/server/utils/project-competition-loop-store'
 import { getProjectOutlineSnapshot } from '~~/server/utils/project-outline-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
+import { createWorkspaceStreamSystemChatMessage } from '~~/shared/utils/workspace-ai-stream'
 
 const ALLOWED_MODES: WorkspaceAiMode[] = [
   'dialog_ask',
+  'loopy_page',
   'auto_optimize',
   'issue_discovery',
+  'document_assist',
+  'contextual_agent',
 ]
+const DOCUMENT_ASSIST_CHANNEL_KEYS: PlatformAiChannelKey[] = [
+  'workspace_document_summarize',
+  'workspace_document_rewrite',
+  'workspace_document_continue',
+  'workspace_document_expand',
+  'workspace_document_complete_context',
+  'workspace_document_restructure',
+]
+const SCENE_SOURCE_FORMATS: AiCanvasAssistSourceFormat[] = ['mermaid', 'markdown_outline', 'ddl', 'architecture']
+type WorkspaceRequestContext = NonNullable<AiWorkspaceRequest['context']>
 
 function toText(value: unknown): string {
   return String(value || '').trim()
 }
 
+function summarizeCompetitionLoop(loop: Awaited<ReturnType<typeof getVisibleProjectCompetitionLoop>>): string {
+  if (!loop)
+    return ''
+
+  const riskLines = loop.risks
+    .filter(item => item.status !== 'resolved' && item.status !== 'ignored')
+    .slice(0, 5)
+    .map(item => `- [${item.severity}] ${item.title}：${item.summary}`)
+  const taskLines = loop.tasks
+    .filter(item => item.status !== 'done' && item.status !== 'ignored')
+    .slice(0, 5)
+    .map(item => `- [${item.priority}] ${item.title}：${item.description}`)
+
+  return [
+    '项目参赛主链：',
+    `- 当前状态：${loop.snapshot.status}`,
+    `- 匹配度：${loop.analysis.matchScore}`,
+    `- 知识库：${loop.knowledge.status}（${loop.knowledge.readyCount}/${loop.knowledge.totalResources} ready）`,
+    riskLines.length > 0 ? `开放风险：\n${riskLines.join('\n')}` : '开放风险：暂无',
+    taskLines.length > 0 ? `联动任务：\n${taskLines.join('\n')}` : '联动任务：暂无',
+  ].join('\n')
+}
+
 function normalizeMode(value: unknown): WorkspaceAiMode {
   const text = toText(value) as WorkspaceAiMode
   return ALLOWED_MODES.includes(text) ? text : 'dialog_ask'
+}
+
+function normalizeInteractionIntent(value: unknown): WorkspaceAiInteractionIntent {
+  return toText(value) === 'draft_action' ? 'draft_action' : 'context_chat'
+}
+
+function normalizeActionSource(value: unknown): WorkspaceAiActionSource {
+  return toText(value) === 'toolbar' ? 'toolbar' : 'composer'
+}
+
+function normalizeSceneSourceFormat(value: unknown): AiCanvasAssistSourceFormat | undefined {
+  const text = toText(value) as AiCanvasAssistSourceFormat
+  return SCENE_SOURCE_FORMATS.includes(text) ? text : undefined
 }
 
 function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined): AiWorkspaceRequest {
@@ -60,29 +127,126 @@ function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined):
       teamId: workspaceId,
       workspaceId,
       projectId,
+      projectTitle: toText(context.projectTitle),
       contestId: toText(context.contestId),
       trackId: toText(context.trackId),
       major: toText(context.major),
+      resourceId: toText(context.resourceId),
+      resourceTitle: toText(context.resourceTitle),
+      markdown: toText(context.markdown),
+      selectionText: toText(context.selectionText),
+      selectionRange: context.selectionRange || null,
+      trigger: context.trigger,
+      documentAction: context.documentAction,
+      assistantPreset: context.assistantPreset,
+      assistantLabel: toText(context.assistantLabel),
+      contextualAssistantKey: toText(context.contextualAssistantKey) as WorkspaceContextualAssistantKey | '',
+      interactionIntent: normalizeInteractionIntent(context.interactionIntent),
+      actionSource: normalizeActionSource(context.actionSource),
+      requestedAgentAction: toText(context.requestedAgentAction) as WorkflowDraftAction | undefined,
+      activeTabId: toText(context.activeTabId),
+      previewMode: toText(context.previewMode),
+      resourcePurpose: toText(context.resourcePurpose) as CollabPurpose | '',
+      workflowSnapshot: context.workflowSnapshot || null,
+      workflowAction: toText(context.workflowAction) as WorkflowDraftAction | undefined,
+      workflowTemplate: toText(context.workflowTemplate) as AiCanvasAssistTemplate | undefined,
+      workflowArchitectureView: toText(context.workflowArchitectureView) as WorkflowArchitectureView | undefined,
+      workflowStylePreset: toText(context.workflowStylePreset) as WorkflowStylePreset | undefined,
+      workflowLayoutPreset: toText(context.workflowLayoutPreset) as WorkflowLayoutPreset | undefined,
+      sceneHash: toText(context.sceneHash),
+      sceneSourceText: toText(context.sceneSourceText),
+      sceneSourceFormat: normalizeSceneSourceFormat(context.sceneSourceFormat),
+      sceneAction: toText(context.sceneAction) as WorkflowDraftAction | undefined,
+      sceneTemplate: toText(context.sceneTemplate) as AiCanvasAssistTemplate | undefined,
+      sceneArchitectureView: toText(context.sceneArchitectureView) as WorkflowArchitectureView | undefined,
+      sceneStylePreset: toText(context.sceneStylePreset) as WorkflowStylePreset | undefined,
+      sceneLayoutPreset: toText(context.sceneLayoutPreset) as WorkflowLayoutPreset | undefined,
     },
     aiOptions: body?.aiOptions || {},
   }
 }
 
-function buildSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName: string): string {
+function buildSessionTitle(
+  mode: WorkspaceAiMode,
+  contestName: string,
+  trackName: string,
+  assistantLabel?: string,
+): string {
   const left = contestName.trim()
   const right = trackName.trim()
 
   const modeLabel = mode === 'auto_optimize'
-    ? '自动优化'
+    ? 'Loopy 自动优化'
     : mode === 'issue_discovery'
-      ? '寻疑发现'
-      : '对话询问'
+      ? 'Loopy 寻疑发现'
+      : mode === 'document_assist'
+        ? 'Loopy 文稿助手'
+        : mode === 'contextual_agent'
+          ? `Loopy ${toText(assistantLabel) || '上下文助手'}`
+          : 'Loopy 对话'
 
   if (left && right)
     return `${modeLabel} · ${left} · ${right}`
   if (left)
     return `${modeLabel} · ${left}`
   return modeLabel
+}
+
+function buildDialogSessionTitleFromMessage(message: string): string {
+  const compact = toText(message).replace(/\s+/g, ' ')
+  if (!compact)
+    return '新对话'
+  if (compact.length <= 16)
+    return compact
+  return `${compact.slice(0, 16)}…`
+}
+
+function resolveInitialSessionTitle(
+  mode: WorkspaceAiMode,
+  contestName: string,
+  trackName: string,
+): string {
+  if (mode === 'dialog_ask' || mode === 'loopy_page')
+    return '新对话'
+  return buildSessionTitle(mode, contestName, trackName)
+}
+
+function resolvePersistedSessionTitle(input: {
+  mode: WorkspaceAiMode
+  latestUserMessage: string
+  initialMessageCount: number
+  contestName: string
+  trackName: string
+  assistantLabel?: string
+}): string | undefined {
+  if (input.mode === 'dialog_ask' || input.mode === 'loopy_page') {
+    if (input.initialMessageCount > 0)
+      return undefined
+    return buildDialogSessionTitleFromMessage(input.latestUserMessage)
+  }
+
+  return buildSessionTitle(input.mode, input.contestName, input.trackName, input.assistantLabel)
+}
+
+function buildSessionContextSnapshot(request: AiWorkspaceRequest) {
+  return {
+    resourceId: toText(request.context?.resourceId),
+    resourceTitle: toText(request.context?.resourceTitle),
+    previewMode: toText(request.context?.previewMode),
+    contextualAssistantKey: toText(request.context?.contextualAssistantKey) as WorkspaceContextualAssistantKey | '',
+    assistantPreset: request.context?.assistantPreset || 'default',
+    assistantLabel: toText(request.context?.assistantLabel),
+    selectionText: toText(request.context?.selectionText),
+    selectionRange: request.context?.selectionRange || null,
+    activeTabId: toText(request.context?.activeTabId),
+    resourcePurpose: toText(request.context?.resourcePurpose) as WorkspaceRequestContext['resourcePurpose'],
+    requestedAgentAction: toText(request.context?.requestedAgentAction) as WorkspaceRequestContext['requestedAgentAction'],
+    workflowSnapshot: request.context?.workflowSnapshot || null,
+    sceneHash: toText(request.context?.sceneHash),
+    sceneSourceFormat: request.context?.sceneSourceFormat,
+    sceneSourceText: toText(request.context?.sceneSourceText),
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function summarizeProjectSettings(snapshot: Awaited<ReturnType<typeof getProjectSettingsSnapshot>>): string {
@@ -108,6 +272,29 @@ function summarizeProjectSettings(snapshot: Awaited<ReturnType<typeof getProject
   return lines.join('\n')
 }
 
+function buildWorkspaceBootstrapProgressMessage(request: AiWorkspaceRequest): string {
+  if (request.mode === 'loopy_page')
+    return '正在读取当前工作空间上下文...'
+
+  const projectTitle = toText(request.context?.projectTitle)
+  const resourceTitle = toText(request.context?.resourceTitle)
+
+  if (request.mode === 'document_assist')
+    return `正在读取当前文档「${resourceTitle || '未命名文档'}」的上下文...`
+
+  if (request.mode === 'contextual_agent') {
+    const assistantLabel = toText(request.context?.assistantLabel)
+    if (request.context?.interactionIntent === 'draft_action' && assistantLabel && resourceTitle)
+      return `正在准备「${assistantLabel}」草案上下文：${resourceTitle}`
+    if (assistantLabel && resourceTitle)
+      return `正在准备「${assistantLabel}」当前资源上下文：${resourceTitle}`
+    if (assistantLabel)
+      return `正在准备「${assistantLabel}」项目上下文：${projectTitle || '未命名项目'}`
+  }
+
+  return `正在读取当前项目「${projectTitle || '未命名项目'}」的上下文...`
+}
+
 function summarizeOutline(snapshot: Awaited<ReturnType<typeof getProjectOutlineSnapshot>>): string {
   if (!snapshot || !Array.isArray(snapshot.items) || snapshot.items.length === 0)
     return '项目大纲暂无可用内容。'
@@ -124,54 +311,66 @@ function toErrorMessage(error: unknown): string {
   return 'UNKNOWN_ERROR'
 }
 
-interface WorkspaceSystemStreamMessage {
-  eventType: 'progress' | 'tool'
-  seq: number
-  content: string
+function createAbortError(): Error {
+  const error = new Error('AbortError')
+  error.name = 'AbortError'
+  return error
 }
 
-function summarizeToolPayload(payload: unknown, maxLength = 180): string {
-  if (payload === null || payload === undefined)
-    return ''
-
-  const normalized = typeof payload === 'string'
-    ? payload.trim()
-    : (() => {
-        try {
-          return JSON.stringify(payload)
-        }
-        catch {
-          return ''
-        }
-      })()
-
-  if (!normalized || normalized === '{}' || normalized === '[]')
-    return ''
-
-  if (normalized.length <= maxLength)
-    return normalized
-  return `${normalized.slice(0, maxLength)}...`
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError'
 }
 
-function buildWorkspaceSystemEventContent(eventType: 'progress' | 'tool', data: Record<string, unknown>): string {
-  if (eventType === 'progress') {
-    const message = String(data.message || 'AI 处理中...').trim() || 'AI 处理中...'
-    return `进度：${message}`
-  }
-
-  const toolName = String(data.name || '').trim() || 'unknown_tool'
-  const payloadSummary = summarizeToolPayload(data.payload)
-  if (!payloadSummary)
-    return `工具：${toolName}`
-  return `工具：${toolName} · ${payloadSummary}`
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted)
+    throw createAbortError()
 }
 
-function resolveWorkspaceChannelKey(mode: WorkspaceAiMode): 'workspace_dialog_ask' | 'workspace_auto_optimize' | 'workspace_issue_discovery' {
+function resolveDocumentAssistChannelKey(action: unknown): 'workspace_document_summarize' | 'workspace_document_rewrite' | 'workspace_document_continue' | 'workspace_document_expand' | 'workspace_document_complete_context' | 'workspace_document_restructure' {
+  const normalized = toText(action) as AiWorkspaceDocumentAction
+  if (normalized === 'rewrite')
+    return 'workspace_document_rewrite'
+  if (normalized === 'continue')
+    return 'workspace_document_continue'
+  if (normalized === 'expand')
+    return 'workspace_document_expand'
+  if (normalized === 'complete_context')
+    return 'workspace_document_complete_context'
+  if (normalized === 'restructure')
+    return 'workspace_document_restructure'
+  return 'workspace_document_summarize'
+}
+
+function resolveWorkspaceChannelKey(
+  mode: WorkspaceAiMode,
+  documentAction?: unknown,
+): 'workspace_dialog_ask' | 'workspace_auto_optimize' | 'workspace_issue_discovery' | 'workspace_document_summarize' | 'workspace_document_rewrite' | 'workspace_document_continue' | 'workspace_document_expand' | 'workspace_document_complete_context' | 'workspace_document_restructure' {
   if (mode === 'auto_optimize')
     return 'workspace_auto_optimize'
   if (mode === 'issue_discovery')
     return 'workspace_issue_discovery'
+  if (mode === 'document_assist')
+    return resolveDocumentAssistChannelKey(documentAction)
   return 'workspace_dialog_ask'
+}
+
+function resolveDocumentAssistExecutionChannelKey(
+  runtime: Awaited<ReturnType<typeof readEffectiveRuntimeSettings>>['runtime'],
+  documentAction?: unknown,
+): PlatformAiChannelKey {
+  const explicitAction = toText(documentAction)
+  if (explicitAction)
+    return resolveDocumentAssistChannelKey(explicitAction)
+
+  for (const key of DOCUMENT_ASSIST_CHANNEL_KEYS) {
+    const resolved = resolveAiRuntimeForChannel(runtime, key)
+    if (resolved.channel.enabled && isAiRuntimeConfigured(resolved.ai))
+      return key
+  }
+
+  return 'workspace_document_summarize'
 }
 
 export default defineEventHandler(async (event) => {
@@ -179,7 +378,10 @@ export default defineEventHandler(async (event) => {
   const { runtime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const request = normalizeRequest(await readBody<Partial<AiWorkspaceRequest>>(event).catch(() => ({})))
-  const channelRuntime = resolveAiRuntimeForChannel(runtime, resolveWorkspaceChannelKey(request.mode || 'dialog_ask'))
+  const channelKey = request.mode === 'document_assist'
+    ? resolveDocumentAssistExecutionChannelKey(runtime, request.context?.documentAction)
+    : resolveWorkspaceChannelKey(request.mode || 'dialog_ask', request.context?.documentAction)
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, channelKey)
   const workspaceAiConfig = {
     ...channelRuntime.ai,
     temperature: Number.isFinite(Number(request.aiOptions?.temperature))
@@ -198,9 +400,24 @@ export default defineEventHandler(async (event) => {
     }, 40095)
   }
 
-  if (!request.projectId && request.mode !== 'dialog_ask') {
+  if (!channelRuntime.channel.enabled || !isAiRuntimeConfigured(workspaceAiConfig)) {
+    setResponseStatus(event, 503)
+    return fail(
+      buildAiNotConfiguredMessage(channelRuntime.channel.label || (request.mode === 'document_assist' ? 'AgentDoc AI' : '工作台 AI')),
+      {
+        startedAt,
+        provider: workspaceAiConfig.provider,
+        model: workspaceAiConfig.model,
+        fallbackUsed: false,
+        attempts: 1,
+      },
+      50395,
+    )
+  }
+
+  if (!request.projectId && request.mode !== 'dialog_ask' && request.mode !== 'loopy_page') {
     setResponseStatus(event, 400)
-    return fail('自动优化与寻疑发现模式必须传 projectId。', {
+    return fail('除对话询问外，工作台 AI 调用必须传 projectId。', {
       startedAt,
       provider: workspaceAiConfig.provider,
       model: workspaceAiConfig.model,
@@ -226,6 +443,11 @@ export default defineEventHandler(async (event) => {
   const trackName = contestDetail?.contest?.tracks.find(item => item.id === request.context?.trackId)?.name || ''
   const scopeProjectId = String(request.projectId || '').trim()
   const scopeMode = request.mode || 'dialog_ask'
+  const latestUserMessage = [...(request.messages || [])]
+    .reverse()
+    .find(message => message.role === 'user')
+    ?.content
+    ?.trim() || ''
 
   const prepared = await withTransaction(event, async (db) => {
     const canUseWorkspace = await teamHasWorkspaceMembership(db, user, request.workspaceId || '')
@@ -238,7 +460,7 @@ export default defineEventHandler(async (event) => {
           sessionId: request.sessionId,
           projectId: scopeProjectId,
           mode: scopeMode,
-          strictScope: Boolean(scopeProjectId),
+          strictScope: true,
         })
       : null
 
@@ -248,7 +470,7 @@ export default defineEventHandler(async (event) => {
         projectId: scopeProjectId,
         mode: scopeMode,
         createdByUserId: user.id,
-        title: buildSessionTitle(scopeMode, contestName, trackName),
+        title: resolveInitialSessionTitle(scopeMode, contestName, trackName),
         contestId: request.context?.contestId,
         trackId: request.context?.trackId,
         major: request.context?.major,
@@ -266,7 +488,32 @@ export default defineEventHandler(async (event) => {
       contestId: request.context?.contestId,
       trackId: request.context?.trackId,
       major: request.context?.major,
-      title: buildSessionTitle(scopeMode, contestName, trackName),
+      title: resolvePersistedSessionTitle({
+        mode: scopeMode,
+        latestUserMessage,
+        initialMessageCount: session.messageCount,
+        contestName,
+        trackName,
+        assistantLabel: request.context?.assistantLabel,
+      }),
+    })
+
+    await upsertAiChatSessionContext(db, {
+      workspaceId: request.workspaceId || '',
+      sessionId: session.id,
+      projectId: scopeProjectId,
+      mode: scopeMode,
+      contextSnapshot: buildSessionContextSnapshot(request),
+      runState: {
+        status: 'running',
+        lastEventSeq: 0,
+        resumeAvailable: false,
+        degraded: false,
+        degradedReason: '',
+      },
+      lastCheckpointRef: '',
+      lastError: '',
+      touchActiveAt: true,
     })
 
     const quota = await teamConsumeAiQuota(db, {
@@ -281,6 +528,7 @@ export default defineEventHandler(async (event) => {
     return {
       sessionId: session.id,
       remainingQuota: quota.remaining,
+      initialMessageCount: session.messageCount,
     }
   }).catch((error) => {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
@@ -329,17 +577,32 @@ export default defineEventHandler(async (event) => {
   }
 
   const stream = createEventStream(event)
-  const streamSystemMessages: WorkspaceSystemStreamMessage[] = []
+  const abortController = new AbortController()
+  const streamSystemMessages: ChatMessage[] = []
   let streamSystemSeq = 0
+  let streamClosed = false
+  let hasVisibleExecutionOutput = false
+
+  stream.onClosed(() => {
+    streamClosed = true
+    if (!abortController.signal.aborted)
+      abortController.abort()
+  })
+
+  const markVisibleExecutionOutput = () => {
+    hasVisibleExecutionOutput = true
+  }
+
   const pushEvent = async (eventType: AiWorkspaceStreamEventType, data: Record<string, unknown>) => {
+    if (streamClosed)
+      return
+
     if (eventType === 'progress' || eventType === 'tool') {
       streamSystemSeq += 1
-      streamSystemMessages.push({
-        eventType,
-        seq: streamSystemSeq,
-        content: buildWorkspaceSystemEventContent(eventType, data),
-      })
+      streamSystemMessages.push(createWorkspaceStreamSystemChatMessage(eventType, data, streamSystemSeq))
     }
+    if (eventType === 'tool' || eventType === 'proposal' || eventType === 'issue' || eventType === 'delta')
+      markVisibleExecutionOutput()
 
     const payload: AiWorkspaceStreamEvent = {
       event: eventType,
@@ -354,9 +617,10 @@ export default defineEventHandler(async (event) => {
   const run = async () => {
     try {
       await pushEvent('progress', {
-        message: '已建立工作台 AI 会话，正在加载上下文...',
+        message: buildWorkspaceBootstrapProgressMessage(request),
         sessionId: prepared.sessionId,
       })
+      throwIfAborted(abortController.signal)
 
       const contextBundle = await withClient(event, async (db) => {
         const projectSettings = request.projectId
@@ -371,70 +635,150 @@ export default defineEventHandler(async (event) => {
               projectId: request.projectId,
             })
           : []
-        const resourceSummary = buildProjectResourceLocalContext(resources, {
+        const pageContextLines = request.mode === 'loopy_page'
+          ? [
+              request.context?.projectTitle ? `当前选中项目：${request.context.projectTitle}` : '',
+              request.context?.resourceTitle ? `当前选中资料：${request.context.resourceTitle}` : '',
+            ].filter(Boolean)
+          : []
+        const knowledgeContext = await buildProjectKnowledgeLocalContext(db, {
+          projectId: request.projectId || '',
+          query: latestUserMessage,
+          resources,
           contestName,
           trackName,
           major: request.context?.major,
-          limit: 10,
+          limit: 6,
+          event,
         })
+        const competitionLoop = request.projectId
+          ? await getVisibleProjectCompetitionLoop(db, {
+              user,
+              projectId: request.projectId,
+              syncKnowledge: false,
+              persist: false,
+            }).catch(() => null)
+          : null
         return {
           projectSettingsSummary: summarizeProjectSettings(projectSettings),
           projectOutlineSummary: summarizeOutline(projectOutline),
-          resourceSummary,
+          resourceSummary: [
+            ...pageContextLines,
+            knowledgeContext.summaryText,
+            summarizeCompetitionLoop(competitionLoop),
+          ].filter(Boolean).join('\n\n'),
+          knowledge: {
+            citations: knowledgeContext.citations,
+            warning: knowledgeContext.warning,
+            usedFallback: knowledgeContext.usedFallback,
+            retrievalPlan: knowledgeContext.retrievalPlan,
+            evidencePaths: knowledgeContext.evidencePaths,
+          },
         }
       })
+      throwIfAborted(abortController.signal)
 
-      const latestUserMessage = [...(request.messages || [])]
-        .reverse()
-        .find(message => message.role === 'user')
-        ?.content
-        ?.trim() || ''
+      const execution = await runWithPlatformAiChannelFallback(runtime, channelKey, async ({ ai, prompt }) => {
+        const nextAiConfig: typeof runtime.ai = {
+          ...runtime.ai,
+          ...ai,
+          temperature: Number.isFinite(Number(request.aiOptions?.temperature))
+            ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
+            : Number(ai.temperature ?? runtime.ai.temperature ?? 0.2),
+        }
 
-      const execution = await executeWorkspaceAi({
-        runtime: {
-          ai: workspaceAiConfig,
-          adminAi: runtime.adminAi,
-        },
-        mode: request.mode || 'dialog_ask',
-        context: {
-          workspaceId: request.workspaceId || '',
-          projectId: request.projectId || '',
-          contestId: request.context?.contestId || '',
-          trackId: request.context?.trackId || '',
-          major: request.context?.major || '',
-          contestName,
-          trackName,
-          projectSettingsSummary: contextBundle.projectSettingsSummary,
-          projectOutlineSummary: contextBundle.projectOutlineSummary,
-          resourceSummary: contextBundle.resourceSummary,
-          latestUserMessage,
-        },
-        channelPrompt: channelRuntime.prompt,
-        hooks: {
-          onProgress: message => pushEvent('progress', { message }),
-          onTool: (name, payload) => pushEvent('tool', { name, payload }),
-          onDelta: text => pushEvent('delta', { text }),
-          onProposal: proposal => pushEvent('proposal', { proposal }),
-          onIssue: issue => pushEvent('issue', { issue }),
-        },
+        return executeWorkspaceAi({
+          sessionId: prepared.sessionId,
+          runtime,
+          ai: nextAiConfig,
+          mode: request.mode || 'dialog_ask',
+          messages: request.messages || [],
+          context: {
+            workspaceId: request.workspaceId || '',
+            projectId: request.projectId || '',
+            projectTitle: request.context?.projectTitle || '',
+            contestId: request.context?.contestId || '',
+            trackId: request.context?.trackId || '',
+            major: request.context?.major || '',
+            contestName,
+            trackName,
+            resourceId: request.context?.resourceId || '',
+            resourceTitle: request.context?.resourceTitle || '',
+            markdown: request.context?.markdown || '',
+            selectionText: request.context?.selectionText || '',
+            selectionRange: request.context?.selectionRange
+              ? {
+                  ...request.context.selectionRange,
+                } as Record<string, unknown>
+              : null,
+            trigger: toText(request.context?.trigger),
+            documentAction: toText(request.context?.documentAction),
+            assistantPreset: request.context?.assistantPreset || 'default',
+            assistantLabel: toText(request.context?.assistantLabel),
+            contextualAssistantKey: toText(request.context?.contextualAssistantKey) as WorkspaceContextualAssistantKey | '',
+            interactionIntent: normalizeInteractionIntent(request.context?.interactionIntent),
+            actionSource: normalizeActionSource(request.context?.actionSource),
+            requestedAgentAction: toText(request.context?.requestedAgentAction),
+            activeTabId: toText(request.context?.activeTabId),
+            previewMode: toText(request.context?.previewMode),
+            resourcePurpose: toText(request.context?.resourcePurpose),
+            workflowSnapshot: request.context?.workflowSnapshot || null,
+            workflowAction: toText(request.context?.workflowAction),
+            workflowTemplate: toText(request.context?.workflowTemplate),
+            workflowArchitectureView: toText(request.context?.workflowArchitectureView),
+            workflowStylePreset: toText(request.context?.workflowStylePreset),
+            workflowLayoutPreset: toText(request.context?.workflowLayoutPreset),
+            sceneHash: toText(request.context?.sceneHash),
+            sceneSourceText: toText(request.context?.sceneSourceText),
+            sceneSourceFormat: toText(request.context?.sceneSourceFormat),
+            sceneAction: toText(request.context?.sceneAction),
+            sceneTemplate: toText(request.context?.sceneTemplate),
+            sceneArchitectureView: toText(request.context?.sceneArchitectureView),
+            sceneStylePreset: toText(request.context?.sceneStylePreset),
+            sceneLayoutPreset: toText(request.context?.sceneLayoutPreset),
+            projectSettingsSummary: contextBundle.projectSettingsSummary,
+            projectOutlineSummary: contextBundle.projectOutlineSummary,
+            resourceSummary: contextBundle.resourceSummary,
+            latestUserMessage,
+          },
+          channelPrompt: request.mode === 'document_assist' && !toText(request.context?.documentAction)
+            ? ''
+            : prompt,
+          hooks: {
+            onProgress: message => pushEvent('progress', { message }),
+            onTool: (name, payload) => pushEvent('tool', { name, payload }),
+            onDelta: text => pushEvent('delta', { text }),
+            onProposal: () => markVisibleExecutionOutput(),
+            onIssue: () => markVisibleExecutionOutput(),
+          },
+          signal: abortController.signal,
+        })
+      }, {
+        shouldContinueOnError: () => !hasVisibleExecutionOutput && !abortController.signal.aborted,
       })
+      throwIfAborted(abortController.signal)
 
       const persisted = await withTransaction(event, async (db) => {
+        throwIfAborted(abortController.signal)
+        const assistantFallbackUsed = Boolean(execution.data.fallbackUsed)
         const baseMetadata = {
           mode: scopeMode,
           projectId: scopeProjectId,
-          channelKey: channelRuntime.key,
-          providerId: channelRuntime.provider?.id || null,
+          channelKey: execution.channel.key,
+          providerId: execution.provider?.id || null,
+          attemptChain: execution.attemptChain,
+          usedFailover: Boolean(execution.usedFallback && !assistantFallbackUsed),
         }
 
         if (latestUserMessage) {
+          throwIfAborted(abortController.signal)
           await appendAiChatMessage(db, {
             workspaceId: request.workspaceId || '',
             sessionId: prepared.sessionId,
             role: 'user',
             content: latestUserMessage,
-            provider: workspaceAiConfig.provider,
-            model: workspaceAiConfig.model,
+            provider: execution.ai.provider,
+            model: execution.ai.model,
             fallbackUsed: false,
             metadata: baseMetadata,
             createdByUserId: user.id,
@@ -442,32 +786,56 @@ export default defineEventHandler(async (event) => {
         }
 
         for (const systemMessage of streamSystemMessages) {
+          throwIfAborted(abortController.signal)
           await appendAiChatMessage(db, {
             workspaceId: request.workspaceId || '',
             sessionId: prepared.sessionId,
             role: 'system',
             content: systemMessage.content,
-            provider: workspaceAiConfig.provider,
-            model: workspaceAiConfig.model,
+            provider: execution.ai.provider,
+            model: execution.ai.model,
             fallbackUsed: false,
             metadata: {
               ...baseMetadata,
-              eventType: systemMessage.eventType,
-              seq: systemMessage.seq,
+              ...(systemMessage.metadata || {}),
             },
             createdByUserId: user.id,
           })
         }
 
+        throwIfAborted(abortController.signal)
         await appendAiChatMessage(db, {
           workspaceId: request.workspaceId || '',
           sessionId: prepared.sessionId,
           role: 'assistant',
-          content: execution.data.assistantReply,
-          provider: workspaceAiConfig.provider,
-          model: workspaceAiConfig.model,
-          fallbackUsed: execution.fallbackUsed,
-          metadata: baseMetadata,
+          content: execution.data.data.assistantReply,
+          provider: execution.ai.provider,
+          model: execution.ai.model,
+          fallbackUsed: assistantFallbackUsed,
+          metadata: {
+            ...baseMetadata,
+            latencyMs: execution.latencyMs,
+            degraded: assistantFallbackUsed,
+            degradedReason: execution.data.degradedReason || '',
+            checkpointRef: execution.data.checkpointRef || '',
+            knowledgeRuntimeStatus: contextBundle.knowledge,
+            ...(execution.data.data.documentDraft
+              ? {
+                  agentDocDraft: execution.data.data.documentDraft,
+                }
+              : {}),
+            ...(execution.data.data.workflowDraft
+              ? {
+                  workflowDraft: execution.data.data.workflowDraft,
+                }
+              : {}),
+            ...(execution.data.data.sceneDraft
+              ? {
+                  sceneDraft: execution.data.data.sceneDraft,
+                }
+              : {}),
+            knowledge: execution.data.data.knowledge || contextBundle.knowledge,
+          },
           createdByUserId: user.id,
         })
 
@@ -479,21 +847,49 @@ export default defineEventHandler(async (event) => {
           contestId: request.context?.contestId,
           trackId: request.context?.trackId,
           major: request.context?.major,
-          title: buildSessionTitle(scopeMode, contestName, trackName),
+          title: resolvePersistedSessionTitle({
+            mode: scopeMode,
+            latestUserMessage,
+            initialMessageCount: prepared.initialMessageCount,
+            contestName,
+            trackName,
+            assistantLabel: request.context?.assistantLabel,
+          }),
+        })
+
+        await upsertAiChatSessionContext(db, {
+          workspaceId: request.workspaceId || '',
+          sessionId: prepared.sessionId,
+          projectId: scopeProjectId,
+          mode: scopeMode,
+          contextSnapshot: buildSessionContextSnapshot(request),
+          runState: {
+            status: 'completed',
+            lastEventSeq: streamSystemSeq,
+            lastCheckpointRef: execution.data.checkpointRef,
+            lastError: '',
+            degraded: assistantFallbackUsed,
+            degradedReason: execution.data.degradedReason || '',
+            resumeAvailable: Boolean(execution.data.checkpointRef),
+          },
+          lastCheckpointRef: execution.data.checkpointRef || '',
+          lastError: '',
+          touchActiveAt: true,
         })
 
         const proposals = request.projectId
           && request.mode === 'auto_optimize'
-          && execution.data.changeDrafts.length > 0
+          && execution.data.data.changeDrafts.length > 0
           ? await createAiProjectChangeRequests(db, {
               workspaceId: request.workspaceId || '',
               projectId: request.projectId,
               sessionId: prepared.sessionId,
               mode: request.mode || 'dialog_ask',
               createdByUserId: user.id,
-              changes: execution.data.changeDrafts,
+              changes: execution.data.data.changeDrafts,
             })
           : []
+        throwIfAborted(abortController.signal)
 
         const issuePayload = request.projectId && request.mode === 'issue_discovery'
           ? await createProjectIssueReportWithIssues(db, {
@@ -501,13 +897,22 @@ export default defineEventHandler(async (event) => {
               projectId: request.projectId,
               sessionId: prepared.sessionId,
               sourceMode: request.mode || 'dialog_ask',
-              title: execution.data.reportTitle || 'AI 寻疑报告',
-              summary: execution.data.reportSummary || execution.data.assistantReply,
-              markdown: execution.data.reportMarkdown || execution.data.assistantReply,
+              title: execution.data.data.reportTitle || 'AI 寻疑报告',
+              summary: execution.data.data.reportSummary || execution.data.data.assistantReply,
+              markdown: execution.data.data.reportMarkdown || execution.data.data.assistantReply,
               createdByUserId: user.id,
-              issues: execution.data.issueDrafts,
+              issues: execution.data.data.issueDrafts,
             })
           : null
+        if (issuePayload && request.projectId) {
+          await getVisibleProjectCompetitionLoop(db, {
+            user,
+            projectId: request.projectId,
+            syncKnowledge: false,
+            persist: true,
+          }).catch(() => null)
+        }
+        throwIfAborted(abortController.signal)
 
         await recordContestAuditLog(db, {
           actorUserId: user.id,
@@ -519,13 +924,15 @@ export default defineEventHandler(async (event) => {
             projectId: request.projectId,
             sessionId: prepared.sessionId,
             mode: request.mode,
-            channelKey: channelRuntime.key,
-            providerId: channelRuntime.provider?.id || null,
+            channelKey: execution.channel.key,
+            providerId: execution.provider?.id || null,
             proposals: proposals.length,
             issues: issuePayload?.issues.length || 0,
-            fallbackUsed: execution.fallbackUsed,
-            attempts: execution.attempts,
-            latencyMs: Date.now() - startedAt,
+            fallbackUsed: assistantFallbackUsed,
+            usedFailover: Boolean(execution.usedFallback && !assistantFallbackUsed),
+            attempts: execution.attemptChain.length,
+            attemptChain: execution.attemptChain,
+            latencyMs: execution.latencyMs,
             remainingQuota: prepared.remainingQuota,
           },
         })
@@ -534,34 +941,85 @@ export default defineEventHandler(async (event) => {
           proposals,
           report: issuePayload?.report || null,
           issues: issuePayload?.issues || [],
+          documentDraft: execution.data.data.documentDraft || null,
+          workflowDraft: execution.data.data.workflowDraft || null,
+          sceneDraft: execution.data.data.sceneDraft || null,
         }
       })
 
       const result: AiWorkspaceResult = {
-        assistantReply: execution.data.assistantReply,
+        assistantReply: execution.data.data.assistantReply,
         mode: request.mode || 'dialog_ask',
         sessionId: prepared.sessionId,
         proposals: persisted.proposals,
         report: persisted.report,
         issues: persisted.issues,
+        documentDraft: persisted.documentDraft,
+        workflowDraft: persisted.workflowDraft,
+        sceneDraft: persisted.sceneDraft,
+        knowledge: execution.data.data.knowledge || contextBundle.knowledge,
       }
 
+      throwIfAborted(abortController.signal)
       await pushEvent('done', {
         result,
         meta: {
-          attempts: execution.attempts,
-          fallbackUsed: execution.fallbackUsed,
-          latencyMs: Date.now() - startedAt,
+          attempts: execution.attemptChain.length,
+          fallbackUsed: execution.data.fallbackUsed,
+          usedFailover: Boolean(execution.usedFallback && !execution.data.fallbackUsed),
+          degradedReason: execution.data.degradedReason || '',
+          checkpointRef: execution.data.checkpointRef || '',
+          latencyMs: execution.latencyMs,
         },
       })
     }
     catch (error) {
+      if (isAbortError(error)) {
+        await withTransaction(event, async (db) => {
+          await upsertAiChatSessionContext(db, {
+            workspaceId: request.workspaceId || '',
+            sessionId: prepared.sessionId,
+            projectId: scopeProjectId,
+            mode: scopeMode,
+            contextSnapshot: buildSessionContextSnapshot(request),
+            runState: {
+              status: 'interrupted',
+              lastEventSeq: streamSystemSeq,
+              lastError: 'ABORTED',
+              resumeAvailable: true,
+            },
+            lastError: 'ABORTED',
+            touchActiveAt: true,
+          })
+        }).catch(() => undefined)
+        return
+      }
+
+      await withTransaction(event, async (db) => {
+        await upsertAiChatSessionContext(db, {
+          workspaceId: request.workspaceId || '',
+          sessionId: prepared.sessionId,
+          projectId: scopeProjectId,
+          mode: scopeMode,
+          contextSnapshot: buildSessionContextSnapshot(request),
+          runState: {
+            status: 'failed',
+            lastEventSeq: streamSystemSeq,
+            lastError: toErrorMessage(error),
+            resumeAvailable: false,
+          },
+          lastError: toErrorMessage(error),
+          touchActiveAt: true,
+        })
+      }).catch(() => undefined)
+
       await pushEvent('error', {
         message: toErrorMessage(error),
       })
     }
     finally {
-      await stream.close()
+      if (!streamClosed)
+        await stream.close().catch(() => {})
     }
   }
 

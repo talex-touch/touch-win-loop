@@ -1,0 +1,175 @@
+import { setResponseStatus } from 'h3'
+import { endProjectMeetingSession, finalizeProjectMeetingAsrSession } from '~~/server/services/meeting/project-meeting'
+import { getRtcProviderGateway } from '~~/server/services/meeting/rtc-provider'
+import { fail, ok } from '~~/server/utils/api'
+import { requireAuth } from '~~/server/utils/auth'
+import { withTransaction } from '~~/server/utils/db'
+import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
+import { getVisibleProjectById } from '~~/server/utils/platform-store'
+import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
+import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
+
+function normalizeString(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return {}
+  return value as Record<string, unknown>
+}
+
+function resolveMeetingRecordingId(providerMetadata: unknown): string {
+  const recordingSession = normalizeRecord(normalizeRecord(providerMetadata).recordingSession)
+  return normalizeString(recordingSession.recordingId)
+}
+
+async function teardownMeetingRtcSession(
+  detail: {
+    providerRoomName?: string | null
+    providerMetadata?: unknown
+  },
+  runtime: Awaited<ReturnType<typeof readEffectiveMeetingRuntimeSettings>>['runtime'],
+): Promise<void> {
+  const roomName = normalizeString(detail.providerRoomName)
+  const recordingId = resolveMeetingRecordingId(detail.providerMetadata)
+
+  if (!roomName && !recordingId)
+    return
+
+  const rtc = getRtcProviderGateway(runtime)
+  const tasks: Promise<unknown>[] = []
+
+  if (recordingId)
+    tasks.push(rtc.stopRecording({ recordingId, roomName }).catch(() => undefined))
+  if (roomName)
+    tasks.push(rtc.deleteRoom({ roomName }).catch(() => undefined))
+
+  await Promise.allSettled(tasks)
+}
+
+export default defineEventHandler(async (event) => {
+  const startedAt = Date.now()
+  const fallbackRuntime = readRuntimeSettings(event)
+  const { runtime } = await readEffectiveMeetingRuntimeSettings(event)
+  const { user } = await requireAuth(event)
+  const projectId = normalizeString(getRouterParam(event, 'id'))
+  const meetingId = normalizeString(getRouterParam(event, 'meetingId'))
+
+  if (!projectId || !meetingId) {
+    setResponseStatus(event, 400)
+    return fail('缺少 projectId 或 meetingId。', {
+      startedAt,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40095)
+  }
+
+  try {
+    const detail = await withTransaction(event, async (db) => {
+      const visibleProject = await getVisibleProjectById(db, user, projectId)
+      if (!visibleProject)
+        throw new Error('PROJECT_NOT_FOUND')
+
+      const access = await resolveProjectRealtimeAccess(db, user, projectId)
+      if (!access)
+        throw new Error('FORBIDDEN')
+
+      return endProjectMeetingSession(db, {
+        projectId,
+        meetingId,
+        user,
+        runtime,
+      })
+    })
+
+    await Promise.allSettled([
+      withTransaction(event, async (db) => {
+        await finalizeProjectMeetingAsrSession(db, {
+          projectId,
+          meetingId,
+          runtime,
+        })
+      }),
+      teardownMeetingRtcSession(detail, runtime),
+    ])
+
+    await Promise.allSettled([
+      emitRealtimeEvent({
+        type: 'meeting.state.updated',
+        workspaceId: detail.workspaceId,
+        projectId,
+        payload: {
+          meetingId,
+        },
+      }),
+      emitRealtimeEvent({
+        type: 'meeting.summary.ready',
+        workspaceId: detail.workspaceId,
+        projectId,
+        payload: {
+          meetingId,
+          queued: true,
+        },
+      }),
+    ])
+
+    return ok(detail, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('项目不存在或无访问权限。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40496)
+    }
+
+    if (error instanceof Error && error.message === 'FORBIDDEN') {
+      setResponseStatus(event, 403)
+      return fail('当前用户无权结束会议。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40394)
+    }
+
+    if (error instanceof Error && error.message === 'MEETING_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('会议不存在。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40497)
+    }
+
+    if (error instanceof Error && error.message === 'MEETING_NOT_ACTIVE') {
+      setResponseStatus(event, 409)
+      return fail('当前会议未处于进行中状态。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40906)
+    }
+
+    throw error
+  }
+})

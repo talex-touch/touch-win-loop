@@ -114,21 +114,51 @@ async function resolveInvitationProjectId(
   return projectId
 }
 
-async function ensureInvitationProjectMember(
+async function findActiveWorkspaceMembership(
+  db: Queryable,
+  workspaceId: string,
+  userId: string,
+): Promise<boolean> {
+  const result = await db.query<{ user_id: string }>(
+    `SELECT user_id
+     FROM workspace_members
+     WHERE workspace_id = $1
+       AND user_id = $2
+       AND is_enabled = TRUE
+     LIMIT 1`,
+    [workspaceId, userId],
+  )
+
+  return Boolean(result.rows[0]?.user_id)
+}
+
+async function findProjectMembership(
+  db: Queryable,
+  projectId: string,
+  userId: string,
+): Promise<boolean> {
+  const result = await db.query<{ role: string }>(
+    `SELECT role
+     FROM project_members
+     WHERE project_id = $1
+       AND user_id = $2
+     LIMIT 1`,
+    [projectId, userId],
+  )
+
+  return Boolean(String(result.rows[0]?.role || '').trim())
+}
+
+async function ensureResolvedInvitationProjectMember(
   db: Queryable,
   invitation: {
-    project_id: string | null
     project_role: ProjectMemberRole | null
-    workspace_id: string
     invited_by_user_id: string
     created_at: string
   },
+  projectId: string,
   targetUserId: string,
-): Promise<string | null> {
-  const projectId = await resolveInvitationProjectId(db, invitation.workspace_id, invitation.project_id)
-  if (!projectId)
-    return null
-
+): Promise<string> {
   const { upsertProjectMember } = await import('~~/server/utils/platform-store')
   await upsertProjectMember(db, {
     projectId,
@@ -142,6 +172,7 @@ async function ensureInvitationProjectMember(
     },
     targetUserId,
     role: normalizeInvitationProjectRole(invitation.project_role) || 'viewer',
+    source: 'invitation',
   })
 
   return projectId
@@ -163,7 +194,8 @@ export async function teamAcceptInvitation(db: Queryable, tokenHash: string, use
     `SELECT id, workspace_id, project_id, project_role, invited_by_user_id, role, invitee_username, expires_at::TEXT, accepted_at::TEXT, created_at::TEXT
      FROM invitations
      WHERE token_hash = $1
-     LIMIT 1`,
+     LIMIT 1
+     FOR UPDATE`,
     [tokenHash],
   )
 
@@ -174,7 +206,8 @@ export async function teamAcceptInvitation(db: Queryable, tokenHash: string, use
   if (invitation.invitee_username && invitation.invitee_username !== user.username)
     throw new Error('INVITATION_TARGET_MISMATCH')
 
-  if (invitation.accepted_at) {
+  const isTargetedInvitation = Boolean(invitation.invitee_username)
+  if (isTargetedInvitation && invitation.accepted_at) {
     const projectId = await resolveInvitationProjectId(db, invitation.workspace_id, invitation.project_id)
     return {
       id: invitation.id,
@@ -207,10 +240,38 @@ export async function teamAcceptInvitation(db: Queryable, tokenHash: string, use
   if (!workspaceType)
     throw new Error('WORKSPACE_NOT_FOUND')
 
+  const resolvedProjectId = await resolveInvitationProjectId(db, invitation.workspace_id, invitation.project_id)
+  if (!isTargetedInvitation) {
+    const hasWorkspaceMembership = await findActiveWorkspaceMembership(db, invitation.workspace_id, user.id)
+    if (!hasWorkspaceMembership)
+      await teamEnsureWorkspaceMember(db, invitation.workspace_id, user.id, invitation.role)
+
+    if (resolvedProjectId) {
+      const hasProjectMembership = await findProjectMembership(db, resolvedProjectId, user.id)
+      if (!hasProjectMembership)
+        await ensureResolvedInvitationProjectMember(db, invitation, resolvedProjectId, user.id)
+    }
+
+    return {
+      id: invitation.id,
+      teamId: invitation.workspace_id,
+      workspaceId: invitation.workspace_id,
+      projectId: resolvedProjectId,
+      projectRole: normalizeInvitationProjectRole(invitation.project_role),
+      role: invitation.role,
+      inviteeUsername: invitation.invitee_username,
+      expiresAt: invitation.expires_at,
+      acceptedAt: null,
+      createdAt: invitation.created_at,
+    }
+  }
+
   const now = new Date().toISOString()
 
   await teamEnsureWorkspaceMember(db, invitation.workspace_id, user.id, invitation.role)
-  const projectId = await ensureInvitationProjectMember(db, invitation, user.id)
+  const projectId = resolvedProjectId
+    ? await ensureResolvedInvitationProjectMember(db, invitation, resolvedProjectId, user.id)
+    : null
 
   await db.query(
     `UPDATE invitations

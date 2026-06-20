@@ -1,7 +1,7 @@
 <template>
   <div text-2xl font-300 inline-flex cursor-default>
     <div flex flex-col children:mx-auto>
-      <img h-18 w-18 inline-block src="/nuxt.svg">
+      <IconLogo class="text-slate-950 h-18 w-18 inline-block dark:text-white" animation="draw" />
       <span text-green-400 mt--2>Nuxt 4</span>
     </div>
     <div

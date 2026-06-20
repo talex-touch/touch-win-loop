@@ -1,6 +1,7 @@
 import type { H3Event } from 'h3'
 import { setResponseStatus } from 'h3'
 import { fail } from '~~/server/utils/api'
+import { createDeprecatedApiHandler } from '~~/server/utils/api-handler'
 import { readRuntimeSettings } from '~~/server/utils/env'
 
 export function teamFirstApiRemoved(event: H3Event) {
@@ -15,3 +16,5 @@ export function teamFirstApiRemoved(event: H3Event) {
     attempts: 1,
   }, 41010)
 }
+
+export const teamFirstDeprecatedHandler = createDeprecatedApiHandler(teamFirstApiRemoved)

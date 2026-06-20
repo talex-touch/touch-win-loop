@@ -5,14 +5,24 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { createProjectCollabResource, ensureProjectWorkflowCanvas } from '~~/server/utils/project-resource-store'
+import {
+  createProjectCollabResource,
+  ensureProjectWorkflowCanvas,
+} from '~~/server/utils/project-resource-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
 interface CreateCollabResourceBody {
   kind?: ResourceKind
   purpose?: CollabPurpose
+  ensurePrimary?: boolean
   title?: string
+  parentResourceId?: string | null
+  drawMode?: string
+  sceneSourceType?: string
+  templateKey?: string
+  editorEngine?: string
+  metadata?: Record<string, unknown>
 }
 
 interface ProjectWorkspaceRow {
@@ -32,7 +42,7 @@ function normalizeCollabKind(rawKind: unknown): Extract<ResourceKind, 'markdown'
 
 function normalizeCollabPurpose(rawPurpose: unknown): CollabPurpose | null {
   const normalized = normalizeString(rawPurpose).toLowerCase()
-  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
+  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'design' || normalized === 'notes')
     return normalized
   return null
 }
@@ -45,7 +55,11 @@ export default defineEventHandler(async (event) => {
   const body = (await readBody<CreateCollabResourceBody>(event).catch(() => ({} as CreateCollabResourceBody))) || {}
   const kind = normalizeCollabKind(body.kind)
   const purpose = normalizeCollabPurpose(body.purpose)
+  const ensurePrimary = body.ensurePrimary === true
   const title = normalizeString(body.title)
+  const requestMetadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+    ? body.metadata
+    : {}
 
   if (!projectId) {
     setResponseStatus(event, 400)
@@ -71,7 +85,7 @@ export default defineEventHandler(async (event) => {
 
   if (body.purpose !== undefined && !purpose) {
     setResponseStatus(event, 400)
-    return fail('purpose 仅支持 workflow / freeform / notes。', {
+    return fail('purpose 仅支持 workflow / freeform / design / notes。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -83,10 +97,10 @@ export default defineEventHandler(async (event) => {
   if (
     purpose
     && ((purpose === 'notes' && kind !== 'markdown')
-      || ((purpose === 'workflow' || purpose === 'freeform') && kind !== 'draw'))
+      || ((purpose === 'workflow' || purpose === 'freeform' || purpose === 'design') && kind !== 'draw'))
   ) {
     setResponseStatus(event, 400)
-    return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow 或 freeform。', {
+    return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow / freeform / design。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -113,7 +127,7 @@ export default defineEventHandler(async (event) => {
       if (!access)
         throw new Error('FORBIDDEN')
 
-      const result = purpose === 'workflow'
+      const result = purpose === 'workflow' && ensurePrimary
         ? await ensureProjectWorkflowCanvas(db, {
             projectId,
             actorUserId: user.id,
@@ -125,6 +139,22 @@ export default defineEventHandler(async (event) => {
             kind,
             purpose: purpose || undefined,
             title,
+            parentResourceId: normalizeString(body.parentResourceId) || undefined,
+            metadata: {
+              ...requestMetadata,
+              ...(normalizeString(body.drawMode) ? { drawMode: normalizeString(body.drawMode) } : {}),
+              ...(normalizeString(body.sceneSourceType) ? { sceneSourceType: normalizeString(body.sceneSourceType) } : {}),
+              ...(normalizeString(body.templateKey) ? { templateKey: normalizeString(body.templateKey) } : {}),
+              ...(normalizeString(body.editorEngine) ? { editorEngine: normalizeString(body.editorEngine) } : {}),
+              ...(purpose === 'design'
+                ? {
+                    drawMode: normalizeString(body.drawMode || requestMetadata.drawMode) || 'composition',
+                    sceneSourceType: normalizeString(body.sceneSourceType || requestMetadata.sceneSourceType) || 'image_mockup',
+                    templateKey: normalizeString(body.templateKey || requestMetadata.templateKey) || 'device-showcase',
+                    editorEngine: 'canvaskit_wasm',
+                  }
+                : {}),
+            },
           })
 
       return {
@@ -187,13 +217,24 @@ export default defineEventHandler(async (event) => {
 
     if (error instanceof Error && error.message === 'INVALID_COLLAB_PURPOSE') {
       setResponseStatus(event, 400)
-      return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow 或 freeform。', {
+      return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow / freeform / design。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40091)
+    }
+
+    if (error instanceof Error && error.message === 'RESOURCE_PARENT_NOT_FOUND') {
+      setResponseStatus(event, 400)
+      return fail('目标父节点不存在，或不在当前项目内。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40092)
     }
 
     throw error

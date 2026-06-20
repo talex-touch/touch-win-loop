@@ -33,6 +33,9 @@ const errorText = ref('')
 const tracks = ref<Track[]>([])
 const trackColumns = [
   { title: '赛道名称', dataIndex: 'name', slotName: 'name', ellipsis: true, tooltip: true },
+  { title: '位置', dataIndex: 'location', slotName: 'location', width: 160 },
+  { title: '主办/承办', dataIndex: 'organizer', slotName: 'organizer', width: 220 },
+  { title: '获奖比例', dataIndex: 'awardRatio', slotName: 'awardRatio', width: 140 },
   { title: '交付物', dataIndex: 'deliverableTypes', slotName: 'deliverables', width: 220 },
   { title: '状态', dataIndex: 'status', slotName: 'status', width: 120 },
   { title: 'Rubric', dataIndex: 'rubricId', slotName: 'rubricId', width: 150 },
@@ -49,7 +52,7 @@ async function loadTracks() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`))
+    const response = await unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`))
     tracks.value = response.data
   }
   catch (error: any) {
@@ -100,6 +103,15 @@ onMounted(loadTracks)
       >
         <template #name="{ record }">
           <span class="text-xs text-slate-900 font-semibold">{{ record.name }}</span>
+        </template>
+        <template #location="{ record }">
+          <span class="text-xs text-slate-600">{{ record.location || '待补充' }}</span>
+        </template>
+        <template #organizer="{ record }">
+          <span class="text-xs text-slate-600">{{ [record.organizer, record.undertaker].filter(Boolean).join(' / ') || '待补充' }}</span>
+        </template>
+        <template #awardRatio="{ record }">
+          <span class="text-xs text-slate-600">{{ record.awardRatio || '待补充' }}</span>
         </template>
         <template #deliverables="{ record }">
           <span class="text-xs text-slate-600">{{ formatDeliverables(record.deliverableTypes) }}</span>

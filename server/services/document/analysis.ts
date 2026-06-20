@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { buildAnalysisFromDraft, extractPdfDraftFromBuffer } from '~~/server/services/document/pdf-layout'
+import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { runWithRetry } from '~~/server/utils/retry'
 
 interface NormalizedPage {
@@ -192,8 +194,8 @@ export async function analyzePdfBufferWithDocAi(
 ): Promise<{ analysis: DocumentAnalysis, pageCount: number }> {
   const draft = await extractPdfDraftFromBuffer(buffer)
   const fallbackAnalysis = buildAnalysisFromDraft(draft)
-  const aiConfig = input.runtime.docAi
-  const enableDocAi = aiConfig.provider !== 'mock' && Boolean(aiConfig.apiKey) && Boolean(aiConfig.baseURL)
+  const aiConfig = resolveAiRuntimeForChannel(input.runtime, 'document_analysis').ai
+  const enableDocAi = isAiRuntimeConfigured(aiConfig)
 
   if (!enableDocAi || !draft.hasText) {
     return {

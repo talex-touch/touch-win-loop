@@ -1,5 +1,5 @@
 import { setResponseStatus } from 'h3'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { deleteObjectsAcrossStorageChannels } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient, withTransaction } from '~~/server/utils/db'
@@ -54,10 +54,7 @@ export default defineEventHandler(async (event) => {
       ? await withClient(event, async db => listUnreferencedUploadObjectKeys(db, expiredUploadObjectKeys))
       : []
 
-    if (deletableObjectKeys.length > 0) {
-      const storage = getDocumentStorage()
-      await Promise.allSettled(deletableObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
-    }
+    await deleteObjectsAcrossStorageChannels(deletableObjectKeys, runtime).catch(() => undefined)
 
     return ok(result.resources, {
       startedAt,

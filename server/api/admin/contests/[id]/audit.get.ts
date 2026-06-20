@@ -1,10 +1,29 @@
+import type {
+  ReleaseQueueInsightsWindowDays,
+  ReleaseQueueReviewerRankingMode,
+} from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
-import { listAdminContestAuditLogs, recordContestAuditLog } from '~~/server/utils/contest-store'
+import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { listContestWorkflowTimeline } from '~~/server/utils/release-store'
+
+function normalizeReviewerRankingMode(raw: unknown): ReleaseQueueReviewerRankingMode {
+  const value = String(raw || '').trim()
+  if (value === 'second_review_approved' || value === 'published')
+    return value
+  return 'total_actions'
+}
+
+function normalizeInsightsWindowDays(raw: unknown): ReleaseQueueInsightsWindowDays {
+  const value = Number(raw)
+  if (value === 7 || value === 30)
+    return value
+  return 0
+}
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -39,13 +58,18 @@ export default defineEventHandler(async (event) => {
   const page = Number(query.page || 1)
   const pageSize = Number(query.pageSize || 20)
   const action = typeof query.action === 'string' ? query.action : ''
+  const rankingMode = normalizeReviewerRankingMode(query.rankingMode)
+  const windowDays = normalizeInsightsWindowDays(query.windowDays)
 
   const result = await withClient(event, async (db) => {
-    return listAdminContestAuditLogs(db, {
+    return listContestWorkflowTimeline(db, {
+      actorUserId: user.id,
       contestId,
       page,
       pageSize,
       action,
+      rankingMode,
+      windowDays,
     })
   })
 
@@ -58,6 +82,8 @@ export default defineEventHandler(async (event) => {
         page,
         pageSize,
         action,
+        rankingMode,
+        windowDays,
       },
     })
   })

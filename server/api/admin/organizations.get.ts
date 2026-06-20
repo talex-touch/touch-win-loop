@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
 
   const access = await getPlatformAccess(event, user)
   const hasOrgPermission = access.permissions.some(item =>
-    ['contest.read_internal', 'pricing.write', 'role.assign'].includes(item),
+    ['contest.read_internal', 'pricing.write', 'user.read', 'role.assign'].includes(item),
   )
 
   if (!hasOrgPermission) {
@@ -60,7 +60,7 @@ export default defineEventHandler(async (event) => {
           SELECT COUNT(DISTINCT wm.user_id)::INT
           FROM workspace_members wm
           WHERE wm.workspace_id = w.id
-            AND wm.is_active = TRUE
+            AND wm.is_enabled = TRUE
         ) AS member_count,
         wb.plan_id,
         bp.code AS plan_code,

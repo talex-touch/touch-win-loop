@@ -1,7 +1,7 @@
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
-import { withClient } from '~~/server/utils/db'
+import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { getProjectSettingsDraft } from '~~/server/utils/platform-store'
 
@@ -10,6 +10,7 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = String(getRouterParam(event, 'id') || '').trim()
+  const deviceId = String(getQuery(event).deviceId || '').trim()
 
   if (!projectId) {
     setResponseStatus(event, 400)
@@ -22,9 +23,20 @@ export default defineEventHandler(async (event) => {
     }, 40079)
   }
 
+  if (!deviceId) {
+    setResponseStatus(event, 400)
+    return fail('缺少 deviceId。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40083)
+  }
+
   try {
-    const draft = await withClient(event, async (db) => {
-      return getProjectSettingsDraft(db, user, projectId)
+    const draft = await withTransaction(event, async (db) => {
+      return getProjectSettingsDraft(db, user, projectId, deviceId)
     })
 
     return ok(draft, {
@@ -56,6 +68,17 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40474)
+    }
+
+    if (error instanceof Error && error.message === 'DEVICE_ID_REQUIRED') {
+      setResponseStatus(event, 400)
+      return fail('缺少 deviceId。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40084)
     }
 
     throw error

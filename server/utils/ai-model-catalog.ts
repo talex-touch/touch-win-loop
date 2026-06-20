@@ -1,5 +1,6 @@
 import type { RuntimeSettings } from '~~/server/utils/env'
 import type { AiModelCatalog, AiModelGroup, AiModelOption } from '~~/shared/types/domain'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 
 export const AUTO_MODEL_GROUP_KEY = 'auto'
 export const AUTO_MODEL_ID = 'auto'
@@ -93,16 +94,19 @@ function parseConfiguredGroups(modelCatalogJson: string): AiModelGroup[] {
 }
 
 export function createAutoModelGroup(runtime: RuntimeSettings): AiModelGroup {
+  const sceneRuntime = resolveAiRuntimeForChannel(runtime, 'project_chat')
   return {
     key: AUTO_MODEL_GROUP_KEY,
-    label: 'Auto',
+    label: '跟随场景',
     options: [
       {
         id: AUTO_MODEL_ID,
-        label: 'Auto',
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
-        description: `默认后端模型：${runtime.ai.model}`,
+        label: '跟随场景',
+        provider: sceneRuntime.ai.provider,
+        model: sceneRuntime.ai.model,
+        description: sceneRuntime.ai.model
+          ? `跟随项目聊天场景：${sceneRuntime.ai.model}`
+          : '跟随项目聊天场景；当前场景未配置',
       },
     ],
   }
@@ -123,6 +127,7 @@ export function resolveAiModelSelection(
   selectedModelGroup?: string,
   selectedModelId?: string,
 ): ResolvedAiModelSelection {
+  const sceneRuntime = resolveAiRuntimeForChannel(runtime, 'project_chat')
   const groupKey = toNonEmptyString(selectedModelGroup) || AUTO_MODEL_GROUP_KEY
   const modelId = toNonEmptyString(selectedModelId) || AUTO_MODEL_ID
 
@@ -143,8 +148,8 @@ export function resolveAiModelSelection(
   return {
     selectedModelGroup: AUTO_MODEL_GROUP_KEY,
     selectedModelId: AUTO_MODEL_ID,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
-    label: 'Auto',
+    provider: sceneRuntime.ai.provider,
+    model: sceneRuntime.ai.model,
+    label: '跟随场景',
   }
 }

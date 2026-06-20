@@ -3,9 +3,21 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
 
+const DB_SCHEMA_FILE = resolve(process.cwd(), 'server/database/bootstrap/schema.ts')
+const STORE_FILE = resolve(process.cwd(), 'server/utils/feishu-integration-store.ts')
+const PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/integrations/feishu.vue')
+const EDITOR_FILE = resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue')
+const LIST_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/index.get.ts')
+const DETAIL_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id].get.ts')
+const ITEM_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId].get.ts')
+const ARCHIVE_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/archive.post.ts')
+const RESTORE_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/restore.post.ts')
+
 it('同步信息归档会写入归档字段并停用全部子表同步项', async () => {
-  const dbSource = await readFile(resolve(process.cwd(), 'server/utils/db.ts'), 'utf8')
-  const storeSource = await readFile(resolve(process.cwd(), 'server/utils/feishu-integration-store.ts'), 'utf8')
+  const [dbSource, storeSource] = await Promise.all([
+    readFile(DB_SCHEMA_FILE, 'utf8'),
+    readFile(STORE_FILE, 'utf8'),
+  ])
 
   assert.match(dbSource, /CREATE TABLE IF NOT EXISTS feishu_bitable_syncs[\s\S]*archived_by_user_id TEXT[\s\S]*archived_at TIMESTAMPTZ/, '同步信息表未持久化归档字段')
   assert.match(storeSource, /export async function archiveFeishuBitableSync/, '存储层缺少同步信息归档函数')
@@ -17,7 +29,7 @@ it('同步信息归档会写入归档字段并停用全部子表同步项', asyn
 })
 
 it('活动同步项查询会排除已归档同步信息', async () => {
-  const storeSource = await readFile(resolve(process.cwd(), 'server/utils/feishu-integration-store.ts'), 'utf8')
+  const storeSource = await readFile(STORE_FILE, 'utf8')
 
   assert.match(storeSource, /listFeishuBitableSyncs[\s\S]*archived_at IS NULL/, '同步信息列表未默认过滤已归档数据')
   assert.match(storeSource, /getFeishuBitableSyncItemById[\s\S]*s\.archived_at IS NULL/, '同步项详情未过滤已归档同步信息')
@@ -26,9 +38,11 @@ it('活动同步项查询会排除已归档同步信息', async () => {
 })
 
 it('管理页会提供同步信息归档按钮并调用归档接口', async () => {
-  const pageSource = await readFile(resolve(process.cwd(), 'app/pages/admin/integrations/feishu.vue'), 'utf8')
-  const apiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/archive.post.ts'), 'utf8')
-  const restoreApiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/restore.post.ts'), 'utf8')
+  const [pageSource, apiSource, restoreApiSource] = await Promise.all([
+    readFile(PAGE_FILE, 'utf8'),
+    readFile(ARCHIVE_API_FILE, 'utf8'),
+    readFile(RESTORE_API_FILE, 'utf8'),
+  ])
 
   assert.match(pageSource, /async function archiveSync\(sync: FeishuBitableSync\)/, '管理页缺少同步信息归档动作')
   assert.match(pageSource, /async function restoreSync\(sync: FeishuBitableSync\)/, '管理页缺少同步信息恢复动作')
@@ -41,11 +55,13 @@ it('管理页会提供同步信息归档按钮并调用归档接口', async () =
 })
 
 it('管理页支持显示已归档同步信息，并把归档记录以只读方式打开', async () => {
-  const pageSource = await readFile(resolve(process.cwd(), 'app/pages/admin/integrations/feishu.vue'), 'utf8')
-  const editorSource = await readFile(resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue'), 'utf8')
-  const listApiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/index.get.ts'), 'utf8')
-  const detailApiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id].get.ts'), 'utf8')
-  const itemApiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId].get.ts'), 'utf8')
+  const [pageSource, editorSource, listApiSource, detailApiSource, itemApiSource] = await Promise.all([
+    readFile(PAGE_FILE, 'utf8'),
+    readFile(EDITOR_FILE, 'utf8'),
+    readFile(LIST_API_FILE, 'utf8'),
+    readFile(DETAIL_API_FILE, 'utf8'),
+    readFile(ITEM_API_FILE, 'utf8'),
+  ])
 
   assert.match(pageSource, /showArchivedSyncs = ref\(false\)/, '管理页缺少“显示已归档”筛选开关')
   assert.match(pageSource, /includeArchived=true/, '管理页未把显示已归档状态传给同步信息列表接口')

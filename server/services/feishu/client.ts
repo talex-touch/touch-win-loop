@@ -6,16 +6,28 @@ import type {
   FeishuDirectoryFetchStatus,
   FeishuDirectoryStatus,
 } from '~~/shared/types/domain'
+import { Buffer } from 'node:buffer'
+import { buildApiEndpoint, extractApiBasePathPrefix, isHttpUrl } from '~~/shared/utils/api-url'
 
 const DEFAULT_FEISHU_API_BASE_URL = 'https://open.feishu.cn'
 const DEFAULT_GROUP_MEMBER_PAGE_SIZE = 200
 const DEFAULT_CONTACT_PAGE_SIZE = 50
+const FEISHU_TOKEN_CACHE_SKEW_MS = 60_000
+const marketplaceAppTokenCache = new Map<string, FeishuCachedToken>()
+const marketplaceTenantTokenCache = new Map<string, FeishuCachedToken>()
 
 interface FeishuApiEnvelope<T> {
   code?: number
   msg?: string
   message?: string
+  error?: string
+  error_description?: string
   data?: T
+}
+
+interface FeishuCachedToken {
+  token: string
+  expiresAt: number
 }
 
 interface OAuthAccessTokenData {
@@ -163,6 +175,16 @@ interface BitableGetRecordData {
   }
 }
 
+interface FeishuDocxRawContentData {
+  content?: string
+}
+
+export interface FeishuDriveMediaDownload {
+  buffer: Buffer
+  contentType: string
+  contentDisposition: string
+}
+
 interface FeishuWikiNodeData {
   node?: {
     obj_type?: string
@@ -297,7 +319,7 @@ async function requestFeishu<T>(input: {
 
   if (!response.ok) {
     const envelope = await parseEnvelope<T>(response)
-    const remoteMessage = String(envelope.msg || envelope.message || '')
+    const remoteMessage = String(envelope.msg || envelope.message || envelope.error_description || envelope.error || '')
     const fallbackMessage = `FEISHU_HTTP_${response.status}`
     const baseMessage = remoteMessage || fallbackMessage
     if (baseMessage.toLowerCase().includes('field validation failed'))
@@ -308,7 +330,7 @@ async function requestFeishu<T>(input: {
   const envelope = await parseEnvelope<T>(response)
   const code = Number(envelope.code || 0)
   if (code !== 0) {
-    const message = String(envelope.msg || envelope.message || '')
+    const message = String(envelope.msg || envelope.message || envelope.error_description || envelope.error || '')
     const fallbackMessage = `FEISHU_API_${code}`
     const baseMessage = message || fallbackMessage
     if (baseMessage.toLowerCase().includes('field validation failed'))
@@ -371,6 +393,20 @@ export interface FeishuBitableRecord {
   fields: Record<string, unknown>
 }
 
+export function resolveFeishuOAuthRedirectUri(input: {
+  publicBaseUrl?: string
+  apiBaseUrl?: string
+}): string {
+  const publicBaseUrl = String(input.publicBaseUrl || '').trim()
+  if (!isHttpUrl(publicBaseUrl))
+    return ''
+
+  const apiBasePathPrefix = extractApiBasePathPrefix(input.apiBaseUrl || '/api') || '/'
+  const apiCallbackPath = buildApiEndpoint(apiBasePathPrefix, '/auth/feishu/callback')
+  const redirectUri = buildApiEndpoint(publicBaseUrl, apiCallbackPath)
+  return isHttpUrl(redirectUri) ? redirectUri : ''
+}
+
 export function buildFeishuAuthorizeUrl(input: {
   config: FeishuIntegrationConfigInternal
   state: string
@@ -411,6 +447,112 @@ export async function getFeishuTenantAccessToken(config: FeishuIntegrationConfig
   return token
 }
 
+async function getFeishuInternalAppAccessToken(config: FeishuIntegrationConfigInternal): Promise<string> {
+  if (!config.appId || !config.appSecret)
+    throw new Error('FEISHU_APP_CONFIG_INCOMPLETE')
+
+  const data = await requestFeishu<{ app_access_token?: string, expire?: number, expires_in?: number }>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/auth/v3/app_access_token/internal',
+    method: 'POST',
+    body: {
+      app_id: config.appId,
+      app_secret: config.appSecret,
+    },
+  })
+  const token = String(data.app_access_token || '').trim()
+  if (!token)
+    throw new Error('FEISHU_APP_TOKEN_EMPTY')
+  return token
+}
+
+function readCachedFeishuToken(cache: Map<string, FeishuCachedToken>, key: string): string {
+  const cached = cache.get(key)
+  if (!cached)
+    return ''
+  if (cached.expiresAt <= Date.now() + FEISHU_TOKEN_CACHE_SKEW_MS) {
+    cache.delete(key)
+    return ''
+  }
+  return cached.token
+}
+
+function writeCachedFeishuToken(
+  cache: Map<string, FeishuCachedToken>,
+  key: string,
+  token: string,
+  expiresInSeconds?: number,
+): void {
+  const ttlMs = Math.max(60, Number(expiresInSeconds || 7200)) * 1000
+  cache.set(key, {
+    token,
+    expiresAt: Date.now() + ttlMs,
+  })
+}
+
+export async function getFeishuMarketplaceAppAccessToken(input: {
+  appId: string
+  appSecret: string
+  appTicket: string
+}): Promise<string> {
+  const appId = String(input.appId || '').trim()
+  const appSecret = String(input.appSecret || '').trim()
+  const appTicket = String(input.appTicket || '').trim()
+  if (!appId || !appSecret || !appTicket)
+    throw new Error('FEISHU_MARKETPLACE_APP_CONFIG_INCOMPLETE')
+
+  const cacheKey = `${appId}:${appTicket}`
+  const cachedToken = readCachedFeishuToken(marketplaceAppTokenCache, cacheKey)
+  if (cachedToken)
+    return cachedToken
+
+  const data = await requestFeishu<{ app_access_token?: string, expire?: number, expires_in?: number }>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/auth/v3/app_access_token',
+    method: 'POST',
+    body: {
+      app_id: appId,
+      app_secret: appSecret,
+      app_ticket: appTicket,
+    },
+  })
+  const token = String(data.app_access_token || '').trim()
+  if (!token)
+    throw new Error('FEISHU_APP_TOKEN_EMPTY')
+  writeCachedFeishuToken(marketplaceAppTokenCache, cacheKey, token, Number(data.expire || data.expires_in || 0))
+  return token
+}
+
+export async function getFeishuMarketplaceTenantAccessToken(input: {
+  appAccessToken: string
+  tenantKey: string
+}): Promise<string> {
+  const appAccessToken = String(input.appAccessToken || '').trim()
+  const tenantKey = String(input.tenantKey || '').trim()
+  if (!appAccessToken || !tenantKey)
+    throw new Error('FEISHU_MARKETPLACE_TENANT_CONFIG_INCOMPLETE')
+
+  const cacheKey = `${tenantKey}:${appAccessToken.slice(0, 16)}`
+  const cachedToken = readCachedFeishuToken(marketplaceTenantTokenCache, cacheKey)
+  if (cachedToken)
+    return cachedToken
+
+  const data = await requestFeishu<{ tenant_access_token?: string, expire?: number, expires_in?: number }>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/auth/v3/tenant_access_token',
+    method: 'POST',
+    body: {
+      app_access_token: appAccessToken,
+      tenant_key: tenantKey,
+    },
+  })
+  const token = String(data.tenant_access_token || '').trim()
+  if (!token)
+    throw new Error('FEISHU_TENANT_TOKEN_EMPTY')
+  writeCachedFeishuToken(marketplaceTenantTokenCache, cacheKey, token, Number(data.expire || data.expires_in || 0))
+  return token
+}
+
 export async function getFeishuWikiNodeInfo(input: {
   tenantAccessToken: string
   token: string
@@ -438,6 +580,24 @@ export async function getFeishuWikiNodeInfo(input: {
     objType,
     objToken,
   }
+}
+
+export async function getFeishuDocxRawContent(input: {
+  tenantAccessToken: string
+  documentId: string
+}): Promise<string> {
+  const documentId = String(input.documentId || '').trim()
+  if (!documentId)
+    return ''
+
+  const data = await requestFeishu<FeishuDocxRawContentData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: `/open-apis/docx/v1/documents/${encodeURIComponent(documentId)}/raw_content`,
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+  })
+
+  return String(data.content || '').trim()
 }
 
 export async function sendFeishuChatTextMessage(input: {
@@ -540,36 +700,45 @@ export async function getFeishuChatById(input: {
   return toFeishuChatCandidate(data.chat || data, chatId)
 }
 
-async function exchangeOAuthCode(config: FeishuIntegrationConfigInternal, code: string): Promise<OAuthAccessTokenData> {
+async function exchangeOAuthCode(input: {
+  config: FeishuIntegrationConfigInternal
+  code: string
+  redirectUri?: string
+}): Promise<OAuthAccessTokenData> {
+  const config = input.config
+  const code = String(input.code || '').trim()
   if (!code)
     throw new Error('FEISHU_OAUTH_CODE_REQUIRED')
   if (!config.appId || !config.appSecret)
     throw new Error('FEISHU_APP_CONFIG_INCOMPLETE')
 
   try {
+    const appAccessToken = await getFeishuInternalAppAccessToken(config)
     return await requestFeishu<OAuthAccessTokenData>({
+      baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+      path: '/open-apis/authen/v1/access_token',
+      method: 'POST',
+      bearerToken: appAccessToken,
+      body: {
+        grant_type: 'authorization_code',
+        code,
+      },
+    })
+  }
+  catch (error) {
+    const message = toErrorMessage(error)
+    if (!message.includes('404') && !message.includes('400') && !message.includes('NOT_FOUND') && !message.toLowerCase().includes('field validation failed'))
+      throw error
+    return requestFeishu<OAuthAccessTokenData>({
       baseUrl: DEFAULT_FEISHU_API_BASE_URL,
       path: '/open-apis/authen/v2/oauth/token',
       method: 'POST',
       body: {
         grant_type: 'authorization_code',
         code,
-        app_id: config.appId,
-        app_secret: config.appSecret,
-      },
-    })
-  }
-  catch (error) {
-    const message = toErrorMessage(error)
-    if (!message.includes('404') && !message.includes('NOT_FOUND'))
-      throw error
-    return requestFeishu<OAuthAccessTokenData>({
-      baseUrl: DEFAULT_FEISHU_API_BASE_URL,
-      path: '/open-apis/authen/v1/access_token',
-      method: 'POST',
-      body: {
-        grant_type: 'authorization_code',
-        code,
+        client_id: config.appId,
+        client_secret: config.appSecret,
+        redirect_uri: String(input.redirectUri || '').trim() || undefined,
       },
     })
   }
@@ -578,8 +747,9 @@ async function exchangeOAuthCode(config: FeishuIntegrationConfigInternal, code: 
 export async function getFeishuOAuthProfile(input: {
   config: FeishuIntegrationConfigInternal
   code: string
+  redirectUri?: string
 }): Promise<FeishuOAuthLoginProfile> {
-  const tokenData = await exchangeOAuthCode(input.config, input.code)
+  const tokenData = await exchangeOAuthCode(input)
   const userAccessToken = String(tokenData.access_token || tokenData.user_access_token || '').trim()
   if (!userAccessToken)
     throw new Error('FEISHU_USER_ACCESS_TOKEN_EMPTY')
@@ -1306,6 +1476,31 @@ export async function getFeishuBitableRecordById(input: {
   return {
     recordId: normalizedId,
     fields: record?.fields || {},
+  }
+}
+
+export async function downloadFeishuDriveMedia(input: {
+  tenantAccessToken: string
+  fileToken: string
+}): Promise<FeishuDriveMediaDownload> {
+  const fileToken = String(input.fileToken || '').trim()
+  if (!fileToken)
+    throw new Error('FEISHU_FILE_TOKEN_REQUIRED')
+
+  const response = await fetch(`${DEFAULT_FEISHU_API_BASE_URL}/open-apis/drive/v1/medias/${encodeURIComponent(fileToken)}/download`, {
+    method: 'GET',
+    headers: {
+      authorization: `Bearer ${input.tenantAccessToken}`,
+    },
+  })
+
+  if (!response.ok)
+    throw new Error(`FEISHU_MEDIA_DOWNLOAD_${response.status}`)
+
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type') || 'application/octet-stream',
+    contentDisposition: response.headers.get('content-disposition') || '',
   }
 }
 

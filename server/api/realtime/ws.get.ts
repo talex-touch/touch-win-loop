@@ -2,6 +2,7 @@ import type { Peer } from 'crossws'
 import type { AuthUser } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
 import process from 'node:process'
+import { resolveValidatedMeetingGuestToken } from '~~/server/services/meeting/project-meeting'
 import {
   ACCESS_COOKIE_NAME,
   LEGACY_SESSION_COOKIE_NAME,
@@ -9,6 +10,7 @@ import {
 } from '~~/server/utils/auth'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { findAuthBySessionTokenHash } from '~~/server/utils/platform-store'
+import { getProjectMeetingDetailByMeetingId } from '~~/server/utils/project-meeting-store'
 import { applyProjectCollabUpdate, getProjectCollabSnapshot } from '~~/server/utils/project-resource-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 import { createRealtimeEvent, publishRealtimeEvent } from '~~/server/utils/realtime-events'
@@ -19,12 +21,14 @@ import {
   leaveRealtimeCollabRoom,
   registerRealtimePeer,
   removeRealtimePeer,
+  subscribeRealtimeMeeting,
   subscribeRealtimeProject,
   subscribeRealtimeWorkspace,
   touchRealtimePeer,
   updateRealtimePresence,
 } from '~~/server/utils/realtime-hub'
 import { hashToken } from '~~/server/utils/security'
+import { captureServerException } from '~~/server/utils/sentry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 
 const HEARTBEAT_INTERVAL_MS = 25_000
@@ -47,6 +51,9 @@ interface RealtimeClientMessage {
 interface RealtimeRuntimeContext {
   peerId: string
   user: AuthUser
+  authKind: 'member' | 'meeting_guest'
+  meetingId?: string
+  guestShareId?: string
   lastSeenAt: number
   heartbeatTimer: NodeJS.Timeout | null
 }
@@ -125,6 +132,28 @@ function readRequestHeader(peer: Peer, headerName: string): string {
   return normalizeString(value)
 }
 
+function readRequestUrl(peer: Peer): URL | null {
+  const rawUrl = normalizeString(String(peer.request?.url || ''))
+  if (!rawUrl)
+    return null
+
+  const host = readRequestHeader(peer, 'host') || 'localhost'
+  const protocol = normalizeString(readRequestHeader(peer, 'x-forwarded-proto')) === 'https' ? 'https' : 'http'
+  try {
+    return new URL(rawUrl, `${protocol}://${host}`)
+  }
+  catch {
+    return null
+  }
+}
+
+function readQueryParam(peer: Peer, name: string): string {
+  const requestUrl = readRequestUrl(peer)
+  if (!requestUrl)
+    return ''
+  return normalizeString(requestUrl.searchParams.get(name))
+}
+
 function logRealtimeDebug(
   message: string,
   detail: Record<string, unknown> = {},
@@ -135,6 +164,11 @@ function logRealtimeDebug(
 
   if (level === 'error') {
     console.error('[realtime-ws]', message, detail)
+    const detailMessage = normalizeString(detail.message)
+    captureServerException(new Error(detailMessage ? `${message}: ${detailMessage}` : message), {
+      module: 'realtime-ws',
+      traceId: normalizeString(detail.requestId),
+    })
     return
   }
 
@@ -329,6 +363,37 @@ async function resolveAuthUserFromPeer(peer: Peer): Promise<AuthUser | null> {
   })
 }
 
+async function resolveGuestAuthFromPeer(peer: Peer): Promise<{
+  user: AuthUser
+  meetingId: string
+  guestShareId: string
+} | null> {
+  const meetingGuestToken = readQueryParam(peer, 'meetingGuestToken')
+  if (!meetingGuestToken)
+    return null
+
+  return withClient(undefined, async (db) => {
+    const resolved = await resolveValidatedMeetingGuestToken(db, meetingGuestToken)
+    if (!resolved)
+      return null
+
+    const now = new Date().toISOString()
+    return {
+      user: {
+        id: `guest:${resolved.meeting.id}:${resolved.providerIdentity}`,
+        username: resolved.guestDisplayName,
+        avatarUrl: null,
+        isPlatformAdmin: false,
+        isDisabled: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+      meetingId: resolved.meeting.id,
+      guestShareId: resolved.share.id,
+    }
+  })
+}
+
 function touchPeerRuntime(peer: Peer): RealtimeRuntimeContext | null {
   const context = resolvePeerContext(peer)
   if (!context)
@@ -341,13 +406,16 @@ function touchPeerRuntime(peer: Peer): RealtimeRuntimeContext | null {
 export default defineWebSocketHandler({
   async open(peer) {
     const cookieHeader = readRequestHeader(peer, 'cookie')
-    const user = await resolveAuthUserFromPeer(peer)
+    const memberUser = await resolveAuthUserFromPeer(peer)
+    const guestAuth = memberUser ? null : await resolveGuestAuthFromPeer(peer)
+    const user = memberUser || guestAuth?.user || null
     if (!user) {
       const cookieMap = parseCookieHeader(cookieHeader)
       logRealtimeDebug('reject unauthorized', {
         remoteAddress: peer.remoteAddress || '',
         hasAccessCookie: Boolean(cookieMap[ACCESS_COOKIE_NAME]),
         hasRefreshCookie: Boolean(cookieMap[REFRESH_COOKIE_NAME] || cookieMap[LEGACY_SESSION_COOKIE_NAME]),
+        hasMeetingGuestToken: Boolean(readQueryParam(peer, 'meetingGuestToken')),
       }, 'warn')
       sendJson(peer, {
         type: 'error',
@@ -359,7 +427,7 @@ export default defineWebSocketHandler({
       safeClose(peer, 4401, 'unauthorized')
       return
     }
-    if (user.isDisabled) {
+    if (!guestAuth && user.isDisabled) {
       logRealtimeDebug('reject forbidden(disabled)', {
         userId: user.id,
         remoteAddress: peer.remoteAddress || '',
@@ -375,7 +443,11 @@ export default defineWebSocketHandler({
       return
     }
 
-    const peerId = registerRealtimePeer(peer, user)
+    const peerId = registerRealtimePeer(peer, user, {
+      authKind: guestAuth ? 'meeting_guest' : 'member',
+      guestShareId: guestAuth?.guestShareId,
+      guestMeetingId: guestAuth?.meetingId,
+    })
     if (!peerId) {
       logRealtimeDebug('reject peer_register_failed', {
         userId: user.id,
@@ -387,6 +459,9 @@ export default defineWebSocketHandler({
     const runtimeContext: RealtimeRuntimeContext = {
       peerId,
       user,
+      authKind: guestAuth ? 'meeting_guest' : 'member',
+      meetingId: guestAuth?.meetingId,
+      guestShareId: guestAuth?.guestShareId,
       lastSeenAt: Date.now(),
       heartbeatTimer: null,
     }
@@ -419,6 +494,8 @@ export default defineWebSocketHandler({
           id: user.id,
           username: user.username,
         },
+        authKind: runtimeContext.authKind,
+        meetingId: runtimeContext.meetingId,
         heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
         heartbeatTimeoutMs: HEARTBEAT_TIMEOUT_MS,
       },
@@ -461,6 +538,10 @@ export default defineWebSocketHandler({
 
     try {
       if (messageType === 'workspace.subscribe') {
+        if (runtimeContext.authKind !== 'member') {
+          sendError(peer, parsedMessage.requestId, 'FORBIDDEN', '外部来宾不能订阅工作区事件。')
+          return
+        }
         const workspaceId = normalizeString(parsedMessage.workspaceId || parsedMessage.payload?.workspaceId)
         if (!workspaceId) {
           sendError(peer, parsedMessage.requestId, 'INVALID_WORKSPACE_ID', '缺少 workspaceId。')
@@ -484,6 +565,10 @@ export default defineWebSocketHandler({
       }
 
       if (messageType === 'project.subscribe') {
+        if (runtimeContext.authKind !== 'member') {
+          sendError(peer, parsedMessage.requestId, 'FORBIDDEN', '外部来宾不能订阅项目事件。')
+          return
+        }
         const projectId = normalizeString(parsedMessage.projectId || parsedMessage.payload?.projectId)
         if (!projectId) {
           sendError(peer, parsedMessage.requestId, 'INVALID_PROJECT_ID', '缺少 projectId。')
@@ -508,7 +593,60 @@ export default defineWebSocketHandler({
         return
       }
 
+      if (messageType === 'meeting.subscribe') {
+        const meetingId = normalizeString(parsedMessage.payload?.meetingId)
+        if (!meetingId) {
+          sendError(peer, parsedMessage.requestId, 'INVALID_MEETING_ID', '缺少 meetingId。')
+          return
+        }
+
+        if (runtimeContext.authKind === 'meeting_guest') {
+          if (meetingId !== normalizeString(runtimeContext.meetingId)) {
+            sendError(peer, parsedMessage.requestId, 'FORBIDDEN', '来宾只能订阅当前分享会议。')
+            return
+          }
+          subscribeRealtimeMeeting(runtimeContext.peerId, meetingId)
+          sendAck(peer, parsedMessage.requestId, {
+            type: messageType,
+            meetingId,
+          })
+          return
+        }
+
+        const context = await withClient(undefined, async (db) => {
+          const meeting = await getProjectMeetingDetailByMeetingId(db, meetingId)
+          if (!meeting)
+            return null
+          const access = await resolveProjectRealtimeAccess(db, runtimeContext.user, meeting.projectId)
+          if (!access)
+            return null
+          return {
+            meeting,
+            access,
+          }
+        })
+        if (!context) {
+          sendError(peer, parsedMessage.requestId, 'FORBIDDEN', '当前用户无权订阅该会议。')
+          return
+        }
+
+        subscribeRealtimeWorkspace(runtimeContext.peerId, context.access.workspaceId)
+        subscribeRealtimeProject(runtimeContext.peerId, context.access.projectId)
+        subscribeRealtimeMeeting(runtimeContext.peerId, meetingId)
+        sendAck(peer, parsedMessage.requestId, {
+          type: messageType,
+          workspaceId: context.access.workspaceId,
+          projectId: context.access.projectId,
+          meetingId,
+        })
+        return
+      }
+
       if (messageType === 'collab.join') {
+        if (runtimeContext.authKind !== 'member') {
+          sendError(peer, parsedMessage.requestId, 'FORBIDDEN', '外部来宾不能加入协作房间。')
+          return
+        }
         const projectId = normalizeString(parsedMessage.projectId || parsedMessage.payload?.projectId)
         const resourceId = normalizeString(parsedMessage.resourceId || parsedMessage.payload?.resourceId)
         if (!projectId || !resourceId) {
@@ -566,6 +704,10 @@ export default defineWebSocketHandler({
       }
 
       if (messageType === 'collab.leave') {
+        if (runtimeContext.authKind !== 'member') {
+          sendError(peer, parsedMessage.requestId, 'FORBIDDEN', '外部来宾不能加入协作房间。')
+          return
+        }
         const projectId = normalizeString(parsedMessage.projectId || parsedMessage.payload?.projectId)
         const resourceId = normalizeString(parsedMessage.resourceId || parsedMessage.payload?.resourceId)
         if (!projectId || !resourceId) {
@@ -585,6 +727,10 @@ export default defineWebSocketHandler({
       }
 
       if (messageType === 'collab.update') {
+        if (runtimeContext.authKind !== 'member') {
+          sendError(peer, parsedMessage.requestId, 'FORBIDDEN', '外部来宾不能编辑协作内容。')
+          return
+        }
         const projectId = normalizeString(parsedMessage.projectId || parsedMessage.payload?.projectId)
         const resourceId = normalizeString(parsedMessage.resourceId || parsedMessage.payload?.resourceId)
         const updateBase64 = normalizeString(parsedMessage.payload?.updateBase64)
@@ -653,6 +799,10 @@ export default defineWebSocketHandler({
       }
 
       if (messageType === 'presence.update') {
+        if (runtimeContext.authKind !== 'member') {
+          sendError(peer, parsedMessage.requestId, 'FORBIDDEN', '外部来宾不能更新协作状态。')
+          return
+        }
         const projectId = normalizeString(parsedMessage.projectId || parsedMessage.payload?.projectId)
         const resourceId = normalizeString(parsedMessage.resourceId || parsedMessage.payload?.resourceId)
         if (!projectId || !resourceId) {
@@ -670,12 +820,20 @@ export default defineWebSocketHandler({
 
         const cursorX = Number(parsedMessage.payload?.cursorX)
         const cursorY = Number(parsedMessage.payload?.cursorY)
+        const awarenessClientId = Number(parsedMessage.payload?.awarenessClientId)
+        const awarenessUpdateBase64 = normalizeString(parsedMessage.payload?.awarenessUpdateBase64)
+        const activityState = normalizeString(parsedMessage.payload?.activityState) === 'background'
+          ? 'background'
+          : 'active'
         const roomKey = buildCollabRoomKey(projectId, resourceId)
         updateRealtimePresence(
           runtimeContext.peerId,
           roomKey,
           Number.isFinite(cursorX) ? cursorX : undefined,
           Number.isFinite(cursorY) ? cursorY : undefined,
+          activityState,
+          Number.isInteger(awarenessClientId) ? Math.trunc(awarenessClientId) : undefined,
+          awarenessUpdateBase64 || undefined,
         )
         publishCollabPresenceSnapshotSilently(roomKey)
         sendAck(peer, parsedMessage.requestId, {

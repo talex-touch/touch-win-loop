@@ -3,6 +3,7 @@ import type { AuthUser, ProjectMemberRole, WorkspaceMemberRole, WorkspaceType } 
 
 const FULL_WORKSPACE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin']
 const MANAGER_PROJECT_ROLES: ProjectMemberRole[] = ['owner', 'manager']
+const ANY_PROJECT_ROLES: ProjectMemberRole[] = ['owner', 'manager', 'editor', 'viewer']
 
 export async function teamAssertProjectCreationAllowed(
   db: Queryable,
@@ -63,7 +64,7 @@ export async function teamCanManageProject(db: Queryable, user: AuthUser, projec
       JOIN workspace_members wm ON wm.workspace_id = p.workspace_id
       WHERE p.id = $1
         AND wm.user_id = $2
-        AND wm.is_active = TRUE
+        AND wm.is_enabled = TRUE
         AND wm.role = ANY($3::TEXT[])
     ) AS can_manage`,
     [projectId, user.id, FULL_WORKSPACE_ROLES],
@@ -80,7 +81,7 @@ export async function teamCanManageProject(db: Queryable, user: AuthUser, projec
       JOIN project_members pm ON pm.project_id = p.id
       WHERE p.id = $1
         AND wm.user_id = $2
-        AND wm.is_active = TRUE
+        AND wm.is_enabled = TRUE
         AND wm.role = 'manager'
         AND pm.user_id = $2
     ) AS can_manage`,
@@ -98,7 +99,7 @@ export async function teamCanManageProject(db: Queryable, user: AuthUser, projec
       JOIN project_members pm ON pm.project_id = p.id
       WHERE p.id = $1
         AND wm.user_id = $2
-        AND wm.is_active = TRUE
+        AND wm.is_enabled = TRUE
         AND pm.user_id = $2
         AND pm.role = ANY($3::TEXT[])
     ) AS can_manage`,
@@ -106,4 +107,50 @@ export async function teamCanManageProject(db: Queryable, user: AuthUser, projec
   )
 
   return Boolean(memberRoleResult.rows[0]?.can_manage)
+}
+
+export async function teamCanImportCanvasLibraryToProject(
+  db: Queryable,
+  user: AuthUser,
+  projectId: string,
+): Promise<boolean> {
+  if (user.isPlatformAdmin)
+    return true
+
+  const result = await db.query<{ can_import: boolean }>(
+    `SELECT EXISTS (
+      SELECT 1
+      FROM projects p
+      WHERE p.id = $1
+        AND EXISTS (
+          SELECT 1
+          FROM workspace_members wm_visible
+          WHERE wm_visible.workspace_id = p.workspace_id
+            AND wm_visible.user_id = $2
+            AND wm_visible.is_enabled = TRUE
+        )
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM workspace_members wm
+            WHERE wm.workspace_id = p.workspace_id
+              AND wm.user_id = $2
+              AND wm.is_enabled = TRUE
+              AND wm.role = ANY($3::TEXT[])
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM workspace_members wm
+            JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = wm.user_id
+            WHERE wm.workspace_id = p.workspace_id
+              AND wm.user_id = $2
+              AND wm.is_enabled = TRUE
+              AND pm.role = ANY($4::TEXT[])
+          )
+        )
+    ) AS can_import`,
+    [projectId, user.id, FULL_WORKSPACE_ROLES, ANY_PROJECT_ROLES],
+  )
+
+  return Boolean(result.rows[0]?.can_import)
 }

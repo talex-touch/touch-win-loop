@@ -28,8 +28,8 @@ export function useDashboardWorkspace() {
   const runtime = useRuntimeConfig()
   const { endpoint } = useApiEndpoint(runtime)
 
-  const searchQuery = ref('')
-  const feedFilter = ref<DashboardFeedFilter>('ongoing')
+  const searchQuery = useState('dashboard:search-query', () => '')
+  const feedFilter = useState<DashboardFeedFilter>('dashboard:feed-filter', () => 'ongoing')
   const overviewLoading = ref(false)
   const overviewError = ref('')
 
@@ -39,7 +39,7 @@ export function useDashboardWorkspace() {
   }
 
   const menuItems: DashboardMenuItem[] = [
-    { id: 'overview', label: '首页概览', icon: 'dashboard', to: '/dashboard' },
+    { id: 'overview', label: 'Loopy', icon: 'brand-mark', to: '/dashboard' },
     { id: 'contests', label: '赛事总库', icon: 'trophy', to: '/contests' },
     { id: 'resources', label: '资料中心', icon: 'folder_open', to: '/resources' },
     { id: 'team', label: '项目台', icon: 'construction', to: '/team' },
@@ -98,12 +98,18 @@ export function useDashboardWorkspace() {
     overviewLoading.value = true
     overviewError.value = ''
     try {
-      const response = await $fetch<ApiResponse<DashboardOverviewPayload>>(endpoint('/dashboard/overview'))
-      summary.value = response.data.summary
-      insights.value = response.data.insights
-      competitions.value = response.data.competitions
-      skillMetrics.value = response.data.skillMetrics
-      scheduleItems.value = response.data.scheduleItems
+      const response = await fetch(String(endpoint('/dashboard/overview')), {
+        credentials: 'include',
+      })
+      const payload = await response.json() as ApiResponse<DashboardOverviewPayload>
+      if (!response.ok)
+        throw new Error(String(payload?.message || 'Dashboard 概览加载失败。'))
+
+      summary.value = payload.data.summary
+      insights.value = payload.data.insights
+      competitions.value = payload.data.competitions
+      skillMetrics.value = payload.data.skillMetrics
+      scheduleItems.value = payload.data.scheduleItems
     }
     catch (error: any) {
       overviewError.value = String(error?.data?.message || 'Dashboard 概览加载失败。')

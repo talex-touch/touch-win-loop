@@ -50,9 +50,26 @@ function toJsonPayload(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+function buildRequestUrl(path: string, query: Record<string, string | number>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(query))
+    search.set(key, String(value))
+  const queryText = search.toString()
+  return queryText ? `${path}?${queryText}` : path
+}
+
+async function requestApi<T>(path: string, query: Record<string, string | number>, fallbackMessage: string): Promise<T> {
+  const response = await fetch(buildRequestUrl(path, query), {
+    credentials: 'include',
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw new Error(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const taskTypeOptions: Array<{ value: AdminAgentTaskType, label: string }> = [
   { value: 'publish_assistant', label: '发布助手' },
-  { value: 'import_sync_analysis', label: '导入/同步分析' },
   { value: 'general', label: '通用咨询' },
 ]
 
@@ -75,9 +92,6 @@ const taskType = ref<AdminAgentTaskType>('publish_assistant')
 const message = ref('')
 const trackId = ref('')
 const major = ref('')
-const csvText = ref('')
-const sourceId = ref('')
-const sourceUrl = ref('')
 
 const timeline = ref<TimelineItem[]>([])
 const artifacts = ref<AdminAgentArtifact[]>([])
@@ -90,14 +104,14 @@ const runMeta = ref<{
 
 const contestDraftCount = computed(() => draftBridge.listDrafts(props.contestId).length)
 
-const showImportOptions = computed(() => taskType.value === 'import_sync_analysis')
-
 const modulePathMap: Record<AdminDraftModule, string> = {
   overview: '/overview/edit',
   tracks: '/tracks',
   timelines: '/timelines',
+  track_timelines: '/track-timelines',
   rubrics: '/rubrics',
   resources: '/resources',
+  knowledge: '/knowledge',
 }
 
 function pushTimeline(type: AdminAgentStreamEventType, text: string) {
@@ -156,21 +170,20 @@ async function loadSessions(preferredSessionId = '') {
 
   loadingSessions.value = true
   try {
-    const response = await $fetch<ApiResponse<AiChatSession[]>>(
+    const data = await requestApi<AiChatSession[]>(
       endpoint(`/teams/${props.workspaceId}/chat/sessions`),
       {
-        query: {
-          limit: 30,
-          projectId: adminChatProjectId.value,
-          mode: adminChatMode,
-        },
+        limit: 30,
+        projectId: adminChatProjectId.value,
+        mode: adminChatMode,
       },
+      '会话列表加载失败。',
     )
 
-    sessions.value = response.data
-    const preferred = response.data.find(item => item.id === preferredSessionId)
-      || response.data.find(item => item.id === activeSessionId.value)
-      || response.data[0]
+    sessions.value = data
+    const preferred = data.find(item => item.id === preferredSessionId)
+      || data.find(item => item.id === activeSessionId.value)
+      || data[0]
 
     activeSessionId.value = preferred?.id || ''
     if (preferred?.id)
@@ -196,17 +209,16 @@ async function loadMessages(sessionId: string) {
 
   loadingMessages.value = true
   try {
-    const response = await $fetch<ApiResponse<{ session: AiChatSession, messages: AiChatMessage[] }>>(
+    const data = await requestApi<{ session: AiChatSession, messages: AiChatMessage[] }>(
       endpoint(`/teams/${props.workspaceId}/chat/sessions/${sessionId}/messages`),
       {
-        query: {
-          limit: 120,
-          projectId: adminChatProjectId.value,
-          mode: adminChatMode,
-        },
+        limit: 120,
+        projectId: adminChatProjectId.value,
+        mode: adminChatMode,
       },
+      '会话消息加载失败。',
     )
-    chatMessages.value = response.data.messages
+    chatMessages.value = data.messages
   }
   catch {
     chatMessages.value = []
@@ -243,14 +255,6 @@ function buildRequestBody(): AdminAgentRunRequest {
     context.trackId = trackId.value
   if (major.value)
     context.major = major.value
-  if (showImportOptions.value) {
-    if (csvText.value.trim())
-      context.csvText = csvText.value.trim()
-    if (sourceId.value.trim())
-      context.sourceId = sourceId.value.trim()
-    if (sourceUrl.value.trim())
-      context.sourceUrl = sourceUrl.value.trim()
-  }
 
   return {
     workspaceId: props.workspaceId,
@@ -491,16 +495,6 @@ watch(activeSessionId, async (value, previous) => {
       </a-select>
 
       <a-input v-model="major" size="small" placeholder="专业（可选）" />
-
-      <template v-if="showImportOptions">
-        <a-input v-model="sourceId" size="small" placeholder="同步源 ID（可选）" />
-        <a-input v-model="sourceUrl" size="small" placeholder="同步源 URL（可选）" />
-        <a-textarea
-          v-model="csvText"
-          :auto-size="{ minRows: 2, maxRows: 5 }"
-          placeholder="CSV 文本（可选）"
-        />
-      </template>
 
       <a-textarea
         v-model="message"

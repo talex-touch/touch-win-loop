@@ -1,0 +1,432 @@
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { discoverProviderModels } from '~~/server/services/admin-ai/provider-models'
+import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolvePlatformAiRequestBaseURL, resolvePlatformAiTransientApiKey } from '~~/server/utils/platform-ai-base-url'
+
+const PROVIDER_MODELS_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/provider-models.post.ts')
+const PROVIDER_MODELS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/provider-models.get.ts')
+const PROVIDERS_TEST_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers/test.post.ts')
+const PROVIDERS_PATCH_FILE = resolve(process.cwd(), 'server/api/admin/ai/providers.patch.ts')
+const CHANNELS_TEST_POST_FILE = resolve(process.cwd(), 'server/api/admin/ai/channels/test.post.ts')
+const CHANNELS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/channels.get.ts')
+const MODELS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/models.get.ts')
+const LOGS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/logs.get.ts')
+const AUDITS_GET_FILE = resolve(process.cwd(), 'server/api/admin/ai/audits.get.ts')
+const AI_PROMPTS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/ai-prompts.vue')
+
+function okJson(data: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    json: async () => data,
+    text: async () => JSON.stringify(data),
+  }
+}
+
+describe('admin-ai provider models', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('newapi 根地址会优先请求 /v1/models', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+
+      if (url === 'https://newapi.example/v1/models')
+        return okJson({ data: [{ id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' }] })
+
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const items = await discoverProviderModels({
+      scope: 'provider',
+      provider: 'newapi',
+      baseURL: 'https://newapi.example',
+      apiKey: 'test-key',
+    })
+
+    expect(items.map(item => item.model)).toEqual(['gpt-4.1-mini'])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://newapi.example/v1/models',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-key',
+        }),
+      }),
+    )
+  })
+
+  it('base url 会自动规范为根地址，并在请求时按 provider 补路径', () => {
+    expect(normalizePlatformAiBaseURL('https://newapi.example/v1', 'newapi')).toBe('https://newapi.example')
+    expect(normalizePlatformAiBaseURL('https://newapi.example/v1/models', 'newapi')).toBe('https://newapi.example')
+    expect(resolvePlatformAiRequestBaseURL('https://newapi.example', 'newapi')).toBe('https://newapi.example/v1')
+    expect(normalizePlatformAiBaseURL('https://dashscope.aliyuncs.com/compatible-mode/v1', 'dashscope')).toBe('https://dashscope.aliyuncs.com')
+    expect(normalizePlatformAiBaseURL('https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding', 'dashscope')).toBe('https://dashscope.aliyuncs.com')
+    expect(resolvePlatformAiRequestBaseURL('https://dashscope.aliyuncs.com', 'dashscope')).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1')
+    expect(resolvePlatformAiRequestBaseURL('', 'newapi')).toBe('')
+  })
+
+  it('会优先使用当前输入的 api key，并自动去掉 bearer 前缀', () => {
+    expect(normalizePlatformAiApiKey('Bearer sk-test')).toBe('sk-test')
+    expect(resolvePlatformAiTransientApiKey({
+      currentApiKey: 'old-key',
+      providedApiKey: 'Bearer new-key',
+      mode: 'keep',
+    })).toBe('new-key')
+  })
+
+  it('临时 provider registry 不再读取已移除的 defaults 字段', async () => {
+    const [providerModelsPost, providersTestPost] = await Promise.all([
+      readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
+      readFile(PROVIDERS_TEST_POST_FILE, 'utf8'),
+    ])
+
+    expect(providerModelsPost).not.toMatch(/defaults: registry\.defaults/)
+    expect(providersTestPost).not.toMatch(/defaults: registry\.defaults/)
+  })
+
+  it('旧 GET 模型拉取接口也收敛到 Provider 语义', async () => {
+    const source = await readFile(PROVIDER_MODELS_GET_FILE, 'utf8')
+
+    expect(source).toMatch(/const providerId = String\(query\.providerId \|\| ''\)\.trim\(\)/)
+    expect(source).toMatch(/registry\.providers\.find\(item => item\.capability !== 'search' && item\.capability !== 'voice' && item\.capability !== 'realtime'\)/)
+    expect(source).toMatch(/provider\.capability === 'search' \|\| provider\.capability === 'voice' \|\| provider\.capability === 'realtime'/)
+    expect(source).toMatch(/Provider API Key 未配置/)
+    expect(source).not.toMatch(/共享上游/)
+  })
+
+  it('语音实时 Provider 配置支持 Qwen 和 Coze profiles 与扣点策略', async () => {
+    const [channelsSource, pageSource, patchSource] = await Promise.all([
+      readFile(resolve(process.cwd(), 'server/utils/platform-ai-channels.ts'), 'utf8'),
+      readFile(AI_PROMPTS_PAGE_FILE, 'utf8'),
+      readFile(PROVIDERS_PATCH_FILE, 'utf8'),
+    ])
+
+    expect(channelsSource).toMatch(/realtimeProfiles: Array<\{/)
+    expect(channelsSource).toMatch(/asrProfiles: Array<\{/)
+    expect(channelsSource).toMatch(/ttsProfiles: Array<\{/)
+    expect(channelsSource).toMatch(/agents: Array<\{/)
+    expect(channelsSource).toMatch(/providerMarkupMultiplier/)
+    expect(channelsSource).toMatch(/allowedProviderCapabilities: \['llm', 'voice', 'realtime'\]/)
+    expect(pageSource).toMatch(/Qwen Realtime \/ ASR \/ TTS/)
+    expect(pageSource).toMatch(/Coze 智能体 \/ 音色 \/ 房间/)
+    expect(pageSource).toMatch(/扣点策略/)
+    expect(pageSource).toMatch(/providerEditorCanRunVoiceTest = computed\(\(\) => providerEditorForm\.capability === 'voice' \|\| providerEditorForm\.capability === 'realtime'\)/)
+    expect(patchSource).toMatch(/voice: hasOwn\(source as Record<string, unknown>, 'voice'\)/)
+  })
+
+  it('模型池拉取接口不会用旧全局模型填充响应 meta', async () => {
+    const [getSource, postSource] = await Promise.all([
+      readFile(PROVIDER_MODELS_GET_FILE, 'utf8'),
+      readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
+    ])
+
+    expect(getSource).toMatch(/model:\s*provider\.models\[0\]\?\.model \|\| ''/)
+    expect(postSource).toMatch(/model:\s*resolvedProvider\.models\[0\]\?\.model \|\| ''/)
+    expect(getSource).not.toMatch(/runtime\.ai\.model/)
+    expect(postSource).not.toMatch(/runtime\.ai\.model/)
+  })
+
+  it('编辑 Provider 时空草稿密钥不会覆盖已保存密钥', async () => {
+    const [providerModelsPost, providersTestPost] = await Promise.all([
+      readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
+      readFile(PROVIDERS_TEST_POST_FILE, 'utf8'),
+    ])
+
+    for (const source of [providerModelsPost, providersTestPost]) {
+      expect(source).toMatch(/const providedApiKey = toText\(body\.apiKey \?\? draftProvider\.apiKey\)/)
+      expect(source).toMatch(/apiKey: apiKeyMode === 'clear'[\s\S]*providedApiKey \|\| currentProvider\?\.apiKey \|\| ''/)
+      expect(source).toMatch(/currentApiKey: resolvedProvider\.apiKey/)
+      expect(source).toMatch(/providedApiKey: body\.apiKey \?\? draftProvider\?\.apiKey/)
+    }
+  })
+
+  it('provider 连通性测试不会用旧全局模型填充失败 meta', async () => {
+    const source = await readFile(PROVIDERS_TEST_POST_FILE, 'utf8')
+
+    expect(source).toMatch(/model:\s*preferredModel \|\| modelConfig\?\.model \|\| ''/)
+    expect(source).toMatch(/model:\s*resolvedProvider\?\.models\[0\]\?\.model \|\| ''/)
+    expect(source).not.toMatch(/runtime\.ai\.model/)
+  })
+
+  it('非聊天场景测试不会再泄露旧全局 embedding 模型', async () => {
+    const source = await readFile(CHANNELS_TEST_POST_FILE, 'utf8')
+
+    expect(source).toMatch(/const testRuntime = buildChannelTestRuntime\(runtime,/)
+    expect(source).toMatch(/resolveAiRuntimeForChannel\(testRuntime, channelKey\)/)
+    expect(source).toMatch(/model:\s*channelRuntime\.ai\.model/)
+    expect(source).not.toMatch(/runtime\.ai\.model/)
+    expect(source).not.toMatch(/runtime\.ai\.embeddingModel/)
+  })
+
+  it('管理端 AI 只读统计接口不会用旧全局模型填充响应 meta', async () => {
+    const sources = await Promise.all([
+      readFile(CHANNELS_GET_FILE, 'utf8'),
+      readFile(MODELS_GET_FILE, 'utf8'),
+      readFile(LOGS_GET_FILE, 'utf8'),
+      readFile(AUDITS_GET_FILE, 'utf8'),
+    ])
+
+    for (const source of sources) {
+      expect(source).toMatch(/model:\s*''/)
+      expect(source).not.toMatch(/runtime\.ai\.model/)
+    }
+  })
+
+  it('首个成功响应不是模型列表时会继续尝试下一个端点', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+
+      if (url === 'https://proxy.example/custom/v1/models') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => {
+            throw new Error('invalid json')
+          },
+          text: async () => '<html>not-json</html>',
+        }
+      }
+
+      if (url === 'https://proxy.example/custom/models')
+        return okJson({ data: [{ id: 'gpt-4.1-mini' }] })
+
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const items = await discoverProviderModels({
+      scope: 'provider',
+      provider: 'openai-compatible',
+      baseURL: 'https://proxy.example/custom',
+      apiKey: 'test-key',
+    })
+
+    expect(items.map(item => item.model)).toEqual(['gpt-4.1-mini'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('newapi 仅使用官方 /v1/models 路径', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+
+      if (url === 'https://newapi.example/v1/models')
+        return okJson({ data: ['gpt-4.1-mini', 'gpt-4.1'] })
+
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const items = await discoverProviderModels({
+      scope: 'provider',
+      provider: 'newapi',
+      baseURL: 'https://newapi.example',
+      apiKey: 'test-key',
+    })
+
+    expect(items.map(item => item.model)).toEqual(['gpt-4.1', 'gpt-4.1-mini'])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('不会把错误响应里的 success 和 message 误判成模型', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+
+      if (url === 'https://proxy.example/v1/models') {
+        return okJson({
+          success: false,
+          message: '无权进行此操作，access token 无效',
+        })
+      }
+
+      if (url === 'https://proxy.example/models')
+        return okJson({ data: [{ id: 'gpt-4.1-mini' }] })
+
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const items = await discoverProviderModels({
+      scope: 'provider',
+      provider: 'openai-compatible',
+      baseURL: 'https://proxy.example',
+      apiKey: 'test-key',
+    })
+
+    expect(items.map(item => item.model)).toEqual(['gpt-4.1-mini'])
+    expect(items.some(item => item.model === 'success' || item.model === 'message')).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('支持解析 NewAPI 包装过的模型映射结构', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return okJson({
+        success: true,
+        data: {
+          1: ['gpt-4.1-mini'],
+          2: [{ id: 'gpt-4.1', name: 'GPT-4.1' }],
+        },
+      })
+    }))
+
+    const items = await discoverProviderModels({
+      scope: 'provider',
+      provider: 'newapi',
+      baseURL: 'https://newapi.example',
+      apiKey: 'test-key',
+    })
+
+    expect(items.map(item => item.model)).toEqual(['gpt-4.1', 'gpt-4.1-mini'])
+  })
+
+  it('会为拉取模型补充能力和实际请求端点', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return okJson({
+        data: [
+          { id: 'text-embedding-v4', name: 'Text Embedding V4' },
+          { id: 'qwen-plus', name: 'Qwen Plus' },
+          { id: 'qwen-vl-max', name: 'Qwen VL Max' },
+          { id: 'gpt-4o-mini-transcribe', name: 'GPT-4o Mini Transcribe' },
+          { id: 'tts-1', name: 'TTS 1' },
+          { id: 'wanx2.1-t2i-turbo', name: 'Wanx Image' },
+        ],
+      })
+    }))
+
+    const items = await discoverProviderModels({
+      scope: 'provider',
+      provider: 'dashscope',
+      baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      apiKey: 'test-key',
+    })
+
+    expect(items.find(item => item.model === 'text-embedding-v4')?.capabilities).toEqual(['embedding'])
+    expect(items.find(item => item.model === 'qwen-plus')?.capabilities).toEqual(['chat'])
+    expect(items.find(item => item.model === 'qwen-vl-max')?.capabilities).toEqual(['chat', 'vision'])
+    expect(items.find(item => item.model === 'gpt-4o-mini-transcribe')?.capabilities).toEqual(['asr'])
+    expect(items.find(item => item.model === 'tts-1')?.capabilities).toEqual(['tts'])
+    expect(items.find(item => item.model === 'wanx2.1-t2i-turbo')?.capabilities).toEqual(['image-gen'])
+    expect(items.find(item => item.model === 'text-embedding-v4')?.sourceEndpoint).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/models')
+    expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.capabilities).toEqual(['embedding'])
+    expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.sourceEndpoint).toBe('https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding')
+    expect(items.find(item => item.model === 'text-embedding-v4')?.rawText).toContain('Text Embedding V4')
+    expect(items.find(item => item.model === 'tongyi-embedding-vision-plus')?.pricingText).toBe('默认价格：输入 USD 0.0000/1M · 输出 USD 0.0000/1M（Provider 未返回报价）')
+  })
+
+  it('缺少 provider 或 baseURL 时会直接报配置错误', async () => {
+    await expect(discoverProviderModels({
+      scope: 'provider',
+      provider: '',
+      baseURL: 'https://proxy.example',
+      apiKey: 'test-key',
+    })).rejects.toThrow(/provider/)
+
+    await expect(discoverProviderModels({
+      scope: 'provider',
+      provider: 'openai-compatible',
+      baseURL: '',
+      apiKey: 'test-key',
+    })).rejects.toThrow(/baseURL/)
+  })
+
+  it('管理端配置页按后端场景定义过滤 Provider 和模型能力', async () => {
+    const [pageSource, patchSource] = await Promise.all([
+      readFile(AI_PROMPTS_PAGE_FILE, 'utf8'),
+      readFile(PROVIDERS_PATCH_FILE, 'utf8'),
+    ])
+
+    expect(pageSource).toMatch(/requiredModelCapability: ModelCapability/)
+    expect(pageSource).toMatch(/allowedProviderCapabilities: ProviderCapability\[\]/)
+    expect(pageSource).toMatch(/sceneDefinitionMap/)
+    expect(pageSource).toMatch(/sceneDefinitionForKey/)
+    expect(pageSource).toMatch(/sceneBuiltinPromptPreview/)
+    expect(pageSource).toMatch(/openSceneBuiltinPrompt/)
+    expect(pageSource).toMatch(/查看内置提示词/)
+    expect(pageSource).toMatch(/resolveSceneModelCatalog\(providerIds, normalized, capability, embeddingApiStyle\)/)
+    expect(pageSource).toMatch(/meeting_asr/)
+    expect(pageSource).toMatch(/speech_tts/)
+    expect(pageSource).toMatch(/value: 'embedding'/)
+    expect(pageSource).toMatch(/value: 'asr'/)
+    expect(pageSource).toMatch(/value: 'tts'/)
+    expect(pageSource).toMatch(/value: 'voice'/)
+    expect(pageSource).toMatch(/value: 'coze-voice'/)
+    expect(pageSource).toMatch(/providerCapabilityOptions/)
+    expect(pageSource).toMatch(/Provider 能力/)
+    expect(pageSource).toMatch(/routableProviderOptions/)
+    expect(pageSource).toMatch(/providerEditorCanRunProviderTest/)
+    expect(pageSource).toMatch(/normalizeSceneProviderIds\(item\.providerIds(?: \|\| \[\])?, item\.key\)/)
+    expect(pageSource).not.toMatch(/key === 'knowledge_embedding' \|\| key === 'knowledge_visual_embedding'/)
+    expect(patchSource).toMatch(/capability: source\.capability \|\| currentProvider\?\.capability \|\| 'llm'/)
+    expect(patchSource).toMatch(/hasOwn\(source as Record<string, unknown>, 'voice'\)/)
+    expect(patchSource).toMatch(/currentProvider\?\.voice/)
+  })
+
+  it('coze 语音 Provider 走语音探针且不参与模型池拉取', async () => {
+    const [postSource, testSource, cozeVoiceSource, dashscopeTtsSource, dashscopeAsrSource, asrProbeSource, channelsTestSource, pageSource] = await Promise.all([
+      readFile(PROVIDER_MODELS_POST_FILE, 'utf8'),
+      readFile(PROVIDERS_TEST_POST_FILE, 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/coze-voice.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/dashscope-tts.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/dashscope-asr.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/asr-probe.ts'), 'utf8'),
+      readFile(CHANNELS_TEST_POST_FILE, 'utf8'),
+      readFile(AI_PROMPTS_PAGE_FILE, 'utf8'),
+    ])
+
+    expect(postSource).toMatch(/resolvedProvider\.capability === 'search' \|\| resolvedProvider\.capability === 'voice' \|\| resolvedProvider\.capability === 'realtime'/)
+    expect(testSource).toMatch(/resolvedProvider\.capability !== 'llm' && resolvedProvider\.capability !== 'voice' && resolvedProvider\.capability !== 'realtime' && resolvedProvider\.capability !== 'tts' && resolvedProvider\.capability !== 'asr'/)
+    expect(testSource).toMatch(/probeCozeVoiceProvider/)
+    expect(testSource).toMatch(/probeDashScopeRealtimeProvider/)
+    expect(testSource).toMatch(/tokens\?expire_in_seconds=1800/)
+    expect(testSource).toMatch(/resolvedProvider\.capability === 'voice' \|\| resolvedProvider\.capability === 'realtime'/)
+    expect(testSource).toMatch(/model:\s*'coze-voice'/)
+    expect(testSource).toMatch(/synthesizeDashScopeTtsSpeech/)
+    expect(testSource).toMatch(/runAdminAiAsrProbe/)
+    expect(testSource).toMatch(/resolvedProvider\.capability === 'tts'/)
+    expect(testSource).toMatch(/resolvedProvider\.capability === 'asr'/)
+    expect(cozeVoiceSource).toMatch(/await import\('@coze\/api'\)/)
+    expect(cozeVoiceSource).toMatch(/client\.audio\.transcriptions\.create\(\{\s*file\s*\}\)/)
+    expect(cozeVoiceSource).toMatch(/client\.audio\.speech\.create\(/)
+    expect(dashscopeTtsSource).toMatch(/\/api\/v1\/services\/aigc\/multimodal-generation\/generation/)
+    expect(dashscopeTtsSource).toMatch(/model:\s*input\.config\.model/)
+    expect(dashscopeTtsSource).toMatch(/voice:\s*normalizeString\(input\.voice\) \|\| input\.config\.voice/)
+    expect(dashscopeAsrSource).toMatch(/\/chat\/completions/)
+    expect(dashscopeAsrSource).toMatch(/type:\s*'input_audio'/)
+    expect(dashscopeAsrSource).toMatch(/qwen3-asr-flash/)
+    expect(asrProbeSource).toMatch(/transcribeCozeVoiceAudio/)
+    expect(asrProbeSource).toMatch(/transcribeDashScopeAsrAudio/)
+    expect(asrProbeSource).toMatch(/\/audio\/transcriptions/)
+    expect(channelsTestSource).toMatch(/synthesizeCozeVoiceSpeech/)
+    expect(channelsTestSource).toMatch(/synthesizeDashScopeTtsSpeech/)
+    expect(channelsTestSource).toMatch(/runAdminAiAsrProbe/)
+    expect(channelsTestSource).toMatch(/providerId\?: string/)
+    expect(channelsTestSource).toMatch(/profileId\?: string/)
+    expect(channelsTestSource).toMatch(/attemptChain/)
+    expect(pageSource).toMatch(/sceneTestDrawerVisible/)
+    expect(pageSource).toMatch(/openSceneTestDrawer/)
+    expect(pageSource).toMatch(/sceneTestProviderOptions/)
+    expect(pageSource).toMatch(/sceneTestProfileOptions/)
+    expect(pageSource).toMatch(/日志链路/)
+    expect(pageSource).toMatch(/回退链路/)
+  })
+
+  it('缺失报价时前后端统一展示明确默认价格', async () => {
+    const [pageSource, providerModelsSource, channelsSource] = await Promise.all([
+      readFile(AI_PROMPTS_PAGE_FILE, 'utf8'),
+      readFile(resolve(process.cwd(), 'server/services/admin-ai/provider-models.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'server/utils/platform-ai-channels.ts'), 'utf8'),
+    ])
+
+    for (const source of [pageSource, providerModelsSource, channelsSource]) {
+      expect(source).toMatch(/默认价格：输入 USD 0\.0000\/1M · 输出 USD 0\.0000\/1M（Provider 未返回报价）/)
+      expect(source).not.toMatch(/默认未计费/)
+    }
+  })
+})

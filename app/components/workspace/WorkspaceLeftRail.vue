@@ -1,30 +1,59 @@
 <script setup lang="ts">
+import type { WorkspaceWithQuota } from '~~/shared/types/domain'
+import type { ProjectUploadSummary } from '~/types/project-upload'
+import NotificationBellButton from '~/components/notifications/NotificationBellButton.vue'
+import WorkspaceUploadAside from '~/components/workspace/WorkspaceUploadAside.vue'
+import WorkspaceUserRailMenu from '~/components/workspace/WorkspaceUserRailMenu.vue'
+
 interface WorkspaceLeftRailItem {
   id: string
   title: string
   icon: string
 }
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   items?: WorkspaceLeftRailItem[]
   activeId?: string
+  workspaceId?: string
+  collapsed?: boolean
   recycleActive?: boolean
-  defenseActive?: boolean
-  memberManagementActive?: boolean
+  uploadActive?: boolean
+  notificationActive?: boolean
+  userName?: string
+  userEmail?: string
+  userAvatarUrl?: string
+  workspaceOptions?: WorkspaceWithQuota[]
+  workspaceCanManageMembers?: boolean
+  hasActiveProject?: boolean
+  uploadSummary?: ProjectUploadSummary | null
 }>(), {
   items: () => [],
   activeId: '',
+  workspaceId: '',
+  collapsed: false,
   recycleActive: false,
-  defenseActive: false,
-  memberManagementActive: false,
+  uploadActive: false,
+  notificationActive: false,
+  userName: '',
+  userEmail: '',
+  userAvatarUrl: '',
+  workspaceOptions: () => [],
+  workspaceCanManageMembers: false,
+  hasActiveProject: false,
+  uploadSummary: null,
 })
 
 const emit = defineEmits<{
   select: [id: string]
-  openDefense: []
+  toggleUploadDrawer: []
   openRecycleBin: []
   openMemberManagement: []
   openSettings: []
+  openNotifications: []
+  switchWorkspace: [workspaceId: string]
+  openWorkspaceHome: []
+  openDisplayPreferences: []
+  openAccountCenter: []
 }>()
 </script>
 
@@ -32,77 +61,92 @@ const emit = defineEmits<{
   <div class="workspace-left-rail">
     <nav class="workspace-left-rail__menu" aria-label="工作区左侧导航">
       <button
-        v-for="item in items"
+        v-for="item in props.items"
         :key="item.id"
-        :title="item.title"
         :aria-label="item.title"
-        :data-tooltip="item.title"
         class="workspace-left-rail__item"
-        :class="{ 'workspace-left-rail__item--active': item.id === activeId }"
+        :class="{ 'workspace-left-rail__item--active': !props.collapsed && item.id === props.activeId }"
         type="button"
         @click="emit('select', item.id)"
       >
-        <span class="material-symbols-outlined">
+        <span class="material-symbols-outlined workspace-left-rail__icon">
           {{ item.icon }}
         </span>
+        <span class="workspace-left-rail__popover" aria-hidden="true">{{ item.title }}</span>
       </button>
     </nav>
 
     <div class="workspace-left-rail__footer">
-      <button
-        class="workspace-left-rail__defense"
-        :class="{ 'workspace-left-rail__defense--active': defenseActive }"
-        title="进入答辩模拟"
-        aria-label="进入答辩模拟"
-        data-tooltip="进入答辩模拟"
-        type="button"
-        @click="emit('openDefense')"
-      >
-        <span class="material-symbols-outlined">record_voice_over</span>
-      </button>
+      <WorkspaceUploadAside
+        :has-active-project="props.hasActiveProject"
+        :upload-summary="props.uploadSummary"
+        :active="props.uploadActive"
+        @open="emit('toggleUploadDrawer')"
+      />
 
       <button
         class="workspace-left-rail__shortcut"
-        :class="{ 'workspace-left-rail__shortcut--active': recycleActive }"
-        title="打开项目回收站"
+        :class="{ 'workspace-left-rail__shortcut--active': props.recycleActive }"
         aria-label="打开项目回收站"
-        data-tooltip="打开项目回收站"
         type="button"
         @click="emit('openRecycleBin')"
       >
-        <span class="material-symbols-outlined">delete</span>
+        <span class="material-symbols-outlined workspace-left-rail__icon">delete</span>
+        <span class="workspace-left-rail__popover" aria-hidden="true">打开项目回收站</span>
       </button>
 
       <button
         data-testid="workspace-left-rail-member-management-button"
         class="workspace-left-rail__members"
-        :class="{ 'workspace-left-rail__members--active': memberManagementActive }"
-        title="项目协作"
         aria-label="项目协作"
-        data-tooltip="项目协作"
         type="button"
         @click="emit('openMemberManagement')"
       >
-        <span class="material-symbols-outlined">group</span>
+        <span class="material-symbols-outlined workspace-left-rail__icon">group</span>
+        <span class="workspace-left-rail__popover" aria-hidden="true">项目协作</span>
       </button>
+
+      <NotificationBellButton
+        data-testid="workspace-left-rail-notification-button"
+        variant="rail"
+        :active="props.notificationActive"
+        :workspace-id="props.workspaceId"
+        @open="emit('openNotifications')"
+      />
 
       <button
         class="workspace-left-rail__setting"
-        title="打开设置面板"
         aria-label="打开设置面板"
-        data-tooltip="打开设置面板"
         type="button"
         @click="emit('openSettings')"
       >
-        <span class="material-symbols-outlined">settings</span>
+        <span class="material-symbols-outlined workspace-left-rail__icon">settings</span>
+        <span class="workspace-left-rail__popover" aria-hidden="true">打开设置面板</span>
       </button>
+
+      <div class="workspace-left-rail__footer-divider" aria-hidden="true" />
+
+      <WorkspaceUserRailMenu
+        :workspace-id="props.workspaceId"
+        :user-name="props.userName"
+        :user-email="props.userEmail"
+        :user-avatar-url="props.userAvatarUrl"
+        :workspace-options="props.workspaceOptions"
+        :workspace-can-manage-members="props.workspaceCanManageMembers"
+        @switch-workspace="emit('switchWorkspace', $event)"
+        @open-workspace-home="emit('openWorkspaceHome')"
+        @open-workspace-settings="emit('openSettings')"
+        @open-display-preferences="emit('openDisplayPreferences')"
+        @open-member-management="emit('openMemberManagement')"
+        @open-account-center="emit('openAccountCenter')"
+      />
     </div>
   </div>
 </template>
 
 <style scoped>
 .workspace-left-rail {
-  width: 54px;
+  width: 56px;
   background: #ffffff;
   border-right: 1px solid #d9e0ec;
   display: flex;
@@ -116,8 +160,8 @@ const emit = defineEmits<{
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 4px 0 0;
+  gap: 10px;
+  padding: 10px 0 0;
 }
 
 .workspace-left-rail__footer {
@@ -129,12 +173,20 @@ const emit = defineEmits<{
   padding: 0 0 12px;
 }
 
+.workspace-left-rail__footer-divider {
+  width: 26px;
+  height: 1px;
+  background: #dce4ef;
+  margin: 4px 0 2px;
+  border-radius: 999px;
+}
+
 .workspace-left-rail__item {
   position: relative;
   border: none;
   border-radius: 12px;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   color: #6e7e99;
   display: flex;
   align-items: center;
@@ -144,15 +196,15 @@ const emit = defineEmits<{
   cursor: pointer;
 }
 
-.workspace-left-rail__item .material-symbols-outlined,
-.workspace-left-rail__shortcut .material-symbols-outlined,
-.workspace-left-rail__defense .material-symbols-outlined,
-.workspace-left-rail__members .material-symbols-outlined,
-.workspace-left-rail__setting .material-symbols-outlined {
-  width: 32px;
-  height: 32px;
-  font-size: 32px;
-  line-height: 32px;
+.workspace-left-rail__icon {
+  width: 24px;
+  height: 24px;
+  font-size: 24px;
+  line-height: 24px;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 320,
+    'opsz' 24;
 }
 
 .workspace-left-rail__item:hover {
@@ -161,28 +213,17 @@ const emit = defineEmits<{
 }
 
 .workspace-left-rail__item--active {
-  color: #2e415f;
-  background: #eef2f8;
-}
-
-.workspace-left-rail__item--active::before {
-  content: '';
-  position: absolute;
-  left: calc((32px - 54px) / 2);
-  top: 6px;
-  width: 4px;
-  height: 20px;
-  border-radius: 3px;
-  background: #2f6af2;
+  color: #35537f;
+  background: #f3f7ff;
+  box-shadow: inset 0 0 0 1px #d7e3f8;
 }
 
 .workspace-left-rail__shortcut,
-.workspace-left-rail__defense,
 .workspace-left-rail__members,
 .workspace-left-rail__setting {
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border: none;
   border-radius: 12px;
   display: flex;
@@ -191,10 +232,6 @@ const emit = defineEmits<{
   background: transparent;
   cursor: pointer;
   transition: all 0.2s ease;
-}
-
-.workspace-left-rail__defense {
-  color: #2f6af2;
 }
 
 .workspace-left-rail__shortcut {
@@ -207,11 +244,6 @@ const emit = defineEmits<{
 
 .workspace-left-rail__setting {
   color: #7c8ca6;
-}
-
-.workspace-left-rail__defense:hover {
-  color: #1d4ed8;
-  background: #eef2ff;
 }
 
 .workspace-left-rail__shortcut:hover {
@@ -229,47 +261,53 @@ const emit = defineEmits<{
   background: #f5f8fd;
 }
 
-.workspace-left-rail__defense--active {
-  color: #1e40af;
-  background: #dbeafe;
-}
-
 .workspace-left-rail__shortcut--active {
   color: #a92323;
-  background: #ffe4e4;
+  background: #fff2f2;
+  box-shadow: inset 0 0 0 1px #f3d8d8;
 }
 
-.workspace-left-rail__members--active {
-  color: #1e3a74;
-  background: #dbeafe;
-}
-
-.workspace-left-rail__item[data-tooltip]::after,
-.workspace-left-rail__defense[data-tooltip]::after,
-.workspace-left-rail__shortcut[data-tooltip]::after,
-.workspace-left-rail__setting[data-tooltip]::after {
-  content: attr(data-tooltip);
+.workspace-left-rail__popover {
   position: absolute;
   left: calc(100% + 10px);
   top: 50%;
   transform: translateY(-50%);
-  border-radius: 6px;
-  background: rgba(16, 23, 40, 0.92);
-  color: #f4f7ff;
+  border: 1px solid rgba(214, 222, 236, 0.96);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  color: #334155;
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
-  padding: 6px 8px;
+  padding: 6px 9px;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.2s ease;
-  z-index: 30;
+  visibility: hidden;
+  box-shadow: 0 12px 24px rgba(31, 45, 70, 0.12);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    visibility 0.16s ease;
+  z-index: 40;
 }
 
-.workspace-left-rail__item[data-tooltip]:hover::after,
-.workspace-left-rail__defense[data-tooltip]:hover::after,
-.workspace-left-rail__shortcut[data-tooltip]:hover::after,
-.workspace-left-rail__setting[data-tooltip]:hover::after {
+.workspace-left-rail__item:hover .workspace-left-rail__popover,
+.workspace-left-rail__item:focus-visible .workspace-left-rail__popover,
+.workspace-left-rail__shortcut:hover .workspace-left-rail__popover,
+.workspace-left-rail__shortcut:focus-visible .workspace-left-rail__popover,
+.workspace-left-rail__members:hover .workspace-left-rail__popover,
+.workspace-left-rail__members:focus-visible .workspace-left-rail__popover,
+.workspace-left-rail__setting:hover .workspace-left-rail__popover,
+.workspace-left-rail__setting:focus-visible .workspace-left-rail__popover {
   opacity: 1;
+  visibility: visible;
+}
+
+.workspace-left-rail__item:focus-visible,
+.workspace-left-rail__shortcut:focus-visible,
+.workspace-left-rail__members:focus-visible,
+.workspace-left-rail__setting:focus-visible {
+  outline: 2px solid #cddcf7;
+  outline-offset: 1px;
 }
 </style>

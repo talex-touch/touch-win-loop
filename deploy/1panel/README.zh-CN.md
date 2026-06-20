@@ -17,6 +17,9 @@
 - `deploy-winloop-1panel.env.example`：部署 env 模板
 - `deploy-winloop-1panel-webhook.env.example`：webhook 校验模板
 
+如果同批部署包含数据库 schema 变更，建议同时把仓库里的 `scripts/migrations` 目录上传到服务器。
+主部署脚本会在 `pull` 成功后、`up -d` 之前自动执行该目录里的 `.sql` 迁移，并把执行状态记入目标库 `migrations_meta`。
+
 ## 1）1Panel 服务器初始化
 
 把本目录文件上传到服务器（示例路径）：
@@ -48,6 +51,10 @@ cp "/opt/1panel/scripts/winloop-deploy/deploy-winloop-1panel-webhook.env.example
 - `WINLOOP_HEALTHCHECK_URL`
 - `WINLOOP_BUILD_VERSION`（可选，CI 通常自动覆盖）
 - `WINLOOP_BUILD_COMMIT_SHA`（可选，CI 通常自动覆盖）
+- `WINLOOP_DB_MIGRATION_DIR`（可选，自定义 SQL 迁移目录）
+- `WINLOOP_DB_MIGRATION_FILES`（可选，逗号分隔；为空时默认执行目录下全部 `.sql`）
+- `WINLOOP_DB_MIGRATION_CLIENT_IMAGE`（可选，默认 `postgres:18-alpine`）
+- `WINLOOP_DB_MIGRATION_NETWORK`（可选，默认 `1panel-network`）
 
 编辑 `/opt/1panel/scripts/winloop-deploy/winloop-webhook.env`：
 
@@ -114,3 +121,4 @@ curl "http://127.0.0.1:3510/api/health"
 - 本次只新增 `touch-win-loop` 接入，不迁移 `pilot`。
 - 生产故障时优先走“第 3 节”的 `ssh home` 兜底 SOP。
 - 业务运行参数支持管理端 UI 覆盖（`UI Override > Env`），基础设施参数仍固定由 Env 提供。
+- 迁移不参与自动回滚，所以发布 SQL 必须保持向后兼容或显式幂等。

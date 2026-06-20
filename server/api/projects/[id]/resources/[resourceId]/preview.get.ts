@@ -1,7 +1,7 @@
 import type { AuthUser } from '~~/shared/types/domain'
 import { setHeader, setResponseStatus } from 'h3'
 import { verifyProjectResourceAccessToken } from '~~/server/services/document/project-resource-access-token'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { getDocumentStorageByChannel } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
@@ -83,7 +83,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (result.fileRef) {
-    const storage = getDocumentStorage()
+    const storage = getDocumentStorageByChannel(result.fileRef.storageProvider)
     const buffer = await storage.getObjectBuffer(result.fileRef.objectKey)
     setHeader(event, 'Content-Type', result.fileRef.mimeType || 'application/pdf')
     setHeader(event, 'Content-Length', buffer.length)

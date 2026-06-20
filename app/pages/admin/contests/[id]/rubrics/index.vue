@@ -53,8 +53,8 @@ async function loadItems() {
   errorText.value = ''
   try {
     const [rubricsRes, tracksRes] = await Promise.all([
-      $fetch<ApiResponse<Rubric[]>>(endpoint(`/admin/contests/${contestId.value}/rubrics`)),
-      $fetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
+      unsafeFetch<ApiResponse<Rubric[]>>(endpoint(`/admin/contests/${contestId.value}/rubrics`)),
+      unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
     ])
     items.value = rubricsRes.data
     tracks.value = tracksRes.data

@@ -1,0 +1,534 @@
+[
+  {
+    "id": "F01",
+    "slug": "overall-architecture",
+    "title": "WinLoop 总体技术架构",
+    "subtitle": "面向竞赛团队的 AI 作战系统全景",
+    "guide": "以团队、项目、资源和智能运行时为核心，把资料沉淀、协作推进、知识推理与答辩准备收敛到同一工作台。",
+    "core": [
+      "Team-First 空间",
+      "项目工作台",
+      "统一资源池",
+      "AI 运行时"
+    ],
+    "modules": [
+      "Nuxt 应用壳",
+      "Nitro API",
+      "PostgreSQL",
+      "Redis / 配置缓存"
+    ],
+    "steps": [
+      "团队创建项目",
+      "资源进入索引",
+      "场景化 AI 推理",
+      "输出提案与答辩材料"
+    ],
+    "flow": [
+      "竞赛输入",
+      "项目沉淀",
+      "智能推理",
+      "可交付成果"
+    ],
+    "conclusion": "平台价值：把竞赛过程从“散乱资料协作”升级为“可追踪、可推理、可复盘”的系统化工作流。",
+    "evidence": [
+      "README.md",
+      "docs/workspace-information-architecture.md",
+      "app/pages/team/[teamId]/project/[projectId].vue"
+    ],
+    "doc": "01-technical-overview.md"
+  },
+  {
+    "id": "F02",
+    "slug": "competition-loop",
+    "title": "竞赛业务闭环",
+    "subtitle": "从选赛到答辩的端到端链路",
+    "guide": "系统围绕竞赛团队的真实交付路径组织数据和操作，使选题、建项、资料、协作、终审与答辩形成闭环。",
+    "core": [
+      "选赛推荐",
+      "建项绑定",
+      "资源沉淀",
+      "答辩准备"
+    ],
+    "modules": [
+      "竞赛库",
+      "赛道 / 时间线",
+      "项目设置",
+      "提交与终审"
+    ],
+    "steps": [
+      "筛选适配竞赛",
+      "绑定项目与赛道",
+      "沉淀资料与流程",
+      "生成答辩证据"
+    ],
+    "flow": [
+      "外部竞赛信息",
+      "团队项目空间",
+      "协作资产",
+      "路演/答辩输出"
+    ],
+    "conclusion": "结果导向：每一次资料输入都服务于最终提交、评审与答辩。",
+    "evidence": [
+      "README.md",
+      "server/utils/contest-store.ts",
+      "app/components/workspace/WorkspaceDefenseWorkbench.vue"
+    ],
+    "doc": "01-technical-overview.md"
+  },
+  {
+    "id": "F03",
+    "slug": "team-first-permission",
+    "title": "团队优先协作与权限",
+    "subtitle": "团队、成员、席位、配额和项目可见性",
+    "guide": "Team 是协作和计费的边界，Project 是推进对象，成员关系决定可见性、角色权限和 AI 资源消耗范围。",
+    "core": [
+      "团队空间",
+      "成员角色",
+      "项目对象",
+      "配额边界"
+    ],
+    "modules": [
+      "成员角色",
+      "邀请链接",
+      "席位管理",
+      "AI credits"
+    ],
+    "steps": [
+      "加入团队",
+      "创建项目",
+      "自动绑定创建者",
+      "按角色授权操作"
+    ],
+    "flow": [
+      "用户身份",
+      "团队上下文",
+      "项目权限",
+      "可见工作台"
+    ],
+    "conclusion": "权限闭环：项目不是孤立对象，所有访问都回到团队成员关系与角色策略。",
+    "evidence": [
+      "server/utils/team-first.ts",
+      "server/utils/team-membership-store.ts",
+      "server/api/teams/[id]/members.get.ts"
+    ],
+    "doc": "05-workspace-resource-collaboration.md"
+  },
+  {
+    "id": "F04",
+    "slug": "project-resource-model",
+    "title": "项目资源统一模型",
+    "subtitle": "资料、文档、画布与协作用途的组合语义",
+    "guide": "所有项目资料先收敛为 ProjectResource，再通过 resourceKind 与 collabPurpose 决定入口、名称和交互方式。",
+    "core": [
+      "资料文件",
+      "协作文档",
+      "画布资源",
+      "协作用途"
+    ],
+    "modules": [
+      "资料预览",
+      "协作文档",
+      "流程画布",
+      "自由画布"
+    ],
+    "steps": [
+      "创建或上传资源",
+      "判定资源形态",
+      "进入对应编辑器",
+      "同步索引与预览"
+    ],
+    "flow": [
+      "原始文件/草稿",
+      "项目资源",
+      "工作台入口",
+      "协作与索引"
+    ],
+    "conclusion": "模型优势：减少文档、画布、文件三套对象并行带来的入口错位。",
+    "evidence": [
+      "docs/collab-resource-model.md",
+      "server/api/projects/[id]/resources/collab.post.ts",
+      "server/utils/project-resource-store.ts"
+    ],
+    "doc": "05-workspace-resource-collaboration.md"
+  },
+  {
+    "id": "F05",
+    "slug": "ai-runtime-routing",
+    "title": "智能运行时与场景路由",
+    "subtitle": "按工作台、知识、答辩和会议分配模型能力",
+    "guide": "AI 不再是全局单一配置，而是按场景解析 provider、model、能力和健康状态，降低错误默认值导致的不可控输出。",
+    "core": [
+      "场景通道",
+      "服务配置",
+      "模型能力",
+      "健康状态"
+    ],
+    "modules": [
+      "工作台助手",
+      "知识向量化",
+      "答辩实时推理",
+      "会议总结"
+    ],
+    "steps": [
+      "识别当前场景",
+      "解析候选模型",
+      "检查配置健康",
+      "执行并写回状态"
+    ],
+    "flow": [
+      "用户意图",
+      "场景路由",
+      "模型/工具选择",
+      "结构化结果"
+    ],
+    "conclusion": "治理重点：让每个智能场景都有明确来源、能力边界和降级原因。",
+    "evidence": [
+      "server/utils/platform-ai-channels.ts",
+      "server/utils/ai-runtime.ts",
+      "server/api/user/ai/runtime.get.ts"
+    ],
+    "doc": "02-ai-intelligence-core.md"
+  },
+  {
+    "id": "F06",
+    "slug": "multimodal-knowledge-index",
+    "title": "多模态知识索引机制",
+    "subtitle": "来源、任务、片段、向量与后台任务的执行链",
+    "guide": "资源上传、文档同步、预览投影和会议转写都会进入项目级知识索引，由 worker 统一推进状态和向量化。",
+    "core": [
+      "知识来源",
+      "索引任务",
+      "语义片段",
+      "向量表示"
+    ],
+    "modules": [
+      "文本抽取",
+      "OCR / 视觉投影",
+      "会议转写",
+      "worker 观测"
+    ],
+    "steps": [
+      "资源标记待更新",
+      "任务入队领取",
+      "抽取切片向量化",
+      "状态进入就绪"
+    ],
+    "flow": [
+      "项目资料",
+      "索引任务",
+      "语义片段",
+      "可检索上下文"
+    ],
+    "conclusion": "能力闭环：多来源资料被统一压缩为可召回、可引用、可观测的知识片段。",
+    "evidence": [
+      "docs/project-knowledge-rag-progress.md",
+      "server/utils/project-knowledge-store.ts",
+      "server/plugins/project-knowledge-worker.ts"
+    ],
+    "doc": "03-multimodal-knowledge-index.md"
+  },
+  {
+    "id": "F07",
+    "slug": "hybrid-retrieval-citation",
+    "title": "混合检索与可溯源引用",
+    "subtitle": "词法召回、向量预选、重排与引用可信链",
+    "guide": "回答前先构建项目知识上下文，结合 ready 优先、stale fallback 和结构化 citation，减少不可追溯结论。",
+    "core": [
+      "词法召回",
+      "向量预选",
+      "结果重排",
+      "证据引用"
+    ],
+    "modules": [
+      "就绪优先",
+      "过期兜底",
+      "风险提示",
+      "引用卡片"
+    ],
+    "steps": [
+      "查询意图解析",
+      "候选片段召回",
+      "重排与证据选择",
+      "写入消息元数据"
+    ],
+    "flow": [
+      "用户问题",
+      "项目知识上下文",
+      "模型回答",
+      "引用证据"
+    ],
+    "conclusion": "可信输出：模型答案必须带着资料来源、索引状态和不完整提示一起进入工作台。",
+    "evidence": [
+      "server/services/ai/project-knowledge-context.ts",
+      "app/components/workspace/WorkspaceAssistantMessageContent.vue",
+      "scripts/tests/project-knowledge-focused-regression.test.mjs"
+    ],
+    "doc": "03-multimodal-knowledge-index.md"
+  },
+  {
+    "id": "F08",
+    "slug": "ai-session-persistence",
+    "title": "智能会话持久化",
+    "subtitle": "上下文快照、运行状态与智能体检查点",
+    "guide": "工作台 AI 会话不仅保存聊天消息，还保存上下文快照、运行状态和 DeepAgent checkpoint，支持续写与恢复。",
+    "core": [
+      "聊天会话",
+      "上下文快照",
+      "运行状态",
+      "检查点"
+    ],
+    "modules": [
+      "会话上下文",
+      "智能体检查点",
+      "存储条目",
+      "消息元数据"
+    ],
+    "steps": [
+      "创建会话",
+      "捕获上下文",
+      "执行流式任务",
+      "恢复运行状态"
+    ],
+    "flow": [
+      "用户指令",
+      "上下文快照",
+      "智能执行",
+      "断线续写"
+    ],
+    "conclusion": "连续性：AI 不再只是一次性问答，而是可恢复的项目协作参与者。",
+    "evidence": [
+      "scripts/migrations/2026-04-21-ai-session-persistence.sql",
+      "server/services/ai/deepagent-factory.ts",
+      "server/utils/chat-session-context-store.ts"
+    ],
+    "doc": "02-ai-intelligence-core.md"
+  },
+  {
+    "id": "F09",
+    "slug": "intelligence-workflow-v1",
+    "title": "智能工作流第一版",
+    "subtitle": "定义、运行、步骤与提示/工具/智能体线性编排",
+    "guide": "工作流能力挂在 Loopy 数据中，保存项目级定义，按线性步骤执行，并通过审批机制处理写操作。",
+    "core": [
+      "工作流定义",
+      "运行历史",
+      "运行步骤",
+      "审批恢复"
+    ],
+    "modules": [
+      "提示步骤",
+      "工具步骤",
+      "智能体步骤",
+      "继续执行"
+    ],
+    "steps": [
+      "保存定义",
+      "触发运行",
+      "执行步骤",
+      "审批后继续"
+    ],
+    "flow": [
+      "工作流模板",
+      "运行历史",
+      "变更提案",
+      "项目更新"
+    ],
+    "conclusion": "编排边界：v1 保持线性和项目内上下文，优先把可靠执行闭环跑通。",
+    "evidence": [
+      "docs/intelligence-workflow-v1.md",
+      "server/services/ai/intelligence-workflow-engine.ts",
+      "server/utils/project-intelligence-workflow-store.ts"
+    ],
+    "doc": "04-agent-workflow-runtime.md"
+  },
+  {
+    "id": "F10",
+    "slug": "loopy-data-semantic-space",
+    "title": "数据语义空间",
+    "subtitle": "知识健康、关系网络、语义空间与工作流入口",
+    "guide": "Loopy Data 把索引状态、语义空间、关系网络和智能工作流统一到数据工作台，避免 AI 能力散落在设置页。",
+    "core": [
+      "总览",
+      "健康状态",
+      "关系网络",
+      "语义空间"
+    ],
+    "modules": [
+      "索引健康",
+      "节点详情",
+      "关系图谱",
+      "工作流运行"
+    ],
+    "steps": [
+      "读取索引快照",
+      "聚合节点关系",
+      "展示语义布局",
+      "触发智能工作流"
+    ],
+    "flow": [
+      "项目资料",
+      "数据工作台",
+      "可视化洞察",
+      "下一步动作"
+    ],
+    "conclusion": "数据中台化：AI 的输入状态、关系结构和行动入口集中呈现。",
+    "evidence": [
+      "app/components/workspace/WorkspaceLoopyDataTab.vue",
+      "app/components/workspace/WorkspaceLoopyDataSemanticSpace.client.vue",
+      "server/api/projects/[id]/knowledge/semantic-layout.get.ts"
+    ],
+    "doc": "03-multimodal-knowledge-index.md"
+  },
+  {
+    "id": "F11",
+    "slug": "canvas-ai-collaboration",
+    "title": "流程/设计画布智能协作",
+    "subtitle": "画布快照、智能草案与人工确认写回",
+    "guide": "流程画布与设计画布复用资源模型，AI 先读取结构快照生成草案，再由用户确认写回，避免自动覆盖协作成果。",
+    "core": [
+      "流程画布",
+      "设计画布",
+      "结构快照",
+      "草案卡"
+    ],
+    "modules": [
+      "单页写回",
+      "基础哈希校验",
+      "设备排布",
+      "导出图片"
+    ],
+    "steps": [
+      "保存画布 XML",
+      "解析工作流快照",
+      "AI 生成草案",
+      "人工确认写回"
+    ],
+    "flow": [
+      "画布结构",
+      "AI 草案",
+      "冲突校验",
+      "可控写回"
+    ],
+    "conclusion": "协作安全：AI 可改图，但必须经过可预览、可校验、可拒绝的草案边界。",
+    "evidence": [
+      "docs/collab-resource-model.md",
+      "app/components/workspace/WorkspaceFlowTab.vue",
+      "app/components/workspace/design/WorkspaceDesignCanvasKitHost.client.vue"
+    ],
+    "doc": "05-workspace-resource-collaboration.md"
+  },
+  {
+    "id": "F12",
+    "slug": "defense-realtime-agent",
+    "title": "答辩实时智能体",
+    "subtitle": "实时会议、语音识别、评委智能体与总结链路",
+    "guide": "答辩工作台把真实音视频会议、转写、评委 persona、实时问答和会后总结连成同一条链路。",
+    "core": [
+      "实时会议",
+      "语音识别网关",
+      "通义桥接",
+      "扣子桥接"
+    ],
+    "modules": [
+      "音频帧",
+      "视频帧抽样",
+      "轮次入库",
+      "总结与行动项"
+    ],
+    "steps": [
+      "媒体采集",
+      "实时转写",
+      "评委智能体输出",
+      "沉淀答辩证据"
+    ],
+    "flow": [
+      "会议输入",
+      "实时理解",
+      "评委反馈",
+      "复盘材料"
+    ],
+    "conclusion": "答辩价值：把临场问答转化为可回放、可总结、可改进的证据链。",
+    "evidence": [
+      "docs/workspace-defense-workbench-progress.md",
+      "docs/meeting-runtime-setup.md",
+      "app/components/meeting/ProjectMeetingWebClient.vue"
+    ],
+    "doc": "06-defense-meeting-realtime-ai.md"
+  },
+  {
+    "id": "F13",
+    "slug": "feishu-sync-loop",
+    "title": "飞书数据同步闭环",
+    "subtitle": "主同步、同步项、样本分页、诊断与回填",
+    "guide": "飞书多维表以主同步信息为调度边界，同步项负责实体映射，运行样本和诊断数据用于解释真实同步口径。",
+    "core": [
+      "同步信息",
+      "同步项",
+      "字段映射",
+      "运行样本"
+    ],
+    "modules": [
+      "预检",
+      "手动执行",
+      "定时调度",
+      "状态回填"
+    ],
+    "steps": [
+      "识别主库",
+      "配置子表映射",
+      "执行同步",
+      "分页查看样本"
+    ],
+    "flow": [
+      "飞书主库",
+      "同步 worker",
+      "平台实体",
+      "诊断回填"
+    ],
+    "conclusion": "数据可信：同步结果不仅要入库，还要解释来源、数量口径和失败原因。",
+    "evidence": [
+      "docs/feishu-bitable-sync-guide.md",
+      "server/services/feishu/bitable-sync.ts",
+      "app/components/admin/AdminFeishuBitableSyncEditor.vue"
+    ],
+    "doc": "07-data-integration-admin-ops.md"
+  },
+  {
+    "id": "F14",
+    "slug": "deployment-observability",
+    "title": "部署与可观测闭环",
+    "subtitle": "数据库、缓存、后台任务、监控与配置加密",
+    "guide": "运行时依赖以 PostgreSQL 为主存储，Redis 与后台配置承接运行态，worker 与 Sentry 提供异步任务和问题追踪能力。",
+    "core": [
+      "主数据库",
+      "运行缓存",
+      "后台任务",
+      "错误监控"
+    ],
+    "modules": [
+      "配置加密",
+      "后台健康页",
+      "任务队列",
+      "冒烟验收"
+    ],
+    "steps": [
+      "加载运行配置",
+      "执行业务任务",
+      "记录状态与错误",
+      "后台观测与告警"
+    ],
+    "flow": [
+      "部署环境",
+      "运行时服务",
+      "观测事件",
+      "恢复动作"
+    ],
+    "conclusion": "工程闭环：关键链路既要能跑，也要能诊断、能恢复、能证明状态。",
+    "evidence": [
+      "README.md",
+      "server/api/admin/sentry/smoke.post.ts",
+      "server/utils/platform-ai-config-store.ts"
+    ],
+    "doc": "08-deployment-security-observability.md"
+  }
+]

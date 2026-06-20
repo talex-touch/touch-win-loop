@@ -1,8 +1,9 @@
 import type { AiProjectChatRequest, AiProjectChatResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { runProjectChatFallback } from '~~/server/services/ai/fallback'
 import { runProjectChatChain } from '~~/server/services/ai/project-chat-chain'
-import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
+import { buildProjectKnowledgeLocalContext } from '~~/server/services/ai/project-knowledge-context'
+import { loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
+import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import {
@@ -14,22 +15,47 @@ import {
 import { getContestDetail, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+import { getVisibleProjectCompetitionLoop } from '~~/server/utils/project-competition-loop-store'
 import { runWithRetry } from '~~/server/utils/retry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
+
+function summarizeCompetitionLoop(loop: Awaited<ReturnType<typeof getVisibleProjectCompetitionLoop>>): string {
+  if (!loop)
+    return ''
+
+  const riskLines = loop.risks
+    .filter(item => item.status !== 'resolved' && item.status !== 'ignored')
+    .slice(0, 5)
+    .map(item => `- [${item.severity}] ${item.title}：${item.summary}`)
+  const taskLines = loop.tasks
+    .filter(item => item.status !== 'done' && item.status !== 'ignored')
+    .slice(0, 5)
+    .map(item => `- [${item.priority}] ${item.title}：${item.description}`)
+
+  return [
+    '项目参赛主链：',
+    `- 当前状态：${loop.snapshot.status}`,
+    `- 匹配度：${loop.analysis.matchScore}`,
+    `- 规则覆盖：${loop.analysis.rubricCoverageScore}`,
+    `- 知识库：${loop.knowledge.status}（${loop.knowledge.readyCount}/${loop.knowledge.totalResources} ready）`,
+    riskLines.length > 0 ? `开放风险：\n${riskLines.join('\n')}` : '开放风险：暂无',
+    taskLines.length > 0 ? `联动任务：\n${taskLines.join('\n')}` : '联动任务：暂无',
+  ].join('\n')
+}
 
 function buildSessionTitle(contestName: string, trackName: string): string {
   const left = contestName.trim()
   const right = trackName.trim()
   if (left && right)
-    return `${left} · ${right}`
+    return `Loopy 对话 · ${left} · ${right}`
   if (left)
-    return left
+    return `Loopy 对话 · ${left}`
   if (right)
-    return right
-  return 'AI 对话'
+    return `Loopy 对话 · ${right}`
+  return 'Loopy 对话'
 }
 
 function normalizeTemperature(raw: unknown, fallback: number): number {
@@ -80,6 +106,17 @@ export default defineEventHandler(async (event) => {
     }, 40071)
   }
 
+  if (!isAiRuntimeConfigured(channelAiConfig)) {
+    setResponseStatus(event, 503)
+    return fail(buildAiNotConfiguredMessage('项目对话 AI'), {
+      startedAt,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 50371)
+  }
+
   const includeInternal = Boolean(
     user.isPlatformAdmin
     || await checkPlatformPermission(event, user, 'contest.read_internal'),
@@ -89,7 +126,13 @@ export default defineEventHandler(async (event) => {
     detail: Awaited<ReturnType<typeof getContestDetail>> | null
     injectedPrompt: string
     localContext: string
+    knowledge: Awaited<ReturnType<typeof buildProjectKnowledgeLocalContext>>
   }
+  const latestUserMessage = [...safeRequest.messages]
+    .reverse()
+    .find(message => message.role === 'user')
+    ?.content
+    ?.trim() || ''
 
   try {
     contextBundle = await withClient(event, async (db) => {
@@ -112,20 +155,40 @@ export default defineEventHandler(async (event) => {
         workspaceId,
         projectId: safeRequest.context.projectId,
       })
+      const competitionLoop = safeRequest.context.projectId
+        ? await getVisibleProjectCompetitionLoop(db, {
+            user,
+            projectId: safeRequest.context.projectId,
+            syncKnowledge: false,
+            persist: false,
+          }).catch(() => null)
+        : null
 
       const contestName = detail?.contest?.name || ''
       const trackName = detail?.contest?.tracks.find(item => item.id === safeRequest.context.trackId)?.name || ''
-      const localContext = buildProjectResourceLocalContext(resources, {
+      const knowledgeContext = await buildProjectKnowledgeLocalContext(db, {
+        projectId: safeRequest.context.projectId || '',
+        query: latestUserMessage,
+        resources,
         contestName,
         trackName,
         major: safeRequest.context.major,
-        limit: 10,
+        limit: 6,
+        event,
       })
 
       return {
         detail,
         injectedPrompt,
-        localContext,
+        localContext: [
+          knowledgeContext.summaryText,
+          summarizeCompetitionLoop(competitionLoop),
+        ].filter(Boolean).join('\n\n'),
+        knowledge: {
+          ...knowledgeContext,
+          retrievalPlan: knowledgeContext.retrievalPlan,
+          evidencePaths: knowledgeContext.evidencePaths,
+        },
       }
     })
   }
@@ -154,7 +217,6 @@ export default defineEventHandler(async (event) => {
     ...channelAiConfig,
     temperature: effectiveAiSettings.temperature,
   }
-  const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
   const scopeProjectId = String(safeRequest.context.projectId || '').trim()
   const scopeMode = 'dialog_ask' as const
 
@@ -269,40 +331,41 @@ export default defineEventHandler(async (event) => {
     }, 42971)
   }
 
-  const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
-  let result: {
+  let execution: Awaited<ReturnType<typeof runWithPlatformAiChannelFallback<{
     data: AiProjectChatResult
     fallbackUsed: boolean
     attempts: number
-  }
+  }>>>
 
-  if (onlyFallback) {
-    result = {
-      data: runProjectChatFallback(safeRequest),
-      fallbackUsed: true,
-      attempts: 1,
-    }
-  }
-  else {
-    result = await runWithRetry({
-      maxRetries: effectiveAiConfig.maxRetries,
-      run: () => runProjectChatChain({
-        request: safeRequest,
-        ai: effectiveAiConfig,
-        contestName: contest?.name,
-        trackName: track?.name,
-        injectedPrompt: mergedInjectedPrompt,
-        localContext: contextBundle.localContext,
-      }),
-      fallback: () => runProjectChatFallback(safeRequest),
+  try {
+    execution = await runWithPlatformAiChannelFallback(runtime, 'project_chat', async ({ ai, prompt }) => {
+      const nextAiConfig = {
+        ...ai,
+        temperature: effectiveAiSettings.temperature,
+      }
+      return runWithRetry({
+        maxRetries: nextAiConfig.maxRetries,
+        run: () => runProjectChatChain({
+          request: safeRequest,
+          ai: nextAiConfig,
+          contestName: contest?.name,
+          trackName: track?.name,
+          injectedPrompt: buildMergedPrompt(prompt, contextBundle.injectedPrompt),
+          localContext: contextBundle.localContext,
+        }),
+      })
     })
   }
-
-  const latestUserMessage = [...safeRequest.messages]
-    .reverse()
-    .find(message => message.role === 'user')
-    ?.content
-    ?.trim() || ''
+  catch (error) {
+    setResponseStatus(event, 502)
+    return fail(error instanceof Error ? error.message || '项目对话 AI 调用失败。' : '项目对话 AI 调用失败。', {
+      startedAt,
+      provider: effectiveAiConfig.provider,
+      model: effectiveAiConfig.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 50271)
+  }
 
   await withTransaction(event, async (db) => {
     const modeMetadata = {
@@ -317,13 +380,13 @@ export default defineEventHandler(async (event) => {
         sessionId: activeSession.id,
         role: 'user',
         content: latestUserMessage,
-        provider: effectiveAiConfig.provider,
-        model: effectiveAiConfig.model,
+        provider: execution.ai.provider,
+        model: execution.ai.model,
         fallbackUsed: false,
         metadata: {
           ...modeMetadata,
-          channelKey: channelRuntime.key,
-          providerId: channelRuntime.provider?.id || null,
+          channelKey: execution.channel.key,
+          providerId: execution.provider?.id || null,
         },
         createdByUserId: user.id,
       })
@@ -333,14 +396,17 @@ export default defineEventHandler(async (event) => {
       workspaceId,
       sessionId: activeSession.id,
       role: 'assistant',
-      content: result.data.assistantReply,
-      provider: effectiveAiConfig.provider,
-      model: effectiveAiConfig.model,
-      fallbackUsed: result.fallbackUsed,
+      content: execution.data.data.assistantReply,
+      provider: execution.ai.provider,
+      model: execution.ai.model,
+      fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
       metadata: {
         ...modeMetadata,
-        channelKey: channelRuntime.key,
-        providerId: channelRuntime.provider?.id || null,
+        channelKey: execution.channel.key,
+        providerId: execution.provider?.id || null,
+        attemptChain: execution.attemptChain,
+        latencyMs: execution.latencyMs,
+        knowledge: execution.data.data.knowledge || contextBundle.knowledge,
       },
       createdByUserId: user.id,
     })
@@ -353,7 +419,7 @@ export default defineEventHandler(async (event) => {
       contestId: safeRequest.context.contestId,
       trackId: safeRequest.context.trackId,
       major: safeRequest.context.major,
-      title: result.data.projectDraft.title,
+      title: execution.data.data.projectDraft.title,
     })
 
     await recordContestAuditLog(db, {
@@ -366,21 +432,24 @@ export default defineEventHandler(async (event) => {
         trackId: safeRequest.context.trackId,
         reasoningEnabled: effectiveAiSettings.reasoningEnabled,
         networkEnabled: effectiveAiSettings.networkEnabled,
-        channelKey: channelRuntime.key,
-        providerId: channelRuntime.provider?.id || null,
-        fallbackUsed: result.fallbackUsed,
-        attempts: result.attempts,
+        channelKey: execution.channel.key,
+        providerId: execution.provider?.id || null,
+        fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+        attempts: execution.attemptChain.length,
+        attemptChain: execution.attemptChain,
+        latencyMs: execution.latencyMs,
       },
     })
   })
 
-  result.data.sessionId = activeSession.id
+  execution.data.data.sessionId = activeSession.id
+  execution.data.data.knowledge = execution.data.data.knowledge || contextBundle.knowledge
 
-  return ok(result.data, {
+  return ok(execution.data.data, {
     startedAt,
-    provider: effectiveAiConfig.provider,
-    model: effectiveAiConfig.model,
-    fallbackUsed: result.fallbackUsed,
-    attempts: result.attempts,
-  }, result.fallbackUsed ? 'fallback used' : 'ok')
+    provider: execution.ai.provider,
+    model: execution.ai.model,
+    fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+    attempts: execution.attemptChain.length,
+  }, 'ok')
 })

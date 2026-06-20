@@ -6,6 +6,9 @@ definePageMeta({
 })
 
 interface RuntimeSettingsPayload {
+  auth: {
+    registrationEnabled: boolean
+  }
   feishuScheduler: {
     enabled: boolean
     intervalMs: number
@@ -22,13 +25,17 @@ interface RuntimeSettingsPayload {
     autoSeed: boolean
   }
   overrideState: {
+    storageAccessKeyOverridden: boolean
+    storageSecretKeyOverridden: boolean
     updatedAt: string
     updatedByUserId: string
   }
   configSource: {
+    authRegistration: 'env' | 'override'
     feishuScheduler: 'env' | 'override'
     resourceRecycle: 'env' | 'override'
     contestAutoSeed: 'env' | 'override'
+    storage: 'env' | 'override'
   }
 }
 
@@ -44,6 +51,9 @@ const successText = ref('')
 const payload = ref<RuntimeSettingsPayload | null>(null)
 
 const form = reactive({
+  auth: {
+    registrationEnabled: true,
+  },
   feishuScheduler: {
     enabled: true,
     intervalMs: 60_000,
@@ -72,6 +82,8 @@ function formatTime(raw: string): string {
 }
 
 function applyPayload(nextPayload: RuntimeSettingsPayload): void {
+  form.auth.registrationEnabled = Boolean(nextPayload.auth.registrationEnabled)
+
   form.feishuScheduler.enabled = Boolean(nextPayload.feishuScheduler.enabled)
   form.feishuScheduler.intervalMs = Number(nextPayload.feishuScheduler.intervalMs || 60_000)
   form.feishuScheduler.batchSize = Number(nextPayload.feishuScheduler.batchSize || 20)
@@ -89,7 +101,7 @@ function displayConfigSource(section: RuntimeConfigSection, value?: RuntimeSetti
   if (value === 'override')
     return 'override'
 
-  if (section === 'contestAutoSeed')
+  if (section === 'contestAutoSeed' || section === 'authRegistration')
     return 'env'
 
   return 'default'
@@ -101,9 +113,14 @@ async function loadSettings(showLoading = false) {
   errorText.value = ''
   successText.value = ''
   try {
-    const response = await $fetch<ApiResponse<RuntimeSettingsPayload>>(endpoint('/admin/runtime-settings'))
-    payload.value = response.data
-    applyPayload(response.data)
+    const response = await fetch(endpoint('/admin/runtime-settings'), {
+      credentials: 'include',
+    })
+    const result = await response.json().catch(() => null) as ApiResponse<RuntimeSettingsPayload> | null
+    if (!response.ok || !result || result.code !== 0)
+      throw new Error(String(result?.message || '运行设置加载失败。'))
+    payload.value = result.data
+    applyPayload(result.data)
   }
   catch (error: any) {
     payload.value = null
@@ -119,9 +136,16 @@ async function saveSettings() {
   errorText.value = ''
   successText.value = ''
   try {
-    const response = await $fetch<ApiResponse<RuntimeSettingsPayload>>(endpoint('/admin/runtime-settings'), {
+    const response = await fetch(endpoint('/admin/runtime-settings'), {
       method: 'PATCH',
-      body: {
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        auth: {
+          registrationEnabled: Boolean(form.auth.registrationEnabled),
+        },
         feishuScheduler: {
           enabled: Boolean(form.feishuScheduler.enabled),
           intervalMs: Number(form.feishuScheduler.intervalMs || 60_000),
@@ -137,10 +161,13 @@ async function saveSettings() {
         contest: {
           autoSeed: Boolean(form.contest.autoSeed),
         },
-      },
+      }),
     })
-    payload.value = response.data
-    applyPayload(response.data)
+    const result = await response.json().catch(() => null) as ApiResponse<RuntimeSettingsPayload> | null
+    if (!response.ok || !result || result.code !== 0)
+      throw new Error(String(result?.message || '运行设置保存失败。'))
+    payload.value = result.data
+    applyPayload(result.data)
     successText.value = '运行设置已保存，新的 worker 参数将自动生效。'
   }
   catch (error: any) {
@@ -165,7 +192,7 @@ onMounted(async () => {
             运行设置
           </h1>
           <p class="text-[11px] text-slate-500 mb-0 mt-1">
-            worker 参数默认使用内置值，UI 保存后立即覆盖生效。当前页不管理 PG/Redis/Storage/域名端口等基础设施变量。
+            worker 与平台基础参数默认使用内置值。
           </p>
         </div>
         <div class="flex gap-2 items-center">
@@ -192,6 +219,21 @@ onMounted(async () => {
     <template v-else>
       <section v-if="successText" class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50">
         {{ successText }}
+      </section>
+
+      <section class="p-3 border border-slate-200 bg-white space-y-3">
+        <div class="flex gap-3 items-center justify-between">
+          <h2 class="text-[12px] text-slate-900 font-bold m-0">
+            认证参数（auth）
+          </h2>
+          <a-tag size="small" :color="payload?.configSource?.authRegistration === 'override' ? 'green' : 'gray'">
+            {{ displayConfigSource('authRegistration', payload?.configSource?.authRegistration) }}
+          </a-tag>
+        </div>
+        <label class="inline-flex gap-2 items-center">
+          <a-switch v-model="form.auth.registrationEnabled" size="small" />
+          <span class="text-[11px] text-slate-700">允许首次登录自动注册本地账号（auth.registrationEnabled）</span>
+        </label>
       </section>
 
       <section class="p-3 border border-slate-200 bg-white space-y-3">

@@ -1,28 +1,18 @@
 import type { ContestLevel } from '~~/shared/types/domain'
-import { ok } from '~~/server/utils/api'
-import { getAuthFromEvent } from '~~/server/utils/auth'
+import { defineApiHandler } from '~~/server/utils/api-handler'
 import { listContestLibrary } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
-import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
-export default defineEventHandler(async (event) => {
-  const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+export default defineApiHandler(async ({ event, ok }) => {
   const query = getQuery(event)
-  const auth = await getAuthFromEvent(event)
 
   const keywordQuery = typeof query.keyword === 'string'
     ? query.keyword.split(',').map(item => item.trim()).filter(Boolean)
     : []
 
-  const includeInternal = auth?.user
-    ? Boolean(auth.user.isPlatformAdmin || await checkPlatformPermission(event, auth.user, 'contest.read_internal'))
-    : false
-
   const contestResult = await withClient(event, async (db) => {
     return listContestLibrary(db, {
-      includeInternal,
+      includeInternal: false,
       q: typeof query.q === 'string' ? query.q : '',
       discipline: typeof query.discipline === 'string' ? query.discipline : '',
       level: (typeof query.level === 'string' ? query.level : '') as ContestLevel | '',
@@ -37,11 +27,12 @@ export default defineEventHandler(async (event) => {
     })
   })
 
-  return ok(contestResult.items, {
-    startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
-    fallbackUsed: false,
-    attempts: 1,
-  })
+  return {
+    ...ok(contestResult.items),
+    pagination: {
+      total: contestResult.total,
+      page: contestResult.page,
+      pageSize: contestResult.pageSize,
+    },
+  }
 })

@@ -482,6 +482,7 @@ export async function updateResourceDocumentFileAsset(
   input: {
     documentId: string
     objectKey: string
+    storageProvider?: string
     fileName: string
     mimeType: string
     fileSize: number
@@ -491,15 +492,17 @@ export async function updateResourceDocumentFileAsset(
   await db.query(
     `UPDATE contest_resource_documents
      SET object_key = $2,
-         file_name = $3,
-         mime_type = $4,
-         file_size = $5,
-         updated_by_user_id = $6,
+         storage_provider = CASE WHEN $3 = '' THEN storage_provider ELSE $3 END,
+         file_name = $4,
+         mime_type = $5,
+         file_size = $6,
+         updated_by_user_id = $7,
          updated_at = NOW()
      WHERE id = $1`,
     [
       input.documentId,
       input.objectKey,
+      String(input.storageProvider || '').trim(),
       input.fileName,
       input.mimeType,
       Math.max(0, Number(input.fileSize || 0)),

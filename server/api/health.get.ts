@@ -1,5 +1,7 @@
+import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { ok } from '~~/server/utils/api'
 import { withClient } from '~~/server/utils/db'
+import { resolveAiRuntimeForChannel, resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { readPlatformAiRuntimeOverrides } from '~~/server/utils/platform-ai-config-store'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 
@@ -26,6 +28,13 @@ export default defineEventHandler(async (event) => {
     const overrides = await readPlatformAiRuntimeOverrides(db)
     return overrides.ai && Object.keys(overrides.ai).length > 0 ? 'override' : 'env'
   }).catch(() => 'env' as const)
+  const registry = resolvePlatformAiRegistry(runtime)
+  const configuredProviders = registry.providers.filter((provider) => {
+    return provider.capability === 'llm' && provider.enabled && Boolean(String(provider.baseURL || '').trim()) && Boolean(String(provider.apiKey || '').trim())
+  })
+  const configuredChannels = registry.channels.filter((channel) => {
+    return isAiRuntimeConfigured(resolveAiRuntimeForChannel(runtime, channel.key).ai)
+  })
   const pgConn = parseConnInfo(runtime.pg.url)
   const redisConn = parseConnInfo(runtime.redis.url)
 
@@ -35,9 +44,9 @@ export default defineEventHandler(async (event) => {
       timestamp: new Date().toISOString(),
       envPriority: runtime.envPriority,
       ai: {
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
-        configured: Boolean(runtime.ai.apiKey),
+        providersConfigured: configuredProviders.length,
+        channelsConfigured: configuredChannels.length,
+        configured: configuredProviders.length > 0 && configuredChannels.length > 0,
       },
       postgresql: {
         host: pgConn.host,
@@ -58,9 +67,7 @@ export default defineEventHandler(async (event) => {
     },
     {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: !runtime.ai.apiKey,
+      fallbackUsed: configuredChannels.length === 0,
       attempts: 1,
     },
   )

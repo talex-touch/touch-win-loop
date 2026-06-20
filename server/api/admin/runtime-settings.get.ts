@@ -28,6 +28,9 @@ export default defineEventHandler(async (event) => {
   const { runtime, overrides, configSource } = await readEffectivePlatformRuntimeSettings(event)
 
   return ok({
+    auth: {
+      registrationEnabled: runtime.auth.registrationEnabled,
+    },
     feishuScheduler: {
       enabled: runtime.feishuScheduler.enabled,
       intervalMs: runtime.feishuScheduler.intervalMs,
@@ -42,6 +45,16 @@ export default defineEventHandler(async (event) => {
     },
     contest: {
       autoSeed: runtime.contest.autoSeed,
+    },
+    storage: {
+      provider: runtime.storage.provider,
+      localRoot: runtime.storage.localRoot,
+      endpoint: runtime.storage.endpoint,
+      region: runtime.storage.region,
+      bucket: runtime.storage.bucket,
+      accessKeyConfigured: Boolean(runtime.storage.accessKey),
+      secretKeyConfigured: Boolean(runtime.storage.secretKey),
+      forcePathStyle: runtime.storage.forcePathStyle,
     },
     overrideState: getPlatformRuntimeOverrideState(overrides),
     configSource,

@@ -5,7 +5,7 @@ import type {
 } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
 import { setResponseStatus } from 'h3'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
+import { buildDocumentObjectKey, selectDocumentWriteStorage } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { createAdminResource, recordContestAuditLog } from '~~/server/utils/contest-store'
@@ -14,8 +14,8 @@ import {
   createResourceDocumentWithTask,
   updateResourceSourceLinkByDocument,
 } from '~~/server/utils/document-store'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
 
 type DocumentKind = 'pdf' | 'doc' | 'docx'
 
@@ -102,7 +102,6 @@ function toMimeType(kind: DocumentKind, fallbackMimeType: string): string {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const contestId = String(getRouterParam(event, 'id') || '').trim()
 
@@ -110,8 +109,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少 contestId。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40090)
@@ -122,8 +119,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权上传资料。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40390)
@@ -134,8 +129,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('请求体为空，请使用 multipart/form-data 上传文档。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40091)
@@ -146,8 +139,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少文件字段 file。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40092)
@@ -158,8 +149,6 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('仅支持上传 PDF/DOC/DOCX 文件。', {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40093)
@@ -168,9 +157,11 @@ export default defineEventHandler(async (event) => {
   const fileName = ensureFileName(filePart.filename, kind)
   const payload = toUploadPayload(toStringMap(parts), fileName.replace(/\.(pdf|docx?)$/i, ''))
   const objectKey = buildDocumentObjectKey(contestId, fileName)
-  const storage = getDocumentStorage()
   const fileBuffer = Buffer.from(filePart.data)
   const mimeType = toMimeType(kind, filePart.type || '')
+  const storage = await selectDocumentWriteStorage({
+    incomingBytes: fileBuffer.length,
+  })
 
   await storage.putObject({
     key: objectKey,
@@ -197,7 +188,7 @@ export default defineEventHandler(async (event) => {
         contestId,
         resourceId: resource.id,
         objectKey,
-        storageProvider: storage.provider,
+        storageProvider: storage.channelId,
         fileName,
         mimeType,
         fileSize: fileBuffer.length,
@@ -222,9 +213,16 @@ export default defineEventHandler(async (event) => {
           taskId: created.task.id,
           fileName,
           fileSize: fileBuffer.length,
-          storageProvider: storage.provider,
+          storageProvider: storage.channelId,
           documentKind: kind,
         },
+      })
+
+      await enqueueResourceGovernanceTask(db, {
+        contestId,
+        resourceId: resource.id,
+        taskType: 'profile_analyze',
+        actorUserId: user.id,
       })
 
       return {
@@ -236,8 +234,6 @@ export default defineEventHandler(async (event) => {
 
     return ok(result, {
       startedAt,
-      provider: runtime.docAi.provider,
-      model: runtime.docAi.model,
       fallbackUsed: false,
       attempts: 1,
     })

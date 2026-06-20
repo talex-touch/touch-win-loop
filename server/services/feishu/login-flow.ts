@@ -1,7 +1,12 @@
 import type { H3Event } from 'h3'
 import type { AuthLoginResult, FeishuIntegrationConfig } from '~~/shared/types/domain'
+import {
+  clearExternalAuthOnboarding,
+  sanitizeRedirectTarget as sanitizeExternalRedirectTarget,
+} from '~~/server/services/auth/external-identity'
 import { loginWithFeishuProfile } from '~~/server/services/feishu/auth'
-import { getFeishuOAuthProfile } from '~~/server/services/feishu/client'
+import { getFeishuOAuthProfile, resolveFeishuOAuthRedirectUri } from '~~/server/services/feishu/client'
+import { consumeFeishuOAuthCallback } from '~~/server/services/feishu/security'
 import { getAuthFromEvent, setSessionCookie } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
@@ -9,6 +14,7 @@ import {
   readFeishuIntegrationConfig,
   toPublicFeishuIntegrationConfig,
 } from '~~/server/utils/feishu-integration-store'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 
 function parseFeishuErrorDetail(raw: string): string {
   const source = String(raw || '').trim()
@@ -57,6 +63,10 @@ export function resolveFeishuLoginErrorInfo(error: unknown): {
     return { code, message: '当前登录会话无效，请重新登录后再绑定飞书账号。' }
   if (code === 'USER_DISABLED')
     return { code, message: '当前账号已被禁用，请联系平台管理员。' }
+  if (code === 'AUTH_REGISTRATION_DISABLED')
+    return { code, message: '平台暂未开放注册，请联系管理员开通账号或开启注册。' }
+  if (code === 'AUTH_ONBOARDING_SECRET_REQUIRED')
+    return { code, message: '第三方登录引导配置不完整，请联系管理员。' }
   if (code === 'FEISHU_INTEGRATION_DISABLED')
     return { code, message: '飞书登录尚未启用。' }
   if (code === 'FEISHU_APP_CONFIG_INCOMPLETE')
@@ -81,7 +91,11 @@ export async function readFeishuAuthMeta(event: H3Event): Promise<FeishuIntegrat
 export async function loginByFeishuOAuthCode(
   event: H3Event,
   code: string,
-): Promise<AuthLoginResult> {
+  input: {
+    redirectTarget?: string
+  } = {},
+): Promise<AuthLoginResult | { needsOnboarding: true, provider: 'feishu' }> {
+  const { runtime } = await readEffectivePlatformRuntimeSettings(event)
   const auth = await getAuthFromEvent(event).catch(() => null)
   const preferredUserId = String(auth?.user?.id || '').trim()
 
@@ -97,12 +111,22 @@ export async function loginByFeishuOAuthCode(
   const profile = await getFeishuOAuthProfile({
     config,
     code,
+    redirectUri: consumeFeishuOAuthCallback(event) || config.oauthRedirectUri || resolveFeishuOAuthRedirectUri({
+      publicBaseUrl: runtime.onlyOffice.sourceBaseURL,
+      apiBaseUrl: runtime.apiBaseUrl,
+    }),
   })
 
   const loginResult = await loginWithFeishuProfile(event, profile, {
     preferredUserId: preferredUserId || undefined,
+    allowRegistration: runtime.auth.registrationEnabled,
+    redirectTarget: sanitizeExternalRedirectTarget(input.redirectTarget),
   })
+  if ('needsOnboarding' in loginResult)
+    return { needsOnboarding: true, provider: 'feishu' }
+
   setSessionCookie(event, loginResult.sessionToken, loginResult.session.expiresAt)
+  clearExternalAuthOnboarding(event)
 
   if (preferredUserId && loginResult.user.id === preferredUserId) {
     await withClient(event, async (db) => {
@@ -125,6 +149,10 @@ export async function loginByFeishuOAuthCode(
     session: loginResult.session,
     teams: loginResult.teams,
     workspaces: loginResult.workspaces,
-    onboarding: loginResult.onboarding,
+    onboarding: {
+      ...loginResult.onboarding,
+      needsProfileSetup: false,
+      pendingProvider: undefined,
+    },
   }
 }

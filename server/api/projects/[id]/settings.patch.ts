@@ -33,6 +33,8 @@ interface PatchSettingsBody {
   common?: {
     title?: string
     summary?: string
+    icon?: string
+    accentColor?: string
     problemStatement?: string
     innovationPoints?: string[]
     techRouteSteps?: string[]
@@ -77,6 +79,10 @@ export default defineEventHandler(async (event) => {
       common.title = body.common.title
     if (body.common.summary !== undefined)
       common.summary = body.common.summary
+    if (body.common.icon !== undefined)
+      common.icon = String(body.common.icon || '').trim()
+    if (body.common.accentColor !== undefined)
+      common.accentColor = String(body.common.accentColor || '').trim()
     if (body.common.problemStatement !== undefined)
       common.problemStatement = body.common.problemStatement
     if (Array.isArray(body.common.innovationPoints))

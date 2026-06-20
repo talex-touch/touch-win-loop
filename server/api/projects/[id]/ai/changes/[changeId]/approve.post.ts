@@ -267,13 +267,13 @@ export default defineEventHandler(async (event) => {
         const resourceId = String(payload.resourceId || '').trim()
         if (!resourceId)
           throw new Error('RESOURCE_ID_REQUIRED')
-        const purged = await purgeProjectResourceFromRecycleBin(db, {
+        await purgeProjectResourceFromRecycleBin(db, {
           projectId,
           resourceId,
         })
         executedResult = {
           changeType: change.changeType,
-          resourceId: purged.resourceId,
+          resourceId,
         }
       }
       else {

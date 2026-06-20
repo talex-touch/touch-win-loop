@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import type { ApiResponse } from '~~/shared/types/domain'
+import type {
+  ApiResponse,
+  ProjectKnowledgeEmbeddingApiStyle as EmbeddingApiStyle,
+  PlatformAiClientType,
+} from '~~/shared/types/domain'
+import { Message } from '@arco-design/web-vue'
 
 definePageMeta({
   layout: 'admin',
 })
 
-type AiConsoleTab = 'providers' | 'channels' | 'models' | 'audits' | 'logs'
+type AiConsoleTab = 'channel_models' | 'scenes' | 'audits' | 'logs'
 type SecretMode = 'keep' | 'replace' | 'clear'
-type ProviderEditorKey = 'llm' | 'docAi'
-type ChannelEditorKey = 'adminAi'
-type ProviderModelScope = ProviderEditorKey | 'provider'
+type ModelFormat = 'openai-compatible' | 'response'
+type PricingSource = 'provider' | 'manual' | 'none'
+type ProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'coze-voice' | 'searchxng' | 'tavily'
+type ProviderCapability = 'llm' | 'search' | 'embedding' | 'asr' | 'tts' | 'realtime' | 'voice'
+type ModelCapability = 'chat' | 'vision' | 'embedding' | 'asr' | 'tts' | 'image-gen' | 'video-gen'
+type LoadBalanceStrategy = 'round_robin'
+type FailoverStrategy = 'model_then_provider'
 type PlatformAiChannelKey
   = 'contest_filter'
     | 'project_chat'
@@ -18,106 +27,174 @@ type PlatformAiChannelKey
     | 'workspace_dialog_ask'
     | 'workspace_auto_optimize'
     | 'workspace_issue_discovery'
+    | 'workspace_document_summarize'
+    | 'workspace_document_rewrite'
+    | 'workspace_document_continue'
+    | 'workspace_document_expand'
+    | 'workspace_document_complete_context'
+    | 'workspace_document_restructure'
+    | 'workspace_canvas_generate'
+    | 'workspace_canvas_complete'
+    | 'workspace_canvas_refine'
     | 'admin_general'
     | 'admin_publish_assistant'
-    | 'admin_import_sync_analysis'
+    | 'admin_operations_analysis'
+    | 'knowledge_embedding'
+    | 'knowledge_visual_embedding'
+    | 'knowledge_query_planner'
+    | 'knowledge_visual_projection'
+    | 'document_analysis'
+    | 'meeting_asr'
+    | 'speech_tts'
 
-interface RegistryProviderModel {
+interface ProviderModelItem {
   model: string
   label: string
-  format: 'openai-compatible' | 'response'
+  format: ModelFormat
+  capabilities: ModelCapability[]
+  clientType: PlatformAiClientType
+  embeddingApiStyle?: EmbeddingApiStyle
+  embeddingDimensions?: number
   enabled: boolean
+  providerInputPricePer1M: number | null
+  providerOutputPricePer1M: number | null
+  manualInputPricePer1M: number | null
+  manualOutputPricePer1M: number | null
   inputPricePer1M: number | null
   outputPricePer1M: number | null
   currency: string
-  pricingSource: 'provider' | 'pricing_table' | 'none'
+  pricingSource: PricingSource
+  manualPriceOverride: boolean
 }
 
-interface RegistryProvider {
+interface ProviderItem {
   id: string
   name: string
-  adapter: 'openai-compatible' | 'response'
+  type: ProviderType
+  capability: ProviderCapability
+  adapter: string
   provider: string
+  clientType: PlatformAiClientType
   baseURL: string
   enabled: boolean
   timeoutMs: number
   maxRetries: number
+  fetchedAt: string
   apiKeyConfigured: boolean
-  models: RegistryProviderModel[]
+  embeddingApiStyle: EmbeddingApiStyle
+  embeddingDimensions: number
+  voice?: ProviderVoiceConfig
+  models: ProviderModelItem[]
 }
 
-interface RegistryChannelDefinition {
+interface ProviderVoiceConfig {
+  botId: string
+  connectorId: string
+  voiceId: string
+  authMode: 'pat' | 'oauth'
+  qwen?: {
+    realtimeProfiles: Array<{
+      id: string
+      name: string
+      model: string
+      baseWsUrl: string
+      workspaceId: string
+      appId: string
+      defaultVoiceId: string
+      asrProfileId: string
+      ttsProfileId: string
+      vadMode: 'server_vad' | 'semantic_vad' | 'manual'
+      frameIntervalMs: number
+      enabled: boolean
+      sortOrder: number
+    }>
+    asrProfiles: Array<{
+      id: string
+      name: string
+      model: string
+      language: string
+      enabled: boolean
+      sortOrder: number
+    }>
+    ttsProfiles: Array<{
+      id: string
+      name: string
+      model: string
+      voiceId: string
+      sampleRate: number
+      enabled: boolean
+      sortOrder: number
+    }>
+  }
+  coze: {
+    agents: Array<{
+      id: string
+      name: string
+      judgeType: string
+      botId: string
+      connectorId: string
+      defaultVoiceId: string
+      enabled: boolean
+      sortOrder: number
+    }>
+    voices: Array<{
+      id: string
+      name: string
+      voiceId: string
+      style: string
+      enabled: boolean
+      sortOrder: number
+    }>
+    roomConfig: {
+      createRoomOnServer: boolean
+      roomNamePrefix: string
+    }
+  }
+  billing: {
+    realtimeStartupUnits: number
+    realtimeUnitsPerMinute: number
+    asrUnitsPerMinute: number
+    ttsUnitsPer1KChars: number
+    videoFrameMultiplier: number
+    judgeMultiplierEnabled: boolean
+    providerMarkupMultiplier: number
+  }
+}
+
+interface ProviderDraftItem extends ProviderItem {
+  voice: ProviderVoiceConfig
+  apiKeyMode: SecretMode
+  apiKey: string
+}
+
+interface SceneDefinition {
   key: PlatformAiChannelKey
   label: string
   description: string
+  builtinPrompt: string
+  requiredModelCapability: ModelCapability
+  allowedProviderCapabilities: ProviderCapability[]
+  embeddingApiStyle?: EmbeddingApiStyle
 }
 
-interface RegistryChannel {
+interface SceneItem {
   key: PlatformAiChannelKey
   label: string
   description: string
   enabled: boolean
-  providerId: string
-  model: string
+  providerIds: string[]
+  loadBalanceStrategy: LoadBalanceStrategy
+  models: string[]
+  modelFallback: string[]
+  failoverStrategy: FailoverStrategy
   prompt: string
 }
 
-interface RegistryProviderUsageStat {
-  providerId: string
-  totalConsumed: number
-  lastTriggeredAt: string | null
-}
-
-interface ProviderModelOption {
-  id: string
-  provider: string
-  model: string
-  label: string
-  mode: ProviderModelScope
-  inputPricePer1M: number | null
-  outputPricePer1M: number | null
-  currency: string
-  pricingSource: 'provider' | 'pricing_table' | 'none'
-  pricingText: string
-}
-
-interface ProviderModelsPayload {
-  scope: ProviderModelScope
-  mode?: ProviderModelScope
-  providerId?: string
-  provider: string
-  baseURL: string
-  fetchedAt: string
-  items: ProviderModelOption[]
-}
-
 interface ProvidersPayload {
-  llm: {
-    provider: string
-    baseURL: string
-    model: string
-    embeddingModel: string
-    modelCatalogJson: string
-    modelPricingJson: string
-    providersJson: string
-    channelsJson: string
-    temperature: number
-    topP: number
-    maxTokens: number
-    presencePenalty: number
-    frequencyPenalty: number
-    timeoutMs: number
-    maxRetries: number
-    apiKeyConfigured: boolean
-  }
-  docAi: {
-    provider: string
-    baseURL: string
-    model: string
-    modelPricingJson: string
-    timeoutMs: number
-    maxRetries: number
-    apiKeyConfigured: boolean
+  providers: ProviderItem[]
+  scenes: {
+    items: SceneItem[]
+    definitions: SceneDefinition[]
   }
   adminAi: {
     enabled: boolean
@@ -126,78 +203,51 @@ interface ProvidersPayload {
     maxWebResults: number
     maxPageChars: number
   }
-  registry: {
-    providers: RegistryProvider[]
-    providerStats: RegistryProviderUsageStat[]
-    channels: RegistryChannel[]
-    channelDefinitions: RegistryChannelDefinition[]
+  config?: {
+    masterKeyReady?: boolean
+  }
+  warnings?: {
+    ignoredProviderApiKeyIds?: string[]
   }
   overrideState?: {
     aiApiKeyOverridden?: boolean
-    docAiApiKeyOverridden?: boolean
     adminTavilyApiKeyOverridden?: boolean
     updatedAt?: string
     updatedByUserId?: string
   }
 }
 
-interface ChannelsPayload {
-  days: number
-  totalCalls: number
-  totalUnits: number
-  items: Array<{
-    route: string
-    calls: number
-    units: number
-    lastAt: string | null
-  }>
-  channelItems: RegistryChannel[]
-  channelDefinitions: RegistryChannelDefinition[]
-  providers: RegistryProvider[]
-  providerModelItems: Array<{
-    providerId: string
-    providerName: string
-    adapter: 'openai-compatible' | 'response'
-    provider: string
-    providerEnabled: boolean
-    model: string
-    label: string
-    format: 'openai-compatible' | 'response'
-    modelEnabled: boolean
-    inputPricePer1M: number | null
-    outputPricePer1M: number | null
-    currency: string
-    pricingSource: 'provider' | 'pricing_table' | 'none'
-  }>
+interface ProviderPullItem {
+  id: string
+  provider: string
+  model: string
+  label: string
+  capabilities: ModelCapability[]
+  sourceEndpoint?: string
+  rawText?: string
+  inputPricePer1M: number | null
+  outputPricePer1M: number | null
+  currency: string
+  pricingSource: 'provider' | 'pricing_table' | 'none'
+  pricingText: string
 }
 
-interface ModelsPayload {
-  days: number
-  totalMessages: number
-  items: Array<{
-    provider: string
-    model: string
-    messages: number
-    fallbackMessages: number
-    fallbackRate: number
-    lastAt: string | null
-  }>
-  totalCatalogModels: number
-  catalogItems: Array<{
-    providerId: string
-    providerName: string
-    adapter: 'openai-compatible' | 'response'
-    provider: string
-    providerEnabled: boolean
-    model: string
-    label: string
-    format: 'openai-compatible' | 'response'
-    modelEnabled: boolean
-    inputPricePer1M: number | null
-    outputPricePer1M: number | null
-    currency: string
-    pricingSource: 'provider' | 'pricing_table' | 'none'
-  }>
+interface ProviderModelsPayload {
+  providerId: string
+  providerName?: string
+  provider: string
+  baseURL: string
+  endpoint?: string
+  nativeEmbeddingEndpoint?: string
+  fetchedAt: string
+  items: ProviderPullItem[]
+}
+
+interface ModelPullSeriesGroup {
+  key: string
+  label: string
+  capability: ModelCapability | 'other'
+  items: ProviderPullItem[]
 }
 
 interface AuditItem {
@@ -234,6 +284,9 @@ interface LogItem {
   contestName: string
   trackId: string
   major: string
+  channelKey: string
+  latencyMs: number | null
+  attemptChain: Array<{ provider: string, model: string, success: boolean, latencyMs: number, error?: string }>
   content: string
   contentPreview: string
   createdAt: string
@@ -247,85 +300,197 @@ interface LogsPayload {
   items: LogItem[]
 }
 
-interface ProviderConfigRow {
-  key: ProviderEditorKey
-  name: string
-  mode: string
+type SceneTestMode = 'chat' | 'asr' | 'tts' | 'embedding'
+
+interface SceneTestAttempt {
   provider: string
   model: string
-  modelPriceText: string
-  modelPoolSize: number
-  modelFetchedAt: string
-  baseURL: string
-  timeoutMs: number
-  maxRetries: number
-  keyConfigured: boolean
+  success: boolean
+  latencyMs: number
+  error?: string
 }
 
-interface ChannelConfigRow {
-  key: ChannelEditorKey
-  name: string
-  enabled: boolean
-  webTimeoutMs: number
-  maxWebResults: number
-  maxPageChars: number
-  keyConfigured: boolean
+interface SceneTestPayload {
+  channelKey: PlatformAiChannelKey
+  channelLabel: string
+  provider: string
+  providerId?: string
+  model: string
+  profileId?: string
+  testMode: SceneTestMode
+  fallbackUsed: boolean
+  promptConfigured: boolean
+  responsePreview: string
+  attemptChain: SceneTestAttempt[]
+  latencyMs: number
+  auditAction?: string
+  logs?: string[]
+}
+
+interface ProviderTypeGuide {
+  title: string
+  summary: string
+  providerPlaceholder: string
+  baseURLPlaceholder: string
+  baseURLHint: string
+  apiKeyPlaceholder: string
+  apiKeyHint: string
+  clientTypeHint: string
+  embeddingHint: string
 }
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
+const defaultModelPricingText = '默认价格：输入 USD 0.0000/1M · 输出 USD 0.0000/1M（Provider 未返回报价）'
+// Contract anchors for source-level regression tests after provider capability migration:
+// value: 'voice', label: 'Voice realtime'
+// Coze 语音参数
+// 只配置模型路由，无需执行对话测试
+// if (!sceneCanRunChatTest(scene)) 无需执行对话测试
+// function sceneCanRunChatTest(scene: SceneItem): boolean
+// :disabled="!sceneCanRunChatTest(scope.record)" 无需测试
+// return defaultModelPricingText
+
+const providerTypeOptions: Array<{ value: ProviderType, label: string, capability: ProviderCapability }> = [
+  { value: 'newapi', label: 'NewAPI', capability: 'llm' },
+  { value: 'openai-compatible', label: 'OpenAI Compatible', capability: 'llm' },
+  { value: 'dashscope-bailian', label: '百炼 DashScope', capability: 'llm' },
+  { value: 'coze-voice', label: 'Coze 语音 / Realtime', capability: 'voice' },
+  { value: 'searchxng', label: 'SearchXNG', capability: 'search' },
+  { value: 'tavily', label: 'Tavily', capability: 'search' },
+]
+
+const providerCapabilityOptions: Array<{ value: ProviderCapability, label: string, hint: string }> = [
+  { value: 'llm', label: 'LLM / 多模型', hint: '可承载聊天、视觉、Embedding、ASR、TTS 等模型能力，Scene 仍按模型能力过滤。' },
+  { value: 'embedding', label: 'Embedding only', hint: '只参与知识库文本或视觉 Embedding 场景，适合 DashScope Embeddings 独立接入。' },
+  { value: 'asr', label: 'ASR only', hint: '只参与会议 ASR、录音转写等语音识别场景。' },
+  { value: 'tts', label: 'TTS only', hint: '只参与文本转语音、朗读和语音播报场景。' },
+  { value: 'realtime', label: 'Voice realtime', hint: '千问或 Coze 实时语音视频 Provider，服务实时答辩、ASR 和 TTS，不进入普通聊天模型池。' },
+  { value: 'voice', label: 'Voice legacy', hint: '兼容旧 Coze 语音 Provider；新配置建议使用 realtime 能力。' },
+  { value: 'search', label: 'Search only', hint: '搜索型 Provider 固定为 search，不参与模型场景路由。' },
+]
+
+const modelCapabilityOptions: Array<{ value: ModelCapability, label: string, color: string, hint: string }> = [
+  { value: 'chat', label: '聊天', color: 'arcoblue', hint: '用于 LLM 对话、文档分析和后台助手场景。' },
+  { value: 'vision', label: '视觉', color: 'purple', hint: '用于图片理解、OCR 和视觉投影。' },
+  { value: 'embedding', label: 'Embedding', color: 'green', hint: '用于知识库文本或多模态向量。' },
+  { value: 'asr', label: 'ASR', color: 'cyan', hint: '用于会议字幕、录音转写和语音识别。' },
+  { value: 'tts', label: 'TTS', color: 'lime', hint: '用于文本转语音、朗读和语音播报。' },
+  { value: 'image-gen', label: '图片生成', color: 'orange', hint: '先作为生成路由能力保留。' },
+  { value: 'video-gen', label: '视频生成', color: 'magenta', hint: '先作为生成路由能力保留。' },
+]
+
+const modelPullCapabilityFilters: Array<{ value: ModelCapability | 'all', label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'chat', label: '聊天' },
+  { value: 'vision', label: '视觉' },
+  { value: 'embedding', label: 'Embedding' },
+  { value: 'asr', label: 'ASR' },
+  { value: 'tts', label: 'TTS' },
+  { value: 'image-gen', label: '图片生成' },
+  { value: 'video-gen', label: '视频生成' },
+]
+
+const providerTypeGuides: Record<ProviderType, ProviderTypeGuide> = {
+  'newapi': {
+    title: 'NewAPI',
+    summary: '按 OpenAI 兼容协议接入，适合聚合网关或自建 NewAPI 服务。',
+    providerPlaceholder: 'newapi',
+    baseURLPlaceholder: 'https://newapi.example.com',
+    baseURLHint: '填写服务根地址即可；如果填到 /v1，保存时会规范化，运行时仍请求 /v1/chat/completions。',
+    apiKeyPlaceholder: 'sk-...',
+    apiKeyHint: '填写即替换并持久化；留空则保持已保存密钥不变。',
+    clientTypeHint: '聊天接入类型使用 LangChain，底层为 @langchain/openai 的 ChatOpenAI。',
+    embeddingHint: 'Embedding 通常选择 OpenAI 兼容文本，并在对应场景里绑定所需向量模型。',
+  },
+  'openai-compatible': {
+    title: 'OpenAI Compatible',
+    summary: '用于 OpenAI 官方或任意兼容 /v1 接口的服务。',
+    providerPlaceholder: 'openai-compatible',
+    baseURLPlaceholder: 'https://api.openai.com',
+    baseURLHint: '填写域名根地址或已包含 /v1 的地址均可，系统会统一拼接到 /v1。',
+    apiKeyPlaceholder: 'sk-...',
+    apiKeyHint: '填写兼容服务的 API Key，不需要 Bearer 前缀；留空保持已保存密钥不变。',
+    clientTypeHint: '聊天接入类型使用 LangChain，底层为 @langchain/openai。',
+    embeddingHint: 'Embedding 选择 OpenAI 兼容文本，例如 text-embedding-3-small、text-embedding-v4 等兼容模型。',
+  },
+  'dashscope-bailian': {
+    title: '百炼 DashScope',
+    summary: 'Provider 只填百炼服务根地址；聊天、模型列表、多模态 Embedding、Qwen 实时音视频、ASR 与 TTS 配置统一维护。',
+    providerPlaceholder: 'dashscope',
+    baseURLPlaceholder: 'https://dashscope.aliyuncs.com',
+    baseURLHint: 'Base URL 填服务根地址即可；系统会为聊天补 compatible-mode/v1/chat/completions，为模型列表补 compatible-mode/v1/models，为百炼多模态 Embedding 补原生 /api/v1/services/embeddings/multimodal-embedding/multimodal-embedding。',
+    apiKeyPlaceholder: 'DASHSCOPE_API_KEY',
+    apiKeyHint: '填写 DashScope API Key，不需要 Bearer 前缀；留空保持已保存密钥不变。',
+    clientTypeHint: '聊天使用 @langchain/openai + 百炼 compatible-mode；实时音视频/ASR/TTS 走 DashScope WebSocket 或语音原生接口。',
+    embeddingHint: '纯文本选 OpenAI 兼容文本；图片、视频或融合向量选百炼原生多模态，运行时使用 https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding。',
+  },
+  'coze-voice': {
+    title: 'Coze 语音 / Realtime',
+    summary: '用于 Coze 实时语音、ASR 和 TTS；token 作为 Provider API Key 保存，多智能体、多音色和房间配置单独维护。',
+    providerPlaceholder: 'coze',
+    baseURLPlaceholder: 'https://api.coze.cn',
+    baseURLHint: 'Base URL 填 Coze Open API 根地址，例如 https://api.coze.cn；实时答辩会复用同一组语音身份。',
+    apiKeyPlaceholder: 'pat_... / oauth token',
+    apiKeyHint: '填写 Coze PAT 或 OAuth Token；留空保持已保存 token 不变。',
+    clientTypeHint: 'Coze 语音不走普通 LLM 模型池，ASR/TTS 由 @coze/api audio 接口执行，答辩实时流由 @coze/realtime-api 执行。',
+    embeddingHint: 'Coze 语音 Provider 不配置 Embedding。',
+  },
+  'searchxng': {
+    title: 'SearchXNG',
+    summary: '搜索型 Provider，只做 search-only 登记，不参与 AI 场景模型路由。',
+    providerPlaceholder: 'searchxng',
+    baseURLPlaceholder: 'https://search.example.com',
+    baseURLHint: '填写 SearchXNG 服务地址；当前 Provider 模型池不会使用它发起 LLM 请求。',
+    apiKeyPlaceholder: '可选',
+    apiKeyHint: '如网关需要鉴权再填写；否则可保持为空。',
+    clientTypeHint: '搜索型 Provider 不需要聊天接入类型。',
+    embeddingHint: '搜索型 Provider 不配置 Embedding。',
+  },
+  'tavily': {
+    title: 'Tavily',
+    summary: '搜索型 Provider。当前联网搜索运行时主要读取管理助手 Web 搜索里的 Tavily API Key。',
+    providerPlaceholder: 'tavily',
+    baseURLPlaceholder: 'https://api.tavily.com',
+    baseURLHint: 'Tavily 搜索代码固定请求 https://api.tavily.com/search；这里主要用于 Provider 登记展示。',
+    apiKeyPlaceholder: 'tvly-...',
+    apiKeyHint: '联网搜索密钥在下方管理助手 Web 搜索配置中保存；这里的 Provider API Key 不进入 LLM 模型路由。',
+    clientTypeHint: '搜索型 Provider 不需要聊天接入类型。',
+    embeddingHint: '搜索型 Provider 不配置 Embedding。',
+  },
+}
 
 const tabOptions: Array<{ key: AiConsoleTab, label: string }> = [
-  { key: 'providers', label: 'Providers' },
-  { key: 'channels', label: 'Channels' },
-  { key: 'models', label: 'Models' },
+  { key: 'channel_models', label: '渠道和模型' },
+  { key: 'scenes', label: '场景' },
   { key: 'audits', label: 'Audits' },
   { key: 'logs', label: 'Logs' },
 ]
 
-const activeTab = ref<AiConsoleTab>('providers')
+const activeTab = ref<AiConsoleTab>('channel_models')
+const consoleLoading = ref(false)
+const consoleLoaded = ref(false)
+const consoleError = ref('')
+const saving = ref(false)
 
-const loaded = reactive<Record<AiConsoleTab, boolean>>({
-  providers: false,
-  channels: false,
-  models: false,
-  audits: false,
-  logs: false,
-})
-
-const loadingMap = reactive<Record<AiConsoleTab, boolean>>({
-  providers: false,
-  channels: false,
-  models: false,
-  audits: false,
-  logs: false,
-})
-
-const errorMap = reactive<Record<AiConsoleTab, string>>({
-  providers: '',
-  channels: '',
-  models: '',
-  audits: '',
-  logs: '',
-})
-
-const providers = ref<ProvidersPayload | null>(null)
-const channels = ref<ChannelsPayload | null>(null)
-const models = ref<ModelsPayload | null>(null)
+const auditLoading = ref(false)
+const auditError = ref('')
 const audits = ref<AuditItem[]>([])
-const logs = ref<LogItem[]>([])
-
-const channelDays = ref(7)
-const modelDays = ref(7)
-
 const auditAction = ref('')
 const auditPage = ref(1)
 const auditPageSize = ref(20)
 const auditTotal = ref(0)
+const auditDetailVisible = ref(false)
+const auditDetailRow = ref<AuditItem | null>(null)
 
+const logLoading = ref(false)
+const logError = ref('')
+const logs = ref<LogItem[]>([])
 const logPage = ref(1)
 const logPageSize = ref(20)
 const logTotal = ref(0)
+const logDetailVisible = ref(false)
+const logDetailRow = ref<LogItem | null>(null)
 const logFilters = reactive({
   days: 7,
   provider: '',
@@ -336,438 +501,149 @@ const logFilters = reactive({
   q: '',
 })
 
-const providerSaving = ref(false)
-const providerSaveMessage = ref('')
+const configMasterKeyReady = ref(true)
+const providers = ref<ProviderDraftItem[]>([])
+const sceneItems = ref<SceneItem[]>([])
+const sceneDefinitions = ref<SceneDefinition[]>([])
+
+const adminAiForm = reactive({
+  enabled: false,
+  webTimeoutMs: 12000,
+  maxWebResults: 5,
+  maxPageChars: 10000,
+  tavilyApiKeyMode: 'keep' as SecretMode,
+  tavilyApiKey: '',
+})
+
 const providerEditorVisible = ref(false)
-const providerEditorKey = ref<ProviderEditorKey>('llm')
-const channelEditorVisible = ref(false)
-const channelScenarioEditorVisible = ref(false)
-const modelDetailVisible = ref(false)
-const modelDetailRow = ref<ModelsPayload['items'][number] | null>(null)
-const auditDetailVisible = ref(false)
-const auditDetailRow = ref<AuditItem | null>(null)
-const logDetailVisible = ref(false)
-const logDetailRow = ref<LogItem | null>(null)
-const providerModelOptions = reactive<Record<ProviderEditorKey, ProviderModelOption[]>>({
-  llm: [],
-  docAi: [],
+const providerEditorIsCreate = ref(false)
+const providerEditorTestLoading = ref(false)
+const providerEditorTestMessage = ref('')
+const providerPullLoading = ref(false)
+const providerPullMessage = ref('')
+const providerEditorForm = reactive<ProviderDraftItem>({
+  id: '',
+  name: '',
+  type: 'newapi',
+  capability: 'llm',
+  adapter: 'openai-compatible',
+  provider: 'newapi',
+  clientType: 'langchain',
+  baseURL: '',
+  enabled: true,
+  timeoutMs: 15000,
+  maxRetries: 2,
+  fetchedAt: '',
+  apiKeyConfigured: false,
+  embeddingApiStyle: 'openai-compatible-text',
+  embeddingDimensions: 1024,
+  voice: {
+    botId: '',
+    connectorId: '',
+    voiceId: '',
+    authMode: 'pat',
+    qwen: {
+      realtimeProfiles: [],
+      asrProfiles: [],
+      ttsProfiles: [],
+    },
+    coze: {
+      agents: [],
+      voices: [],
+      roomConfig: {
+        createRoomOnServer: true,
+        roomNamePrefix: 'WinLoop 答辩',
+      },
+    },
+    billing: {
+      realtimeStartupUnits: 2,
+      realtimeUnitsPerMinute: 1,
+      asrUnitsPerMinute: 1,
+      ttsUnitsPer1KChars: 1,
+      videoFrameMultiplier: 1,
+      judgeMultiplierEnabled: true,
+      providerMarkupMultiplier: 1,
+    },
+  },
+  models: [],
+  apiKeyMode: 'keep',
+  apiKey: '',
 })
-const providerModelLoading = reactive<Record<ProviderEditorKey, boolean>>({
-  llm: false,
-  docAi: false,
+
+const modelEditorVisible = ref(false)
+const modelEditorIsCreate = ref(false)
+const modelEditorForm = reactive<ProviderModelItem>({
+  model: '',
+  label: '',
+  format: 'openai-compatible',
+  capabilities: ['chat'],
+  clientType: 'langchain',
+  embeddingApiStyle: 'openai-compatible-text',
+  embeddingDimensions: 1024,
+  enabled: true,
+  providerInputPricePer1M: null,
+  providerOutputPricePer1M: null,
+  manualInputPricePer1M: null,
+  manualOutputPricePer1M: null,
+  inputPricePer1M: null,
+  outputPricePer1M: null,
+  currency: 'USD',
+  pricingSource: 'none',
+  manualPriceOverride: false,
 })
-const providerModelError = reactive<Record<ProviderEditorKey, string>>({
-  llm: '',
-  docAi: '',
+
+const modelPullSelectorVisible = ref(false)
+const pulledProviderModels = ref<ProviderPullItem[]>([])
+const pulledProviderFetchedAt = ref('')
+const pulledProviderMeta = reactive({
+  providerId: '',
+  providerName: '',
+  provider: '',
+  baseURL: '',
+  endpoint: '',
+  nativeEmbeddingEndpoint: '',
 })
-const providerModelFetchedAt = reactive<Record<ProviderEditorKey, string>>({
-  llm: '',
-  docAi: '',
+const modelPullFilterKeyword = ref('')
+const modelPullCapabilityFilter = ref<ModelCapability | 'all'>('all')
+const selectedPulledModels = ref<string[]>([])
+const expandedModelPullSeriesKeys = ref<string[]>([])
+
+const sceneTesting = reactive<Record<string, boolean>>({})
+const sceneTestMessage = reactive<Record<string, string>>({})
+const sceneTestDrawerVisible = ref(false)
+const sceneTestTarget = ref<SceneItem | null>(null)
+const sceneTestResult = ref<SceneTestPayload | null>(null)
+const sceneTestError = ref('')
+const sceneTestForm = reactive({
+  providerId: '',
+  model: '',
+  profileId: '',
+  testMode: 'chat' as SceneTestMode,
+  message: '',
 })
-const providerManualModelText = reactive<Record<ProviderEditorKey, string>>({
-  llm: '',
-  docAi: '',
-})
-const registryProviderPullLoading = reactive<Record<string, boolean>>({})
-const registryProviderTestLoading = reactive<Record<string, boolean>>({})
-const registryProviderTestMessage = reactive<Record<string, string>>({})
-const registryProviderMutating = reactive<Record<string, boolean>>({})
-const registryProviderModelEditorVisible = ref(false)
-const registryProviderModelEditorProviderId = ref('')
-const registryProviderModelEditorProviderName = ref('')
-const registryProviderModelEditorRows = ref<RegistryProviderModel[]>([])
-const registryChannelTestLoading = reactive<Record<string, boolean>>({})
-const registryChannelTestMessage = reactive<Record<string, string>>({})
-const channelScenarioForm = reactive<RegistryChannel>({
-  key: 'project_chat',
+const sceneEditorVisible = ref(false)
+const sceneBuiltinPromptVisible = ref(false)
+const sceneBuiltinPromptTarget = ref<SceneItem | null>(null)
+const sceneEditorForm = reactive({
+  key: 'project_chat' as PlatformAiChannelKey,
   label: '',
   description: '',
   enabled: true,
-  providerId: '',
-  model: '',
+  providerIds: [] as string[],
+  loadBalanceStrategy: 'round_robin' as LoadBalanceStrategy,
+  models: [] as string[],
+  modelFallback: [] as string[],
+  failoverStrategy: 'model_then_provider' as FailoverStrategy,
   prompt: '',
 })
-
-const providerForm = reactive({
-  aiProvider: '',
-  aiBaseURL: '',
-  aiModel: '',
-  aiEmbeddingModel: '',
-  aiModelCatalogJson: '',
-  aiModelPricingJson: '',
-  aiTemperature: 0.2,
-  aiTopP: 1,
-  aiMaxTokens: 0,
-  aiPresencePenalty: 0,
-  aiFrequencyPenalty: 0,
-  aiTimeoutMs: 15000,
-  aiMaxRetries: 2,
-  aiApiKeyMode: 'keep' as SecretMode,
-  aiApiKey: '',
-  docAiProvider: '',
-  docAiBaseURL: '',
-  docAiModel: '',
-  docAiModelPricingJson: '',
-  docAiTimeoutMs: 15000,
-  docAiMaxRetries: 2,
-  docAiApiKeyMode: 'keep' as SecretMode,
-  docAiApiKey: '',
-  adminAiEnabled: false,
-  adminAiWebTimeoutMs: 12000,
-  adminAiMaxWebResults: 5,
-  adminAiMaxPageChars: 10000,
-  adminAiTavilyApiKeyMode: 'keep' as SecretMode,
-  adminAiTavilyApiKey: '',
+const sceneBatchEditorVisible = ref(false)
+const sceneBatchForm = reactive({
+  providerIds: [] as string[],
+  loadBalanceStrategy: 'round_robin' as LoadBalanceStrategy,
+  models: [] as string[],
+  modelFallback: [] as string[],
+  failoverStrategy: 'model_then_provider' as FailoverStrategy,
 })
-
-const providerColumns = [
-  { title: '模式', dataIndex: 'name', width: 120 },
-  { title: '配置', dataIndex: 'config', slotName: 'config' },
-  { title: '状态', dataIndex: 'status', slotName: 'status', width: 260 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 190 },
-]
-
-const channelConfigColumns = [
-  { title: 'Channel', dataIndex: 'name' },
-  { title: '配置', dataIndex: 'config', slotName: 'config' },
-  { title: '状态', dataIndex: 'status', slotName: 'status', width: 220 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 110 },
-]
-
-const channelUsageColumns = [
-  { title: 'Route', dataIndex: 'route' },
-  { title: 'Calls', dataIndex: 'calls', width: 100 },
-  { title: 'Units', dataIndex: 'units', width: 100 },
-  { title: '最近调用', dataIndex: 'lastAt', slotName: 'lastAt', width: 180 },
-]
-
-const registryProviderColumns = [
-  { title: 'Provider', dataIndex: 'name', width: 220 },
-  { title: '配置', dataIndex: 'config', slotName: 'config' },
-  { title: '模型池', dataIndex: 'models', slotName: 'models', width: 200 },
-  { title: '启用', dataIndex: 'enabled', slotName: 'enabled', width: 120 },
-  { title: '最后触发时间', dataIndex: 'lastTriggeredAt', slotName: 'lastTriggeredAt', width: 170 },
-  { title: '累计消耗', dataIndex: 'totalConsumed', slotName: 'totalConsumed', width: 120 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 360 },
-]
-
-const registryChannelColumns = [
-  { title: '场景', dataIndex: 'label', width: 220 },
-  { title: '模型路由', dataIndex: 'routing', slotName: 'routing', width: 240 },
-  { title: '提示词', dataIndex: 'prompt', slotName: 'prompt' },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 210 },
-]
-
-const modelColumns = [
-  { title: 'Provider', dataIndex: 'provider', width: 140 },
-  { title: 'Model', dataIndex: 'model' },
-  { title: '消息量', dataIndex: 'messages', width: 110 },
-  { title: 'Fallback', dataIndex: 'fallbackMessages', width: 110 },
-  { title: 'Fallback率', dataIndex: 'fallbackRate', slotName: 'fallbackRate', width: 110 },
-  { title: '最近调用', dataIndex: 'lastAt', slotName: 'lastAt', width: 180 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 90 },
-]
-
-const modelCatalogColumns = [
-  { title: 'Provider', dataIndex: 'providerName', width: 180 },
-  { title: '适配器', dataIndex: 'adapter', width: 110 },
-  { title: 'Model', dataIndex: 'model' },
-  { title: '状态', dataIndex: 'status', slotName: 'status', width: 200 },
-  { title: '价格', dataIndex: 'price', slotName: 'price', width: 220 },
-]
-
-const auditColumns = [
-  { title: '时间', dataIndex: 'createdAt', slotName: 'createdAt', width: 176 },
-  { title: 'Action', dataIndex: 'action', width: 220 },
-  { title: '操作者', dataIndex: 'actorName', slotName: 'actorName', width: 150 },
-  { title: '赛事', dataIndex: 'contestName', slotName: 'contestName', width: 180 },
-  { title: 'Payload', dataIndex: 'payload', slotName: 'payload' },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 90 },
-]
-
-const logColumns = [
-  { title: '时间', dataIndex: 'createdAt', slotName: 'createdAt', width: 176 },
-  { title: 'Workspace/Session', dataIndex: 'workspaceName', slotName: 'session', width: 260 },
-  { title: '角色', dataIndex: 'role', width: 90 },
-  { title: 'Provider/Model', dataIndex: 'provider', slotName: 'provider', width: 200 },
-  { title: '操作者', dataIndex: 'actorName', slotName: 'actorName', width: 150 },
-  { title: '消息', dataIndex: 'contentPreview', slotName: 'contentPreview' },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 90 },
-]
-
-const modelRows = computed(() => {
-  return (models.value?.items || []).map(item => ({
-    ...item,
-    rowKey: `${item.provider}-${item.model}`,
-  }))
-})
-
-const registryProviderRows = computed(() => {
-  const statMap = new Map(
-    (providers.value?.registry?.providerStats || []).map(item => [item.providerId, item]),
-  )
-  return (providers.value?.registry?.providers || []).map(item => ({
-    ...item,
-    lastTriggeredAt: statMap.get(item.id)?.lastTriggeredAt || null,
-    totalConsumed: Number(statMap.get(item.id)?.totalConsumed || 0),
-    rowKey: item.id,
-  }))
-})
-
-const registryChannelRows = computed(() => {
-  const source = channels.value?.channelItems?.length
-    ? channels.value.channelItems
-    : (providers.value?.registry?.channels || [])
-  return source.map(item => ({
-    ...item,
-    rowKey: item.key,
-  }))
-})
-
-const modelCatalogRows = computed(() => {
-  return (models.value?.catalogItems || []).map(item => ({
-    ...item,
-    rowKey: `${item.providerId}:${item.model}`,
-  }))
-})
-
-function formatCatalogPrice(item: {
-  inputPricePer1M: number | null
-  outputPricePer1M: number | null
-  currency: string
-}): string {
-  const input = item.inputPricePer1M === null ? '-' : `${item.currency} ${Number(item.inputPricePer1M).toFixed(4)}/1M`
-  const output = item.outputPricePer1M === null ? '-' : `${item.currency} ${Number(item.outputPricePer1M).toFixed(4)}/1M`
-  return `输入 ${input} · 输出 ${output}`
-}
-
-function toPromptPreview(prompt: string): string {
-  const text = String(prompt || '').replace(/\s+/g, ' ').trim()
-  if (!text)
-    return '-'
-  return text.length > 80 ? `${text.slice(0, 80)}...` : text
-}
-
-function toProviderModelPreview(models: RegistryProviderModel[] | null | undefined): string {
-  const items = Array.isArray(models) ? models : []
-  if (items.length === 0)
-    return '-'
-  return items
-    .slice(0, 3)
-    .map(item => `${item.model}[${item.format || 'openai-compatible'}]${item.enabled ? '' : '(off)'}`)
-    .join(' · ')
-}
-
-function toProviderModeLabel(key: ProviderModelScope): string {
-  if (key === 'provider')
-    return 'Provider'
-  return key === 'llm' ? 'LLM' : 'DocAI'
-}
-
-function toModelFormat(value: unknown): RegistryProviderModel['format'] {
-  return String(value || '').trim().toLowerCase() === 'response'
-    ? 'response'
-    : 'openai-compatible'
-}
-
-function toPricingSourceLabel(source: ProviderModelOption['pricingSource']): string {
-  if (source === 'provider')
-    return 'provider'
-  if (source === 'pricing_table')
-    return 'pricing_table'
-  return 'none'
-}
-
-function toProviderEditorKey(value: unknown): ProviderEditorKey {
-  return value === 'docAi' ? 'docAi' : 'llm'
-}
-
-function getProviderModelError(value: unknown): string {
-  return providerModelError[toProviderEditorKey(value)]
-}
-
-function getProviderModelLoading(value: unknown): boolean {
-  return providerModelLoading[toProviderEditorKey(value)]
-}
-
-function findProviderModelOption(key: ProviderEditorKey, model: string): ProviderModelOption | null {
-  const normalized = String(model || '').trim()
-  if (!normalized)
-    return null
-  return providerModelOptions[key].find(item => item.model === normalized) || null
-}
-
-function buildModelCatalogJsonFromOptions(items: ProviderModelOption[]): string {
-  const options = items.map((item) => {
-    const descriptionParts = [
-      `mode=${toProviderModeLabel(item.mode)}`,
-      item.pricingText,
-    ].filter(Boolean)
-
-    return {
-      id: `${item.provider}:${item.model}`,
-      label: item.label || item.model,
-      provider: item.provider,
-      model: item.model,
-      description: descriptionParts.join(' · '),
-    }
-  })
-
-  return JSON.stringify({
-    groups: [
-      {
-        key: 'managed_llm',
-        label: '平台统一模型目录',
-        options,
-      },
-    ],
-  }, null, 2)
-}
-
-const activeProviderModelOption = computed(() => {
-  if (providerEditorKey.value === 'llm')
-    return findProviderModelOption('llm', providerForm.aiModel)
-  return findProviderModelOption('docAi', providerForm.docAiModel)
-})
-
-const providerEditorModelColumns = [
-  { title: 'Model', dataIndex: 'model' },
-  { title: 'Label', dataIndex: 'label', width: 180 },
-  { title: '价格', dataIndex: 'pricingText', slotName: 'pricingText', width: 210 },
-  { title: '来源', dataIndex: 'pricingSource', slotName: 'pricingSource', width: 120 },
-  { title: '状态', dataIndex: 'selected', slotName: 'selected', width: 110 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 90 },
-]
-
-const registryProviderModelColumns = [
-  { title: 'Model', dataIndex: 'model' },
-  { title: 'Label', dataIndex: 'label', width: 180 },
-  { title: '格式', dataIndex: 'format', slotName: 'format', width: 150 },
-  { title: '启用', dataIndex: 'enabled', slotName: 'enabled', width: 110 },
-  { title: '价格', dataIndex: 'price', slotName: 'price', width: 220 },
-]
-
-function parseManualModelLines(raw: string): string[] {
-  const models = String(raw || '')
-    .split(/\r?\n/g)
-    .map(line => line.trim())
-    .filter(Boolean)
-  return Array.from(new Set(models))
-}
-
-const activeProviderManualModelsText = computed({
-  get() {
-    return providerManualModelText[providerEditorKey.value]
-  },
-  set(value: string) {
-    providerManualModelText[providerEditorKey.value] = String(value || '')
-  },
-})
-
-const providerEditorModelRows = computed(() => {
-  const key = providerEditorKey.value
-  const currentModel = key === 'llm'
-    ? String(providerForm.aiModel || '').trim()
-    : String(providerForm.docAiModel || '').trim()
-  const currentProvider = key === 'llm'
-    ? String(providerForm.aiProvider || '').trim()
-    : String(providerForm.docAiProvider || '').trim()
-  const rows = providerModelOptions[key].map(item => ({
-    ...item,
-    rowKey: item.id || `${item.provider}:${item.model}`,
-    selected: item.model === currentModel,
-  }))
-
-  const seen = new Set(rows.map(item => item.model))
-  const manualModels = parseManualModelLines(providerManualModelText[key])
-  if (currentModel)
-    manualModels.unshift(currentModel)
-
-  for (const model of manualModels) {
-    if (seen.has(model))
-      continue
-    seen.add(model)
-    rows.push({
-      id: `manual:${key}:${model}`,
-      provider: currentProvider || '-',
-      model,
-      label: model,
-      mode: key,
-      inputPricePer1M: null,
-      outputPricePer1M: null,
-      currency: 'USD',
-      pricingSource: 'none',
-      pricingText: '手动录入',
-      rowKey: `manual:${key}:${model}`,
-      selected: model === currentModel,
-    })
-  }
-
-  return rows
-})
-
-const providerRows = computed<ProviderConfigRow[]>(() => {
-  if (!providers.value)
-    return []
-
-  const llmModelOption = findProviderModelOption('llm', providers.value.llm.model || '')
-  const docAiModelOption = findProviderModelOption('docAi', providers.value.docAi.model || '')
-
-  return [
-    {
-      key: 'llm',
-      name: 'LLM',
-      mode: 'LLM',
-      provider: providers.value.llm.provider || '-',
-      model: providers.value.llm.model || '-',
-      modelPriceText: llmModelOption
-        ? `${llmModelOption.pricingText} · ${toPricingSourceLabel(llmModelOption.pricingSource)}`
-        : '价格未返回 · none',
-      modelPoolSize: providerModelOptions.llm.length,
-      modelFetchedAt: providerModelFetchedAt.llm,
-      baseURL: providers.value.llm.baseURL || '-',
-      timeoutMs: Number(providers.value.llm.timeoutMs || 0),
-      maxRetries: Number(providers.value.llm.maxRetries || 0),
-      keyConfigured: Boolean(providers.value.llm.apiKeyConfigured),
-    },
-    {
-      key: 'docAi',
-      name: 'DocAI',
-      mode: 'DocAI',
-      provider: providers.value.docAi.provider || '-',
-      model: providers.value.docAi.model || '-',
-      modelPriceText: docAiModelOption
-        ? `${docAiModelOption.pricingText} · ${toPricingSourceLabel(docAiModelOption.pricingSource)}`
-        : '价格未返回 · none',
-      modelPoolSize: providerModelOptions.docAi.length,
-      modelFetchedAt: providerModelFetchedAt.docAi,
-      baseURL: providers.value.docAi.baseURL || '-',
-      timeoutMs: Number(providers.value.docAi.timeoutMs || 0),
-      maxRetries: Number(providers.value.docAi.maxRetries || 0),
-      keyConfigured: Boolean(providers.value.docAi.apiKeyConfigured),
-    },
-  ]
-})
-
-const channelConfigRows = computed<ChannelConfigRow[]>(() => {
-  if (!providers.value)
-    return []
-  return [
-    {
-      key: 'adminAi',
-      name: 'Admin Agent Channel',
-      enabled: Boolean(providers.value.adminAi.enabled),
-      webTimeoutMs: Number(providers.value.adminAi.webTimeoutMs || 0),
-      maxWebResults: Number(providers.value.adminAi.maxWebResults || 0),
-      maxPageChars: Number(providers.value.adminAi.maxPageChars || 0),
-      keyConfigured: Boolean(providers.value.adminAi.tavilyConfigured),
-    },
-  ]
-})
-
-const activeLoading = computed(() => loadingMap[activeTab.value])
-const activeError = computed(() => errorMap[activeTab.value])
-const providerEditorTitle = computed(() => providerEditorKey.value === 'llm' ? '编辑 LLM 模式配置' : '编辑 DocAI 模式配置')
 
 function formatTime(value?: string | null): string {
   if (!value)
@@ -778,11 +654,11 @@ function formatTime(value?: string | null): string {
   return date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
 }
 
-function toAuditPayloadPreview(payload: Record<string, unknown>): string {
-  const text = JSON.stringify(payload || {})
-  if (text.length <= 140)
-    return text
-  return `${text.slice(0, 140)}...`
+function formatLatency(value?: number | null): string {
+  const latencyMs = Number(value)
+  if (!Number.isFinite(latencyMs) || latencyMs < 0)
+    return '-'
+  return `${Math.round(latencyMs)} ms`
 }
 
 function toPrettyJson(value: unknown): string {
@@ -802,822 +678,1918 @@ function normalizeError(error: any, fallback: string): string {
   return String(error?.data?.message || error?.message || fallback)
 }
 
-function assertApiSuccess<T>(
-  response: ApiResponse<T> | null | undefined,
-  fallback: string,
-): T {
-  if (!response)
-    throw new Error(fallback)
-  if (response.code !== 0)
-    throw new Error(String(response.message || fallback))
-  if (response.data === null || response.data === undefined)
-    throw new Error(String(response.message || fallback))
-  return response.data
-}
-
-function getRegistryChannelsSource(): RegistryChannel[] {
-  const source = channels.value?.channelItems?.length
-    ? channels.value.channelItems
-    : (providers.value?.registry?.channels || [])
-  return source.map(item => ({ ...item }))
-}
-
-function selectScenarioProviderDefaultModel(providerId: string): string {
-  const key = String(providerId || '').trim()
-  if (!key)
-    return ''
-  const provider = (providers.value?.registry?.providers || []).find(item => item.id === key)
-  if (!provider)
-    return ''
-  return provider.models.find(item => item.enabled)?.model || provider.models[0]?.model || ''
-}
-
-function openChannelScenarioEditor(record: RegistryChannel) {
-  const source = getRegistryChannelsSource().find(item => item.key === record.key) || record
-  channelScenarioForm.key = source.key
-  channelScenarioForm.label = source.label
-  channelScenarioForm.description = source.description
-  channelScenarioForm.enabled = Boolean(source.enabled)
-  channelScenarioForm.providerId = String(source.providerId || '').trim()
-  channelScenarioForm.model = String(source.model || '').trim()
-  channelScenarioForm.prompt = String(source.prompt || '')
-
-  if (!channelScenarioForm.providerId) {
-    channelScenarioForm.providerId = providers.value?.registry?.providers?.[0]?.id || ''
-  }
-  if (!channelScenarioForm.model) {
-    channelScenarioForm.model = selectScenarioProviderDefaultModel(channelScenarioForm.providerId)
-  }
-
-  errorMap.channels = ''
-  channelScenarioEditorVisible.value = true
-}
-
-function closeChannelScenarioEditor() {
-  if (providerSaving.value)
-    return
-  channelScenarioEditorVisible.value = false
-}
-
-function onChannelScenarioProviderChange(value: string | number | boolean) {
-  const providerId = String(value || '').trim()
-  channelScenarioForm.providerId = providerId
-  channelScenarioForm.model = selectScenarioProviderDefaultModel(providerId)
-}
-
-function getProviderModelsById(providerId: string): RegistryProviderModel[] {
-  const key = String(providerId || '').trim()
-  if (!key)
-    return []
-  const provider = (providers.value?.registry?.providers || []).find(item => item.id === key)
-  return provider?.models || []
-}
-
-function toProviderPatchItems(items: RegistryProvider[]): Array<Record<string, unknown>> {
-  return items.map(item => ({
-    id: item.id,
-    name: item.name,
-    adapter: item.adapter,
-    provider: item.provider,
-    baseURL: item.baseURL,
-    enabled: item.enabled,
-    timeoutMs: item.timeoutMs,
-    maxRetries: item.maxRetries,
-    apiKeyMode: 'keep',
-    models: (item.models || []).map(model => ({
-      model: model.model,
-      label: model.label,
-      format: toModelFormat(model.format || (item.adapter === 'response' ? 'response' : 'openai-compatible')),
-      enabled: model.enabled,
-      inputPricePer1M: model.inputPricePer1M,
-      outputPricePer1M: model.outputPricePer1M,
-      currency: model.currency,
-      pricingSource: model.pricingSource,
-    })),
-  }))
-}
-
-function getRegistryProvidersSource(): RegistryProvider[] {
-  return (providers.value?.registry?.providers || []).map(item => ({
-    ...item,
-    models: [...(item.models || [])],
-  }))
-}
-
-async function saveRegistryProviders(items: RegistryProvider[], message: string) {
-  await patchProviders({
-    ai: {
-      providers: toProviderPatchItems(items),
-    },
-  }, {
-    message,
-    errorFallback: 'Provider Registry 保存失败。',
-    errorScope: 'providers',
-  })
-}
-
-async function toggleRegistryProviderEnabled(providerId: string, nextEnabled: boolean) {
-  const key = String(providerId || '').trim()
-  if (!key || registryProviderMutating[key])
-    return
-  const source = getRegistryProvidersSource()
-  const index = source.findIndex(item => item.id === key)
-  if (index < 0)
-    return
-
-  registryProviderMutating[key] = true
-  try {
-    source[index] = {
-      ...source[index]!,
-      enabled: nextEnabled,
-    }
-    await saveRegistryProviders(source, `Provider(${key}) 已${nextEnabled ? '启用' : '停用'}。`)
-  }
-  finally {
-    registryProviderMutating[key] = false
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
   }
 }
 
-async function deleteRegistryProvider(providerId: string) {
-  const key = String(providerId || '').trim()
-  if (!key || registryProviderMutating[key])
-    return
-  const source = getRegistryProvidersSource()
-  if (source.length <= 1) {
-    registryProviderTestMessage[key] = '至少保留一个 Provider，无法删除。'
-    return
-  }
-
-  const next = source.filter(item => item.id !== key)
-  if (next.length === source.length)
-    return
-
-  registryProviderMutating[key] = true
-  try {
-    await saveRegistryProviders(next, `Provider(${key}) 已删除。`)
-  }
-  finally {
-    registryProviderMutating[key] = false
-  }
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
 }
 
-function openRegistryProviderModelEditor(providerId: string) {
-  const key = String(providerId || '').trim()
-  if (!key)
-    return
-  const provider = getRegistryProvidersSource().find(item => item.id === key)
-  if (!provider)
-    return
-  registryProviderModelEditorProviderId.value = key
-  registryProviderModelEditorProviderName.value = provider.name || provider.id
-  registryProviderModelEditorRows.value = (provider.models || []).map(item => ({
-    ...item,
-    format: toModelFormat(item.format || (provider.adapter === 'response' ? 'response' : 'openai-compatible')),
-  }))
-  registryProviderModelEditorVisible.value = true
-}
-
-function closeRegistryProviderModelEditor() {
-  if (providerSaving.value)
-    return
-  registryProviderModelEditorVisible.value = false
-}
-
-async function saveRegistryProviderModelEditor() {
-  const key = String(registryProviderModelEditorProviderId.value || '').trim()
-  if (!key || registryProviderMutating[key])
-    return
-
-  const source = getRegistryProvidersSource()
-  const index = source.findIndex(item => item.id === key)
-  if (index < 0) {
-    errorMap.providers = `Provider(${key}) 不存在。`
-    return
-  }
-
-  source[index] = {
-    ...source[index]!,
-    models: registryProviderModelEditorRows.value.map(item => ({
-      ...item,
-      model: String(item.model || '').trim(),
-      label: String(item.label || item.model || '').trim() || String(item.model || '').trim(),
-      format: toModelFormat(item.format),
-      enabled: Boolean(item.enabled),
-    })).filter(item => Boolean(item.model)),
-  }
-
-  if (!source[index]!.models.length) {
-    errorMap.providers = '至少保留一个模型。'
-    return
-  }
-
-  registryProviderMutating[key] = true
-  try {
-    await saveRegistryProviders(source, `Provider(${key}) 模型格式配置已保存。`)
-    if (!errorMap.providers)
-      registryProviderModelEditorVisible.value = false
-  }
-  finally {
-    registryProviderMutating[key] = false
-  }
-}
-
-async function saveChannelScenarioEditor() {
-  const source = getRegistryChannelsSource()
-  const index = source.findIndex(item => item.key === channelScenarioForm.key)
-  if (index < 0) {
-    errorMap.channels = `场景(${channelScenarioForm.key}) 不存在。`
-    return
-  }
-
-  const nextProviderId = String(channelScenarioForm.providerId || '').trim()
-  const nextModel = String(channelScenarioForm.model || '').trim()
-  if (!nextProviderId) {
-    errorMap.channels = '请先选择 Provider。'
-    return
-  }
-  if (!nextModel) {
-    errorMap.channels = '请先填写模型。'
-    return
-  }
-
-  source[index] = {
-    ...source[index]!,
-    enabled: Boolean(channelScenarioForm.enabled),
-    providerId: nextProviderId,
-    model: nextModel,
-    prompt: String(channelScenarioForm.prompt || ''),
-  }
-
-  await patchProviders({
-    ai: {
-      channels: source,
-    },
-  }, {
-    message: `场景(${channelScenarioForm.key}) 配置已保存。`,
-    errorFallback: `场景(${channelScenarioForm.key}) 配置保存失败。`,
-    errorScope: 'channels',
-  })
-
-  if (!errorMap.channels)
-    channelScenarioEditorVisible.value = false
-}
-
-async function pullRegistryProviderModels(providerId: string) {
-  const key = String(providerId || '').trim()
-  if (!key)
-    return
-
-  registryProviderPullLoading[key] = true
-  registryProviderTestMessage[key] = ''
-  try {
-    const response = await $fetch<ApiResponse<ProviderModelsPayload>>(endpoint('/admin/ai/provider-models'), {
-      query: {
-        providerId: key,
-      },
-    })
-    const data = assertApiSuccess(response, `Provider(${key}) 模型拉取失败。`)
-
-    const source = providers.value?.registry?.providers || []
-    const updated = source.map((item) => {
-      if (item.id !== key)
-        return item
-      return {
-        ...item,
-        models: (data.items || []).map(model => ({
-          model: model.model,
-          label: model.label || model.model,
-          format: toModelFormat(item.adapter === 'response' ? 'response' : 'openai-compatible'),
-          enabled: true,
-          inputPricePer1M: model.inputPricePer1M,
-          outputPricePer1M: model.outputPricePer1M,
-          currency: model.currency,
-          pricingSource: model.pricingSource,
-        })),
-      }
-    })
-
-    await saveRegistryProviders(updated, `Provider(${key}) 已拉取并更新 ${(data.items || []).length} 个模型。`)
-  }
-  catch (error: any) {
-    registryProviderTestMessage[key] = normalizeError(error, `Provider(${key}) 模型拉取失败。`)
-  }
-  finally {
-    registryProviderPullLoading[key] = false
-  }
-}
-
-async function testRegistryProvider(providerId: string) {
-  const key = String(providerId || '').trim()
-  if (!key)
-    return
-
-  registryProviderTestLoading[key] = true
-  registryProviderTestMessage[key] = ''
-  try {
-    const response = await $fetch<ApiResponse<{
-      provider: string
-      model: string
-      format: 'openai-compatible' | 'response'
-      latencyMs: number
-      responsePreview: string
-    }>>(endpoint('/admin/ai/providers/test'), {
-      method: 'POST',
-      body: {
-        providerId: key,
-      },
-    })
-    const data = assertApiSuccess(response, `Provider(${key}) 测试失败。`)
-    registryProviderTestMessage[key] = `测试成功：${data.provider}/${data.model}[${data.format}] · ${data.latencyMs}ms · ${toPromptPreview(data.responsePreview)}`
-  }
-  catch (error: any) {
-    registryProviderTestMessage[key] = normalizeError(error, `Provider(${key}) 测试失败。`)
-  }
-  finally {
-    registryProviderTestLoading[key] = false
-  }
-}
-
-async function testChannelScenario(channelKey: PlatformAiChannelKey) {
-  const key = String(channelKey || '').trim()
-  if (!key)
-    return
-
-  registryChannelTestLoading[key] = true
-  registryChannelTestMessage[key] = ''
-  try {
-    const response = await $fetch<ApiResponse<{
-      responsePreview: string
-      latencyMs: number
-      provider: string
-      model: string
-    }>>(endpoint('/admin/ai/channels/test'), {
-      method: 'POST',
-      body: {
-        channelKey: key,
-      },
-    })
-    const data = assertApiSuccess(response, `场景(${key}) 测试失败。`)
-    registryChannelTestMessage[key] = `测试成功：${data.provider}/${data.model} · ${data.latencyMs}ms`
-  }
-  catch (error: any) {
-    registryChannelTestMessage[key] = normalizeError(error, `场景(${key}) 测试失败。`)
-  }
-  finally {
-    registryChannelTestLoading[key] = false
-  }
-}
-
-function applyProvidersToForm(payload: ProvidersPayload | null) {
-  if (!payload)
-    return
-  providerForm.aiProvider = payload.llm.provider || ''
-  providerForm.aiBaseURL = payload.llm.baseURL || ''
-  providerForm.aiModel = payload.llm.model || ''
-  providerForm.aiEmbeddingModel = payload.llm.embeddingModel || ''
-  providerForm.aiModelCatalogJson = payload.llm.modelCatalogJson || ''
-  providerForm.aiModelPricingJson = payload.llm.modelPricingJson || ''
-  providerForm.aiTemperature = Number(payload.llm.temperature ?? 0.2)
-  providerForm.aiTopP = Number(payload.llm.topP ?? 1)
-  providerForm.aiMaxTokens = Number(payload.llm.maxTokens ?? 0)
-  providerForm.aiPresencePenalty = Number(payload.llm.presencePenalty ?? 0)
-  providerForm.aiFrequencyPenalty = Number(payload.llm.frequencyPenalty ?? 0)
-  providerForm.aiTimeoutMs = Number(payload.llm.timeoutMs || 15000)
-  providerForm.aiMaxRetries = Number(payload.llm.maxRetries || 2)
-  providerForm.docAiProvider = payload.docAi.provider || ''
-  providerForm.docAiBaseURL = payload.docAi.baseURL || ''
-  providerForm.docAiModel = payload.docAi.model || ''
-  providerForm.docAiModelPricingJson = payload.docAi.modelPricingJson || ''
-  providerForm.docAiTimeoutMs = Number(payload.docAi.timeoutMs || 15000)
-  providerForm.docAiMaxRetries = Number(payload.docAi.maxRetries || 2)
-  providerForm.adminAiEnabled = Boolean(payload.adminAi.enabled)
-  providerForm.adminAiWebTimeoutMs = Number(payload.adminAi.webTimeoutMs || 12000)
-  providerForm.adminAiMaxWebResults = Number(payload.adminAi.maxWebResults || 5)
-  providerForm.adminAiMaxPageChars = Number(payload.adminAi.maxPageChars || 10000)
-
-  providerForm.aiApiKeyMode = 'keep'
-  providerForm.aiApiKey = ''
-  providerForm.docAiApiKeyMode = 'keep'
-  providerForm.docAiApiKey = ''
-  providerForm.adminAiTavilyApiKeyMode = 'keep'
-  providerForm.adminAiTavilyApiKey = ''
-}
-
-function resetProviderEditorState() {
-  providerForm.aiApiKeyMode = 'keep'
-  providerForm.aiApiKey = ''
-  providerForm.docAiApiKeyMode = 'keep'
-  providerForm.docAiApiKey = ''
-  providerForm.adminAiTavilyApiKeyMode = 'keep'
-  providerForm.adminAiTavilyApiKey = ''
-}
-
-function isProviderApiKeyConfigured(key: ProviderEditorKey): boolean {
-  if (!providers.value)
-    return false
-  if (key === 'llm')
-    return Boolean(providers.value.llm.apiKeyConfigured)
-  return Boolean(providers.value.docAi.apiKeyConfigured)
-}
-
-async function loadProviderModelOptions(
-  key: ProviderEditorKey,
+async function requestApi<T>(
+  path: string,
   options: {
-    assignIfEmpty?: boolean
-    syncCatalogForLlm?: boolean
-    silent?: boolean
+    method?: 'GET' | 'POST' | 'PATCH'
+    query?: Record<string, string | number | undefined>
+    body?: unknown
   } = {},
-) {
-  providerModelLoading[key] = true
-  providerModelError[key] = ''
-  if (!options.silent)
-    errorMap.providers = ''
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const url = new URL(path, 'http://localhost')
+  for (const [key, value] of Object.entries(options.query || {})) {
+    if (value === undefined || value === '')
+      continue
+    url.searchParams.set(key, String(value))
+  }
 
-  try {
-    const response = await $fetch<ApiResponse<ProviderModelsPayload>>(endpoint('/admin/ai/provider-models'), {
-      query: {
-        scope: key,
+  const headers = new Headers()
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(`${url.pathname}${url.search}`, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0 || payload.data === null || payload.data === undefined)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
+function dedupeStrings(items: string[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const item of items) {
+    const value = String(item || '').trim()
+    if (!value || seen.has(value))
+      continue
+    seen.add(value)
+    result.push(value)
+  }
+  return result
+}
+
+function normalizeProviderCapability(value: unknown): ProviderCapability | null {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'llm' || normalized === 'search' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'realtime' || normalized === 'voice')
+    return normalized
+  if (normalized === 'embeddings' || normalized === 'embedding-only' || normalized === 'embedding_only' || normalized === 'vector')
+    return 'embedding'
+  if (normalized === 'speech-to-text' || normalized === 'speech_to_text' || normalized === 'transcription')
+    return 'asr'
+  if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis')
+    return 'tts'
+  if (normalized === 'realtime' || normalized === 'realtime-voice' || normalized === 'voice-realtime' || normalized === 'voice_realtime' || normalized === 'qwen-realtime' || normalized === 'coze-voice')
+    return 'realtime'
+  return null
+}
+
+function providerTypeDefaultCapability(type: ProviderType): ProviderCapability {
+  return providerTypeOptions.find(item => item.value === type)?.capability || 'llm'
+}
+
+function resolveProviderCapability(type: ProviderType, value?: unknown): ProviderCapability {
+  if (providerTypeDefaultCapability(type) === 'search')
+    return 'search'
+  if (providerTypeDefaultCapability(type) === 'voice')
+    return 'voice'
+
+  const explicit = normalizeProviderCapability(value)
+  if (explicit && explicit !== 'search')
+    return explicit
+  return 'llm'
+}
+
+function providerCapabilityLabel(value: ProviderCapability): string {
+  return providerCapabilityOptions.find(item => item.value === value)?.label || value
+}
+
+function providerCapabilityHint(value: ProviderCapability): string {
+  return providerCapabilityOptions.find(item => item.value === value)?.hint || ''
+}
+
+function modelCapabilityLabel(value: ModelCapability): string {
+  return modelCapabilityOptions.find(item => item.value === value)?.label || value
+}
+
+function modelCapabilityColor(value: ModelCapability): string {
+  return modelCapabilityOptions.find(item => item.value === value)?.color || 'gray'
+}
+
+function normalizeModelCapability(value: unknown): ModelCapability | null {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'llm' || normalized === 'text-generation')
+    return 'chat'
+  if (normalized === 'chat' || normalized === 'vision' || normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'image-gen' || normalized === 'video-gen')
+    return normalized
+  if (normalized === 'speech-to-text' || normalized === 'speech_to_text' || normalized === 'transcription' || normalized === 'transcribe')
+    return 'asr'
+  if (normalized === 'text-to-speech' || normalized === 'text_to_speech' || normalized === 'speech-synthesis' || normalized === 'speech_synthesis')
+    return 'tts'
+  if (normalized === 'image' || normalized === 'image-generation' || normalized === 'image_generation')
+    return 'image-gen'
+  if (normalized === 'video' || normalized === 'video-generation' || normalized === 'video_generation')
+    return 'video-gen'
+  return null
+}
+
+function inferModelCapabilities(model: string, label = '', rawText = ''): ModelCapability[] {
+  const text = `${model} ${label} ${rawText}`.toLowerCase()
+  const result = new Set<ModelCapability>()
+  if (/(?:^|[-_:./\s])(?:text-)?embed(?:ding)?(?:[-_:./\s]|$)|embedding|bge|gte|e5-|multimodal-embedding/.test(text))
+    result.add('embedding')
+  if (/(?:^|[-_:./\s])(?:whisper|transcribe|transcription|speech-to-text|asr|audio-transcriptions?|gpt-4o-(?:mini-)?transcribe)(?:[-_:./\s]|$)/.test(text))
+    result.add('asr')
+  if (/(?:^|[-_:./\s])(?:tts|text-to-speech|speech-synthesis|speech-generation|gpt-4o-(?:mini-)?tts)(?:[-_:./\s]|$)/.test(text))
+    result.add('tts')
+  if (!result.has('embedding') && !result.has('asr') && !result.has('tts') && /(?:^|[-_:./\s])(?:qwen[-_.:]?vl|vl|vision|gpt-4o|gpt-4\.1|gpt-4[-_.:]?vision|gemini[-_.:]?pro[-_.:]?vision)(?:[-_:./\s]|$)/.test(text))
+    result.add('vision')
+  if (/wanx|(?:^|[-_:./\s])(?:dall[-_.:]?e|gpt-image|image-generation|stable-diffusion|flux|cogview|t2i)(?:[-_:./\s]|$)/.test(text))
+    result.add('image-gen')
+  if (/(?:^|[-_:./\s])(?:sora|kling|cogvideo|video-generation|text-to-video|image-to-video|t2v|i2v|wan.*video)(?:[-_:./\s]|$)/.test(text))
+    result.add('video-gen')
+  if (!result.has('embedding') && !result.has('image-gen') && !result.has('video-gen') && !result.has('asr') && !result.has('tts'))
+    result.add('chat')
+  return modelCapabilityOptions.map(item => item.value).filter(item => result.has(item))
+}
+
+function inferEmbeddingApiStyleForModel(model: string, providerType: ProviderType, fallback: EmbeddingApiStyle = 'openai-compatible-text'): EmbeddingApiStyle {
+  const normalized = String(model || '').toLowerCase()
+  if (
+    providerType === 'dashscope-bailian'
+    && (
+      normalized.includes('tongyi-embedding-vision')
+      || normalized.includes('embedding-vision')
+      || normalized.includes('vl-embedding')
+      || normalized.includes('multimodal-embedding')
+      || normalized.includes('qwen3-vl-embedding')
+    )
+  ) {
+    return 'bailian-multimodal'
+  }
+  return fallback
+}
+
+function normalizeModelCapabilities(raw: unknown, fallback: ModelCapability[]): ModelCapability[] {
+  const values = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(/[,|\s]+/g)
+      : []
+  const normalized = values
+    .map(item => normalizeModelCapability(item))
+    .filter((item): item is ModelCapability => Boolean(item))
+  const source = normalized.length > 0 ? normalized : fallback
+  const sourceSet = new Set(source)
+  return modelCapabilityOptions.map(item => item.value).filter(item => sourceSet.has(item))
+}
+
+function modelHasCapability(item: Pick<ProviderModelItem, 'capabilities'>, capability: ModelCapability): boolean {
+  return Array.isArray(item.capabilities) && item.capabilities.includes(capability)
+}
+
+function primaryModelCapability(item: Pick<ProviderPullItem, 'capabilities'>): ModelCapability | 'other' {
+  return Array.isArray(item.capabilities) ? item.capabilities[0] || 'other' : 'other'
+}
+
+function sanitizeModelFormatForProvider(providerType: ProviderType, format: ModelFormat): ModelFormat {
+  return providerType === 'dashscope-bailian' || providerType === 'coze-voice' ? 'openai-compatible' : format
+}
+
+function cloneModelItem(item: ProviderModelItem): ProviderModelItem {
+  return {
+    ...item,
+    capabilities: [...item.capabilities],
+  }
+}
+
+function cloneProviderItem(item: ProviderDraftItem): ProviderDraftItem {
+  return {
+    ...item,
+    voice: normalizeProviderVoiceDraft(item.voice || createEmptyProviderDraft().voice),
+    models: item.models.map(model => cloneModelItem(model)),
+  }
+}
+
+function normalizeProviderVoiceDraft(raw?: Partial<ProviderVoiceConfig>): ProviderVoiceConfig {
+  const source = raw || {}
+  const qwen = source.qwen || { realtimeProfiles: [], asrProfiles: [], ttsProfiles: [] }
+  const coze = source.coze || { agents: [], voices: [], roomConfig: { createRoomOnServer: true, roomNamePrefix: 'WinLoop 答辩' } }
+  const billing = source.billing || {
+    realtimeStartupUnits: 2,
+    realtimeUnitsPerMinute: 1,
+    asrUnitsPerMinute: 1,
+    ttsUnitsPer1KChars: 1,
+    videoFrameMultiplier: 1,
+    judgeMultiplierEnabled: true,
+    providerMarkupMultiplier: 1,
+  }
+  return {
+    botId: String(source.botId || '').trim(),
+    connectorId: String(source.connectorId || '').trim(),
+    voiceId: String(source.voiceId || '').trim(),
+    authMode: source.authMode === 'oauth' ? 'oauth' : 'pat',
+    qwen: {
+      realtimeProfiles: (qwen.realtimeProfiles || []).map((item, index) => ({
+        id: String(item.id || `qwen_realtime_${index + 1}`).trim(),
+        name: String(item.name || `千问实时 ${index + 1}`).trim(),
+        model: String(item.model || 'qwen3.5-omni-plus-realtime').trim(),
+        baseWsUrl: String(item.baseWsUrl || '').trim(),
+        workspaceId: String(item.workspaceId || '').trim(),
+        appId: String(item.appId || '').trim(),
+        defaultVoiceId: String(item.defaultVoiceId || '').trim(),
+        asrProfileId: String(item.asrProfileId || '').trim(),
+        ttsProfileId: String(item.ttsProfileId || '').trim(),
+        vadMode: item.vadMode === 'manual' ? 'manual' : (item.vadMode === 'semantic_vad' ? 'semantic_vad' : 'server_vad'),
+        frameIntervalMs: Math.max(250, Math.min(5000, Math.trunc(Number(item.frameIntervalMs || 1000)))),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+      asrProfiles: (qwen.asrProfiles || []).map((item, index) => ({
+        id: String(item.id || `qwen_asr_${index + 1}`).trim(),
+        name: String(item.name || `千问 ASR ${index + 1}`).trim(),
+        model: String(item.model || 'qwen3-asr-flash-realtime').trim(),
+        language: String(item.language || 'zh-CN').trim(),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+      ttsProfiles: (qwen.ttsProfiles || []).map((item, index) => ({
+        id: String(item.id || `qwen_tts_${index + 1}`).trim(),
+        name: String(item.name || `千问 TTS ${index + 1}`).trim(),
+        model: String(item.model || 'qwen-tts-realtime').trim(),
+        voiceId: String(item.voiceId || '').trim(),
+        sampleRate: Math.max(8000, Math.min(48000, Math.trunc(Number(item.sampleRate || 24000)))),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+    },
+    coze: {
+      agents: (coze.agents || []).map((item, index) => ({
+        id: String(item.id || `coze_agent_${index + 1}`).trim(),
+        name: String(item.name || `Coze 智能体 ${index + 1}`).trim(),
+        judgeType: String(item.judgeType || 'custom').trim(),
+        botId: String(item.botId || '').trim(),
+        connectorId: String(item.connectorId || '').trim(),
+        defaultVoiceId: String(item.defaultVoiceId || '').trim(),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+      voices: (coze.voices || []).map((item, index) => ({
+        id: String(item.id || `coze_voice_${index + 1}`).trim(),
+        name: String(item.name || `Coze 音色 ${index + 1}`).trim(),
+        voiceId: String(item.voiceId || '').trim(),
+        style: String(item.style || '').trim(),
+        enabled: item.enabled !== false,
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index,
+      })),
+      roomConfig: {
+        createRoomOnServer: coze.roomConfig?.createRoomOnServer !== false,
+        roomNamePrefix: String(coze.roomConfig?.roomNamePrefix || 'WinLoop 答辩').trim(),
       },
-    })
-    const data = assertApiSuccess(response, `${toProviderModeLabel(key)} 模型拉取失败。`)
-
-    const items = data.items || []
-    providerModelOptions[key] = items
-    providerModelFetchedAt[key] = data.fetchedAt || new Date().toISOString()
-
-    if (options.assignIfEmpty) {
-      if (key === 'llm' && !providerForm.aiModel.trim() && items[0]?.model)
-        providerForm.aiModel = items[0].model
-      if (key === 'docAi' && !providerForm.docAiModel.trim() && items[0]?.model)
-        providerForm.docAiModel = items[0].model
-    }
-
-    if (key === 'llm' && options.syncCatalogForLlm)
-      providerForm.aiModelCatalogJson = buildModelCatalogJsonFromOptions(items)
-
-    if (!options.silent) {
-      providerSaveMessage.value = `${toProviderModeLabel(key)} 已自动拉取 ${items.length} 个模型。`
-    }
-  }
-  catch (error: any) {
-    const message = normalizeError(error, `${toProviderModeLabel(key)} 模型拉取失败。`)
-    providerModelError[key] = message
-    if (!options.silent)
-      providerSaveMessage.value = message
-  }
-  finally {
-    providerModelLoading[key] = false
+    },
+    billing: {
+      realtimeStartupUnits: Math.max(0, Math.trunc(Number(billing.realtimeStartupUnits || 2))),
+      realtimeUnitsPerMinute: Math.max(0, Math.trunc(Number(billing.realtimeUnitsPerMinute || 1))),
+      asrUnitsPerMinute: Math.max(0, Math.trunc(Number(billing.asrUnitsPerMinute || 1))),
+      ttsUnitsPer1KChars: Math.max(0, Math.trunc(Number(billing.ttsUnitsPer1KChars || 1))),
+      videoFrameMultiplier: Math.max(1, Number(billing.videoFrameMultiplier || 1)),
+      judgeMultiplierEnabled: billing.judgeMultiplierEnabled !== false,
+      providerMarkupMultiplier: Math.max(1, Number(billing.providerMarkupMultiplier || 1)),
+    },
   }
 }
 
-async function patchProviders(
-  body: Record<string, unknown>,
-  options: {
-    message: string
-    errorFallback: string
-    errorScope?: AiConsoleTab
-  },
-) {
-  providerSaving.value = true
-  providerSaveMessage.value = ''
-  errorMap.providers = ''
-  errorMap.channels = ''
+function createEmptyProviderDraft(): ProviderDraftItem {
+  return {
+    id: '',
+    name: '',
+    type: 'newapi',
+    capability: 'llm',
+    adapter: 'openai-compatible',
+    provider: 'newapi',
+    clientType: 'langchain',
+    baseURL: '',
+    enabled: true,
+    timeoutMs: 15000,
+    maxRetries: 2,
+    fetchedAt: '',
+    apiKeyConfigured: false,
+    embeddingApiStyle: 'openai-compatible-text',
+    embeddingDimensions: 1024,
+    voice: {
+      botId: '',
+      connectorId: '',
+      voiceId: '',
+      authMode: 'pat',
+      qwen: {
+        realtimeProfiles: [],
+        asrProfiles: [],
+        ttsProfiles: [],
+      },
+      coze: {
+        agents: [],
+        voices: [],
+        roomConfig: {
+          createRoomOnServer: true,
+          roomNamePrefix: 'WinLoop 答辩',
+        },
+      },
+      billing: {
+        realtimeStartupUnits: 2,
+        realtimeUnitsPerMinute: 1,
+        asrUnitsPerMinute: 1,
+        ttsUnitsPer1KChars: 1,
+        videoFrameMultiplier: 1,
+        judgeMultiplierEnabled: true,
+        providerMarkupMultiplier: 1,
+      },
+    },
+    models: [],
+    apiKeyMode: 'keep',
+    apiKey: '',
+  }
+}
+
+function normalizeProviderTypeLabel(type: ProviderType): string {
+  return providerTypeOptions.find(item => item.value === type)?.label || type
+}
+
+function normalizePricing(item: Pick<ProviderModelItem, 'providerInputPricePer1M' | 'providerOutputPricePer1M' | 'manualInputPricePer1M' | 'manualOutputPricePer1M' | 'manualPriceOverride'>): {
+  inputPricePer1M: number | null
+  outputPricePer1M: number | null
+  pricingSource: PricingSource
+} {
+  const inputPricePer1M = item.manualPriceOverride
+    ? (item.manualInputPricePer1M ?? item.providerInputPricePer1M)
+    : (item.providerInputPricePer1M ?? item.manualInputPricePer1M)
+  const outputPricePer1M = item.manualPriceOverride
+    ? (item.manualOutputPricePer1M ?? item.providerOutputPricePer1M)
+    : (item.providerOutputPricePer1M ?? item.manualOutputPricePer1M)
+  const hasManual = item.manualInputPricePer1M !== null || item.manualOutputPricePer1M !== null
+  const hasProvider = item.providerInputPricePer1M !== null || item.providerOutputPricePer1M !== null
+  const pricingSource: PricingSource = inputPricePer1M === null && outputPricePer1M === null
+    ? 'none'
+    : (item.manualPriceOverride && hasManual)
+        ? 'manual'
+        : hasProvider
+          ? 'provider'
+          : hasManual
+            ? 'manual'
+            : 'none'
+  return {
+    inputPricePer1M,
+    outputPricePer1M,
+    pricingSource,
+  }
+}
+
+function normalizeModelItem(item: ProviderModelItem, providerType: ProviderType = providerEditorForm.type): ProviderModelItem {
+  const pricing = normalizePricing(item)
+  const model = String(item.model || '').trim()
+  const label = String(item.label || item.model || '').trim() || model
+  const capabilities = normalizeModelCapabilities(item.capabilities, inferModelCapabilities(model, label))
+  const isEmbedding = capabilities.includes('embedding')
+  return {
+    ...item,
+    model,
+    label,
+    format: sanitizeModelFormatForProvider(providerType, item.format || 'openai-compatible'),
+    capabilities,
+    clientType: 'langchain',
+    embeddingApiStyle: isEmbedding ? inferEmbeddingApiStyleForModel(model, providerType, item.embeddingApiStyle || 'openai-compatible-text') : undefined,
+    embeddingDimensions: isEmbedding ? Number(item.embeddingDimensions || 1024) : undefined,
+    currency: String(item.currency || 'USD').trim().toUpperCase() || 'USD',
+    inputPricePer1M: pricing.inputPricePer1M,
+    outputPricePer1M: pricing.outputPricePer1M,
+    pricingSource: pricing.pricingSource,
+  }
+}
+
+function buildPriceText(item: Pick<ProviderModelItem, 'inputPricePer1M' | 'outputPricePer1M' | 'currency'>): string {
+  if (item.inputPricePer1M === null && item.outputPricePer1M === null)
+    return defaultModelPricingText
+  const input = item.inputPricePer1M === null ? '-' : `${item.currency} ${Number(item.inputPricePer1M).toFixed(4)}/1M`
+  const output = item.outputPricePer1M === null ? '-' : `${item.currency} ${Number(item.outputPricePer1M).toFixed(4)}/1M`
+  return `输入 ${input} · 输出 ${output}`
+}
+
+function buildImportedPriceText(item: Pick<ProviderModelItem, 'providerInputPricePer1M' | 'providerOutputPricePer1M' | 'currency'>): string {
+  if (item.providerInputPricePer1M === null && item.providerOutputPricePer1M === null)
+    return defaultModelPricingText
+  const input = item.providerInputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerInputPricePer1M).toFixed(4)}/1M`
+  const output = item.providerOutputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerOutputPricePer1M).toFixed(4)}/1M`
+  return `输入 ${input} · 输出 ${output}`
+}
+
+function sceneModelEmptyHint(): string {
+  if (sceneEditorForm.providerIds.length === 0)
+    return '请先绑定可服务该场景的 Provider。'
+  const requiredCapability = modelCapabilityLabel(sceneRequiredCapability(sceneEditorForm.key))
+  const embeddingApiStyle = sceneEmbeddingApiStyleFilter(sceneEditorForm.key)
+  if (sceneEditorForm.key === 'knowledge_embedding') {
+    return `当前场景需要 ${requiredCapability} 模型，且接入类型必须为 OpenAI 兼容文本；DashScope 的 tongyi-embedding-vision-plus 属于百炼原生多模态，请改用 text-embedding-v4 等文本向量模型。`
+  }
+  if (sceneEditorForm.key === 'knowledge_visual_embedding') {
+    return `当前场景需要 ${requiredCapability} 模型，且接入类型必须为百炼原生多模态；可选择 tongyi-embedding-vision-plus。`
+  }
+  return `当前绑定 Provider 中没有启用的 ${requiredCapability}${embeddingApiStyle ? ` / ${embeddingApiStyle}` : ''} 模型，请先在 Provider 模型池中新增或启用匹配模型。`
+}
+
+function normalizePullItem(item: ProviderPullItem): ProviderPullItem {
+  const model = String(item.model || '').trim()
+  const label = String(item.label || model).trim() || model
+  return {
+    ...item,
+    model,
+    label,
+    capabilities: normalizeModelCapabilities(item.capabilities, inferModelCapabilities(model, label, item.rawText || '')),
+    currency: String(item.currency || 'USD').trim().toUpperCase() || 'USD',
+    rawText: String(item.rawText || ''),
+  }
+}
+
+function providerCapabilitySupportsModels(capability: ProviderCapability): boolean {
+  return capability !== 'search' && capability !== 'voice' && capability !== 'realtime'
+}
+
+function normalizeProviderDraft(provider: ProviderDraftItem): ProviderDraftItem {
+  const capability = resolveProviderCapability(provider.type, provider.capability)
+  const models = providerCapabilitySupportsModels(capability)
+    ? provider.models.map(item => normalizeModelItem(item, provider.type)).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+    : []
+  const hasApiKey = provider.apiKeyMode === 'clear'
+    ? false
+    : (provider.apiKeyConfigured || Boolean(String(provider.apiKey || '').trim()))
+  return {
+    ...provider,
+    capability,
+    provider: String(provider.provider || provider.type).trim() || provider.type,
+    name: String(provider.name || normalizeProviderTypeLabel(provider.type)).trim() || normalizeProviderTypeLabel(provider.type),
+    baseURL: String(provider.baseURL || '').trim(),
+    apiKeyConfigured: hasApiKey,
+    voice: normalizeProviderVoiceDraft(provider.voice),
+    models,
+  }
+}
+
+const modelSeriesRules = [
+  { key: 'qwen', label: 'Qwen 系列', patterns: [/qwen/i, /qwq/i] },
+  { key: 'deepseek', label: 'DeepSeek 系列', patterns: [/deepseek/i] },
+  { key: 'claude', label: 'Claude 系列', patterns: [/claude/i] },
+  { key: 'gemini', label: 'Gemini 系列', patterns: [/gemini/i] },
+  { key: 'openai', label: 'OpenAI 系列', patterns: [/\bgpt\b/i, /\bo1\b/i, /\bo3\b/i, /\bo4\b/i, /text-embedding/i] },
+  { key: 'llama', label: 'Llama 系列', patterns: [/llama/i] },
+  { key: 'mistral', label: 'Mistral 系列', patterns: [/mistral/i] },
+  { key: 'glm', label: 'GLM 系列', patterns: [/glm/i, /chatglm/i, /cogview/i, /cogvideox/i, /cogito/i] },
+  { key: 'doubao', label: 'Doubao 系列', patterns: [/doubao/i] },
+  { key: 'moonshot', label: 'Moonshot 系列', patterns: [/moonshot/i, /kimi/i] },
+] as const
+
+function formatSeriesLabel(token: string): string {
+  const normalized = String(token || '').trim()
+  if (!normalized)
+    return '其他模型'
+  if (/^[a-z0-9]+$/i.test(normalized) && normalized.length <= 4)
+    return `${normalized.toUpperCase()} 系列`
+  return `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)} 系列`
+}
+
+function resolveModelSeries(item: Pick<ProviderPullItem, 'model' | 'label'>): { key: string, label: string } {
+  const searchText = `${item.model} ${item.label}`.toLowerCase()
+  const matchedRule = modelSeriesRules.find(rule => rule.patterns.some(pattern => pattern.test(searchText)))
+  if (matchedRule)
+    return { key: matchedRule.key, label: matchedRule.label }
+
+  const firstToken = String(item.model || item.label || '')
+    .trim()
+    .split(/[:/_\s.-]+/g)
+    .find(Boolean)
+  if (!firstToken)
+    return { key: 'other', label: '其他模型' }
+  return {
+    key: `series:${firstToken.toLowerCase()}`,
+    label: formatSeriesLabel(firstToken),
+  }
+}
+
+function formatPullPricingSource(source: ProviderPullItem['pricingSource']): string {
+  if (source === 'provider')
+    return '接口返回'
+  if (source === 'pricing_table')
+    return '价格表'
+  return '未返回'
+}
+
+function mergePulledModels(currentItems: ProviderModelItem[], pulled: ProviderPullItem[]): ProviderModelItem[] {
+  const currentMap = new Map(currentItems.map(item => [item.model, normalizeModelItem(item)]))
+  const result: ProviderModelItem[] = []
+
+  for (const item of pulled) {
+    const current = currentMap.get(item.model)
+    const next = normalizeModelItem({
+      model: item.model,
+      label: current?.label || item.label || item.model,
+      format: current?.format || 'openai-compatible',
+      capabilities: normalizeModelCapabilities(current?.capabilities, item.capabilities),
+      clientType: 'langchain',
+      embeddingApiStyle: current?.embeddingApiStyle || inferEmbeddingApiStyleForModel(item.model, providerEditorForm.type),
+      embeddingDimensions: current?.embeddingDimensions || (item.capabilities.includes('embedding') ? 1024 : undefined),
+      enabled: current?.enabled ?? true,
+      providerInputPricePer1M: item.inputPricePer1M,
+      providerOutputPricePer1M: item.outputPricePer1M,
+      manualInputPricePer1M: current?.manualInputPricePer1M ?? null,
+      manualOutputPricePer1M: current?.manualOutputPricePer1M ?? null,
+      inputPricePer1M: current?.inputPricePer1M ?? item.inputPricePer1M,
+      outputPricePer1M: current?.outputPricePer1M ?? item.outputPricePer1M,
+      currency: current?.currency || item.currency || 'USD',
+      pricingSource: current?.pricingSource || (item.pricingSource === 'pricing_table' ? 'provider' : item.pricingSource),
+      manualPriceOverride: current?.manualPriceOverride ?? false,
+    })
+    result.push(next)
+    currentMap.delete(item.model)
+  }
+
+  for (const item of currentMap.values())
+    result.push(normalizeModelItem(item))
+
+  return result.sort((a, b) => a.model.localeCompare(b.model, 'en'))
+}
+
+const providerIdMap = computed(() => new Map(providers.value.map(item => [item.id, item])))
+
+const providerRows = computed(() => {
+  return [...providers.value].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+})
+
+const routableProviderOptions = computed(() => {
+  return providers.value
+    .filter(item => item.capability !== 'search')
+    .map(item => ({
+      id: item.id,
+      name: item.name,
+      provider: item.provider,
+      capability: item.capability,
+      enabled: item.enabled,
+    }))
+})
+
+const providerEditorSupportsModels = computed(() => providerCapabilitySupportsModels(providerEditorForm.capability))
+const providerEditorCanRunChatTest = computed(() => providerEditorForm.capability === 'llm')
+const providerEditorCanRunVoiceTest = computed(() => providerEditorForm.capability === 'voice' || providerEditorForm.capability === 'realtime')
+const providerEditorCanRunTtsTest = computed(() => providerEditorForm.capability === 'tts')
+const providerEditorCanRunProviderTest = computed(() => providerEditorCanRunChatTest.value || providerEditorCanRunVoiceTest.value || providerEditorCanRunTtsTest.value)
+const providerEditorCapabilityLocked = computed(() => providerTypeDefaultCapability(providerEditorForm.type) === 'search' || providerTypeDefaultCapability(providerEditorForm.type) === 'voice')
+const providerEditorCapabilityOptions = computed(() => {
+  const values: ProviderCapability[] = providerEditorCapabilityLocked.value
+    ? [providerTypeDefaultCapability(providerEditorForm.type)]
+    : ['llm', 'embedding', 'asr', 'tts', 'realtime']
+  return providerCapabilityOptions.filter(item => values.includes(item.value))
+})
+const providerEditorTypeGuide = computed(() => providerTypeGuides[providerEditorForm.type] || providerTypeGuides['openai-compatible'])
+
+const providerEditorModelRows = computed(() => {
+  return [...providerEditorForm.models].map(item => normalizeModelItem(item)).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+})
+
+const currentModelPoolNameSet = computed(() => new Set(providerEditorForm.models.map(item => item.model)))
+
+const normalizedModelPullFilterKeyword = computed(() => String(modelPullFilterKeyword.value || '').trim().toLowerCase())
+
+function modelPullSearchText(item: ProviderPullItem): string {
+  return [
+    item.model,
+    item.label,
+    item.provider,
+    item.pricingText,
+    item.sourceEndpoint,
+    item.rawText,
+    ...item.capabilities,
+    ...item.capabilities.map(capability => modelCapabilityLabel(capability)),
+  ].filter(Boolean).join(' ').toLowerCase()
+}
+
+function matchesModelPullFilter(item: ProviderPullItem, keyword: string): boolean {
+  if (!keyword)
+    return true
+  return modelPullSearchText(item).includes(keyword)
+}
+
+const filteredPulledModels = computed(() => {
+  const keyword = normalizedModelPullFilterKeyword.value
+  const capability = modelPullCapabilityFilter.value
+  return pulledProviderModels.value.filter((item) => {
+    if (capability !== 'all' && !item.capabilities.includes(capability))
+      return false
+    return matchesModelPullFilter(item, keyword)
+  })
+})
+
+const modelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
+  const groups = new Map<string, ModelPullSeriesGroup>()
+  for (const item of filteredPulledModels.value) {
+    const capability = primaryModelCapability(item)
+    const series = resolveModelSeries(item)
+    const key = `${capability}:${series.key}`
+    const capabilityLabel = capability === 'other' ? '其他' : modelCapabilityLabel(capability)
+    const currentGroup = groups.get(key) || { key, label: `${capabilityLabel} / ${series.label}`, capability, items: [] }
+    currentGroup.items.push(item)
+    groups.set(key, currentGroup)
+  }
+  return Array.from(groups.values()).map(group => ({
+    ...group,
+    items: [...group.items].sort((a, b) => a.model.localeCompare(b.model, 'en')),
+  }))
+})
+
+const filteredModelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
+  return modelPullSeriesGroups.value
+})
+
+const filteredPulledModelCount = computed(() => filteredModelPullSeriesGroups.value.reduce((count, group) => count + group.items.length, 0))
+const selectedPulledModelSet = computed(() => new Set(selectedPulledModels.value))
+const selectedPulledModelCount = computed(() => selectedPulledModels.value.length)
+const allPulledModelsChecked = computed(() => filteredPulledModels.value.length > 0 && filteredPulledModels.value.every(item => selectedPulledModelSet.value.has(item.model)))
+const allPulledModelsIndeterminate = computed(() => {
+  const selectedCount = filteredPulledModels.value.filter(item => selectedPulledModelSet.value.has(item.model)).length
+  return selectedCount > 0 && selectedCount < filteredPulledModels.value.length
+})
+const pulledEmbeddingCandidateCount = computed(() => pulledProviderModels.value.filter(item => item.capabilities.includes('embedding')).length)
+
+const sceneDefinitionMap = computed(() => new Map(sceneDefinitions.value.map(item => [item.key, item])))
+
+function sceneDefinitionForKey(key: PlatformAiChannelKey): SceneDefinition | null {
+  return sceneDefinitionMap.value.get(key) || null
+}
+
+function sceneRequiredCapability(key: PlatformAiChannelKey): ModelCapability {
+  return sceneDefinitionForKey(key)?.requiredModelCapability || 'chat'
+}
+
+function sceneDefaultTestMode(key: PlatformAiChannelKey): SceneTestMode {
+  const capability = sceneRequiredCapability(key)
+  if (capability === 'asr')
+    return 'asr'
+  if (capability === 'tts')
+    return 'tts'
+  if (capability === 'embedding')
+    return 'embedding'
+  return 'chat'
+}
+
+function sceneAllowedProviderCapabilities(key: PlatformAiChannelKey): ProviderCapability[] {
+  return sceneDefinitionForKey(key)?.allowedProviderCapabilities || ['llm']
+}
+
+function sceneEmbeddingApiStyleFilter(key: PlatformAiChannelKey): EmbeddingApiStyle | null {
+  return sceneDefinitionForKey(key)?.embeddingApiStyle || null
+}
+
+function sceneCanRunTest(scene: Pick<SceneItem, 'key' | 'providerIds'>): boolean {
+  const capability = sceneRequiredCapability(scene.key)
+  if (capability === 'embedding') {
+    return scene.providerIds.some((id) => {
+      const provider = providerIdMap.value.get(id)
+      return provider?.capability === 'embedding' || provider?.capability === 'llm'
+    })
+  }
+  if (capability === 'asr') {
+    return scene.providerIds.some((id) => {
+      const provider = providerIdMap.value.get(id)
+      return provider?.capability === 'asr' || provider?.capability === 'voice' || provider?.capability === 'realtime' || provider?.capability === 'llm'
+    })
+  }
+  if (capability === 'tts') {
+    return scene.providerIds.some((id) => {
+      const provider = providerIdMap.value.get(id)
+      return provider?.capability === 'tts' || provider?.capability === 'voice' || provider?.capability === 'realtime' || provider?.capability === 'llm'
+    })
+  }
+  if (capability !== 'chat')
+    return false
+  return scene.providerIds.some(id => providerIdMap.value.get(id)?.capability === 'llm')
+}
+
+const sceneTestProviderOptions = computed(() => {
+  const scene = sceneTestTarget.value
+  if (!scene)
+    return []
+  const providerSet = new Set(scene.providerIds)
+  return providers.value
+    .filter(item => providerSet.has(item.id) && providerCanServeScene(item, scene.key))
+    .map(item => ({
+      id: item.id,
+      name: item.name,
+      provider: item.provider,
+      capability: item.capability,
+      enabled: item.enabled,
+    }))
+})
+
+const sceneTestModelOptions = computed(() => {
+  const scene = sceneTestTarget.value
+  if (!scene || !sceneTestForm.providerId)
+    return []
+  const capability = sceneRequiredCapability(scene.key)
+  const provider = providerIdMap.value.get(sceneTestForm.providerId)
+  if (!provider || provider.capability === 'voice' || provider.capability === 'realtime')
+    return []
+  return provider.models
+    .filter(item => item.enabled && modelHasCapability(item, capability) && (!sceneEmbeddingApiStyleFilter(scene.key) || item.embeddingApiStyle === sceneEmbeddingApiStyleFilter(scene.key)))
+    .map(item => ({
+      model: item.model,
+      label: item.label,
+      priceText: buildPriceText(item),
+    }))
+})
+
+const sceneTestProfileOptions = computed(() => {
+  const scene = sceneTestTarget.value
+  const provider = sceneTestForm.providerId ? providerIdMap.value.get(sceneTestForm.providerId) : null
+  if (!scene || !provider)
+    return []
+  if (sceneTestForm.testMode === 'asr') {
+    return (provider.voice?.qwen?.asrProfiles || [])
+      .filter(item => item.enabled)
+      .map(item => ({
+        id: item.id,
+        label: `${item.name || item.id} · ${item.model}`,
+      }))
+  }
+  if (sceneTestForm.testMode === 'tts') {
+    const qwenProfiles = (provider.voice?.qwen?.ttsProfiles || [])
+      .filter(item => item.enabled)
+      .map(item => ({
+        id: item.id,
+        label: `${item.name || item.id} · ${item.model}${item.voiceId ? ` · ${item.voiceId}` : ''}`,
+      }))
+    const cozeVoices = (provider.voice?.coze?.voices || [])
+      .filter(item => item.enabled)
+      .map(item => ({
+        id: item.id,
+        label: `${item.name || item.id} · ${item.voiceId}`,
+      }))
+    return [...qwenProfiles, ...cozeVoices]
+  }
+  return []
+})
+
+const sceneTestSelectedProvider = computed(() => {
+  return sceneTestForm.providerId ? providerIdMap.value.get(sceneTestForm.providerId) || null : null
+})
+
+function providerCanServeScene(provider: Pick<ProviderItem, 'capability'>, key: PlatformAiChannelKey): boolean {
+  return sceneAllowedProviderCapabilities(key).includes(provider.capability)
+}
+
+function resolveSceneModelCatalog(providerIds: string[], currentModels: string[] = [], capability: ModelCapability = 'chat', embeddingApiStyle: EmbeddingApiStyle | null = null): Array<{ model: string, label: string, priceText: string }> {
+  const providerSet = new Set(providerIds)
+  const map = new Map<string, { model: string, label: string, priceText: string }>()
+  for (const provider of providers.value.filter(item => item.capability !== 'search' && providerSet.has(item.id))) {
+    for (const model of provider.models.filter(item => item.enabled && modelHasCapability(item, capability) && (!embeddingApiStyle || item.embeddingApiStyle === embeddingApiStyle))) {
+      if (!map.has(model.model)) {
+        map.set(model.model, {
+          model: model.model,
+          label: model.label,
+          priceText: buildPriceText(model),
+        })
+      }
+    }
+  }
+  for (const model of currentModels) {
+    const normalized = String(model || '').trim()
+    if (normalized && !map.has(normalized)) {
+      map.set(normalized, {
+        model: normalized,
+        label: normalized,
+        priceText: '未在当前 Provider 模型池中',
+      })
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+}
+
+function resolveSceneBatchModelCatalog(providerIds: string[], currentModels: string[] = []): Array<{ model: string, label: string, priceText: string }> {
+  const providerSet = new Set(providerIds)
+  const map = new Map<string, { model: string, label: string, priceText: string }>()
+  for (const provider of providers.value.filter(item => item.capability !== 'search' && providerSet.has(item.id))) {
+    for (const model of provider.models.filter(item => item.enabled)) {
+      if (!map.has(model.model)) {
+        map.set(model.model, {
+          model: model.model,
+          label: model.label,
+          priceText: buildPriceText(model),
+        })
+      }
+    }
+  }
+  for (const model of currentModels) {
+    const normalized = String(model || '').trim()
+    if (normalized && !map.has(normalized)) {
+      map.set(normalized, {
+        model: normalized,
+        label: normalized,
+        priceText: '未在当前 Provider 模型池中',
+      })
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+}
+
+function normalizeSceneModels(models: string[], providerIds: string[], capability: ModelCapability = 'chat', embeddingApiStyle: EmbeddingApiStyle | null = null): string[] {
+  const normalized = dedupeStrings(models)
+  const catalog = new Set(resolveSceneModelCatalog(providerIds, normalized, capability, embeddingApiStyle).map(item => item.model))
+  if (catalog.size === 0)
+    return normalized
+  return normalized.filter(item => catalog.has(item))
+}
+
+function normalizeSceneBatchModels(models: string[], providerIds: string[]): string[] {
+  const normalized = dedupeStrings(models)
+  const catalog = new Set(resolveSceneBatchModelCatalog(providerIds, normalized).map(item => item.model))
+  if (catalog.size === 0)
+    return normalized
+  return normalized.filter(item => catalog.has(item))
+}
+
+function normalizeSceneRoutingConfig(
+  input: Pick<SceneItem, 'models' | 'modelFallback' | 'key'>,
+  providerIds: string[],
+): Pick<SceneItem, 'models' | 'modelFallback'> {
+  const models = normalizeSceneModels(
+    input.models.length > 0 ? input.models : input.modelFallback,
+    providerIds,
+    sceneRequiredCapability(input.key),
+    sceneEmbeddingApiStyleFilter(input.key),
+  )
+  const modelSet = new Set(models)
+  return {
+    models,
+    modelFallback: normalizeSceneModels(
+      input.modelFallback,
+      providerIds,
+      sceneRequiredCapability(input.key),
+      sceneEmbeddingApiStyleFilter(input.key),
+    ).filter(item => modelSet.has(item)),
+  }
+}
+
+function normalizeSceneBatchRoutingConfig(input: Pick<typeof sceneBatchForm, 'models' | 'modelFallback'>): Pick<typeof sceneBatchForm, 'models' | 'modelFallback'> {
+  const models = normalizeSceneBatchModels(input.models.length > 0 ? input.models : input.modelFallback, sceneBatchForm.providerIds)
+  const modelSet = new Set(models)
+  return {
+    models,
+    modelFallback: normalizeSceneBatchModels(input.modelFallback, sceneBatchForm.providerIds).filter(item => modelSet.has(item)),
+  }
+}
+
+const sceneEditorModelPoolOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.models, sceneRequiredCapability(sceneEditorForm.key), sceneEmbeddingApiStyleFilter(sceneEditorForm.key)))
+const sceneEditorProviderOptions = computed(() => routableProviderOptions.value.filter(provider => providerCanServeScene(provider, sceneEditorForm.key)))
+const sceneEditorFallbackOptions = computed(() => {
+  const modelSet = new Set(sceneEditorForm.models)
+  return sceneEditorModelPoolOptions.value.filter(item => modelSet.has(item.model))
+})
+const sceneBatchModelPoolOptions = computed(() => resolveSceneBatchModelCatalog(sceneBatchForm.providerIds, sceneBatchForm.models))
+const sceneBatchFallbackOptions = computed(() => {
+  const modelSet = new Set(sceneBatchForm.models)
+  return sceneBatchModelPoolOptions.value.filter(item => modelSet.has(item.model))
+})
+
+function normalizeSceneProviderIds(providerIds: string[], key?: PlatformAiChannelKey): string[] {
+  const providerMap = new Map(providers.value.map(item => [item.id, item]))
+  return dedupeStrings(providerIds).filter((item) => {
+    const provider = providerMap.get(item)
+    if (!provider || provider.capability === 'search')
+      return false
+    return key ? providerCanServeScene(provider, key) : true
+  })
+}
+
+const sceneRows = computed(() => {
+  const definitionIndex = new Map(sceneDefinitions.value.map((item, index) => [item.key, index]))
+  return [...sceneItems.value].sort((a, b) => Number(definitionIndex.get(a.key) ?? 999) - Number(definitionIndex.get(b.key) ?? 999))
+})
+
+function providerSummary(provider: ProviderDraftItem): string {
+  if (provider.capability === 'search')
+    return '仅搜索能力，不参与当前 AI 场景模型路由'
+  if (provider.capability === 'embedding')
+    return 'Embedding Provider，只参与知识库向量场景模型路由'
+  if (provider.capability === 'asr')
+    return '语音识别 Provider，只参与 ASR 场景模型路由'
+  if (provider.capability === 'tts')
+    return '语音合成 Provider，只参与 TTS 场景模型路由'
+  if (provider.capability === 'voice' || provider.capability === 'realtime')
+    return '实时语音视频 Provider，参与答辩、ASR 和 TTS 场景'
+  const enabledCount = provider.models.filter(item => item.enabled).length
+  const capabilityText = modelCapabilityOptions
+    .map(option => `${option.label} ${provider.models.filter(item => modelHasCapability(item, option.value)).length}`)
+    .filter(item => !item.endsWith(' 0'))
+    .join(' · ')
+  return `模型 ${enabledCount}/${provider.models.length}${capabilityText ? ` · ${capabilityText}` : ''}`
+}
+
+function sceneProvidersPreview(scene: SceneItem): string {
+  if (scene.providerIds.length === 0)
+    return '未绑定 Provider'
+  return scene.providerIds
+    .map((id) => {
+      const providerName = providerIdMap.value.get(id)?.name || id
+      return `${providerName} #${id}`
+    })
+    .join(' / ')
+}
+
+function sceneUsesModelLessVoice(scene: Pick<SceneItem, 'key' | 'providerIds'>): boolean {
+  const capability = sceneRequiredCapability(scene.key)
+  return (capability === 'asr' || capability === 'tts' || scene.key === 'defense')
+    && scene.providerIds.some(id => ['voice', 'realtime'].includes(providerIdMap.value.get(id)?.capability || ''))
+}
+
+function sceneModelPoolPreview(scene: SceneItem): string {
+  if (scene.models.length === 0 && sceneUsesModelLessVoice(scene))
+    return '实时语音原生接口，无需模型池'
+  if (scene.models.length === 0)
+    return '未配置'
+  return scene.models.join(' / ')
+}
+
+function sceneFallbackPreview(scene: SceneItem): string {
+  if (scene.modelFallback.length === 0) {
+    if (sceneUsesModelLessVoice(scene))
+      return '实时语音原生接口，无需回退模型'
+    if (scene.models.length === 0)
+      return '未配置'
+    return `未单独配置，将按模型池顺序：${scene.models.join(' -> ')}`
+  }
+  return scene.modelFallback.join(' -> ')
+}
+
+function sceneFailoverStrategyLabel(scene: Pick<SceneItem, 'failoverStrategy'>): string {
+  if (scene.failoverStrategy === 'model_then_provider')
+    return '按模型顺序切换，同模型内轮询 Provider'
+  return '按模型顺序切换，同模型内轮询 Provider'
+}
+
+function sceneUsageHint(scene: SceneItem): string {
+  if (scene.key === 'project_chat')
+    return '项目对话场景'
+  if (scene.key === 'document_analysis')
+    return '文档分析场景'
+  if (scene.key === 'knowledge_embedding')
+    return '文本向量入口'
+  if (scene.key === 'knowledge_visual_embedding')
+    return '视觉向量入口'
+  if (scene.key === 'knowledge_visual_projection')
+    return '视觉投影入口'
+  return ''
+}
+
+function sceneUsageHintColor(scene: SceneItem): 'arcoblue' | 'green' | 'gray' {
+  if (scene.key === 'project_chat')
+    return 'arcoblue'
+  if (scene.key === 'document_analysis' || scene.key === 'knowledge_embedding' || scene.key === 'knowledge_visual_embedding' || scene.key === 'knowledge_visual_projection')
+    return 'green'
+  return 'gray'
+}
+
+function promptPreview(prompt: string): string {
+  const text = String(prompt || '').replace(/\s+/g, ' ').trim()
+  if (!text)
+    return '-'
+  return text.length > 90 ? `${text.slice(0, 90)}...` : text
+}
+
+function sceneBuiltinPromptPreview(key: PlatformAiChannelKey): string {
+  return promptPreview(sceneDefinitionForKey(key)?.builtinPrompt || '')
+}
+
+function openSceneBuiltinPrompt(scene: SceneItem) {
+  sceneBuiltinPromptTarget.value = scene
+  sceneBuiltinPromptVisible.value = true
+}
+
+function closeSceneBuiltinPrompt() {
+  sceneBuiltinPromptVisible.value = false
+  sceneBuiltinPromptTarget.value = null
+}
+
+function applyConsolePayload(payload: ProvidersPayload): void {
+  configMasterKeyReady.value = payload.config?.masterKeyReady !== false
+  providers.value = (payload.providers || []).map((item) => {
+    const draft = normalizeProviderDraft({
+      ...item,
+      voice: item.voice || createEmptyProviderDraft().voice,
+      models: (item.models || []).map(model => normalizeModelItem(model, item.type)),
+      apiKeyMode: 'keep',
+      apiKey: '',
+    })
+    return draft
+  })
+  sceneDefinitions.value = payload.scenes?.definitions || []
+  sceneItems.value = (payload.scenes?.items || []).map((item) => {
+    const providerIds = normalizeSceneProviderIds(item.providerIds || [], item.key)
+    const normalizedRouting = normalizeSceneRoutingConfig({
+      key: item.key,
+      models: dedupeStrings(item.models || item.modelFallback || []),
+      modelFallback: dedupeStrings(item.modelFallback || []),
+    }, providerIds)
+    return {
+      ...item,
+      providerIds,
+      loadBalanceStrategy: item.loadBalanceStrategy || 'round_robin',
+      models: normalizedRouting.models,
+      modelFallback: normalizedRouting.modelFallback,
+      failoverStrategy: item.failoverStrategy || 'model_then_provider',
+      prompt: String(item.prompt || ''),
+    }
+  })
+
+  adminAiForm.enabled = Boolean(payload.adminAi.enabled)
+  adminAiForm.webTimeoutMs = Number(payload.adminAi.webTimeoutMs || 12000)
+  adminAiForm.maxWebResults = Number(payload.adminAi.maxWebResults || 5)
+  adminAiForm.maxPageChars = Number(payload.adminAi.maxPageChars || 10000)
+  adminAiForm.tavilyApiKeyMode = 'keep'
+  adminAiForm.tavilyApiKey = ''
+}
+
+function resolveProviderApiKeyMode(provider: Pick<ProviderDraftItem, 'apiKey'>): SecretMode {
+  return String(provider.apiKey || '').trim() ? 'replace' : 'keep'
+}
+
+async function loadConsole() {
+  consoleLoading.value = true
+  consoleError.value = ''
   try {
-    const response = await $fetch<ApiResponse<ProvidersPayload>>(endpoint('/admin/ai/providers'), {
-      method: 'PATCH',
-      body,
-    })
-    const data = assertApiSuccess(response, options.errorFallback)
-    providers.value = data
-    applyProvidersToForm(data)
-    if (channels.value) {
-      channels.value.channelItems = data.registry.channels || []
-      channels.value.providers = data.registry.providers || []
-      channels.value.channelDefinitions = data.registry.channelDefinitions || []
-    }
-    providerSaveMessage.value = options.message
-    loaded.providers = true
-    loaded.channels = true
-    loaded.models = false
-    resetProviderEditorState()
+    const data = await requestApi<ProvidersPayload>(endpoint('/admin/ai/providers'), {}, 'AI 配置加载失败。')
+    applyConsolePayload(data)
+    consoleLoaded.value = true
   }
   catch (error: any) {
-    const message = String(error?.message || normalizeError(error, options.errorFallback))
-    if (options.errorScope === 'channels')
-      errorMap.channels = message
-    else
-      errorMap.providers = message
+    consoleError.value = normalizeError(error, 'AI 配置加载失败。')
   }
   finally {
-    providerSaving.value = false
+    consoleLoading.value = false
   }
 }
 
-function openProviderEditor(key: ProviderEditorKey) {
-  providerEditorKey.value = key
-  errorMap.providers = ''
-  resetProviderEditorState()
+function buildProviderPayload(provider: ProviderDraftItem) {
+  const normalized = normalizeProviderDraft(provider)
+  const apiKey = String(normalized.apiKey || '').trim()
+  const payload: {
+    id: string
+    name: string
+    type: ProviderType
+    capability: ProviderCapability
+    provider: string
+    baseURL: string
+    enabled: boolean
+    timeoutMs: number
+    maxRetries: number
+    apiKeyMode: SecretMode
+    apiKey?: string
+    voice: ProviderVoiceConfig
+    models: ProviderModelItem[]
+  } = {
+    id: normalized.id,
+    name: normalized.name,
+    type: normalized.type,
+    capability: normalized.capability,
+    provider: normalized.provider,
+    baseURL: normalized.baseURL,
+    enabled: normalized.enabled,
+    timeoutMs: Number(normalized.timeoutMs || 15000),
+    maxRetries: Number(normalized.maxRetries || 2),
+    apiKeyMode: resolveProviderApiKeyMode(normalized),
+    voice: normalized.voice,
+    models: normalized.models.map(item => normalizeModelItem(item, normalized.type)),
+  }
+  if (apiKey)
+    payload.apiKey = apiKey
+  return payload
+}
+
+function addQwenRealtimeProfile(): void {
+  const items = providerEditorForm.voice.qwen?.realtimeProfiles || []
+  items.push({
+    id: `qwen_realtime_${items.length + 1}`,
+    name: `千问实时 ${items.length + 1}`,
+    model: 'qwen3.5-omni-plus-realtime',
+    baseWsUrl: '',
+    workspaceId: '',
+    appId: '',
+    defaultVoiceId: '',
+    asrProfileId: '',
+    ttsProfileId: '',
+    vadMode: 'server_vad',
+    frameIntervalMs: 1000,
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.qwen = {
+    realtimeProfiles: items,
+    asrProfiles: providerEditorForm.voice.qwen?.asrProfiles || [],
+    ttsProfiles: providerEditorForm.voice.qwen?.ttsProfiles || [],
+  }
+}
+
+function addQwenAsrProfile(): void {
+  const items = providerEditorForm.voice.qwen?.asrProfiles || []
+  items.push({
+    id: `qwen_asr_${items.length + 1}`,
+    name: `千问 ASR ${items.length + 1}`,
+    model: 'qwen3-asr-flash-realtime',
+    language: 'zh-CN',
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.qwen = {
+    realtimeProfiles: providerEditorForm.voice.qwen?.realtimeProfiles || [],
+    asrProfiles: items,
+    ttsProfiles: providerEditorForm.voice.qwen?.ttsProfiles || [],
+  }
+}
+
+function addQwenTtsProfile(): void {
+  const items = providerEditorForm.voice.qwen?.ttsProfiles || []
+  items.push({
+    id: `qwen_tts_${items.length + 1}`,
+    name: `千问 TTS ${items.length + 1}`,
+    model: 'qwen-tts-realtime',
+    voiceId: '',
+    sampleRate: 24000,
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.qwen = {
+    realtimeProfiles: providerEditorForm.voice.qwen?.realtimeProfiles || [],
+    asrProfiles: providerEditorForm.voice.qwen?.asrProfiles || [],
+    ttsProfiles: items,
+  }
+}
+
+function addCozeAgent(): void {
+  const items = providerEditorForm.voice.coze?.agents || []
+  items.push({
+    id: `coze_agent_${items.length + 1}`,
+    name: `Coze 智能体 ${items.length + 1}`,
+    judgeType: 'custom',
+    botId: providerEditorForm.voice.botId,
+    connectorId: providerEditorForm.voice.connectorId,
+    defaultVoiceId: providerEditorForm.voice.voiceId,
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.coze = {
+    agents: items,
+    voices: providerEditorForm.voice.coze?.voices || [],
+    roomConfig: providerEditorForm.voice.coze?.roomConfig || { createRoomOnServer: true, roomNamePrefix: 'WinLoop 答辩' },
+  }
+}
+
+function addCozeVoice(): void {
+  const items = providerEditorForm.voice.coze?.voices || []
+  items.push({
+    id: `coze_voice_${items.length + 1}`,
+    name: `Coze 音色 ${items.length + 1}`,
+    voiceId: providerEditorForm.voice.voiceId,
+    style: '',
+    enabled: true,
+    sortOrder: items.length,
+  })
+  providerEditorForm.voice.coze = {
+    agents: providerEditorForm.voice.coze?.agents || [],
+    voices: items,
+    roomConfig: providerEditorForm.voice.coze?.roomConfig || { createRoomOnServer: true, roomNamePrefix: 'WinLoop 答辩' },
+  }
+}
+
+function removeQwenRealtimeProfile(index: number): void {
+  providerEditorForm.voice.qwen?.realtimeProfiles.splice(index, 1)
+}
+
+function removeQwenAsrProfile(index: number): void {
+  providerEditorForm.voice.qwen?.asrProfiles.splice(index, 1)
+}
+
+function removeQwenTtsProfile(index: number): void {
+  providerEditorForm.voice.qwen?.ttsProfiles.splice(index, 1)
+}
+
+function removeCozeAgent(index: number): void {
+  providerEditorForm.voice.coze?.agents.splice(index, 1)
+}
+
+function removeCozeVoice(index: number): void {
+  providerEditorForm.voice.coze?.voices.splice(index, 1)
+}
+
+async function saveConsole() {
+  saving.value = true
+  consoleError.value = ''
+  try {
+    const payload = await requestApi<ProvidersPayload>(endpoint('/admin/ai/providers'), {
+      method: 'PATCH',
+      body: {
+        providers: providers.value.map(item => buildProviderPayload(item)),
+        scenes: {
+          items: sceneItems.value.map((item) => {
+            const providerIds = normalizeSceneProviderIds(item.providerIds, item.key)
+            const normalizedRouting = normalizeSceneRoutingConfig(item, providerIds)
+            return {
+              key: item.key,
+              label: item.label,
+              description: item.description,
+              enabled: item.enabled,
+              providerIds,
+              loadBalanceStrategy: item.loadBalanceStrategy,
+              models: normalizedRouting.models,
+              modelFallback: normalizedRouting.modelFallback,
+              failoverStrategy: item.failoverStrategy,
+              prompt: item.prompt,
+            }
+          }),
+        },
+        adminAi: {
+          enabled: adminAiForm.enabled,
+          webTimeoutMs: Number(adminAiForm.webTimeoutMs || 12000),
+          maxWebResults: Number(adminAiForm.maxWebResults || 5),
+          maxPageChars: Number(adminAiForm.maxPageChars || 10000),
+          tavilyApiKeyMode: adminAiForm.tavilyApiKeyMode,
+          tavilyApiKey: adminAiForm.tavilyApiKey,
+        },
+      },
+    }, 'AI 配置保存失败。')
+    applyConsolePayload(payload)
+    const ignoredIds = payload.warnings?.ignoredProviderApiKeyIds || []
+    if (ignoredIds.length > 0) {
+      const warning = `当前未配置 master key，这些 Provider 的 API Key 替换未持久化：${ignoredIds.join(', ')}`
+      consoleError.value = warning
+      Message.warning(warning)
+      return
+    }
+    Message.success('AI 配置已保存。')
+  }
+  catch (error: any) {
+    const message = normalizeError(error, 'AI 配置保存失败。')
+    consoleError.value = message
+    Message.error(message)
+  }
+  finally {
+    saving.value = false
+  }
+}
+
+function nextProviderId(): string {
+  let index = providers.value.length + 1
+  while (providers.value.some(item => item.id === `provider_${index}`))
+    index += 1
+  return `provider_${index}`
+}
+
+function openCreateProviderDrawer() {
+  providerEditorIsCreate.value = true
+  Object.assign(providerEditorForm, createEmptyProviderDraft(), {
+    id: nextProviderId(),
+  })
+  providerEditorTestMessage.value = ''
+  providerPullMessage.value = ''
   providerEditorVisible.value = true
-  if (!providerManualModelText[key].trim()) {
-    const seedModel = key === 'llm' ? providerForm.aiModel : providerForm.docAiModel
-    const normalizedSeed = String(seedModel || '').trim()
-    if (normalizedSeed)
-      providerManualModelText[key] = normalizedSeed
-  }
-
-  if (!providerModelOptions[key].length && isProviderApiKeyConfigured(key))
-    void loadProviderModelOptions(key, { silent: true })
 }
 
-function closeProviderEditor() {
-  if (providerSaving.value)
-    return
+function openEditProviderDrawer(record: ProviderDraftItem) {
+  providerEditorIsCreate.value = false
+  Object.assign(providerEditorForm, cloneProviderItem(record))
+  providerEditorTestMessage.value = ''
+  providerPullMessage.value = ''
+  providerEditorVisible.value = true
+}
+
+function closeProviderDrawer() {
   providerEditorVisible.value = false
 }
 
-function selectProviderEditorModel(model: string) {
-  const nextModel = String(model || '').trim()
-  if (!nextModel)
-    return
-  if (providerEditorKey.value === 'llm')
-    providerForm.aiModel = nextModel
-  else
-    providerForm.docAiModel = nextModel
-}
-
-async function saveProviderEditor() {
-  if (providerEditorKey.value === 'llm') {
-    const apiKey = String(providerForm.aiApiKey || '').trim()
-    await patchProviders({
-      ai: {
-        provider: providerForm.aiProvider.trim(),
-        baseURL: providerForm.aiBaseURL.trim(),
-        model: providerForm.aiModel.trim(),
-        embeddingModel: providerForm.aiEmbeddingModel.trim(),
-        apiKeyMode: apiKey ? 'replace' : 'keep',
-        apiKey,
-      },
-    }, {
-      message: 'LLM 模式配置已保存并生效。',
-      errorFallback: 'LLM 模式配置保存失败。',
-      errorScope: 'providers',
-    })
+function syncProviderType(type: ProviderType) {
+  const previousType = providerEditorForm.type
+  providerEditorForm.type = type
+  providerEditorForm.capability = resolveProviderCapability(type, providerEditorForm.capability)
+  const previousProviderDefault = previousType === 'coze-voice' ? 'coze' : previousType
+  const nextProviderDefault = type === 'coze-voice' ? 'coze' : type
+  if (!providerEditorForm.provider || providerEditorForm.provider === previousType || providerEditorForm.provider === previousProviderDefault)
+    providerEditorForm.provider = nextProviderDefault
+  if (type === 'coze-voice' && !providerEditorForm.baseURL)
+    providerEditorForm.baseURL = 'https://api.coze.cn'
+  if (!providerEditorForm.voice)
+    providerEditorForm.voice = createEmptyProviderDraft().voice
+  if (!providerCapabilitySupportsModels(providerEditorForm.capability)) {
+    providerEditorForm.models = []
   }
-  else {
-    const apiKey = String(providerForm.docAiApiKey || '').trim()
-    await patchProviders({
-      docAi: {
-        provider: providerForm.docAiProvider.trim(),
-        baseURL: providerForm.docAiBaseURL.trim(),
-        model: providerForm.docAiModel.trim(),
-        apiKeyMode: apiKey ? 'replace' : 'keep',
-        apiKey,
-      },
-    }, {
-      message: 'DocAI 模式配置已保存并生效。',
-      errorFallback: 'DocAI 模式配置保存失败。',
-      errorScope: 'providers',
-    })
+  if (providerCapabilitySupportsModels(providerEditorForm.capability))
+    providerEditorForm.models = providerEditorForm.models.map(item => normalizeModelItem(item, type))
+}
+
+function handleProviderTypeChange(value: string | number | boolean | Record<string, unknown> | undefined) {
+  syncProviderType(String(value || '').trim() as ProviderType)
+}
+
+function handleProviderCapabilityChange(value: string | number | boolean | Record<string, unknown> | undefined) {
+  providerEditorForm.capability = resolveProviderCapability(providerEditorForm.type, value)
+  if (!providerCapabilitySupportsModels(providerEditorForm.capability))
+    providerEditorForm.models = []
+}
+
+function handleSceneProviderIdsChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  const providerIds = normalizeSceneProviderIds(values, sceneEditorForm.key)
+  const normalizedRouting = normalizeSceneRoutingConfig(sceneEditorForm, providerIds)
+  sceneEditorForm.providerIds = providerIds
+  sceneEditorForm.models = normalizedRouting.models
+  sceneEditorForm.modelFallback = normalizedRouting.modelFallback
+}
+
+function handleSceneModelsChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  const previousModels = new Set(sceneEditorForm.models)
+  const models = normalizeSceneModels(values, sceneEditorForm.providerIds, sceneRequiredCapability(sceneEditorForm.key), sceneEmbeddingApiStyleFilter(sceneEditorForm.key))
+  const modelSet = new Set(models)
+  const modelFallback = sceneEditorForm.modelFallback.filter(item => modelSet.has(item))
+  for (const model of models) {
+    if (!previousModels.has(model) && !modelFallback.includes(model))
+      modelFallback.push(model)
   }
-
-  if (!errorMap.providers)
-    providerEditorVisible.value = false
+  sceneEditorForm.models = models
+  sceneEditorForm.modelFallback = modelFallback
 }
 
-function openChannelEditor(_key: ChannelEditorKey) {
-  errorMap.channels = ''
-  resetProviderEditorState()
-  channelEditorVisible.value = true
+function handleSceneModelFallbackChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  const modelSet = new Set(sceneEditorForm.models)
+  sceneEditorForm.modelFallback = dedupeStrings(values).filter(item => modelSet.has(item))
 }
 
-function closeChannelEditor() {
-  if (providerSaving.value)
-    return
-  channelEditorVisible.value = false
+function handleSceneBatchProviderIdsChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  const providerIds = normalizeSceneProviderIds(values)
+  sceneBatchForm.providerIds = providerIds
+  const normalizedRouting = normalizeSceneBatchRoutingConfig(sceneBatchForm)
+  sceneBatchForm.models = normalizedRouting.models
+  sceneBatchForm.modelFallback = normalizedRouting.modelFallback
 }
 
-async function saveChannelEditor() {
-  await patchProviders({
-    adminAi: {
-      enabled: providerForm.adminAiEnabled,
-      webTimeoutMs: Number(providerForm.adminAiWebTimeoutMs || 12000),
-      maxWebResults: Number(providerForm.adminAiMaxWebResults || 5),
-      maxPageChars: Number(providerForm.adminAiMaxPageChars || 10000),
-      tavilyApiKeyMode: providerForm.adminAiTavilyApiKeyMode,
-      tavilyApiKey: providerForm.adminAiTavilyApiKey,
-    },
-  }, {
-    message: 'Admin Agent Channel 配置已保存并生效。',
-    errorFallback: 'Channel 配置保存失败。',
-    errorScope: 'channels',
+function handleSceneBatchModelsChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  const previousModels = new Set(sceneBatchForm.models)
+  const models = normalizeSceneBatchModels(values, sceneBatchForm.providerIds)
+  const modelSet = new Set(models)
+  const modelFallback = sceneBatchForm.modelFallback.filter(item => modelSet.has(item))
+  for (const model of models) {
+    if (!previousModels.has(model) && !modelFallback.includes(model))
+      modelFallback.push(model)
+  }
+  sceneBatchForm.models = models
+  sceneBatchForm.modelFallback = modelFallback
+}
+
+function handleSceneBatchModelFallbackChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  const modelSet = new Set(sceneBatchForm.models)
+  sceneBatchForm.modelFallback = dedupeStrings(values).filter(item => modelSet.has(item))
+}
+
+function saveProviderDrawer() {
+  const normalized = normalizeProviderDraft({
+    ...providerEditorForm,
+    apiKeyMode: resolveProviderApiKeyMode(providerEditorForm),
   })
-
-  if (!errorMap.channels)
-    channelEditorVisible.value = false
+  const next = [...providers.value]
+  const index = next.findIndex(item => item.id === normalized.id)
+  if (index >= 0)
+    next.splice(index, 1, normalized)
+  else
+    next.push(normalized)
+  providers.value = next.map(item => normalizeProviderDraft(item))
+  providerEditorVisible.value = false
 }
 
-async function loadProviders() {
-  loadingMap.providers = true
-  errorMap.providers = ''
-  try {
-    const response = await $fetch<ApiResponse<ProvidersPayload>>(endpoint('/admin/ai/providers'))
-    const data = assertApiSuccess(response, 'Providers 加载失败。')
-    providers.value = data
-    applyProvidersToForm(data)
-    loaded.providers = true
-
-    if (data.llm.apiKeyConfigured && providerModelOptions.llm.length === 0)
-      void loadProviderModelOptions('llm', { silent: true })
-    if (data.docAi.apiKeyConfigured && providerModelOptions.docAi.length === 0)
-      void loadProviderModelOptions('docAi', { silent: true })
-  }
-  catch (error: any) {
-    providers.value = null
-    errorMap.providers = normalizeError(error, 'Providers 加载失败。')
-  }
-  finally {
-    loadingMap.providers = false
-  }
+function removeProvider(providerId: string) {
+  providers.value = providers.value.filter(item => item.id !== providerId)
+  sceneItems.value = sceneItems.value.map((scene) => {
+    const providerIds = scene.providerIds.filter(id => id !== providerId)
+    const normalizedRouting = normalizeSceneRoutingConfig(scene, providerIds)
+    return {
+      ...scene,
+      providerIds,
+      models: normalizedRouting.models,
+      modelFallback: normalizedRouting.modelFallback,
+    }
+  })
 }
 
-async function loadChannels() {
-  loadingMap.channels = true
-  errorMap.channels = ''
-  try {
-    if (!providers.value)
-      await loadProviders()
+function openCreateModelDrawer() {
+  modelEditorIsCreate.value = true
+  Object.assign(modelEditorForm, {
+    model: '',
+    label: '',
+    format: 'openai-compatible',
+    capabilities: ['chat'],
+    clientType: 'langchain',
+    embeddingApiStyle: 'openai-compatible-text',
+    embeddingDimensions: 1024,
+    enabled: true,
+    providerInputPricePer1M: null,
+    providerOutputPricePer1M: null,
+    manualInputPricePer1M: null,
+    manualOutputPricePer1M: null,
+    inputPricePer1M: null,
+    outputPricePer1M: null,
+    currency: 'USD',
+    pricingSource: 'none',
+    manualPriceOverride: false,
+  } satisfies ProviderModelItem)
+  modelEditorVisible.value = true
+}
 
-    const response = await $fetch<ApiResponse<ChannelsPayload>>(endpoint('/admin/ai/channels'), {
-      query: {
-        days: channelDays.value,
+function openEditModelDrawer(record: ProviderModelItem) {
+  modelEditorIsCreate.value = false
+  Object.assign(modelEditorForm, cloneModelItem(record))
+  modelEditorVisible.value = true
+}
+
+function closeModelDrawer() {
+  modelEditorVisible.value = false
+}
+
+function saveModelDrawer() {
+  const model = String(modelEditorForm.model || '').trim()
+  if (!model) {
+    Message.error('模型名不能为空。')
+    return
+  }
+  const nextItem = normalizeModelItem({
+    ...modelEditorForm,
+    model,
+    label: String(modelEditorForm.label || model).trim() || model,
+    capabilities: normalizeModelCapabilities(modelEditorForm.capabilities, inferModelCapabilities(model, modelEditorForm.label)),
+    clientType: 'langchain',
+    format: sanitizeModelFormatForProvider(providerEditorForm.type, modelEditorForm.format),
+  })
+  if (providerEditorForm.type === 'dashscope-bailian' && modelEditorForm.format === 'response') {
+    Message.warning('百炼 DashScope 当前仅支持 openai-compatible 格式，已自动改为 openai-compatible。')
+  }
+  const nextItems = [...providerEditorForm.models]
+  const existingIndex = nextItems.findIndex(item => item.model === model)
+  if (existingIndex >= 0)
+    nextItems.splice(existingIndex, 1, nextItem)
+  else
+    nextItems.push(nextItem)
+  providerEditorForm.models = nextItems.sort((a, b) => a.model.localeCompare(b.model, 'en'))
+  modelEditorVisible.value = false
+}
+
+function removeProviderModel(model: string) {
+  providerEditorForm.models = providerEditorForm.models.filter(item => item.model !== model)
+}
+
+function clearProviderModelPoolDraft() {
+  providerEditorForm.models = []
+  providerPullMessage.value = '已清空当前 Provider 的模型池草稿，请确认后保存。'
+  Message.success(providerPullMessage.value)
+}
+
+function setSelectedPulledModels(models: string[]) {
+  selectedPulledModels.value = dedupeStrings(models)
+}
+
+function openModelPullSelector(payload: ProviderModelsPayload) {
+  pulledProviderModels.value = [...(payload.items || [])]
+    .map(item => normalizePullItem(item))
+    .filter(item => item.model)
+    .sort((a, b) => a.model.localeCompare(b.model, 'en'))
+  pulledProviderFetchedAt.value = payload.fetchedAt || ''
+  pulledProviderMeta.providerId = payload.providerId || providerEditorForm.id
+  pulledProviderMeta.providerName = payload.providerName || providerEditorForm.name
+  pulledProviderMeta.provider = payload.provider || providerEditorForm.provider
+  pulledProviderMeta.baseURL = payload.baseURL || providerEditorForm.baseURL
+  pulledProviderMeta.endpoint = payload.endpoint || pulledProviderModels.value[0]?.sourceEndpoint || ''
+  pulledProviderMeta.nativeEmbeddingEndpoint = payload.nativeEmbeddingEndpoint || ''
+  modelPullFilterKeyword.value = ''
+  modelPullCapabilityFilter.value = 'all'
+  setSelectedPulledModels(pulledProviderModels.value.map(item => item.model))
+  expandedModelPullSeriesKeys.value = []
+  modelPullSelectorVisible.value = true
+}
+
+function closeModelPullSelector() {
+  modelPullFilterKeyword.value = ''
+  modelPullCapabilityFilter.value = 'all'
+  modelPullSelectorVisible.value = false
+}
+
+function togglePulledModel(model: string, checked: boolean) {
+  const next = new Set(selectedPulledModels.value)
+  if (checked)
+    next.add(model)
+  else
+    next.delete(model)
+  setSelectedPulledModels(Array.from(next))
+}
+
+function hasSelectedAllModels(items: ProviderPullItem[]): boolean {
+  return items.length > 0 && items.every(item => selectedPulledModelSet.value.has(item.model))
+}
+
+function hasPartialSelectedModels(items: ProviderPullItem[]): boolean {
+  const selectedCount = items.filter(item => selectedPulledModelSet.value.has(item.model)).length
+  return selectedCount > 0 && selectedCount < items.length
+}
+
+function togglePulledGroup(items: ProviderPullItem[], checked: boolean) {
+  const next = new Set(selectedPulledModels.value)
+  for (const item of items) {
+    if (checked)
+      next.add(item.model)
+    else
+      next.delete(item.model)
+  }
+  setSelectedPulledModels(Array.from(next))
+}
+
+function toggleAllPulledModels(checked: boolean) {
+  const next = new Set(selectedPulledModels.value)
+  for (const item of filteredPulledModels.value) {
+    if (checked)
+      next.add(item.model)
+    else
+      next.delete(item.model)
+  }
+  setSelectedPulledModels(Array.from(next))
+}
+
+function isModelPullSeriesExpanded(key: string): boolean {
+  if (normalizedModelPullFilterKeyword.value)
+    return true
+  return expandedModelPullSeriesKeys.value.includes(key)
+}
+
+function toggleModelPullSeriesExpanded(key: string) {
+  const next = new Set(expandedModelPullSeriesKeys.value)
+  if (next.has(key))
+    next.delete(key)
+  else
+    next.add(key)
+  expandedModelPullSeriesKeys.value = Array.from(next)
+}
+
+function applyPulledModelSelection() {
+  if (selectedPulledModelCount.value === 0) {
+    Message.error('请至少选择一个模型后再导入。')
+    return
+  }
+  const selectedSet = new Set(selectedPulledModels.value)
+  const selectedItems = pulledProviderModels.value.filter(item => selectedSet.has(item.model))
+  providerEditorForm.models = mergePulledModels(providerEditorForm.models, selectedItems)
+  providerEditorForm.fetchedAt = pulledProviderFetchedAt.value || providerEditorForm.fetchedAt
+  modelPullSelectorVisible.value = false
+  providerPullMessage.value = `已导入 ${selectedItems.length} 个模型，请确认后保存 Provider。`
+  Message.success(providerPullMessage.value)
+}
+
+async function pullProviderModels() {
+  if (!providerEditorSupportsModels.value) {
+    Message.warning('当前 Provider 类型不支持模型池。')
+    return
+  }
+  providerPullLoading.value = true
+  providerPullMessage.value = ''
+  try {
+    const data = await requestApi<ProviderModelsPayload>(
+      endpoint('/admin/ai/provider-models'),
+      {
+        method: 'POST',
+        body: {
+          providerId: providerEditorForm.id,
+          draftProvider: buildProviderPayload(providerEditorForm),
+          apiKeyMode: resolveProviderApiKeyMode(providerEditorForm),
+          apiKey: providerEditorForm.apiKey,
+        },
       },
-    })
-    const data = assertApiSuccess(response, 'Channels 加载失败。')
-    channels.value = data
-    loaded.channels = true
+      '模型拉取失败。',
+    )
+    if ((data.items || []).length === 0) {
+      providerPullMessage.value = '未拉取到可导入模型。'
+      Message.warning(providerPullMessage.value)
+      return
+    }
+    openModelPullSelector(data)
+    providerPullMessage.value = `已拉取 ${data.items?.length || 0} 个候选模型，请在弹框中选择后导入。`
   }
   catch (error: any) {
-    channels.value = null
-    errorMap.channels = normalizeError(error, 'Channels 加载失败。')
+    const message = normalizeError(error, '模型拉取失败。')
+    providerPullMessage.value = message
+    Message.error(message)
   }
   finally {
-    loadingMap.channels = false
+    providerPullLoading.value = false
   }
 }
 
-async function loadModels() {
-  loadingMap.models = true
-  errorMap.models = ''
+async function testProvider() {
+  if (!providerEditorCanRunProviderTest.value) {
+    Message.warning('当前 Provider 类型不支持连通性测试。')
+    return
+  }
+  providerEditorTestLoading.value = true
+  providerEditorTestMessage.value = ''
   try {
-    const response = await $fetch<ApiResponse<ModelsPayload>>(endpoint('/admin/ai/models'), {
-      query: {
-        days: modelDays.value,
+    const targetCapability: ModelCapability = providerEditorCanRunTtsTest.value ? 'tts' : 'chat'
+    const testModel = providerEditorForm.models.find(item => item.enabled && modelHasCapability(item, targetCapability))?.model || ''
+    if (providerEditorCanRunChatTest.value && !testModel) {
+      Message.warning('当前 Provider 没有可用于聊天连通性测试的模型。')
+      return
+    }
+    if (providerEditorCanRunTtsTest.value && !testModel) {
+      Message.warning('当前 Provider 没有可用于 TTS 连通性测试的模型。')
+      return
+    }
+    const data = await requestApi<{
+      providerId: string
+      provider: string
+      model: string
+      responsePreview: string
+      latencyMs: number
+    }>(endpoint('/admin/ai/providers/test'), {
+      method: 'POST',
+      body: {
+        providerId: providerEditorForm.id,
+        draftProvider: buildProviderPayload(providerEditorForm),
+        apiKeyMode: resolveProviderApiKeyMode(providerEditorForm),
+        apiKey: providerEditorForm.apiKey,
+        model: testModel,
       },
-    })
-    const data = assertApiSuccess(response, 'Models 加载失败。')
-    models.value = data
-    loaded.models = true
+    }, 'Provider 测试失败。')
+    providerEditorTestMessage.value = data.model
+      ? `${data.provider} / ${data.model} · ${data.responsePreview}`
+      : `${data.provider} · ${data.responsePreview}`
+    Message.success('Provider 连通性测试成功。')
   }
   catch (error: any) {
-    models.value = null
-    errorMap.models = normalizeError(error, 'Models 加载失败。')
+    const message = normalizeError(error, 'Provider 测试失败。')
+    providerEditorTestMessage.value = message
+    Message.error(message)
   }
   finally {
-    loadingMap.models = false
+    providerEditorTestLoading.value = false
+  }
+}
+
+function openSceneDrawer(record: SceneItem) {
+  sceneEditorForm.key = record.key
+  sceneEditorForm.label = record.label
+  sceneEditorForm.description = record.description
+  sceneEditorForm.enabled = Boolean(record.enabled)
+  sceneEditorForm.providerIds = normalizeSceneProviderIds(record.providerIds || [], record.key)
+  sceneEditorForm.loadBalanceStrategy = record.loadBalanceStrategy || 'round_robin'
+  sceneEditorForm.models = dedupeStrings(record.models || record.modelFallback || [])
+  sceneEditorForm.modelFallback = dedupeStrings(record.modelFallback || [])
+  sceneEditorForm.failoverStrategy = record.failoverStrategy || 'model_then_provider'
+  sceneEditorForm.prompt = String(record.prompt || '')
+  sceneEditorVisible.value = true
+}
+
+function closeSceneDrawer() {
+  sceneEditorVisible.value = false
+}
+
+function saveSceneDrawer() {
+  const index = sceneItems.value.findIndex(item => item.key === sceneEditorForm.key)
+  if (index < 0)
+    return
+  const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds, sceneEditorForm.key)
+  const normalizedRouting = normalizeSceneRoutingConfig(sceneEditorForm, providerIds)
+  const next = [...sceneItems.value]
+  next.splice(index, 1, {
+    key: sceneEditorForm.key,
+    label: sceneEditorForm.label,
+    description: sceneEditorForm.description,
+    enabled: Boolean(sceneEditorForm.enabled),
+    providerIds,
+    loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
+    models: normalizedRouting.models,
+    modelFallback: normalizedRouting.modelFallback,
+    failoverStrategy: sceneEditorForm.failoverStrategy,
+    prompt: String(sceneEditorForm.prompt || ''),
+  })
+  sceneItems.value = next
+  sceneEditorVisible.value = false
+}
+
+function openSceneBatchDrawer() {
+  const mostUsedProviderIds = dedupeStrings(sceneItems.value.flatMap(item => item.providerIds || []))
+  const mostUsedModels = dedupeStrings(sceneItems.value.flatMap(item => item.models || item.modelFallback || []))
+  const mostUsedFallback = dedupeStrings(sceneItems.value.flatMap(item => item.modelFallback || []))
+  sceneBatchForm.providerIds = mostUsedProviderIds
+  sceneBatchForm.loadBalanceStrategy = 'round_robin'
+  sceneBatchForm.models = mostUsedModels
+  sceneBatchForm.modelFallback = mostUsedFallback
+  sceneBatchForm.failoverStrategy = 'model_then_provider'
+  sceneBatchEditorVisible.value = true
+}
+
+function closeSceneBatchDrawer() {
+  sceneBatchEditorVisible.value = false
+}
+
+function applySceneBatchConfig() {
+  const normalizedBatch = normalizeSceneBatchRoutingConfig(sceneBatchForm)
+  sceneItems.value = sceneItems.value.map((item) => {
+    const providerIds = normalizeSceneProviderIds(sceneBatchForm.providerIds, item.key)
+    const normalizedRouting = normalizeSceneRoutingConfig({
+      key: item.key,
+      models: normalizedBatch.models,
+      modelFallback: normalizedBatch.modelFallback,
+    }, providerIds)
+    return {
+      ...item,
+      providerIds,
+      loadBalanceStrategy: sceneBatchForm.loadBalanceStrategy,
+      models: normalizedRouting.models,
+      modelFallback: normalizedRouting.modelFallback,
+      failoverStrategy: sceneBatchForm.failoverStrategy,
+    }
+  })
+  sceneBatchEditorVisible.value = false
+  Message.success(`已为 ${sceneItems.value.length} 个场景应用统一 Provider、模型池与故障转移策略。`)
+}
+
+function applyCurrentSceneConfigToAll() {
+  sceneItems.value = sceneItems.value.map((item) => {
+    const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds, item.key)
+    const normalizedRouting = normalizeSceneRoutingConfig({
+      key: item.key,
+      models: sceneEditorForm.models,
+      modelFallback: sceneEditorForm.modelFallback,
+    }, providerIds)
+    return {
+      ...item,
+      providerIds,
+      loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
+      models: normalizedRouting.models,
+      modelFallback: normalizedRouting.modelFallback,
+      failoverStrategy: sceneEditorForm.failoverStrategy,
+    }
+  })
+  Message.success(`已将「${sceneEditorForm.label}」的 Provider 绑定、模型池与故障转移策略复制到全部场景。`)
+}
+
+function sceneTestModeLabel(mode: SceneTestMode): string {
+  if (mode === 'asr')
+    return 'ASR'
+  if (mode === 'tts')
+    return 'TTS'
+  if (mode === 'embedding')
+    return 'Embedding'
+  return 'Chat'
+}
+
+function openSceneTestDrawer(scene: SceneItem) {
+  if (!sceneCanRunTest(scene)) {
+    Message.info(`${modelCapabilityLabel(sceneRequiredCapability(scene.key))} 场景未绑定可测试 Provider。`)
+    return
+  }
+
+  sceneTestTarget.value = scene
+  sceneTestResult.value = null
+  sceneTestError.value = ''
+  sceneTestForm.testMode = sceneDefaultTestMode(scene.key)
+  sceneTestForm.providerId = normalizeSceneProviderIds(scene.providerIds || [], scene.key)[0] || ''
+  sceneTestForm.model = ''
+  sceneTestForm.profileId = ''
+  sceneTestForm.message = sceneTestForm.testMode === 'asr'
+    ? '会议 ASR 字幕探针'
+    : sceneTestForm.testMode === 'tts'
+      ? '这是一次语音合成场景测试。'
+      : sceneTestForm.testMode === 'embedding'
+        ? 'WinLoop knowledge embedding probe'
+        : '请回复“SCENE_OK”，并附带一句简短诊断说明。'
+  sceneTestDrawerVisible.value = true
+}
+
+function closeSceneTestDrawer() {
+  sceneTestDrawerVisible.value = false
+}
+
+function handleSceneTestProviderChange() {
+  sceneTestForm.model = ''
+  sceneTestForm.profileId = ''
+}
+
+async function runSceneTest() {
+  const scene = sceneTestTarget.value
+  if (!scene)
+    return
+  sceneTesting[scene.key] = true
+  sceneTestMessage[scene.key] = ''
+  sceneTestResult.value = null
+  sceneTestError.value = ''
+  try {
+    const data = await requestApi<SceneTestPayload>(endpoint('/admin/ai/channels/test'), {
+      method: 'POST',
+      body: {
+        channelKey: scene.key,
+        providerId: sceneTestForm.providerId,
+        model: sceneTestForm.model,
+        profileId: sceneTestForm.profileId,
+        testMode: sceneTestForm.testMode,
+        message: sceneTestForm.message,
+      },
+    }, '场景测试失败。')
+
+    const chainText = (data.attemptChain || [])
+      .map(item => `${item.provider}/${item.model || 'coze-voice'}${item.success ? '' : '(failed)'}`)
+      .join(' -> ')
+    sceneTestResult.value = data
+    sceneTestMessage[scene.key] = `${sceneTestModeLabel(data.testMode)} · ${data.provider} / ${data.model || 'coze-voice'}${data.fallbackUsed ? ' · 已回退' : ''} · ${chainText || data.responsePreview}`
+    Message.success(`场景「${scene.label}」测试成功。`)
+  }
+  catch (error: any) {
+    const message = normalizeError(error, '场景测试失败。')
+    sceneTestMessage[scene.key] = message
+    sceneTestError.value = message
+    Message.error(message)
+  }
+  finally {
+    sceneTesting[scene.key] = false
   }
 }
 
 async function loadAudits() {
-  loadingMap.audits = true
-  errorMap.audits = ''
+  auditLoading.value = true
+  auditError.value = ''
   try {
-    const response = await $fetch<ApiResponse<AuditsPayload>>(endpoint('/admin/ai/audits'), {
-      query: {
-        page: auditPage.value,
-        pageSize: auditPageSize.value,
-        action: auditAction.value.trim(),
+    const data = await requestApi<AuditsPayload>(
+      endpoint('/admin/ai/audits'),
+      {
+        query: {
+          page: auditPage.value,
+          pageSize: auditPageSize.value,
+          action: auditAction.value.trim(),
+        },
       },
-    })
-    const data = assertApiSuccess(response, 'Audits 加载失败。')
+      '审计日志加载失败。',
+    )
     audits.value = data.items || []
     auditTotal.value = Number(data.total || 0)
-    loaded.audits = true
   }
   catch (error: any) {
     audits.value = []
     auditTotal.value = 0
-    errorMap.audits = normalizeError(error, 'Audits 加载失败。')
+    auditError.value = normalizeError(error, '审计日志加载失败。')
   }
   finally {
-    loadingMap.audits = false
+    auditLoading.value = false
   }
 }
 
 async function loadLogs() {
-  loadingMap.logs = true
-  errorMap.logs = ''
+  logLoading.value = true
+  logError.value = ''
   try {
-    const response = await $fetch<ApiResponse<LogsPayload>>(endpoint('/admin/ai/logs'), {
-      query: {
-        page: logPage.value,
-        pageSize: logPageSize.value,
-        days: logFilters.days,
-        provider: logFilters.provider.trim(),
-        model: logFilters.model.trim(),
-        role: logFilters.role.trim(),
-        workspaceId: logFilters.workspaceId.trim(),
-        sessionId: logFilters.sessionId.trim(),
-        q: logFilters.q.trim(),
+    const data = await requestApi<LogsPayload>(
+      endpoint('/admin/ai/logs'),
+      {
+        query: {
+          page: logPage.value,
+          pageSize: logPageSize.value,
+          days: logFilters.days,
+          provider: logFilters.provider.trim(),
+          model: logFilters.model.trim(),
+          role: logFilters.role.trim(),
+          workspaceId: logFilters.workspaceId.trim(),
+          sessionId: logFilters.sessionId.trim(),
+          q: logFilters.q.trim(),
+        },
       },
-    })
-    const data = assertApiSuccess(response, 'Logs 加载失败。')
+      '日志加载失败。',
+    )
     logs.value = data.items || []
     logTotal.value = Number(data.total || 0)
-    loaded.logs = true
   }
   catch (error: any) {
     logs.value = []
     logTotal.value = 0
-    errorMap.logs = normalizeError(error, 'Logs 加载失败。')
+    logError.value = normalizeError(error, '日志加载失败。')
   }
   finally {
-    loadingMap.logs = false
+    logLoading.value = false
   }
-}
-
-async function loadActiveTab() {
-  if (activeTab.value === 'providers') {
-    await loadProviders()
-    return
-  }
-  if (activeTab.value === 'channels') {
-    await loadChannels()
-    return
-  }
-  if (activeTab.value === 'models') {
-    await loadModels()
-    return
-  }
-  if (activeTab.value === 'audits') {
-    await loadAudits()
-    return
-  }
-  await loadLogs()
-}
-
-function switchTab(tab: AiConsoleTab) {
-  activeTab.value = tab
-  if (!loaded[tab])
-    void loadActiveTab()
-}
-
-function refreshCurrentTab() {
-  void loadActiveTab()
-}
-
-function applyAuditFilter() {
-  auditPage.value = 1
-  void loadAudits()
-}
-
-function onAuditPageChange(value: number) {
-  auditPage.value = value
-  void loadAudits()
-}
-
-function onAuditPageSizeChange(value: number) {
-  auditPageSize.value = value
-  auditPage.value = 1
-  void loadAudits()
-}
-
-function applyLogFilter() {
-  logPage.value = 1
-  void loadLogs()
-}
-
-function onLogPageChange(value: number) {
-  logPage.value = value
-  void loadLogs()
-}
-
-function onLogPageSizeChange(value: number) {
-  logPageSize.value = value
-  logPage.value = 1
-  void loadLogs()
-}
-
-function formatRate(value: number): string {
-  return `${(Number(value || 0) * 100).toFixed(2)}%`
-}
-
-function openModelDetail(record: ModelsPayload['items'][number]) {
-  modelDetailRow.value = record
-  modelDetailVisible.value = true
-}
-
-function closeModelDetail() {
-  modelDetailVisible.value = false
 }
 
 function openAuditDetail(record: AuditItem) {
@@ -1625,1066 +2597,1685 @@ function openAuditDetail(record: AuditItem) {
   auditDetailVisible.value = true
 }
 
-function closeAuditDetail() {
-  auditDetailVisible.value = false
-}
-
 function openLogDetail(record: LogItem) {
   logDetailRow.value = record
   logDetailVisible.value = true
 }
 
-function closeLogDetail() {
-  logDetailVisible.value = false
+function onAuditPageChange(page: number) {
+  auditPage.value = page
+  void loadAudits()
 }
 
+function onLogPageChange(page: number) {
+  logPage.value = page
+  void loadLogs()
+}
+
+watch(activeTab, async (tab) => {
+  if ((tab === 'channel_models' || tab === 'scenes') && !consoleLoaded.value && !consoleLoading.value)
+    await loadConsole()
+  if (tab === 'audits' && !auditLoading.value)
+    await loadAudits()
+  if (tab === 'logs' && !logLoading.value)
+    await loadLogs()
+})
+
 onMounted(async () => {
-  await loadProviders()
+  await loadConsole()
 })
 </script>
 
 <template>
-  <div class="text-[11px] space-y-3">
-    <section class="p-2 border border-slate-200 bg-white">
-      <div class="flex flex-wrap gap-2 items-center justify-between">
-        <div class="flex flex-wrap gap-1">
-          <button
-            v-for="tab in tabOptions"
-            :key="tab.key"
-            class="text-[11px] font-semibold px-3 py-1 border rounded transition-colors"
-            :class="activeTab === tab.key ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'"
-            @click="switchTab(tab.key)"
-          >
-            {{ tab.label }}
-          </button>
-        </div>
-        <a-button size="small" type="outline" :loading="activeLoading" @click="refreshCurrentTab">
-          刷新当前分栏
-        </a-button>
-      </div>
-    </section>
+  <div class="ai-prompts-page min-w-0 w-full space-y-4">
+    <a-tabs v-model:active-key="activeTab" type="rounded">
+      <a-tab-pane v-for="tab in tabOptions" :key="tab.key" :title="tab.label" />
+    </a-tabs>
 
-    <section v-if="activeLoading" class="p-3 border border-slate-200 bg-white">
-      <a-skeleton :animation="true">
-        <a-skeleton-line :rows="8" />
-      </a-skeleton>
-    </section>
+    <div v-if="activeTab === 'channel_models'" class="space-y-4">
+      <a-alert v-if="consoleError" type="error" :show-icon="true">
+        {{ consoleError }}
+      </a-alert>
 
-    <section v-else-if="activeError && !loaded[activeTab]" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
-      {{ activeError }}
-    </section>
-
-    <section v-else-if="activeTab === 'providers'" class="space-y-3">
-      <section class="p-3 border border-slate-200 bg-white">
-        <div class="text-[11px] text-slate-600">
-          <p class="m-0">
-            API Key 覆盖状态：LLM={{ providers?.overrideState?.aiApiKeyOverridden ? 'override' : 'env' }} ·
-            DocAI={{ providers?.overrideState?.docAiApiKeyOverridden ? 'override' : 'env' }} ·
-            Tavily={{ providers?.overrideState?.adminTavilyApiKeyOverridden ? 'override' : 'env' }}
-          </p>
-          <p class="m-0 mt-1">
-            最近更新：{{ formatTime(providers?.overrideState?.updatedAt || '') }} · by {{ providers?.overrideState?.updatedByUserId || '-' }}
-          </p>
-        </div>
-        <p v-if="providerSaveMessage" class="text-[11px] text-emerald-600 mt-2">
-          {{ providerSaveMessage }}
-        </p>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white">
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="providerColumns"
-          :data="providerRows"
-          :pagination="false"
-          row-key="key"
-          size="small"
-        >
-          <template #config="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 m-0 truncate">
-                mode={{ record.mode }} · provider={{ record.provider }}
-              </p>
-              <p class="text-[11px] text-slate-900 m-0 mt-1 truncate">
-                model={{ record.model }}
-              </p>
-              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
-                baseURL={{ record.baseURL }}
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                timeout={{ record.timeoutMs }}ms · retries={{ record.maxRetries }}
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                price={{ record.modelPriceText }}
-              </p>
-            </div>
-          </template>
-          <template #status="{ record }">
-            <div class="flex flex-wrap gap-1 items-center">
-              <a-tag :color="record.keyConfigured ? 'green' : 'orange'" size="small">
-                {{ record.keyConfigured ? 'Key 已配置' : 'Key 未配置' }}
-              </a-tag>
-              <a-tag color="arcoblue" size="small">
-                {{ record.modelPoolSize }} models
-              </a-tag>
-              <a-tag
-                v-if="record.modelFetchedAt"
-                color="gray"
-                size="small"
-              >
-                sync {{ formatTime(record.modelFetchedAt) }}
-              </a-tag>
-            </div>
-            <p
-              v-if="getProviderModelError(record.key)"
-              class="text-[10px] text-rose-600 m-0 mt-1"
-            >
-              {{ getProviderModelError(record.key) }}
-            </p>
-          </template>
-          <template #actions="{ record }">
-            <div class="flex gap-1 items-center">
-              <a-button
-                size="mini"
-                :loading="getProviderModelLoading(record.key)"
-                :disabled="!record.keyConfigured"
-                @click="loadProviderModelOptions(toProviderEditorKey(record.key), { assignIfEmpty: true, syncCatalogForLlm: toProviderEditorKey(record.key) === 'llm' })"
-              >
-                拉取模型
-              </a-button>
-              <a-button size="mini" :loading="providerSaving" @click="openProviderEditor(toProviderEditorKey(record.key))">
-                编辑
-              </a-button>
-            </div>
-          </template>
-        </a-table>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white space-y-3">
-        <div>
-          <p class="text-[11px] text-slate-900 font-semibold m-0">
-            Provider Registry（多 Provider）
-          </p>
-          <p class="text-[10px] text-slate-500 m-0 mt-1">
-            支持 provider/model 双层 enabled 开关，可用于 channels 场景路由。
-          </p>
-        </div>
-
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="registryProviderColumns"
-          :data="registryProviderRows"
-          :pagination="false"
-          row-key="rowKey"
-          size="small"
-        >
-          <template #config="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 m-0 truncate">
-                id={{ record.id }} · adapter={{ record.adapter }} · provider={{ record.provider }}
-              </p>
-              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
-                baseURL={{ record.baseURL || '-' }}
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                enabled={{ record.enabled ? 'true' : 'false' }} · key={{ record.apiKeyConfigured ? 'configured' : 'missing' }}
-              </p>
-            </div>
-          </template>
-          <template #models="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 m-0">
-                {{ (record.models || []).length }} models
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1 truncate">
-                {{ toProviderModelPreview(record.models) }}
-              </p>
-            </div>
-          </template>
-          <template #enabled="{ record }">
-            <a-switch
-              :model-value="record.enabled"
-              :loading="registryProviderMutating[record.id]"
-              size="small"
-              @change="(value: boolean | string | number) => toggleRegistryProviderEnabled(record.id, Boolean(value))"
-            />
-          </template>
-          <template #lastTriggeredAt="{ record }">
-            <span class="text-[10px] text-slate-600">{{ formatTime(record.lastTriggeredAt) }}</span>
-          </template>
-          <template #totalConsumed="{ record }">
-            <span class="text-[10px] text-slate-700 font-mono">{{ Number(record.totalConsumed || 0).toLocaleString('zh-CN') }}</span>
-          </template>
-          <template #actions="{ record }">
-            <div class="space-y-1">
-              <div class="flex gap-1 items-center">
-                <a-button
-                  size="mini"
-                  :loading="registryProviderPullLoading[record.id]"
-                  :disabled="registryProviderMutating[record.id]"
-                  @click="pullRegistryProviderModels(record.id)"
-                >
-                  拉取模型
-                </a-button>
-                <a-button
-                  size="mini"
-                  :loading="registryProviderTestLoading[record.id]"
-                  :disabled="registryProviderMutating[record.id]"
-                  @click="testRegistryProvider(record.id)"
-                >
-                  测试
-                </a-button>
-                <a-button
-                  size="mini"
-                  type="outline"
-                  :disabled="registryProviderMutating[record.id]"
-                  @click="openRegistryProviderModelEditor(record.id)"
-                >
-                  模型格式
-                </a-button>
-                <a-popconfirm
-                  content="确认删除该 Provider 吗？"
-                  type="warning"
-                  @ok="deleteRegistryProvider(record.id)"
-                >
-                  <a-button
-                    size="mini"
-                    status="danger"
-                    :loading="registryProviderMutating[record.id]"
-                  >
-                    删除
-                  </a-button>
-                </a-popconfirm>
+      <a-spin :loading="consoleLoading || saving" class="w-full block">
+        <a-card :bordered="false" class="rounded-3xl shadow-sm">
+          <template #title>
+            <div class="flex flex-wrap gap-4 items-center justify-between">
+              <div>
+                <div class="text-base font-semibold">
+                  Provider 列表
+                </div>
+                <div class="text-xs text-slate-500">
+                  每个 Provider 独立维护类型、密钥、模型池，以及搜索或 AI 能力配置。
+                </div>
               </div>
-              <p v-if="registryProviderTestMessage[record.id]" class="text-[10px] m-0" :class="(registryProviderTestMessage[record.id] || '').includes('失败') ? 'text-rose-600' : 'text-emerald-600'">
-                {{ registryProviderTestMessage[record.id] }}
-              </p>
+              <div class="flex flex-wrap gap-2">
+                <a-button @click="openCreateProviderDrawer">
+                  新增 Provider
+                </a-button>
+                <a-button type="primary" :loading="saving" @click="saveConsole">
+                  保存配置
+                </a-button>
+              </div>
             </div>
           </template>
-        </a-table>
-      </section>
 
-      <a-modal
-        v-model:visible="registryProviderModelEditorVisible"
-        :closable="!providerSaving"
-        :footer="false"
-        :mask-closable="!providerSaving"
-        :title="`编辑模型格式：${registryProviderModelEditorProviderName || '-'}`"
-        @cancel="closeRegistryProviderModelEditor"
-      >
-        <div class="space-y-3">
-          <section class="p-3 border border-slate-200 bg-slate-50/40">
-            <p class="text-[11px] text-slate-700 m-0">
-              Provider ID：{{ registryProviderModelEditorProviderId || '-' }}
-            </p>
-            <p class="text-[10px] text-slate-500 m-0 mt-1">
-              每个模型可独立配置 format（openai-compatible / response）与启用状态。
-            </p>
-          </section>
+          <a-table :data="providerRows" :pagination="false" row-key="id">
+            <template #columns>
+              <a-table-column title="Provider" data-index="name" :width="260">
+                <template #cell="scope">
+                  <div class="space-y-1">
+                    <div class="text-slate-900 font-medium">
+                      {{ scope.record.name }}
+                    </div>
+                    <div class="text-xs text-slate-500">
+                      {{ scope.record.provider || scope.record.type }}
+                    </div>
+                  </div>
+                </template>
+              </a-table-column>
+              <a-table-column title="类型" data-index="type" :width="180">
+                <template #cell="scope">
+                  <div class="space-y-1">
+                    <a-tag>{{ normalizeProviderTypeLabel(scope.record.type) }}</a-tag>
+                    <div class="text-xs text-slate-500">
+                      {{ providerCapabilityLabel(scope.record.capability) }}
+                    </div>
+                  </div>
+                </template>
+              </a-table-column>
+              <a-table-column title="连接" data-index="baseURL">
+                <template #cell="scope">
+                  <div class="space-y-1">
+                    <div class="text-sm text-slate-700 break-all">
+                      {{ scope.record.baseURL || '-' }}
+                    </div>
+                    <div class="text-xs text-slate-500">
+                      {{ providerSummary(scope.record) }}
+                    </div>
+                  </div>
+                </template>
+              </a-table-column>
+              <a-table-column title="状态" data-index="enabled" :width="120">
+                <template #cell="scope">
+                  <a-tag :color="scope.record.enabled ? 'green' : 'gray'">
+                    {{ scope.record.enabled ? 'enabled' : 'disabled' }}
+                  </a-tag>
+                </template>
+              </a-table-column>
+              <a-table-column title="操作" data-index="providerActions" :width="180">
+                <template #cell="scope">
+                  <div class="flex gap-2">
+                    <a-button size="mini" @click="openEditProviderDrawer(scope.record)">
+                      编辑
+                    </a-button>
+                    <a-popconfirm
+                      content="确认删除该 Provider 吗？删除后会同步从所有已绑定场景中移除；需要点击“保存配置”后才会持久化。"
+                      type="warning"
+                      @ok="removeProvider(scope.record.id)"
+                    >
+                      <a-button size="mini" status="danger">
+                        删除
+                      </a-button>
+                    </a-popconfirm>
+                  </div>
+                </template>
+              </a-table-column>
+            </template>
+          </a-table>
+        </a-card>
+      </a-spin>
+    </div>
 
-          <section class="p-3 border border-slate-200 bg-white">
-            <a-table
-              :bordered="{ cell: true }"
-              :columns="registryProviderModelColumns"
-              :data="registryProviderModelEditorRows"
-              :pagination="false"
-              row-key="model"
-              size="small"
-            >
-              <template #format="{ record }">
-                <a-select v-model="record.format" size="small">
-                  <a-option value="openai-compatible">
-                    openai-compatible
-                  </a-option>
-                  <a-option value="response">
-                    response
-                  </a-option>
-                </a-select>
-              </template>
-              <template #enabled="{ record }">
-                <a-switch v-model="record.enabled" size="small" />
-              </template>
-              <template #price="{ record }">
-                <p class="text-[10px] text-slate-600 m-0">
-                  {{ formatCatalogPrice(record) }}
-                </p>
-              </template>
-            </a-table>
-          </section>
-        </div>
+    <div v-else-if="activeTab === 'scenes'" class="space-y-4">
+      <a-alert v-if="consoleError" type="error" :show-icon="true">
+        {{ consoleError }}
+      </a-alert>
 
-        <div class="mt-4 flex gap-2 justify-end">
-          <a-button size="small" :disabled="providerSaving" @click="closeRegistryProviderModelEditor">
-            取消
-          </a-button>
-          <a-button
-            size="small"
-            type="primary"
-            :loading="providerSaving || registryProviderMutating[registryProviderModelEditorProviderId]"
-            @click="saveRegistryProviderModelEditor"
-          >
-            保存
-          </a-button>
-        </div>
-      </a-modal>
+      <a-alert type="info" :show-icon="true">
+        每个场景都只看自身绑定的 Provider、模型池和回退顺序；留空就表示该场景未接通，不再共享兜底。
+      </a-alert>
 
-      <a-modal
-        v-model:visible="providerEditorVisible"
-        :closable="!providerSaving"
-        :footer="false"
-        :mask-closable="!providerSaving"
-        :title="providerEditorTitle"
-        @cancel="closeProviderEditor"
-      >
-        <div class="space-y-3">
-          <section class="p-3 border border-slate-200 bg-slate-50/40 space-y-1">
-            <div class="flex gap-2 items-center justify-between">
-              <p class="text-[11px] text-slate-700 m-0">
-                模式：{{ providerEditorKey === 'llm' ? 'LLM' : 'DocAI' }}
-              </p>
-              <a-button
-                size="mini"
-                type="outline"
-                :loading="providerEditorKey === 'llm' ? providerModelLoading.llm : providerModelLoading.docAi"
-                @click="loadProviderModelOptions(providerEditorKey, { assignIfEmpty: true, syncCatalogForLlm: providerEditorKey === 'llm' })"
-              >
-                自动拉取模型
+      <a-card :bordered="false" class="rounded-3xl shadow-sm">
+        <template #title>
+          <div class="flex flex-wrap gap-4 items-center justify-between">
+            <div>
+              <div class="text-base font-semibold">
+                场景路由
+              </div>
+              <div class="text-xs text-slate-500">
+                每个场景独立维护 Provider 绑定、模型池、回退顺序和故障转移策略；只有显式绑定的模型才会参与运行。
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <a-button @click="openSceneBatchDrawer">
+                一键设置全部场景
+              </a-button>
+              <a-button type="primary" :loading="saving" @click="saveConsole">
+                保存场景
               </a-button>
             </div>
-            <p class="text-[10px] text-slate-500 m-0">
-              当前模型价格={{ activeProviderModelOption?.pricingText || '价格未返回' }} · 来源={{ activeProviderModelOption ? toPricingSourceLabel(activeProviderModelOption.pricingSource) : 'none' }}
-            </p>
-            <p class="text-[10px] text-slate-500 m-0">
-              最近拉取时间={{ formatTime(providerModelFetchedAt[providerEditorKey] || '') }}
-            </p>
-          </section>
+          </div>
+        </template>
 
-          <section class="p-3 border border-slate-200 bg-white space-y-2">
-            <p class="text-[11px] text-slate-700 font-medium m-0">
-              基础配置
-            </p>
-            <div class="gap-2 grid md:grid-cols-2">
-              <label class="block space-y-1">
-                <span class="text-[11px] text-slate-600">Provider</span>
-                <a-input v-if="providerEditorKey === 'llm'" v-model="providerForm.aiProvider" size="small" placeholder="例如：openai" />
-                <a-input v-else v-model="providerForm.docAiProvider" size="small" placeholder="例如：openai" />
-              </label>
-              <label class="block space-y-1">
-                <span class="text-[11px] text-slate-600">Model（可手输）</span>
-                <a-input v-if="providerEditorKey === 'llm'" v-model="providerForm.aiModel" size="small" placeholder="例如：gpt-4o-mini" />
-                <a-input v-else v-model="providerForm.docAiModel" size="small" placeholder="例如：gpt-4o-mini" />
-              </label>
-              <label v-if="providerEditorKey === 'llm'" class="block space-y-1">
-                <span class="text-[11px] text-slate-600">Embedding Model</span>
-                <a-input v-model="providerForm.aiEmbeddingModel" size="small" placeholder="例如：text-embedding-3-small" />
-              </label>
-              <label class="block space-y-1 md:col-span-2">
-                <span class="text-[11px] text-slate-600">Base URL</span>
-                <a-input v-if="providerEditorKey === 'llm'" v-model="providerForm.aiBaseURL" size="small" placeholder="例如：https://api.openai.com/v1" />
-                <a-input v-else v-model="providerForm.docAiBaseURL" size="small" placeholder="例如：https://api.openai.com/v1" />
-              </label>
-            </div>
-          </section>
-
-          <section class="p-3 border border-slate-200 bg-white space-y-2">
-            <p class="text-[11px] text-slate-700 font-medium m-0">
-              模型池（Table）
-            </p>
-            <a-table
-              :bordered="{ cell: true }"
-              :columns="providerEditorModelColumns"
-              :data="providerEditorModelRows"
-              :pagination="false"
-              row-key="rowKey"
-              size="small"
-            >
-              <template #pricingText="{ record }">
-                {{ record.pricingText || '-' }}
+        <a-table :data="sceneRows" :pagination="false" row-key="key">
+          <template #columns>
+            <a-table-column title="场景" data-index="label" :width="220">
+              <template #cell="scope">
+                <div class="space-y-1">
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <div class="text-slate-900 font-medium">
+                      {{ scope.record.label }}
+                    </div>
+                    <a-tag size="small" color="gray">
+                      ID: {{ scope.record.key }}
+                    </a-tag>
+                    <a-tag v-if="sceneUsageHint(scope.record)" :color="sceneUsageHintColor(scope.record)">
+                      {{ sceneUsageHint(scope.record) }}
+                    </a-tag>
+                    <a-tag size="small" :color="modelCapabilityColor(sceneRequiredCapability(scope.record.key))">
+                      {{ modelCapabilityLabel(sceneRequiredCapability(scope.record.key)) }}
+                    </a-tag>
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    {{ scope.record.description }}
+                  </div>
+                </div>
               </template>
-              <template #pricingSource="{ record }">
-                {{ toPricingSourceLabel(record.pricingSource) }}
+            </a-table-column>
+            <a-table-column title="Provider 绑定" data-index="providerIds" :width="240">
+              <template #cell="scope">
+                <div class="text-sm text-slate-700">
+                  {{ sceneProvidersPreview(scope.record) }}
+                </div>
               </template>
-              <template #selected="{ record }">
-                <a-tag :color="record.selected ? 'green' : 'gray'" size="small">
-                  {{ record.selected ? '已选中' : '未选' }}
+            </a-table-column>
+            <a-table-column title="模型策略" data-index="modelFallback">
+              <template #cell="scope">
+                <div class="space-y-1.5">
+                  <div class="text-sm text-slate-700">
+                    模型池：{{ sceneModelPoolPreview(scope.record) }}
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    回退顺序：{{ sceneFallbackPreview(scope.record) }}
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    故障转移：{{ sceneFailoverStrategyLabel(scope.record) }}
+                  </div>
+                  <div v-if="sceneTestMessage[scope.record.key]" class="text-xs text-slate-500">
+                    {{ sceneTestMessage[scope.record.key] }}
+                  </div>
+                </div>
+              </template>
+            </a-table-column>
+            <a-table-column title="提示词" data-index="prompt">
+              <template #cell="scope">
+                <div class="space-y-1.5">
+                  <div class="text-xs text-slate-500">
+                    内置：{{ sceneBuiltinPromptPreview(scope.record.key) }}
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    自定义：{{ promptPreview(scope.record.prompt) }}
+                  </div>
+                  <a-button size="mini" @click="openSceneBuiltinPrompt(scope.record)">
+                    查看内置提示词
+                  </a-button>
+                </div>
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" data-index="enabled" :width="100">
+              <template #cell="scope">
+                <a-tag :color="scope.record.enabled ? 'green' : 'gray'">
+                  {{ scope.record.enabled ? 'enabled' : 'disabled' }}
                 </a-tag>
               </template>
-              <template #actions="{ record }">
-                <a-button size="mini" type="outline" @click="selectProviderEditorModel(record.model)">
-                  选择
+            </a-table-column>
+            <a-table-column title="操作" data-index="sceneActions" :width="220">
+              <template #cell="scope">
+                <div class="flex gap-2">
+                  <a-button size="mini" @click="openSceneDrawer(scope.record)">
+                    编辑
+                  </a-button>
+                  <a-button size="mini" :disabled="!sceneCanRunTest(scope.record)" :loading="sceneTesting[scope.record.key]" @click="openSceneTestDrawer(scope.record)">
+                    {{ sceneCanRunTest(scope.record) ? '测试' : '不可测' }}
+                  </a-button>
+                </div>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
+      </a-card>
+    </div>
+
+    <div v-else-if="activeTab === 'audits'" class="space-y-4">
+      <a-alert v-if="auditError" type="error" :show-icon="true">
+        {{ auditError }}
+      </a-alert>
+
+      <a-card :bordered="false" class="rounded-3xl shadow-sm">
+        <template #title>
+          <div class="flex flex-wrap gap-4 items-center justify-between">
+            <div class="text-base font-semibold">
+              审计日志
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <a-input v-model="auditAction" placeholder="按 action 过滤" allow-clear class="w-60" />
+              <a-button @click="loadAudits">
+                刷新
+              </a-button>
+            </div>
+          </div>
+        </template>
+
+        <a-table :data="audits" :loading="auditLoading" :pagination="false" row-key="id">
+          <template #columns>
+            <a-table-column title="时间" data-index="createdAt" :width="180">
+              <template #cell="scope">
+                {{ formatTime(scope.record.createdAt) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="Action" data-index="action" :width="260" />
+            <a-table-column title="操作者" data-index="actorName" :width="150">
+              <template #cell="scope">
+                {{ scope.record.actorName || scope.record.actorUserId || '-' }}
+              </template>
+            </a-table-column>
+            <a-table-column title="赛事" data-index="contestName" :width="180">
+              <template #cell="scope">
+                {{ scope.record.contestName || '-' }}
+              </template>
+            </a-table-column>
+            <a-table-column title="Payload" data-index="payload">
+              <template #cell="scope">
+                <div class="text-sm text-slate-600 truncate">
+                  {{ toPrettyJson(scope.record.payload).slice(0, 160) }}
+                </div>
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" data-index="auditActions" :width="90">
+              <template #cell="scope">
+                <a-button size="mini" @click="openAuditDetail(scope.record)">
+                  详情
                 </a-button>
               </template>
-            </a-table>
-            <p v-if="providerModelError[providerEditorKey]" class="text-[10px] text-rose-600 m-0">
-              {{ providerModelError[providerEditorKey] }}
-            </p>
-            <label class="block space-y-1">
-              <span class="text-[11px] text-slate-600">模型池文本编辑（每行一个）</span>
-              <a-textarea
-                v-model="activeProviderManualModelsText"
-                :auto-size="{ minRows: 3, maxRows: 8 }"
-                placeholder="每行一个模型名，例如：gpt-5.4"
-              />
-            </label>
-          </section>
-
-          <section class="p-3 border border-slate-200 bg-white space-y-2">
-            <p class="text-[11px] text-slate-700 font-medium m-0">
-              密钥策略
-            </p>
-            <label class="block space-y-1">
-              <span class="text-[11px] text-slate-600">API Key（留空=keep，填写=replace）</span>
-              <a-input
-                v-if="providerEditorKey === 'llm'"
-                v-model="providerForm.aiApiKey"
-                size="small"
-                type="password"
-                placeholder="留空保持原值，填写后替换为新 Key"
-              />
-              <a-input
-                v-else
-                v-model="providerForm.docAiApiKey"
-                size="small"
-                type="password"
-                placeholder="留空保持原值，填写后替换为新 Key"
-              />
-            </label>
-          </section>
-        </div>
-
-        <div class="mt-4 flex gap-2 justify-end">
-          <a-button size="small" :disabled="providerSaving" @click="closeProviderEditor">
-            取消
-          </a-button>
-          <a-button size="small" type="primary" :loading="providerSaving" @click="saveProviderEditor">
-            保存
-          </a-button>
-        </div>
-      </a-modal>
-    </section>
-
-    <section v-else-if="activeTab === 'channels'" class="space-y-3">
-      <section class="p-3 border border-slate-200 bg-white">
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="channelConfigColumns"
-          :data="channelConfigRows"
-          :pagination="false"
-          row-key="key"
-          size="small"
-        >
-          <template #config="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 m-0">
-                enabled={{ record.enabled ? 'true' : 'false' }} · webTimeout={{ record.webTimeoutMs }}ms
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                maxWebResults={{ record.maxWebResults }} · maxPageChars={{ record.maxPageChars }}
-              </p>
-            </div>
-          </template>
-          <template #status="{ record }">
-            <div class="flex flex-wrap gap-1 items-center">
-              <a-tag :color="record.enabled ? 'green' : 'gray'" size="small">
-                {{ record.enabled ? 'Enabled' : 'Disabled' }}
-              </a-tag>
-              <a-tag :color="record.keyConfigured ? 'green' : 'orange'" size="small">
-                {{ record.keyConfigured ? 'Tavily Key 已配置' : 'Tavily Key 未配置' }}
-              </a-tag>
-            </div>
-          </template>
-          <template #actions="{ record }">
-            <a-button size="mini" :loading="providerSaving" @click="openChannelEditor(record.key)">
-              编辑
-            </a-button>
+            </a-table-column>
           </template>
         </a-table>
-        <p v-if="providerSaveMessage" class="text-[11px] text-emerald-600 mt-2">
-          {{ providerSaveMessage }}
-        </p>
-      </section>
 
-      <section class="p-3 border border-slate-200 bg-white space-y-3">
-        <div>
-          <div>
-            <p class="text-[11px] text-slate-900 font-semibold m-0">
-              Channel 场景路由（模型 + 提示词）
-            </p>
-            <p class="text-[10px] text-slate-500 m-0 mt-1">
-              不同场景可指定不同 Provider/Model，并独立维护场景提示词。
-            </p>
-          </div>
-        </div>
-
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="registryChannelColumns"
-          :data="registryChannelRows"
-          :pagination="false"
-          row-key="rowKey"
-          size="small"
-        >
-          <template #routing="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 m-0 truncate">
-                providerId={{ record.providerId || '-' }} · model={{ record.model || '-' }}
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                enabled={{ record.enabled ? 'true' : 'false' }}
-              </p>
-            </div>
-          </template>
-          <template #prompt="{ record }">
-            <div class="min-w-0">
-              <p class="text-[10px] text-slate-700 m-0">
-                {{ toPromptPreview(record.prompt) }}
-              </p>
-              <p v-if="registryChannelTestMessage[record.key]" class="text-[10px] m-0 mt-1" :class="(registryChannelTestMessage[record.key] || '').includes('失败') ? 'text-rose-600' : 'text-emerald-600'">
-                {{ registryChannelTestMessage[record.key] }}
-              </p>
-            </div>
-          </template>
-          <template #actions="{ record }">
-            <div class="flex gap-1 items-center">
-              <a-button size="mini" type="outline" :disabled="providerSaving" @click="openChannelScenarioEditor(record)">
-                编辑
-              </a-button>
-              <a-button size="mini" :loading="registryChannelTestLoading[record.key]" @click="testChannelScenario(record.key)">
-                场景测试
-              </a-button>
-            </div>
-          </template>
-        </a-table>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white">
-        <div class="flex flex-wrap gap-2 items-center justify-between">
-          <div class="flex gap-2 items-center">
-            <span class="text-[11px] text-slate-600">调用统计窗口</span>
-            <a-select v-model="channelDays" size="small" style="width: 100px" @change="loadChannels">
-              <a-option :value="1">
-                1 天
-              </a-option>
-              <a-option :value="7">
-                7 天
-              </a-option>
-              <a-option :value="30">
-                30 天
-              </a-option>
-            </a-select>
-          </div>
-          <div class="text-[11px] text-slate-600 flex gap-2 items-center">
-            <span>totalCalls: <b class="text-slate-900 font-mono">{{ channels?.totalCalls || 0 }}</b></span>
-            <span>totalUnits: <b class="text-slate-900 font-mono">{{ channels?.totalUnits || 0 }}</b></span>
-          </div>
-        </div>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white">
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="channelUsageColumns"
-          :data="channels?.items || []"
-          :pagination="false"
-          row-key="route"
-          size="small"
-        >
-          <template #lastAt="{ record }">
-            {{ formatTime(record.lastAt) }}
-          </template>
-        </a-table>
-      </section>
-
-      <a-modal
-        v-model:visible="channelScenarioEditorVisible"
-        :closable="!providerSaving"
-        :footer="false"
-        :mask-closable="!providerSaving"
-        title="编辑场景路由"
-        @cancel="closeChannelScenarioEditor"
-      >
-        <div class="space-y-3">
-          <section class="p-3 border border-slate-200 bg-slate-50/40 space-y-1">
-            <p class="text-[11px] text-slate-700 m-0">
-              场景：{{ channelScenarioForm.label || channelScenarioForm.key }}
-            </p>
-            <p class="text-[10px] text-slate-500 m-0">
-              key={{ channelScenarioForm.key }} · {{ channelScenarioForm.description || '无描述' }}
-            </p>
-          </section>
-
-          <section class="p-3 border border-slate-200 bg-white space-y-2">
-            <label class="text-[11px] text-slate-700 inline-flex gap-2 items-center">
-              <span>启用</span>
-              <a-switch v-model="channelScenarioForm.enabled" size="small" />
-            </label>
-
-            <label class="block space-y-1">
-              <span class="text-[11px] text-slate-600">Provider</span>
-              <a-select
-                v-model="channelScenarioForm.providerId"
-                size="small"
-                @change="onChannelScenarioProviderChange"
-              >
-                <a-option
-                  v-for="item in providers?.registry?.providers || []"
-                  :key="item.id"
-                  :value="item.id"
-                >
-                  {{ item.name }} ({{ item.id }})
-                </a-option>
-              </a-select>
-            </label>
-
-            <label class="block space-y-1">
-              <span class="text-[11px] text-slate-600">Model</span>
-              <a-input
-                v-model="channelScenarioForm.model"
-                size="small"
-                placeholder="例如：gpt-5.4"
-              />
-            </label>
-            <p class="text-[10px] text-slate-500 m-0">
-              可用模型：{{ getProviderModelsById(channelScenarioForm.providerId).map(item => `${item.model}[${item.format}]${item.enabled ? '' : '(off)'}`).slice(0, 6).join(' · ') || '-' }}
-            </p>
-          </section>
-
-          <section class="p-3 border border-slate-200 bg-white">
-            <label class="block space-y-1">
-              <span class="text-[11px] text-slate-600">场景提示词</span>
-              <a-textarea
-                v-model="channelScenarioForm.prompt"
-                :auto-size="{ minRows: 6, maxRows: 14 }"
-                placeholder="请输入该场景专用提示词。"
-              />
-            </label>
-          </section>
-        </div>
-
-        <div class="mt-4 flex gap-2 justify-end">
-          <a-button size="small" :disabled="providerSaving" @click="closeChannelScenarioEditor">
-            取消
-          </a-button>
-          <a-button size="small" type="primary" :loading="providerSaving" @click="saveChannelScenarioEditor">
-            保存
-          </a-button>
-        </div>
-      </a-modal>
-
-      <a-modal
-        v-model:visible="channelEditorVisible"
-        :closable="!providerSaving"
-        :footer="false"
-        :mask-closable="!providerSaving"
-        title="编辑 Admin Agent Channel"
-        @cancel="closeChannelEditor"
-      >
-        <div class="space-y-3">
-          <label class="text-[11px] text-slate-700 inline-flex gap-2 items-center">
-            <span>enabled</span>
-            <a-switch v-model="providerForm.adminAiEnabled" size="small" />
-          </label>
-          <div class="gap-2 grid md:grid-cols-2">
-            <label class="block space-y-1">
-              <span class="text-[11px] text-slate-600">Web Timeout (ms)</span>
-              <a-input-number v-model="providerForm.adminAiWebTimeoutMs" size="small" :min="1000" :max="120000" placeholder="webTimeoutMs" />
-            </label>
-            <label class="block space-y-1">
-              <span class="text-[11px] text-slate-600">Max Web Results</span>
-              <a-input-number v-model="providerForm.adminAiMaxWebResults" size="small" :min="1" :max="10" placeholder="maxWebResults" />
-            </label>
-            <label class="block space-y-1 md:col-span-2">
-              <span class="text-[11px] text-slate-600">Max Page Chars</span>
-              <a-input-number v-model="providerForm.adminAiMaxPageChars" size="small" :min="1000" :max="50000" placeholder="maxPageChars" />
-            </label>
-          </div>
-          <label class="block space-y-1">
-            <span class="text-[11px] text-slate-600">Tavily Key 策略</span>
-            <div class="gap-2 grid md:grid-cols-[140px_1fr]">
-              <a-select v-model="providerForm.adminAiTavilyApiKeyMode" size="small">
-                <a-option value="keep">
-                  keep key
-                </a-option>
-                <a-option value="replace">
-                  replace key
-                </a-option>
-                <a-option value="clear">
-                  clear key
-                </a-option>
-              </a-select>
-              <a-input
-                v-model="providerForm.adminAiTavilyApiKey"
-                size="small"
-                type="password"
-                :disabled="providerForm.adminAiTavilyApiKeyMode !== 'replace'"
-                placeholder="仅 replace 模式下填写新的 Tavily API Key"
-              />
-            </div>
-          </label>
-        </div>
-
-        <div class="mt-4 flex gap-2 justify-end">
-          <a-button size="small" :disabled="providerSaving" @click="closeChannelEditor">
-            取消
-          </a-button>
-          <a-button size="small" type="primary" :loading="providerSaving" @click="saveChannelEditor">
-            保存
-          </a-button>
-        </div>
-      </a-modal>
-    </section>
-
-    <section v-else-if="activeTab === 'models'" class="space-y-3">
-      <section class="p-3 border border-slate-200 bg-white">
-        <div class="flex flex-wrap gap-2 items-center justify-between">
-          <div class="flex gap-2 items-center">
-            <span class="text-[11px] text-slate-600">统计窗口</span>
-            <a-select v-model="modelDays" size="small" style="width: 100px" @change="loadModels">
-              <a-option :value="1">
-                1 天
-              </a-option>
-              <a-option :value="7">
-                7 天
-              </a-option>
-              <a-option :value="30">
-                30 天
-              </a-option>
-            </a-select>
-          </div>
-          <div class="text-[11px] text-slate-600">
-            totalMessages:
-            <b class="text-slate-900 font-mono">{{ models?.totalMessages || 0 }}</b>
-          </div>
-        </div>
-        <p class="text-[10px] text-slate-500 mb-0 mt-2">
-          聚合模型池：{{ models?.totalCatalogModels || 0 }}（来自所有已配置 providers）
-        </p>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white">
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="modelCatalogColumns"
-          :data="modelCatalogRows"
-          :pagination="false"
-          row-key="rowKey"
-          size="small"
-        >
-          <template #status="{ record }">
-            <div class="flex flex-wrap gap-1 items-center">
-              <a-tag :color="record.providerEnabled ? 'green' : 'gray'" size="small">
-                {{ record.providerEnabled ? 'provider:on' : 'provider:off' }}
-              </a-tag>
-              <a-tag :color="record.modelEnabled ? 'green' : 'gray'" size="small">
-                {{ record.modelEnabled ? 'model:on' : 'model:off' }}
-              </a-tag>
-              <a-tag color="arcoblue" size="small">
-                {{ record.pricingSource }}
-              </a-tag>
-            </div>
-          </template>
-          <template #price="{ record }">
-            <p class="text-[10px] text-slate-600 m-0">
-              {{ formatCatalogPrice(record) }}
-            </p>
-          </template>
-        </a-table>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white">
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="modelColumns"
-          :data="modelRows"
-          :pagination="false"
-          row-key="rowKey"
-          size="small"
-        >
-          <template #fallbackRate="{ record }">
-            {{ formatRate(record.fallbackRate) }}
-          </template>
-          <template #lastAt="{ record }">
-            {{ formatTime(record.lastAt) }}
-          </template>
-          <template #actions="{ record }">
-            <a-button size="mini" @click="openModelDetail(record)">
-              查看
-            </a-button>
-          </template>
-        </a-table>
-      </section>
-
-      <a-modal
-        v-model:visible="modelDetailVisible"
-        :footer="false"
-        title="Model 详情"
-        @cancel="closeModelDetail"
-      >
-        <div v-if="modelDetailRow" class="text-[11px] text-slate-700 space-y-2">
-          <p class="m-0">
-            provider={{ modelDetailRow.provider || '-' }} / model={{ modelDetailRow.model || '-' }}
-          </p>
-          <p class="m-0">
-            messages={{ modelDetailRow.messages }} · fallback={{ modelDetailRow.fallbackMessages }} · fallbackRate={{ formatRate(modelDetailRow.fallbackRate) }}
-          </p>
-          <p class="m-0">
-            最近调用：{{ formatTime(modelDetailRow.lastAt) }}
-          </p>
-        </div>
         <div class="mt-4 flex justify-end">
-          <a-button size="small" @click="closeModelDetail">
-            关闭
-          </a-button>
-        </div>
-      </a-modal>
-    </section>
-
-    <section v-else-if="activeTab === 'audits'" class="space-y-3">
-      <section class="p-3 border border-slate-200 bg-white">
-        <div class="gap-2 grid md:grid-cols-[1fr_auto]">
-          <a-input
-            v-model="auditAction"
-            size="small"
-            allow-clear
-            placeholder="按 action 模糊筛选，如 ai.invoke.project_chat"
-            @press-enter="applyAuditFilter"
-          />
-          <a-button size="small" type="primary" @click="applyAuditFilter">
-            应用筛选
-          </a-button>
-        </div>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white">
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="auditColumns"
-          :data="audits"
-          :pagination="false"
-          row-key="id"
-          size="small"
-        >
-          <template #createdAt="{ record }">
-            {{ formatTime(record.createdAt) }}
-          </template>
-          <template #actorName="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 m-0 truncate">
-                {{ record.actorName || '-' }}
-              </p>
-              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
-                {{ record.actorUserId || '-' }}
-              </p>
-            </div>
-          </template>
-          <template #contestName="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 m-0 truncate">
-                {{ record.contestName || '-' }}
-              </p>
-              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
-                {{ record.contestId || '-' }}
-              </p>
-            </div>
-          </template>
-          <template #payload="{ record }">
-            <p class="text-[10px] text-slate-600 font-mono m-0">
-              {{ toAuditPayloadPreview(record.payload || {}) }}
-            </p>
-          </template>
-          <template #actions="{ record }">
-            <a-button size="mini" @click="openAuditDetail(record)">
-              查看
-            </a-button>
-          </template>
-        </a-table>
-
-        <div class="mt-3 flex justify-end">
           <a-pagination
             :current="auditPage"
             :page-size="auditPageSize"
-            :page-size-options="[10, 20, 50]"
-            :show-total="true"
             :total="auditTotal"
-            size="small"
             @change="onAuditPageChange"
-            @page-size-change="onAuditPageSizeChange"
           />
         </div>
-      </section>
+      </a-card>
+    </div>
 
-      <a-modal
-        v-model:visible="auditDetailVisible"
-        :footer="false"
-        title="Audit 详情"
-        @cancel="closeAuditDetail"
-      >
-        <div v-if="auditDetailRow" class="text-[11px] text-slate-700 space-y-2">
-          <p class="m-0">
-            时间：{{ formatTime(auditDetailRow.createdAt) }}
-          </p>
-          <p class="m-0">
-            action={{ auditDetailRow.action }}
-          </p>
-          <p class="m-0">
-            actor={{ auditDetailRow.actorName || '-' }} ({{ auditDetailRow.actorUserId || '-' }})
-          </p>
-          <p class="m-0">
-            contest={{ auditDetailRow.contestName || '-' }} ({{ auditDetailRow.contestId || '-' }})
-          </p>
-          <pre class="text-[10px] leading-4 font-mono p-2 border border-slate-200 rounded bg-slate-50 max-h-80 overflow-auto">{{ toPrettyJson(auditDetailRow.payload || {}) }}</pre>
-        </div>
-        <div class="mt-4 flex justify-end">
-          <a-button size="small" @click="closeAuditDetail">
-            关闭
-          </a-button>
-        </div>
-      </a-modal>
-    </section>
+    <div v-else class="space-y-4">
+      <a-alert v-if="logError" type="error" :show-icon="true">
+        {{ logError }}
+      </a-alert>
 
-    <section v-else class="space-y-3">
-      <section class="p-3 border border-slate-200 bg-white">
-        <div class="gap-2 grid md:grid-cols-3">
-          <a-select v-model="logFilters.days" size="small" placeholder="窗口天数">
-            <a-option :value="1">
-              1 天
-            </a-option>
-            <a-option :value="7">
-              7 天
-            </a-option>
-            <a-option :value="30">
-              30 天
-            </a-option>
-          </a-select>
-          <a-input v-model="logFilters.provider" size="small" allow-clear placeholder="provider" />
-          <a-input v-model="logFilters.model" size="small" allow-clear placeholder="model" />
-          <a-input v-model="logFilters.role" size="small" allow-clear placeholder="role(system/user/assistant)" />
-          <a-input v-model="logFilters.workspaceId" size="small" allow-clear placeholder="workspaceId" />
-          <a-input v-model="logFilters.sessionId" size="small" allow-clear placeholder="sessionId" />
-        </div>
-        <div class="mt-2 gap-2 grid md:grid-cols-[1fr_auto]">
-          <a-input
-            v-model="logFilters.q"
-            size="small"
-            allow-clear
-            placeholder="全文检索：content/session/workspace/actor/contest"
-            @press-enter="applyLogFilter"
-          />
-          <a-button size="small" type="primary" @click="applyLogFilter">
-            应用筛选
-          </a-button>
-        </div>
-      </section>
-
-      <section class="p-3 border border-slate-200 bg-white">
-        <a-table
-          :bordered="{ cell: true }"
-          :columns="logColumns"
-          :data="logs"
-          :pagination="false"
-          row-key="id"
-          size="small"
-        >
-          <template #createdAt="{ record }">
-            {{ formatTime(record.createdAt) }}
-          </template>
-          <template #session="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
-                {{ record.workspaceName || '-' }}
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1 truncate">
-                {{ record.sessionTitle || record.sessionId }}
-              </p>
-              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
-                ws={{ record.workspaceId }} · sid={{ record.sessionId }}
-              </p>
+      <a-card :bordered="false" class="rounded-3xl shadow-sm">
+        <template #title>
+          <div class="flex flex-wrap gap-4 items-center justify-between">
+            <div class="text-base font-semibold">
+              调用日志
             </div>
-          </template>
-          <template #provider="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 m-0 truncate">
-                {{ record.provider || '-' }} / {{ record.model || '-' }}
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1">
-                fallback={{ record.fallbackUsed ? 'true' : 'false' }}
-              </p>
-            </div>
-          </template>
-          <template #actorName="{ record }">
-            <div class="min-w-0">
-              <p class="text-[11px] text-slate-900 m-0 truncate">
-                {{ record.actorName || '-' }}
-              </p>
-              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
-                {{ record.actorUserId || '-' }}
-              </p>
-            </div>
-          </template>
-          <template #contentPreview="{ record }">
-            <div class="min-w-0">
-              <p class="text-[10px] text-slate-700 font-mono m-0 truncate">
-                {{ record.contentPreview || '-' }}
-              </p>
-              <p class="text-[10px] text-slate-500 m-0 mt-1 truncate">
-                contest={{ record.contestName || record.contestId || '-' }} · track={{ record.trackId || '-' }} · major={{ record.major || '-' }}
-              </p>
-            </div>
-          </template>
-          <template #actions="{ record }">
-            <a-button size="mini" @click="openLogDetail(record)">
-              查看
+            <a-button @click="loadLogs">
+              刷新
             </a-button>
+          </div>
+        </template>
+
+        <div class="mb-4 gap-3 grid md:grid-cols-3 xl:grid-cols-6">
+          <a-input-number v-model="logFilters.days" :min="1" :max="30" class="w-full" placeholder="天数" />
+          <a-input v-model="logFilters.provider" placeholder="Provider" allow-clear />
+          <a-input v-model="logFilters.model" placeholder="Model" allow-clear />
+          <a-input v-model="logFilters.role" placeholder="Role" allow-clear />
+          <a-input v-model="logFilters.workspaceId" placeholder="Workspace ID" allow-clear />
+          <a-input v-model="logFilters.sessionId" placeholder="Session ID" allow-clear />
+        </div>
+
+        <div class="mb-4 flex flex-wrap gap-2">
+          <a-input v-model="logFilters.q" placeholder="按内容搜索" allow-clear class="flex-1 min-w-[240px]" />
+          <a-button type="primary" @click="loadLogs">
+            查询
+          </a-button>
+        </div>
+
+        <a-table :data="logs" :loading="logLoading" :pagination="false" row-key="id">
+          <template #columns>
+            <a-table-column title="时间" data-index="createdAt" :width="180">
+              <template #cell="scope">
+                {{ formatTime(scope.record.createdAt) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="Workspace / Session" data-index="workspaceName" :width="260">
+              <template #cell="scope">
+                <div class="space-y-1">
+                  <div class="text-slate-900 font-medium">
+                    {{ scope.record.workspaceName || scope.record.workspaceId || '-' }}
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    {{ scope.record.sessionTitle || scope.record.sessionId || '-' }}
+                  </div>
+                </div>
+              </template>
+            </a-table-column>
+            <a-table-column title="角色" data-index="role" :width="100">
+              <template #cell="scope">
+                {{ scope.record.role }}
+              </template>
+            </a-table-column>
+            <a-table-column title="Provider / Model" data-index="provider" :width="220">
+              <template #cell="scope">
+                <div class="space-y-1">
+                  <div>{{ scope.record.provider || '-' }}</div>
+                  <div class="text-xs text-slate-500">
+                    {{ scope.record.model || '-' }}<span v-if="scope.record.fallbackUsed"> · fallback</span>
+                  </div>
+                </div>
+              </template>
+            </a-table-column>
+            <a-table-column title="耗时" data-index="latencyMs" :width="110">
+              <template #cell="scope">
+                {{ formatLatency(scope.record.latencyMs) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="消息" data-index="contentPreview">
+              <template #cell="scope">
+                <div class="text-sm text-slate-600 truncate">
+                  {{ scope.record.contentPreview || scope.record.content || '-' }}
+                </div>
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" data-index="logActions" :width="90">
+              <template #cell="scope">
+                <a-button size="mini" @click="openLogDetail(scope.record)">
+                  详情
+                </a-button>
+              </template>
+            </a-table-column>
           </template>
         </a-table>
 
-        <div class="mt-3 flex justify-end">
+        <div class="mt-4 flex justify-end">
           <a-pagination
             :current="logPage"
             :page-size="logPageSize"
-            :page-size-options="[10, 20, 50]"
-            :show-total="true"
             :total="logTotal"
-            size="small"
             @change="onLogPageChange"
-            @page-size-change="onLogPageSizeChange"
           />
         </div>
-      </section>
+      </a-card>
+    </div>
 
-      <a-modal
-        v-model:visible="logDetailVisible"
-        :footer="false"
-        title="Log 详情"
-        @cancel="closeLogDetail"
-      >
-        <div v-if="logDetailRow" class="text-[11px] text-slate-700 space-y-2">
-          <p class="m-0">
-            时间：{{ formatTime(logDetailRow.createdAt) }}
-          </p>
-          <p class="m-0">
-            workspace={{ logDetailRow.workspaceName || '-' }} ({{ logDetailRow.workspaceId || '-' }})
-          </p>
-          <p class="m-0">
-            session={{ logDetailRow.sessionTitle || '-' }} ({{ logDetailRow.sessionId || '-' }})
-          </p>
-          <p class="m-0">
-            role={{ logDetailRow.role || '-' }} · provider={{ logDetailRow.provider || '-' }} · model={{ logDetailRow.model || '-' }} · fallback={{ logDetailRow.fallbackUsed ? 'true' : 'false' }}
-          </p>
-          <p class="m-0">
-            actor={{ logDetailRow.actorName || '-' }} ({{ logDetailRow.actorUserId || '-' }})
-          </p>
-          <p class="m-0">
-            contest={{ logDetailRow.contestName || logDetailRow.contestId || '-' }} · track={{ logDetailRow.trackId || '-' }} · major={{ logDetailRow.major || '-' }}
-          </p>
-          <pre class="text-[10px] leading-4 font-mono p-2 border border-slate-200 rounded bg-slate-50 max-h-80 overflow-auto">{{ logDetailRow.content || '-' }}</pre>
+    <a-drawer
+      v-model:visible="providerEditorVisible"
+      :title="providerEditorIsCreate ? '新增 Provider' : `编辑 Provider · ${providerEditorForm.name || providerEditorForm.id}`"
+      width="min(1120px, calc(100vw - 32px))"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <div class="gap-4 grid">
+          <a-alert v-if="!configMasterKeyReady" type="warning" :show-icon="true">
+            当前未配置 master key。你可以先用当前输入的 API Key 测试与拉取模型，但保存时不会持久化新密钥。
+          </a-alert>
+          <a-alert type="info" :show-icon="true">
+            <div class="space-y-1">
+              <div class="font-medium">
+                {{ providerEditorTypeGuide.title }}
+              </div>
+              <div>{{ providerEditorTypeGuide.summary }}</div>
+              <div class="text-xs text-slate-500">
+                {{ providerEditorTypeGuide.baseURLHint }}
+              </div>
+            </div>
+          </a-alert>
+
+          <div class="px-4 py-4 border border-slate-200 rounded-lg bg-white space-y-3">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                基础信息
+              </div>
+              <div class="text-xs text-slate-500">
+                Provider 只保存连接身份；模型能力与接入细节在模型池里维护。
+              </div>
+            </div>
+            <div class="gap-4 grid md:grid-cols-2">
+              <a-form-item label="Provider 名称">
+                <a-input v-model="providerEditorForm.name" placeholder="用于后台展示" />
+              </a-form-item>
+              <a-form-item label="Provider 类型">
+                <a-select v-model="providerEditorForm.type" @change="handleProviderTypeChange">
+                  <a-option v-for="item in providerTypeOptions" :key="item.value" :value="item.value">
+                    {{ item.label }}
+                  </a-option>
+                </a-select>
+              </a-form-item>
+              <a-form-item label="Provider 能力">
+                <div class="w-full space-y-1">
+                  <a-select
+                    v-model="providerEditorForm.capability"
+                    :disabled="providerEditorCapabilityLocked"
+                    class="w-full"
+                    @change="handleProviderCapabilityChange"
+                  >
+                    <a-option
+                      v-for="item in providerEditorCapabilityOptions"
+                      :key="item.value"
+                      :value="item.value"
+                    >
+                      {{ item.label }}
+                    </a-option>
+                  </a-select>
+                  <div class="text-xs text-slate-500 leading-relaxed">
+                    {{ providerCapabilityHint(providerEditorForm.capability) }}
+                  </div>
+                </div>
+              </a-form-item>
+              <a-form-item label="Provider 标识">
+                <a-input v-model="providerEditorForm.provider" :placeholder="providerEditorTypeGuide.providerPlaceholder" />
+              </a-form-item>
+              <a-form-item label="启用">
+                <a-switch v-model="providerEditorForm.enabled" />
+              </a-form-item>
+            </div>
+          </div>
+
+          <div class="px-4 py-4 border border-slate-200 rounded-lg bg-white space-y-3">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                连接与密钥
+              </div>
+            </div>
+            <a-alert type="info" :show-icon="true">
+              <div class="text-xs leading-relaxed">
+                {{ providerEditorTypeGuide.clientTypeHint }} {{ providerEditorTypeGuide.baseURLHint }}
+              </div>
+            </a-alert>
+            <div class="gap-4 grid md:grid-cols-2">
+              <a-form-item label="Base URL">
+                <a-input v-model="providerEditorForm.baseURL" :placeholder="providerEditorTypeGuide.baseURLPlaceholder" />
+              </a-form-item>
+              <a-form-item label="API Key">
+                <div class="w-full space-y-1">
+                  <a-input-password
+                    v-model="providerEditorForm.apiKey"
+                    :placeholder="providerEditorTypeGuide.apiKeyPlaceholder"
+                    autocomplete="new-password"
+                    allow-clear
+                  />
+                  <div class="text-xs text-slate-500 leading-relaxed">
+                    {{ providerEditorTypeGuide.apiKeyHint }}
+                  </div>
+                </div>
+              </a-form-item>
+              <a-form-item label="超时(ms)">
+                <a-input-number v-model="providerEditorForm.timeoutMs" :min="1000" :step="1000" class="w-full" />
+              </a-form-item>
+              <a-form-item label="重试次数">
+                <a-input-number v-model="providerEditorForm.maxRetries" :min="0" :max="10" class="w-full" />
+              </a-form-item>
+            </div>
+          </div>
+
+          <div v-if="providerEditorForm.capability === 'voice' || providerEditorForm.capability === 'realtime'" class="px-4 py-4 border border-slate-200 rounded-lg bg-white space-y-4">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                实时语音视频能力
+              </div>
+              <div class="text-xs text-slate-500">
+                同一 Provider 可配置 Qwen 实时音视频、ASR、TTS，也可配置 Coze 多智能体和音色。旧 botId / connectorId / voiceId 仍作为兼容默认值。
+              </div>
+            </div>
+            <div class="gap-4 grid md:grid-cols-2">
+              <a-form-item label="Bot ID">
+                <a-input v-model="providerEditorForm.voice.botId" placeholder="Coze botId" />
+              </a-form-item>
+              <a-form-item label="Connector ID">
+                <a-input v-model="providerEditorForm.voice.connectorId" placeholder="Coze connectorId" />
+              </a-form-item>
+              <a-form-item label="Voice ID">
+                <a-input v-model="providerEditorForm.voice.voiceId" placeholder="Coze voiceId" />
+              </a-form-item>
+              <a-form-item label="Token 类型">
+                <a-select v-model="providerEditorForm.voice.authMode">
+                  <a-option value="pat">
+                    PAT
+                  </a-option>
+                  <a-option value="oauth">
+                    OAuth
+                  </a-option>
+                </a-select>
+              </a-form-item>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+              <div class="flex flex-wrap gap-3 items-center justify-between">
+                <div>
+                  <div class="text-sm text-slate-900 font-medium">
+                    Qwen Realtime / ASR / TTS
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    用于千问实时音视频、实时语音识别和语音合成。Base URL 仍使用百炼根地址，实时 WebSocket 可按 profile 覆盖。
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <a-button size="small" @click="addQwenRealtimeProfile">
+                    新增 Realtime
+                  </a-button>
+                  <a-button size="small" @click="addQwenAsrProfile">
+                    新增 ASR
+                  </a-button>
+                  <a-button size="small" @click="addQwenTtsProfile">
+                    新增 TTS
+                  </a-button>
+                </div>
+              </div>
+
+              <div v-for="(profile, index) in providerEditorForm.voice.qwen?.realtimeProfiles || []" :key="profile.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex gap-3 items-center justify-between">
+                  <strong class="text-sm text-slate-900">Realtime Profile</strong>
+                  <a-button size="mini" status="danger" @click="removeQwenRealtimeProfile(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-3">
+                  <a-input v-model="profile.name" placeholder="名称" />
+                  <a-input v-model="profile.model" placeholder="qwen3.5-omni-plus-realtime" />
+                  <a-input v-model="profile.baseWsUrl" placeholder="Realtime WebSocket URL" />
+                  <a-input v-model="profile.workspaceId" placeholder="Workspace ID" />
+                  <a-input v-model="profile.appId" placeholder="App ID" />
+                  <a-input v-model="profile.defaultVoiceId" placeholder="默认音色 ID" />
+                  <a-input v-model="profile.asrProfileId" placeholder="ASR Profile ID" />
+                  <a-input v-model="profile.ttsProfileId" placeholder="TTS Profile ID" />
+                  <a-select v-model="profile.vadMode">
+                    <a-option value="server_vad">
+                      server_vad
+                    </a-option>
+                    <a-option value="semantic_vad">
+                      semantic_vad
+                    </a-option>
+                    <a-option value="manual">
+                      manual
+                    </a-option>
+                  </a-select>
+                  <a-input-number v-model="profile.frameIntervalMs" :min="250" :max="5000" :step="250" class="w-full" placeholder="视频帧间隔 ms" />
+                  <a-switch v-model="profile.enabled" />
+                </div>
+              </div>
+
+              <div v-for="(profile, index) in providerEditorForm.voice.qwen?.asrProfiles || []" :key="profile.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex gap-3 items-center justify-between">
+                  <strong class="text-sm text-slate-900">ASR Profile</strong>
+                  <a-button size="mini" status="danger" @click="removeQwenAsrProfile(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-4">
+                  <a-input v-model="profile.name" placeholder="名称" />
+                  <a-input v-model="profile.model" placeholder="qwen3-asr-flash-realtime" />
+                  <a-input v-model="profile.language" placeholder="zh-CN" />
+                  <a-switch v-model="profile.enabled" />
+                </div>
+              </div>
+
+              <div v-for="(profile, index) in providerEditorForm.voice.qwen?.ttsProfiles || []" :key="profile.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex gap-3 items-center justify-between">
+                  <strong class="text-sm text-slate-900">TTS Profile</strong>
+                  <a-button size="mini" status="danger" @click="removeQwenTtsProfile(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-5">
+                  <a-input v-model="profile.name" placeholder="名称" />
+                  <a-input v-model="profile.model" placeholder="qwen-tts-realtime" />
+                  <a-input v-model="profile.voiceId" placeholder="音色 ID" />
+                  <a-input-number v-model="profile.sampleRate" :min="8000" :max="48000" :step="1000" class="w-full" />
+                  <a-switch v-model="profile.enabled" />
+                </div>
+              </div>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+              <div class="flex flex-wrap gap-3 items-center justify-between">
+                <div>
+                  <div class="text-sm text-slate-900 font-medium">
+                    Coze 智能体 / 音色 / 房间
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    按评委角色配置多个 Bot，发起答辩时用户可调整每个评委的智能体和音色。
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <a-button size="small" @click="addCozeAgent">
+                    新增智能体
+                  </a-button>
+                  <a-button size="small" @click="addCozeVoice">
+                    新增音色
+                  </a-button>
+                </div>
+              </div>
+              <div class="gap-3 grid md:grid-cols-2">
+                <a-form-item label="服务端创建房间">
+                  <a-switch v-model="providerEditorForm.voice.coze.roomConfig.createRoomOnServer" />
+                </a-form-item>
+                <a-form-item label="房间名前缀">
+                  <a-input v-model="providerEditorForm.voice.coze.roomConfig.roomNamePrefix" placeholder="WinLoop 答辩" />
+                </a-form-item>
+              </div>
+              <div v-for="(agent, index) in providerEditorForm.voice.coze?.agents || []" :key="agent.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex gap-3 items-center justify-between">
+                  <strong class="text-sm text-slate-900">Coze 智能体</strong>
+                  <a-button size="mini" status="danger" @click="removeCozeAgent(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-4">
+                  <a-input v-model="agent.name" placeholder="名称" />
+                  <a-select v-model="agent.judgeType">
+                    <a-option value="technical">
+                      技术评委
+                    </a-option>
+                    <a-option value="business">
+                      业务评委
+                    </a-option>
+                    <a-option value="expression">
+                      表达评委
+                    </a-option>
+                    <a-option value="custom">
+                      自定义评委
+                    </a-option>
+                  </a-select>
+                  <a-input v-model="agent.botId" placeholder="Bot ID" />
+                  <a-input v-model="agent.connectorId" placeholder="Connector ID" />
+                  <a-input v-model="agent.defaultVoiceId" placeholder="默认音色 ID" />
+                  <a-switch v-model="agent.enabled" />
+                </div>
+              </div>
+              <div v-for="(voice, index) in providerEditorForm.voice.coze?.voices || []" :key="voice.id" class="p-3 border border-slate-200 rounded-lg bg-white space-y-3">
+                <div class="flex gap-3 items-center justify-between">
+                  <strong class="text-sm text-slate-900">Coze 音色</strong>
+                  <a-button size="mini" status="danger" @click="removeCozeVoice(index)">
+                    删除
+                  </a-button>
+                </div>
+                <div class="gap-3 grid md:grid-cols-4">
+                  <a-input v-model="voice.name" placeholder="名称" />
+                  <a-input v-model="voice.voiceId" placeholder="Voice ID" />
+                  <a-input v-model="voice.style" placeholder="风格" />
+                  <a-switch v-model="voice.enabled" />
+                </div>
+              </div>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+              <div>
+                <div class="text-sm text-slate-900 font-medium">
+                  扣点策略
+                </div>
+                <div class="text-xs text-slate-500">
+                  按 Provider 维护倍率，不把官方价格写死到业务逻辑。
+                </div>
+              </div>
+              <div class="gap-3 grid md:grid-cols-4">
+                <a-form-item label="启动扣点">
+                  <a-input-number v-model="providerEditorForm.voice.billing.realtimeStartupUnits" :min="0" class="w-full" />
+                </a-form-item>
+                <a-form-item label="实时每分钟">
+                  <a-input-number v-model="providerEditorForm.voice.billing.realtimeUnitsPerMinute" :min="0" class="w-full" />
+                </a-form-item>
+                <a-form-item label="ASR 每分钟">
+                  <a-input-number v-model="providerEditorForm.voice.billing.asrUnitsPerMinute" :min="0" class="w-full" />
+                </a-form-item>
+                <a-form-item label="TTS 每千字">
+                  <a-input-number v-model="providerEditorForm.voice.billing.ttsUnitsPer1KChars" :min="0" class="w-full" />
+                </a-form-item>
+                <a-form-item label="视频倍率">
+                  <a-input-number v-model="providerEditorForm.voice.billing.videoFrameMultiplier" :min="1" :step="0.1" class="w-full" />
+                </a-form-item>
+                <a-form-item label="Provider 加价">
+                  <a-input-number v-model="providerEditorForm.voice.billing.providerMarkupMultiplier" :min="1" :step="0.1" class="w-full" />
+                </a-form-item>
+                <a-form-item label="按评委数倍率">
+                  <a-switch v-model="providerEditorForm.voice.billing.judgeMultiplierEnabled" />
+                </a-form-item>
+              </div>
+            </div>
+          </div>
+
+          <div class="text-sm text-slate-500 flex flex-wrap gap-3 items-center">
+            <span>能力：{{ providerCapabilityLabel(providerEditorForm.capability) }}</span>
+            <span v-if="providerEditorSupportsModels">模型池拉取时间：{{ formatTime(providerEditorForm.fetchedAt) }}</span>
+            <span v-if="providerEditorSupportsModels">当前模型数：{{ providerEditorForm.models.length }}</span>
+            <span v-else>模型池：无需配置</span>
+            <span>API Key：{{ providerEditorForm.apiKeyConfigured ? '已配置' : '未配置' }}</span>
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <a-button :loading="providerEditorTestLoading" :disabled="!providerEditorCanRunProviderTest" @click="testProvider">
+              测试 Provider
+            </a-button>
+            <a-button :loading="providerPullLoading" :disabled="!providerEditorSupportsModels" @click="pullProviderModels">
+              拉取模型
+            </a-button>
+          </div>
+
+          <div v-if="providerEditorTestMessage" class="text-sm text-slate-600 px-4 py-3 rounded-2xl bg-slate-50">
+            {{ providerEditorTestMessage }}
+          </div>
+          <div v-if="providerPullMessage" class="text-sm text-slate-600 px-4 py-3 rounded-2xl bg-slate-50">
+            {{ providerPullMessage }}
+          </div>
+
+          <template v-if="providerEditorSupportsModels">
+            <div class="px-4 py-4 border border-slate-200 rounded-2xl bg-slate-50 space-y-3">
+              <div class="flex flex-wrap gap-3 items-center justify-between">
+                <div>
+                  <div class="text-sm text-slate-900 font-medium">
+                    Provider 模型池
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    每个可承载模型的 Provider 维护自己的模型池、能力标签、接入参数与价格覆盖。
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <a-button size="small" @click="openCreateModelDrawer">
+                    新增模型
+                  </a-button>
+                  <a-popconfirm
+                    content="确认清空当前 Provider 的模型池草稿吗？只有保存 Provider 后才会持久化。"
+                    type="warning"
+                    @ok="clearProviderModelPoolDraft"
+                  >
+                    <a-button size="small" status="danger" :disabled="providerEditorForm.models.length === 0">
+                      清空模型池
+                    </a-button>
+                  </a-popconfirm>
+                </div>
+              </div>
+
+              <a-table :data="providerEditorModelRows" :pagination="false" row-key="model">
+                <template #columns>
+                  <a-table-column title="模型" data-index="model">
+                    <template #cell="scope">
+                      <div class="space-y-1">
+                        <div class="text-slate-900 font-medium">
+                          {{ scope.record.model }}
+                        </div>
+                        <div class="text-xs text-slate-500">
+                          {{ scope.record.label }}
+                        </div>
+                      </div>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="能力" data-index="capabilities" :width="220">
+                    <template #cell="scope">
+                      <div class="flex flex-wrap gap-1">
+                        <a-tag
+                          v-for="capability in scope.record.capabilities"
+                          :key="`${scope.record.model}-${capability}`"
+                          :color="modelCapabilityColor(capability)"
+                        >
+                          {{ modelCapabilityLabel(capability) }}
+                        </a-tag>
+                      </div>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="启用" data-index="enabled" :width="90">
+                    <template #cell="scope">
+                      <a-tag :color="scope.record.enabled ? 'green' : 'gray'">
+                        {{ scope.record.enabled ? 'on' : 'off' }}
+                      </a-tag>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="生效价格" data-index="inputPricePer1M" :width="260">
+                    <template #cell="scope">
+                      {{ buildPriceText(scope.record) }}
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="来源" data-index="pricingSource" :width="120">
+                    <template #cell="scope">
+                      <a-tag :color="scope.record.pricingSource === 'manual' ? 'orange' : scope.record.pricingSource === 'provider' ? 'arcoblue' : 'gray'">
+                        {{ scope.record.pricingSource }}
+                      </a-tag>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="操作" data-index="actions" :width="160">
+                    <template #cell="scope">
+                      <div class="flex gap-2">
+                        <a-button size="mini" @click="openEditModelDrawer(scope.record)">
+                          编辑
+                        </a-button>
+                        <a-button size="mini" status="danger" @click="removeProviderModel(scope.record.model)">
+                          删除
+                        </a-button>
+                      </div>
+                    </template>
+                  </a-table-column>
+                </template>
+              </a-table>
+            </div>
+          </template>
+          <a-alert v-else type="info" :show-icon="true">
+            {{ providerEditorTypeGuide.summary }} {{ providerEditorTypeGuide.apiKeyHint }}
+          </a-alert>
         </div>
-        <div class="mt-4 flex justify-end">
-          <a-button size="small" @click="closeLogDetail">
-            关闭
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="closeProviderDrawer">
+            取消
+          </a-button>
+          <a-button type="primary" @click="saveProviderDrawer">
+            保存 Provider
           </a-button>
         </div>
-      </a-modal>
-    </section>
+      </template>
+    </a-drawer>
+
+    <a-modal
+      v-model:visible="modelPullSelectorVisible"
+      title="选择导入模型"
+      width="960px"
+      unmount-on-close
+      @cancel="closeModelPullSelector"
+    >
+      <div class="pr-2 max-h-[70vh] overflow-y-auto">
+        <div class="space-y-4">
+          <a-alert type="info" :show-icon="true">
+            <div class="space-y-1">
+              <div>
+                当前 Provider：{{ pulledProviderMeta.providerName || pulledProviderMeta.providerId }} / {{ pulledProviderMeta.provider }}
+              </div>
+              <div class="text-xs">
+                聊天 Base URL：{{ pulledProviderMeta.baseURL || '-' }}；模型列表端点：{{ pulledProviderMeta.endpoint || '-' }}
+              </div>
+              <div v-if="pulledProviderMeta.nativeEmbeddingEndpoint" class="text-xs">
+                百炼多模态 Embedding 运行端点：{{ pulledProviderMeta.nativeEmbeddingEndpoint }}
+              </div>
+              <div class="text-xs">
+                候选模型会按能力和系列分组展示，可按能力过滤、搜索模型名、展示名、能力标签或 Provider 原始字段。
+              </div>
+            </div>
+          </a-alert>
+
+          <div class="gap-3 grid md:grid-cols-[220px_1fr]">
+            <a-select v-model="modelPullCapabilityFilter">
+              <a-option v-for="item in modelPullCapabilityFilters" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </a-option>
+            </a-select>
+            <a-input
+              v-model="modelPullFilterKeyword"
+              allow-clear
+              placeholder="按模型名、展示名、能力或 Provider 原始字段筛选"
+            />
+          </div>
+
+          <div class="px-4 py-3 rounded-2xl bg-slate-50 flex flex-wrap gap-3 items-center justify-between">
+            <div class="text-sm text-slate-600 flex flex-wrap gap-3 items-center">
+              <span>拉取时间：{{ formatTime(pulledProviderFetchedAt) }}</span>
+              <span>候选模型：{{ pulledProviderModels.length }}</span>
+              <span>筛选结果：{{ filteredPulledModelCount }}</span>
+              <span>已选：{{ selectedPulledModelCount }}</span>
+            </div>
+            <div class="flex flex-wrap gap-3 items-center">
+              <a-checkbox
+                :model-value="allPulledModelsChecked"
+                :indeterminate="allPulledModelsIndeterminate"
+                @change="toggleAllPulledModels(Boolean($event))"
+              >
+                全选
+              </a-checkbox>
+              <a-button size="mini" @click="toggleAllPulledModels(false)">
+                清空
+              </a-button>
+            </div>
+          </div>
+
+          <div
+            v-for="group in filteredModelPullSeriesGroups"
+            :key="group.key"
+            class="px-4 py-4 border border-slate-200 rounded-2xl bg-white"
+          >
+            <div class="flex flex-wrap gap-3 items-center justify-between">
+              <div class="flex flex-wrap gap-3 items-center">
+                <a-checkbox
+                  :model-value="hasSelectedAllModels(group.items)"
+                  :indeterminate="hasPartialSelectedModels(group.items)"
+                  @change="togglePulledGroup(group.items, Boolean($event))"
+                >
+                  {{ group.label }}
+                </a-checkbox>
+                <a-tag color="arcoblue">
+                  {{ group.items.length }} 个
+                </a-tag>
+                <a-tag v-if="group.capability !== 'other'" :color="modelCapabilityColor(group.capability)">
+                  {{ modelCapabilityLabel(group.capability) }}
+                </a-tag>
+              </div>
+              <a-button
+                v-if="!normalizedModelPullFilterKeyword"
+                size="mini"
+                type="text"
+                @click="toggleModelPullSeriesExpanded(group.key)"
+              >
+                {{ isModelPullSeriesExpanded(group.key) ? '收起' : '展开' }}
+              </a-button>
+            </div>
+
+            <div v-if="!isModelPullSeriesExpanded(group.key)" class="text-xs text-slate-500 mt-3">
+              点击展开查看该系列下的 {{ group.items.length }} 个模型。
+            </div>
+
+            <div v-else class="mt-3 gap-3 grid md:grid-cols-2">
+              <div
+                v-for="item in group.items"
+                :key="item.model"
+                class="px-3 py-3 border border-slate-200 rounded-xl flex gap-3 items-start"
+              >
+                <a-checkbox
+                  :model-value="selectedPulledModelSet.has(item.model)"
+                  @change="togglePulledModel(item.model, Boolean($event))"
+                />
+                <div class="flex-1 min-w-0">
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <div class="text-sm text-slate-900 font-medium break-all">
+                      {{ item.model }}
+                    </div>
+                    <a-tag :color="currentModelPoolNameSet.has(item.model) ? 'gold' : 'green'">
+                      {{ currentModelPoolNameSet.has(item.model) ? '已在模型池' : '新模型' }}
+                    </a-tag>
+                    <a-tag
+                      v-for="capability in item.capabilities"
+                      :key="`${item.model}-pull-${capability}`"
+                      :color="modelCapabilityColor(capability)"
+                    >
+                      {{ modelCapabilityLabel(capability) }}
+                    </a-tag>
+                  </div>
+                  <div class="text-xs text-slate-500 mt-1 break-all">
+                    {{ item.label || item.model }}
+                  </div>
+                  <div class="text-xs text-slate-500 mt-2 flex flex-wrap gap-3 items-center">
+                    <span>{{ item.pricingText }}</span>
+                    <span>来源：{{ formatPullPricingSource(item.pricingSource) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <a-alert v-if="pulledEmbeddingCandidateCount === 0" type="warning" :show-icon="true">
+            未从该 Provider 拉取到 Embedding 模型，可手动新增 text-embedding-v4；百炼多模态可新增 tongyi-embedding-vision-plus 并选择“百炼原生多模态”。
+          </a-alert>
+          <a-empty v-if="filteredModelPullSeriesGroups.length === 0" description="没有匹配的模型" />
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="closeModelPullSelector">
+            取消
+          </a-button>
+          <a-button type="primary" :disabled="selectedPulledModelCount === 0" @click="applyPulledModelSelection">
+            导入选中模型
+          </a-button>
+        </div>
+      </template>
+    </a-modal>
+
+    <a-drawer
+      v-model:visible="modelEditorVisible"
+      :title="modelEditorIsCreate ? '新增模型' : '编辑模型'"
+      :width="560"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <div class="gap-4 grid">
+          <a-form-item label="模型名">
+            <a-input v-model="modelEditorForm.model" placeholder="例如 gpt-4.1-mini" />
+          </a-form-item>
+          <a-form-item label="展示名称">
+            <a-input v-model="modelEditorForm.label" placeholder="用于后台展示" />
+          </a-form-item>
+          <a-form-item label="模型能力">
+            <a-checkbox-group v-model="modelEditorForm.capabilities">
+              <div class="flex flex-wrap gap-2">
+                <a-checkbox v-for="item in modelCapabilityOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </a-checkbox>
+              </div>
+            </a-checkbox-group>
+            <div class="text-xs text-slate-500 mt-1">
+              场景绑定会按能力过滤：聊天场景只选择 chat 模型，知识库向量只选择 Embedding，视觉投影只选择 vision，ASR/TTS 场景只选择对应语音模型。
+            </div>
+          </a-form-item>
+          <div v-if="modelEditorForm.capabilities.includes('chat')" class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                聊天模型
+              </div>
+              <div class="text-xs text-slate-500">
+                当前聊天接入固定使用 LangChain；百炼走 @langchain/openai + compatible-mode/v1。
+              </div>
+            </div>
+            <a-form-item label="格式">
+              <a-select v-model="modelEditorForm.format">
+                <a-option value="openai-compatible">
+                  openai-compatible
+                </a-option>
+                <a-option v-if="providerEditorForm.type !== 'dashscope-bailian'" value="response">
+                  response
+                </a-option>
+              </a-select>
+              <div v-if="providerEditorForm.type === 'dashscope-bailian'" class="text-xs text-slate-500 mt-1">
+                DashScope 当前限定为 openai-compatible，避免走 Responses 客户端。
+              </div>
+            </a-form-item>
+          </div>
+          <div v-if="modelEditorForm.capabilities.includes('embedding')" class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
+            <div>
+              <div class="text-sm text-slate-900 font-medium">
+                Embedding 模型
+              </div>
+              <div class="text-xs text-slate-500">
+                纯文本向量用 OpenAI 兼容文本；百炼图片、视频或融合向量用百炼原生多模态，运行时不走 compatible-mode。
+              </div>
+            </div>
+            <a-form-item label="Embedding 接入类型">
+              <a-select v-model="modelEditorForm.embeddingApiStyle">
+                <a-option value="openai-compatible-text">
+                  OpenAI 兼容文本
+                </a-option>
+                <a-option value="bailian-multimodal">
+                  百炼原生多模态
+                </a-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="Embedding 维度">
+              <a-input-number v-model="modelEditorForm.embeddingDimensions" :min="64" :step="64" class="w-full" />
+            </a-form-item>
+          </div>
+          <div v-if="modelEditorForm.capabilities.includes('vision') || modelEditorForm.capabilities.includes('image-gen') || modelEditorForm.capabilities.includes('video-gen')" class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50">
+            <div class="text-sm text-slate-900 font-medium">
+              视觉与生成能力
+            </div>
+            <div class="text-xs text-slate-500 mt-1">
+              vision 能力模型通过显式模型池参与图片理解；image-gen / video-gen 先作为后续生成场景路由标签保留。
+            </div>
+          </div>
+          <a-form-item label="启用">
+            <a-switch v-model="modelEditorForm.enabled" />
+          </a-form-item>
+          <a-form-item label="货币">
+            <a-input v-model="modelEditorForm.currency" placeholder="USD" />
+          </a-form-item>
+
+          <div class="text-sm text-slate-600 px-4 py-3 rounded-2xl bg-slate-50">
+            <div class="text-slate-900 font-medium">
+              导入价格
+            </div>
+            <div class="mt-2">
+              {{ buildImportedPriceText(modelEditorForm) }}
+            </div>
+          </div>
+
+          <a-form-item label="启用手工价格覆盖">
+            <a-switch v-model="modelEditorForm.manualPriceOverride" />
+          </a-form-item>
+          <a-form-item label="手工输入价格 / 1M">
+            <a-input-number v-model="modelEditorForm.manualInputPricePer1M" :min="0" :precision="6" class="w-full" />
+          </a-form-item>
+          <a-form-item label="手工输出价格 / 1M">
+            <a-input-number v-model="modelEditorForm.manualOutputPricePer1M" :min="0" :precision="6" class="w-full" />
+          </a-form-item>
+
+          <div class="text-sm text-slate-600 px-4 py-3 rounded-2xl bg-slate-50">
+            <div class="text-slate-900 font-medium">
+              生效价格
+            </div>
+            <div class="mt-2">
+              {{ buildPriceText(normalizeModelItem(modelEditorForm)) }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="closeModelDrawer">
+            取消
+          </a-button>
+          <a-button type="primary" @click="saveModelDrawer">
+            保存模型
+          </a-button>
+        </div>
+      </template>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="sceneEditorVisible"
+      :title="`编辑场景 · ${sceneEditorForm.label}`"
+      :width="680"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <div class="gap-4 grid">
+          <a-alert type="info" :show-icon="true">
+            {{ sceneEditorForm.description }}
+          </a-alert>
+          <a-form-item label="启用场景">
+            <a-switch v-model="sceneEditorForm.enabled" />
+          </a-form-item>
+          <a-form-item label="绑定 Provider">
+            <a-select
+              v-model="sceneEditorForm.providerIds"
+              multiple
+              allow-search
+              allow-clear
+              placeholder="按场景能力过滤 Provider"
+              @change="handleSceneProviderIdsChange"
+            >
+              <a-option
+                v-for="item in sceneEditorProviderOptions"
+                :key="item.id"
+                :value="item.id"
+                :disabled="!item.enabled"
+              >
+                {{ item.name }} <span class="text-xs text-slate-400">({{ item.provider }} · {{ item.capability }})</span>
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="负载均衡策略">
+            <a-select v-model="sceneEditorForm.loadBalanceStrategy">
+              <a-option value="round_robin">
+                轮询
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="模型池">
+            <a-select
+              v-model="sceneEditorForm.models"
+              multiple
+              allow-search
+              allow-clear
+              placeholder="按绑定 Provider 的模型池汇总选择"
+              @change="handleSceneModelsChange"
+            >
+              <template #empty>
+                <div class="px-4 py-5 text-left">
+                  <div class="text-sm text-slate-700 font-medium">
+                    没有匹配当前场景的模型
+                  </div>
+                  <div class="text-xs text-slate-500 leading-relaxed mt-1">
+                    {{ sceneModelEmptyHint() }}
+                  </div>
+                </div>
+              </template>
+              <a-option
+                v-for="item in sceneEditorModelPoolOptions"
+                :key="`scene-model-pool-${item.model}`"
+                :value="item.model"
+              >
+                <div class="space-y-0.5">
+                  <div class="flex gap-3 items-center justify-between">
+                    <span>{{ item.model }}</span>
+                    <span v-if="item.label && item.label !== item.model" class="text-xs text-slate-400">
+                      {{ item.label }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-slate-400">
+                    {{ item.priceText }}
+                  </div>
+                </div>
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="回退顺序">
+            <a-select
+              v-model="sceneEditorForm.modelFallback"
+              multiple
+              allow-search
+              allow-clear
+              placeholder="留空则按模型池顺序依次尝试"
+              @change="handleSceneModelFallbackChange"
+            >
+              <a-option
+                v-for="item in sceneEditorFallbackOptions"
+                :key="item.model"
+                :value="item.model"
+              >
+                <div class="space-y-0.5">
+                  <div class="flex gap-3 items-center justify-between">
+                    <span>{{ item.model }}</span>
+                    <span v-if="item.label && item.label !== item.model" class="text-xs text-slate-400">
+                      {{ item.label }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-slate-400">
+                    {{ item.priceText }}
+                  </div>
+                </div>
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="故障转移策略">
+            <a-select v-model="sceneEditorForm.failoverStrategy">
+              <a-option value="model_then_provider">
+                先按模型切换，再在同模型内轮询 Provider
+              </a-option>
+            </a-select>
+          </a-form-item>
+
+          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
+            当前 Provider：{{ sceneEditorForm.providerIds.length > 0 ? sceneProvidersPreview({ ...sceneEditorForm, providerIds: sceneEditorForm.providerIds, models: [], modelFallback: [], enabled: true, key: sceneEditorForm.key, label: '', description: '', loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy, failoverStrategy: sceneEditorForm.failoverStrategy, prompt: '' }) : '未绑定 Provider' }}
+          </div>
+          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
+            当前模型池：{{ sceneEditorForm.models.length > 0 ? sceneEditorForm.models.join(' / ') : '未配置' }}
+          </div>
+          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
+            当前模型回退顺序：{{ sceneEditorForm.modelFallback.length > 0 ? sceneEditorForm.modelFallback.join(' -> ') : (sceneEditorForm.models.length > 0 ? `未单独配置，将按模型池顺序：${sceneEditorForm.models.join(' -> ')}` : '未配置') }}
+          </div>
+          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
+            当前故障转移：{{ sceneFailoverStrategyLabel(sceneEditorForm) }}
+          </div>
+
+          <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50 space-y-2">
+            <div class="text-sm text-slate-900 font-medium">
+              内置提示词
+            </div>
+            <pre class="text-xs text-slate-600 leading-relaxed m-0 whitespace-pre-wrap">{{ sceneDefinitionForKey(sceneEditorForm.key)?.builtinPrompt || '未配置内置提示词。' }}</pre>
+          </div>
+
+          <a-form-item label="自定义提示词">
+            <a-textarea
+              v-model="sceneEditorForm.prompt"
+              :auto-size="{ minRows: 8, maxRows: 16 }"
+              placeholder="留空表示不追加自定义提示词。"
+            />
+          </a-form-item>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="applyCurrentSceneConfigToAll">
+            复制当前策略到全部场景
+          </a-button>
+          <a-button @click="closeSceneDrawer">
+            取消
+          </a-button>
+          <a-button type="primary" @click="saveSceneDrawer">
+            保存场景
+          </a-button>
+        </div>
+      </template>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="sceneTestDrawerVisible"
+      :title="sceneTestTarget ? `测试场景 · ${sceneTestTarget.label}` : '测试场景'"
+      :width="760"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <div v-if="sceneTestTarget" class="gap-4 grid">
+          <a-alert type="info" :show-icon="true">
+            点击执行后会走统一 Channel 路由，返回实际 Provider、模型/Profile、回退链路、延迟和审计动作。
+          </a-alert>
+
+          <div class="gap-3 grid md:grid-cols-2">
+            <div class="text-sm px-4 py-3 rounded-lg bg-slate-50">
+              <div class="text-xs text-slate-500">
+                场景
+              </div>
+              <div class="text-slate-900 font-medium mt-1">
+                {{ sceneTestTarget.label }} · {{ sceneTestTarget.key }}
+              </div>
+            </div>
+            <div class="text-sm px-4 py-3 rounded-lg bg-slate-50">
+              <div class="text-xs text-slate-500">
+                能力
+              </div>
+              <div class="text-slate-900 font-medium mt-1">
+                {{ modelCapabilityLabel(sceneRequiredCapability(sceneTestTarget.key)) }}
+              </div>
+            </div>
+          </div>
+
+          <a-form-item label="测试类型">
+            <a-select v-model="sceneTestForm.testMode">
+              <a-option value="chat">
+                Chat
+              </a-option>
+              <a-option value="asr">
+                ASR
+              </a-option>
+              <a-option value="tts">
+                TTS
+              </a-option>
+              <a-option value="embedding">
+                Embedding
+              </a-option>
+            </a-select>
+          </a-form-item>
+
+          <a-form-item label="Provider">
+            <a-select
+              v-model="sceneTestForm.providerId"
+              allow-clear
+              placeholder="留空则按场景配置顺序测试"
+              @change="handleSceneTestProviderChange"
+            >
+              <a-option
+                v-for="item in sceneTestProviderOptions"
+                :key="item.id"
+                :value="item.id"
+                :disabled="!item.enabled"
+              >
+                {{ item.name }} <span class="text-xs text-slate-400">({{ item.provider }} · {{ item.capability }})</span>
+              </a-option>
+            </a-select>
+          </a-form-item>
+
+          <a-form-item v-if="sceneTestModelOptions.length > 0" label="模型">
+            <a-select v-model="sceneTestForm.model" allow-clear allow-search placeholder="留空则按场景回退顺序测试">
+              <a-option
+                v-for="item in sceneTestModelOptions"
+                :key="item.model"
+                :value="item.model"
+              >
+                <div class="space-y-0.5">
+                  <div class="flex gap-3 items-center justify-between">
+                    <span>{{ item.model }}</span>
+                    <span v-if="item.label && item.label !== item.model" class="text-xs text-slate-400">
+                      {{ item.label }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-slate-400">
+                    {{ item.priceText }}
+                  </div>
+                </div>
+              </a-option>
+            </a-select>
+          </a-form-item>
+
+          <a-form-item v-if="sceneTestProfileOptions.length > 0" label="Profile">
+            <a-select v-model="sceneTestForm.profileId" allow-clear allow-search placeholder="留空则使用 Provider 默认 Profile">
+              <a-option
+                v-for="item in sceneTestProfileOptions"
+                :key="item.id"
+                :value="item.id"
+              >
+                {{ item.label }}
+              </a-option>
+            </a-select>
+          </a-form-item>
+
+          <div v-if="sceneTestSelectedProvider" class="text-xs text-slate-500 px-4 py-3 rounded-lg bg-slate-50">
+            当前选择：{{ sceneTestSelectedProvider.name }} · {{ sceneTestSelectedProvider.provider }} · {{ providerCapabilityLabel(sceneTestSelectedProvider.capability) }}
+          </div>
+
+          <a-form-item label="测试输入">
+            <a-textarea
+              v-model="sceneTestForm.message"
+              :auto-size="{ minRows: 3, maxRows: 8 }"
+              placeholder="按测试类型传入提示词、ASR context、TTS 文本或 embedding 文本"
+            />
+          </a-form-item>
+
+          <a-alert v-if="sceneTestError" type="error" :show-icon="true">
+            {{ sceneTestError }}
+          </a-alert>
+
+          <div v-if="sceneTestResult" class="space-y-3">
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-white">
+              <div class="flex flex-wrap gap-2 items-center">
+                <a-tag color="green">
+                  {{ sceneTestModeLabel(sceneTestResult.testMode) }}
+                </a-tag>
+                <a-tag :color="sceneTestResult.fallbackUsed ? 'orange' : 'arcoblue'">
+                  {{ sceneTestResult.fallbackUsed ? '已回退' : '主链路' }}
+                </a-tag>
+                <a-tag color="gray">
+                  {{ formatLatency(sceneTestResult.latencyMs) }}
+                </a-tag>
+              </div>
+              <div class="text-sm text-slate-900 font-medium mt-3">
+                {{ sceneTestResult.provider }} / {{ sceneTestResult.model || 'model-less' }}
+              </div>
+              <div class="text-xs text-slate-500 mt-2 whitespace-pre-wrap">
+                {{ sceneTestResult.responsePreview }}
+              </div>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50">
+              <div class="text-sm text-slate-900 font-medium">
+                回退链路
+              </div>
+              <div class="mt-3 space-y-2">
+                <div
+                  v-for="(item, index) in sceneTestResult.attemptChain"
+                  :key="`${item.provider}-${item.model}-${index}`"
+                  class="text-xs flex flex-wrap gap-2 items-center"
+                >
+                  <a-tag :color="item.success ? 'green' : 'red'">
+                    {{ item.success ? 'OK' : 'FAIL' }}
+                  </a-tag>
+                  <span class="text-slate-700">{{ index + 1 }}. {{ item.provider }} / {{ item.model || 'model-less' }}</span>
+                  <span class="text-slate-400">{{ formatLatency(item.latencyMs) }}</span>
+                  <span v-if="item.error" class="text-red-500">{{ item.error }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="px-4 py-4 border border-slate-200 rounded-lg bg-slate-50">
+              <div class="text-sm text-slate-900 font-medium">
+                日志链路
+              </div>
+              <div class="text-xs text-slate-600 mt-3 space-y-1">
+                <div v-for="(item, index) in sceneTestResult.logs || []" :key="`${index}-${item}`">
+                  {{ item }}
+                </div>
+                <div>审计动作：{{ sceneTestResult.auditAction || 'test.admin.ai.channel' }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="closeSceneTestDrawer">
+            关闭
+          </a-button>
+          <a-button type="primary" :loading="sceneTestTarget ? sceneTesting[sceneTestTarget.key] : false" @click="runSceneTest">
+            执行测试
+          </a-button>
+        </div>
+      </template>
+    </a-drawer>
+
+    <a-modal
+      v-model:visible="sceneBuiltinPromptVisible"
+      :title="sceneBuiltinPromptTarget ? `内置提示词 · ${sceneBuiltinPromptTarget.label}` : '内置提示词'"
+      :width="760"
+      :footer="false"
+      unmount-on-close
+      @cancel="closeSceneBuiltinPrompt"
+    >
+      <div v-if="sceneBuiltinPromptTarget" class="space-y-3">
+        <div class="text-xs text-slate-500">
+          {{ sceneBuiltinPromptTarget.key }} · {{ modelCapabilityLabel(sceneRequiredCapability(sceneBuiltinPromptTarget.key)) }}
+        </div>
+        <pre class="text-xs text-slate-100 leading-relaxed p-4 rounded-2xl bg-slate-950 whitespace-pre-wrap overflow-x-auto">{{ sceneDefinitionForKey(sceneBuiltinPromptTarget.key)?.builtinPrompt || '未配置内置提示词。' }}</pre>
+      </div>
+    </a-modal>
+
+    <a-drawer
+      v-model:visible="sceneBatchEditorVisible"
+      title="一键设置全部场景"
+      :width="680"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <div class="gap-4 grid">
+          <a-alert type="info" :show-icon="true">
+            这里会覆盖全部场景的 Provider 绑定、负载均衡策略、模型池、回退顺序和故障转移策略，不会改动提示词和启停状态。
+          </a-alert>
+          <a-form-item label="统一 Provider 绑定">
+            <a-select
+              v-model="sceneBatchForm.providerIds"
+              multiple
+              allow-search
+              allow-clear
+              @change="handleSceneBatchProviderIdsChange"
+            >
+              <a-option
+                v-for="item in routableProviderOptions"
+                :key="`batch-provider-${item.id}`"
+                :value="item.id"
+                :disabled="!item.enabled"
+              >
+                {{ item.name }} <span class="text-xs text-slate-400">({{ item.capability }})</span>
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="统一负载均衡策略">
+            <a-select v-model="sceneBatchForm.loadBalanceStrategy">
+              <a-option value="round_robin">
+                轮询
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="统一模型池">
+            <a-select
+              v-model="sceneBatchForm.models"
+              multiple
+              allow-search
+              allow-clear
+              @change="handleSceneBatchModelsChange"
+            >
+              <a-option
+                v-for="item in sceneBatchModelPoolOptions"
+                :key="`batch-model-pool-${item.model}`"
+                :value="item.model"
+              >
+                {{ item.model }}
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="统一回退顺序">
+            <a-select
+              v-model="sceneBatchForm.modelFallback"
+              multiple
+              allow-search
+              allow-clear
+              @change="handleSceneBatchModelFallbackChange"
+            >
+              <a-option
+                v-for="item in sceneBatchFallbackOptions"
+                :key="`batch-model-${item.model}`"
+                :value="item.model"
+              >
+                {{ item.model }}
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="统一故障转移策略">
+            <a-select v-model="sceneBatchForm.failoverStrategy">
+              <a-option value="model_then_provider">
+                先按模型切换，再在同模型内轮询 Provider
+              </a-option>
+            </a-select>
+          </a-form-item>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="closeSceneBatchDrawer">
+            取消
+          </a-button>
+          <a-button type="primary" @click="applySceneBatchConfig">
+            应用到全部场景
+          </a-button>
+        </div>
+      </template>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="auditDetailVisible"
+      title="审计详情"
+      :width="720"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <template v-if="auditDetailRow">
+          <div class="text-sm space-y-3">
+            <div><span class="font-medium">时间：</span>{{ formatTime(auditDetailRow.createdAt) }}</div>
+            <div><span class="font-medium">Action：</span>{{ auditDetailRow.action }}</div>
+            <div><span class="font-medium">操作者：</span>{{ auditDetailRow.actorName || auditDetailRow.actorUserId || '-' }}</div>
+            <div><span class="font-medium">赛事：</span>{{ auditDetailRow.contestName || '-' }}</div>
+            <a-typography-paragraph>
+              <pre class="text-xs text-slate-100 p-4 rounded-2xl bg-slate-950 overflow-x-auto">{{ toPrettyJson(auditDetailRow.payload) }}</pre>
+            </a-typography-paragraph>
+          </div>
+        </template>
+      </div>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="logDetailVisible"
+      title="日志详情"
+      :width="760"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <template v-if="logDetailRow">
+          <div class="text-sm space-y-3">
+            <div><span class="font-medium">时间：</span>{{ formatTime(logDetailRow.createdAt) }}</div>
+            <div><span class="font-medium">Workspace：</span>{{ logDetailRow.workspaceName || logDetailRow.workspaceId || '-' }}</div>
+            <div><span class="font-medium">Session：</span>{{ logDetailRow.sessionTitle || logDetailRow.sessionId || '-' }}</div>
+            <div><span class="font-medium">Provider / Model：</span>{{ logDetailRow.provider || '-' }} / {{ logDetailRow.model || '-' }}</div>
+            <div><span class="font-medium">Channel：</span>{{ logDetailRow.channelKey || '-' }}</div>
+            <div><span class="font-medium">角色：</span>{{ logDetailRow.role }}</div>
+            <div><span class="font-medium">Fallback：</span>{{ logDetailRow.fallbackUsed ? '是' : '否' }}</div>
+            <div><span class="font-medium">耗时：</span>{{ formatLatency(logDetailRow.latencyMs) }}</div>
+            <div v-if="logDetailRow.attemptChain.length > 0">
+              <span class="font-medium">尝试链：</span>
+              <div class="mt-2 space-y-2">
+                <div
+                  v-for="(attempt, index) in logDetailRow.attemptChain"
+                  :key="`${logDetailRow.id}-${index}`"
+                  class="text-xs text-slate-700 px-3 py-2 border border-slate-200 rounded-xl bg-slate-50"
+                >
+                  {{ index + 1 }}. {{ attempt.provider || '-' }} / {{ attempt.model || '-' }} · {{ attempt.success ? 'success' : 'failed' }} · {{ formatLatency(attempt.latencyMs) }}<span v-if="attempt.error"> · {{ attempt.error }}</span>
+                </div>
+              </div>
+            </div>
+            <a-typography-paragraph>
+              <pre class="text-xs text-slate-100 p-4 rounded-2xl bg-slate-950 whitespace-pre-wrap overflow-x-auto">{{ logDetailRow.content || logDetailRow.contentPreview }}</pre>
+            </a-typography-paragraph>
+          </div>
+        </template>
+      </div>
+    </a-drawer>
   </div>
 </template>
+
+<style scoped>
+.ai-prompts-page :deep(.arco-spin),
+.ai-prompts-page :deep(.arco-spin-container),
+.ai-prompts-page :deep(.arco-spin-children) {
+  display: block;
+  width: 100%;
+}
+</style>

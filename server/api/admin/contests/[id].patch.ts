@@ -2,12 +2,13 @@ import type { ContestFaqItem, ContestLevel, ContestVisibility } from '~~/shared/
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
-import { patchAdminContest } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { createContestManualReleaseDraft } from '~~/server/utils/release-store'
 
 interface PatchContestBody {
+  sourceModule?: string
   name?: string
   level?: ContestLevel
   organizer?: string
@@ -60,7 +61,7 @@ export default defineEventHandler(async (event) => {
   let patched
   try {
     patched = await withTransaction(event, async (db) => {
-      return patchAdminContest(db, {
+      return createContestManualReleaseDraft(db, {
         actorUserId: user.id,
         contestId,
         patch: {
@@ -82,21 +83,15 @@ export default defineEventHandler(async (event) => {
           hotScore: body?.hotScore,
           visibility: body?.visibility,
         },
+        sourceModule: body?.sourceModule,
       })
     })
   }
   catch (error) {
-    if (error instanceof Error && error.message === 'FEISHU_SOURCE_OF_TRUTH_CONFLICT') {
-      setResponseStatus(event, 409)
-      return fail('当前赛事由飞书多维主库托管，请在飞书侧修改后同步。', {
-        startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
-        fallbackUsed: false,
-        attempts: 1,
-      }, 40963)
-    }
-    throw error
+    if (error instanceof Error && error.message === 'CONTEST_NOT_FOUND')
+      patched = null
+    else
+      throw error
   }
 
   if (!patched) {

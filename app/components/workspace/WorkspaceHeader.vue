@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import WorkspaceAiToggleButton from '~/components/workspace/WorkspaceAiToggleButton.vue'
+
+type WorkspaceWorkbenchMode = 'project' | 'defense' | 'final_review'
+
 interface WorkspaceQuickSwitchProject {
   projectId: string
   workspaceId: string
@@ -8,21 +12,28 @@ interface WorkspaceQuickSwitchProject {
 }
 
 const props = withDefaults(defineProps<{
-  modelValue?: string
   projectName?: string
   myProjects?: WorkspaceQuickSwitchProject[]
   recentProjects?: WorkspaceQuickSwitchProject[]
+  workbenchMode?: WorkspaceWorkbenchMode
+  workbenchSwitching?: boolean
+  metaKShortcutLabel?: string
+  aiCollapsed?: boolean
 }>(), {
-  modelValue: '',
   projectName: '未命名项目',
   myProjects: () => [],
   recentProjects: () => [],
+  workbenchMode: 'project',
+  workbenchSwitching: false,
+  metaKShortcutLabel: '⌘K',
+  aiCollapsed: false,
 })
 
 const emit = defineEmits<{
-  (event: 'update:modelValue', value: string): void
+  (event: 'update:workbenchMode', value: WorkspaceWorkbenchMode): void
   (event: 'quickSwitchProject', value: { projectId: string, workspaceId: string }): void
-  (event: 'finalReview'): void
+  (event: 'openMetaK'): void
+  (event: 'toggleAiSidebar'): void
 }>()
 
 const quickSwitchOpen = ref(false)
@@ -31,11 +42,6 @@ const quickSwitchRef = ref<HTMLElement | null>(null)
 const hasQuickSwitchOptions = computed(() => {
   return props.myProjects.length > 0 || props.recentProjects.length > 0
 })
-
-function onInput(event: Event) {
-  const target = event.target as HTMLInputElement
-  emit('update:modelValue', target.value)
-}
 
 function formatShortTime(value: string): string {
   const date = new Date(value)
@@ -73,24 +79,29 @@ function goWorkspaceList() {
   navigateTo('/team')
 }
 
-function openFinalReview() {
+function openMetaK() {
   closeQuickSwitch()
-  emit('finalReview')
+  emit('openMetaK')
+}
+
+function selectWorkbench(mode: WorkspaceWorkbenchMode) {
+  if (props.workbenchSwitching)
+    return
+  if (props.workbenchMode === mode)
+    return
+  emit('update:workbenchMode', mode)
 }
 
 function handleGlobalPointerDown(event: Event) {
-  if (!quickSwitchOpen.value)
-    return
-
-  const container = quickSwitchRef.value
   const target = event.target as Node | null
-  if (!container || !target)
+  if (!target)
     return
 
-  if (container.contains(target))
-    return
-
-  closeQuickSwitch()
+  if (quickSwitchOpen.value) {
+    const quickSwitchContainer = quickSwitchRef.value
+    if (!quickSwitchContainer || !quickSwitchContainer.contains(target))
+      closeQuickSwitch()
+  }
 }
 
 function handleGlobalEscape(event: KeyboardEvent) {
@@ -118,10 +129,10 @@ onBeforeUnmount(() => {
   <header class="px-4 border-b border-slate-200 bg-white flex shrink-0 gap-3 h-12 items-center z-10">
     <div class="flex flex-1 gap-2 min-w-0 items-center">
       <nav
-        aria-label="项目工作区面包屑"
+        aria-label="研发工作台面包屑"
         class="flex gap-1 min-w-0 items-center"
       >
-        <span class="material-symbols-outlined text-xl text-blue-600">dataset</span>
+        <BrandLogo variant="mark" class="shrink-0" style="--winloop-brand-mark-size: 22px;" />
         <button
           class="text-sm text-slate-900 font-bold px-1 py-0.5 rounded transition-colors hover:bg-slate-100"
           type="button"
@@ -201,36 +212,70 @@ onBeforeUnmount(() => {
         </div>
       </nav>
     </div>
-    <div class="shrink-0 max-w-[40vw] w-96 relative">
-      <span class="material-symbols-outlined text-sm text-slate-400 left-2.5 top-1/2 absolute -translate-y-1/2">search</span>
-      <input
-        :value="modelValue"
-        class="text-xs py-1 pl-8 pr-4 outline-none border border-slate-200 rounded bg-slate-50 w-full focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-        placeholder="搜索资源、文档或指令..."
-        type="text"
-        @input="onInput"
+    <div class="shrink-0 max-w-[42vw] w-[28rem]">
+      <button
+        type="button"
+        class="px-1.5 text-left border border-slate-200 rounded-lg bg-white h-7 w-full focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+        data-testid="workspace-header-metak-trigger"
+        @click="openMetaK"
       >
-      <span class="text-[10px] text-slate-400 px-1 border border-slate-200 rounded right-2 top-1/2 absolute -translate-y-1/2">⌘K</span>
+        <span class="flex gap-1.5 min-w-0 items-center">
+          <span class="text-blue-600 rounded-md bg-blue-50 inline-flex shrink-0 h-[22px] w-[22px] items-center justify-center">
+            <span class="material-symbols-outlined text-[14px]">search</span>
+          </span>
+          <span class="text-[11px] text-slate-500 leading-none flex-1 min-w-0 block truncate">
+            搜索命令、资源、会议或项目
+          </span>
+          <span class="text-[9px] text-slate-400 leading-none font-semibold px-1.5 py-0.5 border border-slate-200 rounded-md bg-slate-50 shrink-0">
+            {{ metaKShortcutLabel }}
+          </span>
+        </span>
+      </button>
     </div>
 
     <div class="flex flex-1 gap-2 items-center justify-end">
-      <button
-        class="text-xs text-white font-semibold px-3 py-1.5 rounded bg-slate-900 hover:opacity-90"
-        type="button"
-        @click="openFinalReview"
+      <div
+        data-testid="workspace-header-workbench-tabs"
+        class="p-0.5 border border-slate-200 rounded-xl bg-slate-100/80 inline-flex gap-0.5 items-center"
       >
-        终审
-      </button>
-      <button class="text-slate-500 p-1.5 rounded transition-colors hover:bg-slate-100">
-        <span class="material-symbols-outlined text-xl">notifications</span>
-      </button>
-      <div class="border border-slate-300 rounded-full bg-slate-200 h-6 w-6 overflow-hidden">
-        <img
-          alt="avatar"
-          class="h-full w-full object-cover"
-          src="https://lh3.googleusercontent.com/aida-public/AB6AXuCpeK3ZzVd7LtrOg5h6iFhJ5azRbuUFRmmaMGNaVkipoRx2KeXJvGzjOem-njmZ1X2K7E5eZq7iEGey_U1YoWT2pMOklyV-WBBdEXaeAsz-Gr76uirUlHq69Ry0Fs7j56my_Rkzmsqgd-IwpFzP7GnGQQLMOQ5ow_q8rIICxDOttJQY_PinNCZcLPjEAJaTIm6TZKjFhUquEDOc_dJHU_4nZZUHpVc9q77XvmnEtM5aBVMhBO4J0oNIfiA6rLO49eLZ9IVEQs_CTyPt"
+        <button
+          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          :class="workbenchMode === 'project'
+            ? 'bg-white text-slate-900 shadow-sm'
+            : 'text-slate-500 hover:text-slate-700'"
+          :disabled="props.workbenchSwitching"
+          type="button"
+          @click="selectWorkbench('project')"
         >
+          研发工作台
+        </button>
+        <button
+          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          :class="workbenchMode === 'defense'
+            ? 'bg-[#d4a017] text-white shadow-sm'
+            : 'text-slate-500 hover:text-amber-700'"
+          :disabled="props.workbenchSwitching"
+          type="button"
+          @click="selectWorkbench('defense')"
+        >
+          答辩工作台
+        </button>
+        <button
+          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          :class="workbenchMode === 'final_review'
+            ? 'bg-[#2563eb] text-white shadow-sm'
+            : 'text-slate-500 hover:text-blue-700'"
+          :disabled="props.workbenchSwitching"
+          type="button"
+          @click="selectWorkbench('final_review')"
+        >
+          终审工作台
+        </button>
       </div>
+      <WorkspaceAiToggleButton
+        :collapsed="props.aiCollapsed"
+        @toggle="emit('toggleAiSidebar')"
+      />
     </div>
   </header>
 </template>
