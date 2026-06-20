@@ -16,6 +16,7 @@ public/assets/fonts
 --port/
 tmp/document-storage/
 tmp/document-storage-*/
+deploy/meeting/data/
 .golutra/
 output/
 .playwright-mcp/
